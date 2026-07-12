@@ -6,9 +6,16 @@ load_dotenv()
 
 class Config:
     # LLM Settings
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()  # 'openai', 'gemini', or 'anthropic'
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
     OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", None)
+    
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+    
+    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+    ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest")
 
     # Portfolio settings
     PORTFOLIO_TICKERS = [
@@ -36,9 +43,15 @@ class Config:
         warnings = []
         errors = []
 
-        if not cls.OPENAI_API_KEY:
-            # If no API key is present, warn that AI generation won't work
-            errors.append("OPENAI_API_KEY environment variable is missing. LLM agents will fail to execute.")
+        if cls.LLM_PROVIDER == "gemini":
+            if not cls.GEMINI_API_KEY:
+                errors.append("GEMINI_API_KEY environment variable is missing. LLM agents will fail to execute.")
+        elif cls.LLM_PROVIDER == "anthropic":
+            if not cls.ANTHROPIC_API_KEY:
+                errors.append("ANTHROPIC_API_KEY environment variable is missing. LLM agents will fail to execute.")
+        else:  # Default is openai
+            if not cls.OPENAI_API_KEY:
+                errors.append("OPENAI_API_KEY environment variable is missing. LLM agents will fail to execute.")
 
         if not cls.PORTFOLIO_TICKERS:
             errors.append("PORTFOLIO_TICKERS environment variable is empty. No tickers to analyze.")

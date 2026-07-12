@@ -1,26 +1,130 @@
 import json
 import datetime
-from openai import OpenAI
+import time
 from config import Config
 
-def get_client() -> OpenAI:
-    """Returns an initialized OpenAI client with custom base URL if configured."""
-    api_key = Config.OPENAI_API_KEY
-    base_url = Config.OPENAI_API_BASE
+def generate_text_completion(system_prompt: str, prompt: str, temperature: float = 0.3) -> str:
+    """
+    Routes the LLM call to the configured provider (OpenAI, Gemini, or Anthropic).
+    Implements a robust model-fallback sequence to handle 503 (temporary overload),
+    429 (rate limits), and API outages gracefully.
+    """
+    provider = Config.LLM_PROVIDER
     
-    if base_url:
-        return OpenAI(api_key=api_key, base_url=base_url)
-    return OpenAI(api_key=api_key)
+    if provider == "gemini":
+        from google import genai
+        from google.genai import types
+        
+        # Model fallback sequence for Gemini
+        models_to_try = [
+            Config.GEMINI_MODEL, 
+            "gemini-2.5-flash", 
+            "gemini-2.0-flash", 
+            "gemini-1.5-flash"
+        ]
+        # De-duplicate while preserving order
+        models_to_try = list(dict.fromkeys(models_to_try))
+        
+        client = genai.Client(api_key=Config.GEMINI_API_KEY)
+        
+        last_error = None
+        for model in models_to_try:
+            try:
+                print(f"[LLM Dispatch] Requesting Gemini model: {model}...")
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        temperature=temperature
+                    )
+                )
+                return response.text.strip()
+            except Exception as e:
+                print(f"[LLM Bypass Alert] Gemini model {model} failed: {e}. Trying fallback...")
+                last_error = e
+                time.sleep(1.5)  # Wait briefly for congestion to clear
+                continue
+        
+        raise last_error
+        
+    elif provider == "anthropic":
+        from anthropic import Anthropic
+        
+        # Model fallback sequence for Anthropic
+        models_to_try = [
+            Config.ANTHROPIC_MODEL,
+            "claude-3-5-haiku-latest",
+            "claude-3-haiku-20240307"
+        ]
+        models_to_try = list(dict.fromkeys(models_to_try))
+        
+        client = Anthropic(api_key=Config.ANTHROPIC_API_KEY)
+        
+        last_error = None
+        for model in models_to_try:
+            try:
+                print(f"[LLM Dispatch] Requesting Anthropic model: {model}...")
+                response = client.messages.create(
+                    model=model,
+                    max_tokens=4000,
+                    temperature=temperature,
+                    system=system_prompt,
+                    messages=[
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+                return response.content[0].text.strip()
+            except Exception as e:
+                print(f"[LLM Bypass Alert] Anthropic model {model} failed: {e}. Trying fallback...")
+                last_error = e
+                time.sleep(1.5)
+                continue
+                
+        raise last_error
+        
+    else:  # openai (default)
+        from openai import OpenAI
+        
+        # Model fallback sequence for OpenAI
+        models_to_try = [
+            Config.OPENAI_MODEL,
+            "gpt-4o-mini",
+            "gpt-3.5-turbo"
+        ]
+        models_to_try = list(dict.fromkeys(models_to_try))
+        
+        if Config.OPENAI_API_BASE:
+            client = OpenAI(api_key=Config.OPENAI_API_KEY, base_url=Config.OPENAI_API_BASE)
+        else:
+            client = OpenAI(api_key=Config.OPENAI_API_KEY)
+            
+        last_error = None
+        for model in models_to_try:
+            try:
+                print(f"[LLM Dispatch] Requesting OpenAI model: {model}...")
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=temperature
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as e:
+                print(f"[LLM Bypass Alert] OpenAI model {model} failed: {e}. Trying fallback...")
+                last_error = e
+                time.sleep(1.5)
+                continue
+                
+        raise last_error
 
 class FinancialDataAnalystAgent:
     """
     Persona: A data-driven quantitative financial analyst.
     Aggregates technical metrics and raw news headlines into a clean, structured JSON report.
     """
-    def __init__(self):
-        self.client = get_client()
-        self.model = Config.OPENAI_MODEL
-
     def run(self, raw_data: list, raw_news: dict) -> str:
         """
         Processes stock metrics and news feeds.
@@ -67,16 +171,7 @@ class FinancialDataAnalystAgent:
             "}"
         )
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.1
-        )
-        
-        content = response.choices[0].message.content.strip()
+        content = generate_text_completion(system_prompt, prompt, temperature=0.1)
         
         # Clean markdown wraps if LLM accidentally outputs them
         if content.startswith("```"):
@@ -95,10 +190,6 @@ class PortfolioManagerAgent:
     Persona: A seasoned Wall Street portfolio manager and investment strategist.
     Consumes structured JSON data, synthesizes macro/sector outlooks, and drafts a beautifully designed HTML summary.
     """
-    def __init__(self):
-        self.client = get_client()
-        self.model = Config.OPENAI_MODEL
-
     def run(self, analyst_json_str: str) -> str:
         """
         Takes structured JSON data from the analyst and writes the final summary.
@@ -135,17 +226,8 @@ class PortfolioManagerAgent:
             "Draft the Daily Portfolio Executive Summary HTML email. Make it visual, clean, and highly professional. Ensure it matches all requirements."
         )
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3
-        )
+        content = generate_text_completion(system_prompt, prompt, temperature=0.3)
 
-        content = response.choices[0].message.content.strip()
-        
         # Clean markdown wraps if LLM accidentally outputs them
         if content.startswith("```"):
             lines = content.splitlines()

@@ -1,0 +1,7 @@
+# Generated artifacts — never commit these.
+# Cached raw SEC EDGAR JSON payloads:
+raw/
+# Local SQLite database (sec_data.sqlite3):
+*.sqlite3
+*.sqlite3-journal
+__pycache__/

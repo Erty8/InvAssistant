@@ -132,5 +132,5 @@ def is_trading_day(dt: datetime.date) -> bool:
 
 def get_current_ny_time() -> datetime.datetime:
     """Returns the current date and time in New York (EST/EDT) timezone."""
-    ny_tz = pytz.timezone("America/New York")
+    ny_tz = pytz.timezone("America/New_York")
     return datetime.datetime.now(ny_tz)

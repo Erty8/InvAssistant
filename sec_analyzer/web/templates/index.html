@@ -1,0 +1,991 @@
+<!--
+  SEC EDGAR Earnings Explorer -- single-page front end for sec_analyzer.web.app
+
+  Plain HTML + inline CSS + vanilla JS, no external resources (no CDNs, no
+  fonts, no icon libraries). Talks to two JSON endpoints served by the same
+  Flask app:
+
+    GET  /api/financials?ticker=&years=&no_cache=   -> fetch + normalize only
+    POST /api/analyze  {ticker, years, provider, no_cache} -> + LLM analysis
+
+  Everything below this comment is one self-contained file: markup, styling,
+  and behavior. Comments throughout explain the non-obvious bits (mostly the
+  number-formatting helpers and the render functions).
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SEC EDGAR Earnings Explorer</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --accent: #2563eb;
+    --accent-dark: #1d4ed8;
+    --bg: #f5f7fa;
+    --card-bg: #ffffff;
+    --text: #1a2233;
+    --text-muted: #5b6472;
+    --border: #e2e6ec;
+    --danger: #b3261e;
+    --danger-bg: #fdecea;
+    --warn: #8a5a00;
+    --warn-bg: #fff4dc;
+    --good: #0f7b3a;
+    --shadow: 0 1px 3px rgba(20, 24, 33, 0.08), 0 1px 2px rgba(20, 24, 33, 0.06);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --accent: #5b8def;
+      --accent-dark: #7aa4f0;
+      --bg: #12151c;
+      --card-bg: #1a1f2b;
+      --text: #e7eaf0;
+      --text-muted: #9aa4b4;
+      --border: #2b3140;
+      --danger: #ff8a80;
+      --danger-bg: #3a1a18;
+      --warn: #ffcf7a;
+      --warn-bg: #3a2c0f;
+      --good: #6fd39b;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.45;
+  }
+
+  .page {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 28px 20px 60px;
+  }
+
+  header.app-header {
+    margin-bottom: 20px;
+  }
+
+  header.app-header h1 {
+    font-size: 1.6rem;
+    margin: 0 0 4px;
+    letter-spacing: -0.01em;
+  }
+
+  header.app-header p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.92rem;
+  }
+
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 20px 22px;
+    margin-bottom: 20px;
+  }
+
+  .card h2 {
+    font-size: 1.05rem;
+    margin: 0 0 14px;
+  }
+
+  form#controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 14px;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .field label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  input, select {
+    font-size: 0.95rem;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: inherit;
+  }
+
+  input:focus, select:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  #ticker { text-transform: uppercase; width: 11ch; font-weight: 600; }
+  #years { width: 6ch; }
+
+  .provider-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .provider-hint {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  .checkbox-field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-bottom: 8px;
+  }
+
+  .checkbox-field label {
+    font-size: 0.86rem;
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  .buttons {
+    display: flex;
+    gap: 10px;
+    margin-left: auto;
+  }
+
+  button {
+    font-size: 0.92rem;
+    font-weight: 600;
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    font-family: inherit;
+    transition: opacity 0.15s ease;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
+  button.primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  button.primary:hover:not(:disabled) { background: var(--accent-dark); }
+
+  button.secondary {
+    background: transparent;
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  button.secondary:hover:not(:disabled) { background: rgba(37, 99, 235, 0.08); }
+
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: -2px;
+    margin-right: 6px;
+  }
+  button.secondary .spinner {
+    border: 2px solid rgba(37, 99, 235, 0.25);
+    border-top-color: var(--accent);
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #error-banner {
+    display: none;
+    background: var(--danger-bg);
+    color: var(--danger);
+    border: 1px solid var(--danger);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    font-size: 0.9rem;
+  }
+
+  #results { display: none; }
+
+  .result-header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .result-header h2 {
+    margin: 0;
+    font-size: 1.2rem;
+  }
+
+  .result-meta {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+  }
+
+  .currency-note {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    margin: 4px 0 16px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.86rem;
+  }
+
+  th, td {
+    text-align: right;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  th:first-child, td:first-child {
+    text-align: left;
+    white-space: normal;
+  }
+
+  thead th {
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.76rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    border-bottom: 2px solid var(--border);
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: rgba(37, 99, 235, 0.05); }
+
+  .table-scroll {
+    overflow-x: auto;
+  }
+
+  .missing-note {
+    margin-top: 12px;
+    font-size: 0.82rem;
+    color: var(--warn);
+    background: var(--warn-bg);
+    border-radius: 8px;
+    padding: 8px 12px;
+  }
+
+  .quarterly-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 640px) {
+    .quarterly-grid { grid-template-columns: 1fr; }
+  }
+  .quarterly-grid h3 {
+    font-size: 0.88rem;
+    margin: 0 0 8px;
+    color: var(--text-muted);
+    font-weight: 700;
+  }
+
+  #analysis-card { display: none; }
+
+  .analysis-error {
+    background: var(--warn-bg);
+    color: var(--warn);
+    border: 1px solid var(--warn);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-size: 0.9rem;
+  }
+  .analysis-error strong { display: block; margin-bottom: 4px; }
+
+  .fair-value {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .fair-value .range {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--good);
+  }
+  .fair-value .unit {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+  }
+  .basis {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+
+  .verdict-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 640px) {
+    .verdict-grid { grid-template-columns: 1fr; }
+  }
+  .verdict-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .verdict-box h4 {
+    margin: 0 0 6px;
+    font-size: 0.76rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+  }
+  .verdict-box p { margin: 0; font-size: 0.9rem; }
+
+  .key-ratios-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .key-ratios-list span {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 0.82rem;
+  }
+  .key-ratios-list span b { color: var(--accent); }
+
+  .summary-block {
+    font-size: 0.92rem;
+    background: var(--bg);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    padding: 12px 16px;
+  }
+
+  .provenance {
+    margin-top: 12px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+
+  footer.app-footer {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    margin-top: 32px;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    left: -9999px;
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <header class="app-header">
+    <h1>SEC EDGAR Earnings Explorer</h1>
+    <p>Pull a company's financials straight from the official SEC EDGAR API, then optionally get an LLM fundamental read.</p>
+  </header>
+
+  <section class="card">
+    <h2>Look up a company</h2>
+    <form id="controls">
+      <div class="field">
+        <label for="ticker">Ticker</label>
+        <input id="ticker" name="ticker" type="text" placeholder="e.g. AAPL" autocomplete="off" required />
+      </div>
+
+      <div class="field">
+        <label for="years">Years</label>
+        <input id="years" name="years" type="number" min="1" max="15" value="5" />
+      </div>
+
+      <div class="provider-field">
+        <label for="provider">LLM provider</label>
+        <select id="provider" name="provider">
+          {% for value, label in providers %}
+          <option value="{{ value }}" {% if value == default_provider %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <span class="provider-hint">Model: <code id="model-hint">{{ default_model }}</code></span>
+      </div>
+
+      <div class="checkbox-field">
+        <input id="no-cache" name="no_cache" type="checkbox" />
+        <label for="no-cache">Bypass cache</label>
+      </div>
+
+      <div class="buttons">
+        <button type="submit" id="btn-fetch" class="primary">Get Earnings</button>
+        <button type="button" id="btn-analyze" class="secondary">Analyze with LLM</button>
+      </div>
+    </form>
+  </section>
+
+  <div id="error-banner" role="alert"></div>
+
+  <section id="results">
+    <section class="card">
+      <div class="result-header">
+        <h2 id="company-name"></h2>
+        <span class="result-meta" id="company-meta"></span>
+      </div>
+      <p class="currency-note" id="currency-note"></p>
+
+      <div class="table-scroll">
+        <table id="annual-table" aria-label="Annual financials">
+          <thead><tr id="annual-head"></tr></thead>
+          <tbody id="annual-body"></tbody>
+        </table>
+      </div>
+
+      <div id="per-share-section" style="display: none; margin-top: 16px;">
+        <h3 style="font-size: 0.88rem; margin: 0 0 8px; color: var(--text-muted); font-weight: 700;">Per-share</h3>
+        <div class="table-scroll">
+          <table id="per-share-table" aria-label="Per-share figures">
+            <thead><tr id="per-share-head"></tr></thead>
+            <tbody id="per-share-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <p class="missing-note" id="missing-note" style="display: none;"></p>
+    </section>
+
+    <section class="card">
+      <h2>Ratios</h2>
+      <div class="table-scroll">
+        <table id="ratios-table" aria-label="Financial ratios">
+          <thead>
+            <tr>
+              <th>FY</th>
+              <th>Net Margin</th>
+              <th>Gross Margin</th>
+              <th>Op Margin</th>
+              <th>ROE</th>
+              <th>ROA</th>
+              <th>Current Ratio</th>
+              <th>D/E</th>
+              <th>FCF Margin</th>
+              <th>Rev YoY</th>
+              <th>NI YoY</th>
+            </tr>
+          </thead>
+          <tbody id="ratios-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Quarterly earnings (last 8 quarters)</h2>
+      <div class="quarterly-grid">
+        <div>
+          <h3>Revenue</h3>
+          <div class="table-scroll">
+            <table aria-label="Quarterly revenue">
+              <thead><tr><th>Period</th><th>Value</th></tr></thead>
+              <tbody id="quarterly-revenue-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <h3>Net Income</h3>
+          <div class="table-scroll">
+            <table aria-label="Quarterly net income">
+              <thead><tr><th>Period</th><th>Value</th></tr></thead>
+              <tbody id="quarterly-netincome-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="analysis-card">
+      <h2>LLM Analysis</h2>
+      <div id="analysis-error-box" class="analysis-error" style="display: none;"></div>
+      <div id="analysis-body"></div>
+    </section>
+  </section>
+
+  <footer class="app-footer">
+    Data: SEC EDGAR (official API). Educational use only — not investment advice.
+  </footer>
+</div>
+
+<script>
+  // ---------------------------------------------------------------------
+  // Constants: display order/labels for annual concepts. This is a purely
+  // front-end presentation concern -- the API returns all concepts as a
+  // JSON object, and we choose the row order here rather than depending on
+  // object-key order from the server.
+  // ---------------------------------------------------------------------
+  const ANNUAL_ROWS = [
+    ["Revenue", "Revenue"],
+    ["GrossProfit", "Gross Profit"],
+    ["OperatingIncome", "Operating Income"],
+    ["NetIncome", "Net Income"],
+    ["TotalAssets", "Total Assets"],
+    ["StockholdersEquity", "Stockholders' Equity"],
+    ["OperatingCashFlow", "Operating Cash Flow"],
+    ["CapEx", "Capital Expenditures"],
+    ["Cash", "Cash"],
+    ["TotalLiabilities", "Total Liabilities"],
+    ["LongTermDebt", "Long-Term Debt"],
+    ["CurrentAssets", "Current Assets"],
+    ["CurrentLiabilities", "Current Liabilities"],
+    ["DividendsPaid", "Dividends Paid"],
+  ];
+
+  // Per-share concepts are rendered in their own small section (below the
+  // monetary annual table) rather than mixed into ANNUAL_ROWS, since they
+  // aren't raw USD amounts and formatMoney() would misrepresent them.
+  const PER_SHARE_ROWS = [
+    ["EPS", "EPS", (v) => (v === null || v === undefined ? "—" : `$${v.toFixed(2)}`)],
+    [
+      "SharesOutstanding",
+      "Shares Outstanding",
+      (v) => (v === null || v === undefined ? "—" : `${(v / 1e6).toLocaleString(undefined, { maximumFractionDigits: 1 })}M shares`),
+    ],
+  ];
+
+  const providerSelect = document.getElementById("provider");
+  const modelHint = document.getElementById("model-hint");
+  const defaultModel = {{ default_model | tojson }};
+
+  // The only model we know client-side for sure is the configured Ollama
+  // model and the fixed script-provider identifier; the Anthropic model is
+  // picked by the server, so just name the one we default to there too.
+  const MODEL_HINTS = {
+    script: "rule-based-v1 (no AI)",
+    ollama: defaultModel,
+    anthropic: "claude-opus-4-8",
+  };
+
+  providerSelect.addEventListener("change", () => {
+    modelHint.textContent = MODEL_HINTS[providerSelect.value] || "(server default)";
+  });
+  // Sync the hint with whichever provider is selected by default on load
+  // (the template pre-selects default_provider, which may not be "ollama").
+  modelHint.textContent = MODEL_HINTS[providerSelect.value] || defaultModel;
+
+  const form = document.getElementById("controls");
+  const tickerInput = document.getElementById("ticker");
+  const yearsInput = document.getElementById("years");
+  const noCacheInput = document.getElementById("no-cache");
+  const btnFetch = document.getElementById("btn-fetch");
+  const btnAnalyze = document.getElementById("btn-analyze");
+  const errorBanner = document.getElementById("error-banner");
+  const resultsSection = document.getElementById("results");
+  const analysisCard = document.getElementById("analysis-card");
+
+  /**
+   * Format a raw USD number as a compact currency string:
+   * >= 1e9 -> "$X.XXB", >= 1e6 -> "$X.XXM", else plain comma-grouped dollars.
+   * Returns "—" for null/undefined.
+   */
+  function formatMoney(value) {
+    if (value === null || value === undefined || Number.isNaN(value)) return "—";
+    const sign = value < 0 ? "-" : "";
+    const abs = Math.abs(value);
+    if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
+    if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
+    return `${sign}$${abs.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  }
+
+  /**
+   * Format a ratio (stored as a fraction, e.g. 0.153) as a signed percentage
+   * string with 1 decimal place, e.g. "15.3%" or "-4.2%". Returns "—" for
+   * null/undefined.
+   */
+  function formatPercent(value) {
+    if (value === null || value === undefined || Number.isNaN(value)) return "—";
+    const pct = value * 100;
+    const sign = pct > 0 ? "+" : "";
+    return `${sign}${pct.toFixed(1)}%`;
+  }
+
+  /** Format a plain decimal ratio (e.g. current ratio) to 2 places, or "—". */
+  function formatDecimal(value) {
+    if (value === null || value === undefined || Number.isNaN(value)) return "—";
+    return value.toFixed(2);
+  }
+
+  function showError(message) {
+    errorBanner.textContent = message;
+    errorBanner.style.display = "block";
+  }
+
+  function clearError() {
+    errorBanner.style.display = "none";
+    errorBanner.textContent = "";
+  }
+
+  function setLoading(isLoading) {
+    btnFetch.disabled = isLoading;
+    btnAnalyze.disabled = isLoading;
+  }
+
+  function withSpinner(button, label, isLoading) {
+    button.innerHTML = isLoading ? `<span class="spinner"></span>${label}...` : label;
+  }
+
+  /** Render the annual financials table: rows = concepts, columns = fiscal years (desc). */
+  function renderAnnualTable(data) {
+    const fiscalYears = new Set();
+    for (const [concept] of ANNUAL_ROWS) {
+      for (const record of data.annual[concept] || []) {
+        if (record.fy !== null && record.fy !== undefined) fiscalYears.add(record.fy);
+      }
+    }
+    const years = Array.from(fiscalYears).sort((a, b) => b - a);
+
+    const head = document.getElementById("annual-head");
+    head.innerHTML = "<th>Concept</th>" + years.map((fy) => `<th>FY${fy}</th>`).join("");
+
+    const body = document.getElementById("annual-body");
+    body.innerHTML = "";
+    for (const [concept, label] of ANNUAL_ROWS) {
+      const byYear = {};
+      for (const record of data.annual[concept] || []) {
+        byYear[record.fy] = record.value;
+      }
+      const tr = document.createElement("tr");
+      const cells = years.map((fy) => `<td>${formatMoney(byYear[fy])}</td>`).join("");
+      tr.innerHTML = `<td>${label}</td>${cells}`;
+      body.appendChild(tr);
+    }
+
+    if (years.length === 0) {
+      body.innerHTML = `<tr><td colspan="1">No annual data available for this filer.</td></tr>`;
+    }
+  }
+
+  /**
+   * Render the per-share table (EPS, Shares Outstanding) if the API sent
+   * any data for those concepts; hides the whole section otherwise. Kept
+   * separate from renderAnnualTable() because these aren't raw USD amounts
+   * and formatMoney() would misrepresent them (e.g. "$6.00" read as $6,
+   * not $6.00B).
+   */
+  function renderPerShareTable(data) {
+    const section = document.getElementById("per-share-section");
+    const hasData = PER_SHARE_ROWS.some(([concept]) => (data.annual[concept] || []).length > 0);
+    if (!hasData) {
+      section.style.display = "none";
+      return;
+    }
+    section.style.display = "block";
+
+    const fiscalYears = new Set();
+    for (const [concept] of PER_SHARE_ROWS) {
+      for (const record of data.annual[concept] || []) {
+        if (record.fy !== null && record.fy !== undefined) fiscalYears.add(record.fy);
+      }
+    }
+    const years = Array.from(fiscalYears).sort((a, b) => b - a);
+
+    const head = document.getElementById("per-share-head");
+    head.innerHTML = "<th>Concept</th>" + years.map((fy) => `<th>FY${fy}</th>`).join("");
+
+    const body = document.getElementById("per-share-body");
+    body.innerHTML = "";
+    for (const [concept, label, formatter] of PER_SHARE_ROWS) {
+      const byYear = {};
+      for (const record of data.annual[concept] || []) {
+        byYear[record.fy] = record.value;
+      }
+      const tr = document.createElement("tr");
+      const cells = years.map((fy) => `<td>${formatter(byYear[fy])}</td>`).join("");
+      tr.innerHTML = `<td>${label}</td>${cells}`;
+      body.appendChild(tr);
+    }
+  }
+
+  /** Render the per-fiscal-year ratios table. */
+  function renderRatiosTable(ratios) {
+    const body = document.getElementById("ratios-body");
+    body.innerHTML = "";
+    if (!ratios || ratios.length === 0) {
+      body.innerHTML = `<tr><td colspan="11">No ratios available (insufficient annual data).</td></tr>`;
+      return;
+    }
+    for (const row of ratios) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>FY${row.fy ?? "—"}</td>
+        <td>${formatPercent(row.net_margin)}</td>
+        <td>${formatPercent(row.gross_margin)}</td>
+        <td>${formatPercent(row.operating_margin)}</td>
+        <td>${formatDecimal(row.roe)}</td>
+        <td>${formatDecimal(row.roa)}</td>
+        <td>${formatDecimal(row.current_ratio)}</td>
+        <td>${formatDecimal(row.debt_to_equity)}</td>
+        <td>${formatPercent(row.fcf_margin)}</td>
+        <td>${formatPercent(row.yoy_revenue_growth)}</td>
+        <td>${formatPercent(row.yoy_net_income_growth)}</td>
+      `;
+      body.appendChild(tr);
+    }
+  }
+
+  /** Render one quarterly mini-table (Revenue or Net Income) into the given tbody id. */
+  function renderQuarterlyTable(records, tbodyId) {
+    const body = document.getElementById(tbodyId);
+    body.innerHTML = "";
+    if (!records || records.length === 0) {
+      body.innerHTML = `<tr><td colspan="2">No quarterly data available.</td></tr>`;
+      return;
+    }
+    for (const record of records) {
+      const tr = document.createElement("tr");
+      const periodLabel = record.period_end ? `${record.period_end} (${record.fp || ""})` : "—";
+      tr.innerHTML = `<td>${periodLabel}</td><td>${formatMoney(record.value)}</td>`;
+      body.appendChild(tr);
+    }
+  }
+
+  /** Render the company header, currency note, and "missing concepts" hint. */
+  function renderHeader(data) {
+    document.getElementById("company-name").textContent = data.entity_name || data.name || data.cik;
+    document.getElementById("company-meta").textContent = `CIK ${data.cik}`;
+    document.getElementById("currency-note").textContent = `Figures in ${data.currency || "USD"}.`;
+
+    const missingNote = document.getElementById("missing-note");
+    if (data.missing && data.missing.length > 0) {
+      missingNote.style.display = "block";
+      missingNote.textContent = `No SEC tag matched for: ${data.missing.join(", ")}.`;
+    } else {
+      missingNote.style.display = "none";
+    }
+  }
+
+  /** Render all of the shared financials UI (used by both Get Earnings and Analyze). */
+  function renderFinancials(data) {
+    renderHeader(data);
+    renderAnnualTable(data);
+    renderPerShareTable(data);
+    renderRatiosTable(data.ratios);
+    renderQuarterlyTable((data.quarterly && data.quarterly.Revenue) || [], "quarterly-revenue-body");
+    renderQuarterlyTable((data.quarterly && data.quarterly.NetIncome) || [], "quarterly-netincome-body");
+    resultsSection.style.display = "block";
+  }
+
+  /** Render the LLM analysis card, including the error-path (analysis.error). */
+  function renderAnalysis(analysis) {
+    analysisCard.style.display = "block";
+    const errorBox = document.getElementById("analysis-error-box");
+    const body = document.getElementById("analysis-body");
+
+    if (!analysis) {
+      errorBox.style.display = "none";
+      body.innerHTML = "";
+      return;
+    }
+
+    if (analysis.error) {
+      errorBox.style.display = "block";
+      errorBox.innerHTML = `<strong>Analysis unavailable (${escapeHtml(String(analysis.error))})</strong>${escapeHtml(analysis.summary || "No further details.")}`;
+    } else {
+      errorBox.style.display = "none";
+    }
+
+    const fv = analysis.fair_value_range || {};
+    const hasRange = fv.low !== null && fv.low !== undefined && fv.high !== null && fv.high !== undefined;
+    const rangeText = hasRange
+      ? `${formatMoney(fv.low)} – ${formatMoney(fv.high)}`
+      : "Not estimable from available data";
+
+    const keyRatios = analysis.key_ratios || {};
+    const keyRatiosHtml = Object.keys(keyRatios).length
+      ? Object.entries(keyRatios)
+          .map(([k, v]) => `<span>${escapeHtml(k)}: <b>${escapeHtml(String(v))}</b></span>`)
+          .join("")
+      : "<span>No key ratios returned.</span>";
+
+    body.innerHTML = analysis.error
+      ? ""
+      : `
+      <div class="fair-value">
+        <span class="range">${rangeText}</span>
+        <span class="unit">${escapeHtml(fv.unit || "")}</span>
+      </div>
+      <p class="basis">${escapeHtml(fv.basis || "")}</p>
+
+      <div class="verdict-grid">
+        <div class="verdict-box">
+          <h4>Fundamental Verdict</h4>
+          <p>${escapeHtml(analysis.fundamental_verdict || "—")}</p>
+        </div>
+        <div class="verdict-box">
+          <h4>Cyclical Risk</h4>
+          <p>${escapeHtml(analysis.cyclical_risk || "—")}</p>
+        </div>
+      </div>
+
+      <div class="key-ratios-list">${keyRatiosHtml}</div>
+
+      ${renderScoreTable(analysis.score)}
+
+      <div class="summary-block">${escapeHtml(analysis.summary || "No summary provided.")}</div>
+
+      <p class="provenance">Produced by ${escapeHtml(analysis._provider || "unknown provider")} / ${escapeHtml(analysis._model || "unknown model")}</p>
+    `;
+  }
+
+  /**
+   * Render the auditable checklist from a script-provider result's `score`
+   * key ({points, max_points, checks: [{name, passed, detail}]}). Returns
+   * an empty string (renders nothing) when `score` is absent, which keeps
+   * LLM-provider results (no `score` key) rendered exactly as before.
+   */
+  function renderScoreTable(score) {
+    if (!score || !Array.isArray(score.checks) || score.checks.length === 0) return "";
+
+    const rows = score.checks
+      .map((check) => {
+        const mark = check.passed === true ? "✓" : check.passed === false ? "✗" : "n/a";
+        const markClass = check.passed === true ? "good" : check.passed === false ? "danger" : "text-muted";
+        return `
+          <tr>
+            <td>${escapeHtml(check.name || "")}</td>
+            <td style="text-align:center; color: var(--${markClass});">${mark}</td>
+            <td style="text-align:left; white-space: normal; color: var(--text-muted);">${escapeHtml(check.detail || "")}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    return `
+      <div class="verdict-box" style="margin-bottom: 16px;">
+        <h4>Checklist (${score.points}/${score.max_points} evaluable checks passed)</h4>
+        <div class="table-scroll">
+          <table aria-label="Deterministic checklist">
+            <thead><tr><th style="text-align:left;">Check</th><th>Result</th><th style="text-align:left;">Detail</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  /** Minimal HTML-escaping for text interpolated into innerHTML. */
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function getFormValues() {
+    const ticker = tickerInput.value.trim().toUpperCase();
+    const years = parseInt(yearsInput.value, 10) || 5;
+    const noCache = noCacheInput.checked;
+    const provider = providerSelect.value;
+    return { ticker, years, noCache, provider };
+  }
+
+  async function handleFetchEarnings(event) {
+    event.preventDefault();
+    const { ticker, years, noCache } = getFormValues();
+    if (!ticker) {
+      showError("Please enter a ticker symbol.");
+      return;
+    }
+
+    clearError();
+    analysisCard.style.display = "none";
+    setLoading(true);
+    withSpinner(btnFetch, "Get Earnings", true);
+
+    try {
+      const params = new URLSearchParams({ ticker, years: String(years), no_cache: String(noCache) });
+      const response = await fetch(`/api/financials?${params.toString()}`);
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        showError(data.error || "Failed to fetch financials.");
+        return;
+      }
+      renderFinancials(data);
+    } catch (err) {
+      showError(`Network error: ${err.message}`);
+    } finally {
+      setLoading(false);
+      withSpinner(btnFetch, "Get Earnings", false);
+    }
+  }
+
+  async function handleAnalyze() {
+    const { ticker, years, noCache, provider } = getFormValues();
+    if (!ticker) {
+      showError("Please enter a ticker symbol.");
+      return;
+    }
+
+    clearError();
+    setLoading(true);
+    withSpinner(btnAnalyze, "Analyze with LLM", true);
+
+    try {
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker, years, provider, no_cache: noCache }),
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        showError(data.error || "Failed to run analysis.");
+        return;
+      }
+      renderFinancials(data);
+      renderAnalysis(data.analysis);
+    } catch (err) {
+      showError(`Network error: ${err.message}`);
+    } finally {
+      setLoading(false);
+      withSpinner(btnAnalyze, "Analyze with LLM", false);
+    }
+  }
+
+  form.addEventListener("submit", handleFetchEarnings);
+  btnAnalyze.addEventListener("click", handleAnalyze);
+</script>
+
+</body>
+</html>

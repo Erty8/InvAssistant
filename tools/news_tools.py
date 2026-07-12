@@ -16,19 +16,35 @@ def fetch_ticker_news(ticker_symbol: str, max_articles: int = 5) -> List[Dict[st
             return []
             
         for article in raw_news[:max_articles]:
-            title = article.get("title", "No Title")
-            publisher = article.get("publisher", "Unknown Publisher")
-            link = article.get("link", "")
+            content = article.get("content", {}) if "content" in article else article
             
-            # Convert publish time if available (POSIX timestamp)
-            publish_time_stamp = article.get("providerPublishTime", None)
+            title = content.get("title", "No Title")
+            
+            provider = content.get("provider", {})
+            if isinstance(provider, dict):
+                publisher = provider.get("displayName", "Unknown Publisher")
+            else:
+                publisher = content.get("publisher", "Unknown Publisher")
+                
+            link = ""
+            if "clickThroughUrl" in content and isinstance(content["clickThroughUrl"], dict):
+                link = content["clickThroughUrl"].get("url", "")
+            elif "canonicalUrl" in content and isinstance(content["canonicalUrl"], dict):
+                link = content["canonicalUrl"].get("url", "")
+            else:
+                link = content.get("link", "")
+                
             publish_date_str = "Unknown Date"
-            if publish_time_stamp:
-                try:
-                    publish_date = datetime.datetime.fromtimestamp(publish_time_stamp)
-                    publish_date_str = publish_date.strftime("%Y-%m-%d %H:%M")
-                except Exception:
-                    pass
+            if "pubDate" in content:
+                publish_date_str = content.get("pubDate", "Unknown Date")
+            elif "providerPublishTime" in content:
+                publish_time_stamp = content.get("providerPublishTime")
+                if publish_time_stamp:
+                    try:
+                        publish_date = datetime.datetime.fromtimestamp(publish_time_stamp)
+                        publish_date_str = publish_date.strftime("%Y-%m-%d %H:%M")
+                    except Exception:
+                        pass
             
             formatted_news.append({
                 "title": title,
