@@ -32,7 +32,12 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from sec_analyzer.normalize.concepts import CONCEPT_UNITS, CONCEPTS, FLOW_CONCEPTS
+from sec_analyzer.normalize.concepts import (
+    CONCEPT_UNITS,
+    CONCEPTS,
+    FLOW_CONCEPTS,
+    TAG_TAXONOMY,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +105,7 @@ def _fiscal_year(period_end: Optional[str]) -> Optional[int]:
 
 
 def _extract_concept(
-    usgaap: dict, tag_list: List[str], unit_keys: List[str]
+    facts: dict, tag_list: List[str], unit_keys: List[str]
 ) -> List[Tuple[int, str, str, dict]]:
     """Collect fact rows from ALL present fallback tags for a concept.
 
@@ -111,6 +116,14 @@ def _extract_concept(
     Revenue under ``RevenueFromContractWithCustomerExcludingAssessedTax`` for
     older years and switched to ``Revenues`` for recent years, so neither
     tag alone covers all periods.
+
+    ``facts`` is the full ``facts_json["facts"]`` dict, keyed by taxonomy
+    (``"us-gaap"``, ``"dei"``, ...). Most tags live under ``us-gaap``, but a
+    handful (e.g. the dei cover-page tag ``EntityCommonStockSharesOutstanding``)
+    live in a different taxonomy sub-dict -- see ``concepts.TAG_TAXONOMY``.
+    Each tag in ``tag_list`` is looked up in its own taxonomy (defaulting to
+    ``"us-gaap"`` for tags not listed in ``TAG_TAXONOMY``), so a single
+    concept's fallback list can freely mix tags from different taxonomies.
 
     ``unit_keys`` is the ordered list of acceptable XBRL unit keys for this
     concept (see ``concepts.CONCEPT_UNITS`` -- most concepts are just
@@ -132,7 +145,9 @@ def _extract_concept(
     """
     collected: List[Tuple[int, str, str, dict]] = []
     for priority, tag in enumerate(tag_list):
-        tag_data = usgaap.get(tag)
+        taxonomy = TAG_TAXONOMY.get(tag, "us-gaap")
+        taxonomy_data = facts.get(taxonomy) or {}
+        tag_data = taxonomy_data.get(tag)
         if not tag_data:
             continue
         units = tag_data.get("units") or {}
@@ -398,7 +413,7 @@ def normalize_facts(facts_json: dict, years: int = 5) -> dict:
         # Collect rows from ALL present fallback tags (merged across tags),
         # each carrying its fallback-priority index and matched unit key.
         unit_keys = CONCEPT_UNITS.get(concept, ["USD"])
-        collected = _extract_concept(usgaap, tag_list, unit_keys)
+        collected = _extract_concept(facts, tag_list, unit_keys)
 
         if not collected:
             annual[concept] = None
@@ -457,6 +472,37 @@ def normalize_facts(facts_json: dict, years: int = 5) -> dict:
         matched_tags[concept] = contributing_tags
         annual[concept] = annual_records or None
         quarterly[concept] = quarterly_records or None
+
+    # Global fiscal-year window: a concept whose data simply STOPS years ago
+    # (e.g. a filer switched to a different tag we don't know, or genuinely
+    # stopped reporting the item) must not drag decade-old columns into the
+    # output next to the entity's current years. Window every concept to the
+    # entity-wide most recent `years` fiscal years; concepts with nothing
+    # inside the window become missing.
+    global_max_fy = max(
+        (r["fy"] for recs in annual.values() if recs for r in recs
+         if r.get("fy") is not None),
+        default=None,
+    )
+    if global_max_fy is not None:
+        min_fy = global_max_fy - years + 1
+        for concept in list(annual.keys()):
+            recs = annual[concept]
+            if not recs:
+                continue
+            windowed = [r for r in recs if (r.get("fy") or 0) >= min_fy]
+            if len(windowed) != len(recs):
+                dropped = len(recs) - len(windowed)
+                logger.info(
+                    "Concept %r: dropped %d stale annual record(s) outside "
+                    "the FY%d-FY%d window for CIK %s.",
+                    concept, dropped, min_fy, global_max_fy, cik,
+                )
+            annual[concept] = windowed or None
+            if not windowed and not quarterly.get(concept):
+                matched_tags[concept] = None
+                if concept not in missing:
+                    missing.append(concept)
 
     if missing:
         logger.warning(

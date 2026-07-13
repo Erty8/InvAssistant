@@ -5,44 +5,64 @@ Two subcommands:
 * ``fetch TICKER`` -- resolve the ticker to a CIK, pull SEC XBRL company
   facts, normalize them, compute ratios, print both, and persist everything
   to the local SQLite database.
-* ``analyze TICKER`` -- everything ``fetch`` does, plus a fundamental
-  interpretation (fair-value range, verdict, cyclicality, and a summary)
-  from a selectable backend: local Ollama/Gemma (default), the hosted
-  Anthropic Claude API, or a deterministic script-based (no-AI) analyzer.
+* ``analyze TICKER`` -- everything ``fetch`` does, plus price/technical data,
+  valuation metrics, red flags, an earnings-date estimate, and a full
+  fundamental+technical interpretation (fair-value range, verdicts,
+  cyclicality, and a summary) from a selectable backend: local Ollama/Gemma
+  (default), the hosted Anthropic Claude API, or a deterministic script-based
+  (no-AI) analyzer. The result is printed as a compact Turkish-language
+  verdict card and, optionally, saved as a standalone HTML report.
 
 Usage::
 
     python -m sec_analyzer.cli fetch AAPL --years 5
     python -m sec_analyzer.cli analyze AAPL
-    python -m sec_analyzer.cli analyze AAPL --provider script
+    python -m sec_analyzer.cli analyze AAPL --horizon 5y --provider script
+    python -m sec_analyzer.cli analyze AAPL --html
 
 Only the official SEC EDGAR API and (for ``analyze`` with the ``ollama`` or
-``anthropic`` providers) an LLM API are used -- no third-party finance data
-libraries. The ``script`` provider makes no network calls at all beyond the
-SEC EDGAR fetch.
+``anthropic`` providers) an LLM API are used for financial statement data --
+no third-party finance data libraries beyond the optional Stooq/yfinance
+price-history fetch used to power the technical-analysis layer.
 """
 
 import argparse
 import json
 import logging
 import sys
-from typing import List, Tuple
+from datetime import date
+from typing import List, Optional, Tuple
 
 import requests
 
 from sec_analyzer.config import Config, ConfigError
-from sec_analyzer.fetch.companyfacts import get_company_facts
+from sec_analyzer.fetch.companyfacts import get_company_facts, get_submissions
+from sec_analyzer.fetch.filings import estimate_next_earnings
+from sec_analyzer.fetch.prices import PriceDataError, get_price_history, latest_price
 from sec_analyzer.fetch.tickers import resolve_cik
 from sec_analyzer.http_client import SecHttpClient
 from sec_analyzer.interpret.analyzer import interpret
+from sec_analyzer.normalize.metrics import compute_metrics
 from sec_analyzer.normalize.normalizer import format_table, normalize_facts
 from sec_analyzer.normalize.ratios import compute_ratios
-from sec_analyzer.store.database import save_normalized
+from sec_analyzer.normalize.red_flags import detect_red_flags
+from sec_analyzer.report.generator import generate_report
+from sec_analyzer.store.database import save_normalized, save_prices, save_verdict
+from sec_analyzer.technical.indicators import compute_indicators
+from sec_analyzer.technical.verdict import technical_verdict
 
 logger = logging.getLogger(__name__)
 
 #: Column width used when rendering the ratios table in _print_ratios.
 _RATIO_COL_WIDTH = 14
+
+#: Placeholder shown for any missing/None value in the terminal verdict card.
+_DASH = "—"
+
+#: Label column width for the verdict card's aligned "Label: value" lines
+#: (e.g. "Fundamental:", "Teknik:", ...) -- chosen so every label lines up
+#: regardless of its own length.
+_CARD_LABEL_WIDTH = 13
 
 
 def _print_ratios(ratios: List[dict]) -> None:
@@ -82,7 +102,7 @@ def _print_ratios(ratios: List[dict]) -> None:
         print("".join(c.rjust(_RATIO_COL_WIDTH) for c in cells))
 
 
-def _fetch_normalize_store(args: argparse.Namespace) -> Tuple[dict, List[dict]]:
+def _fetch_normalize_store(args: argparse.Namespace) -> Tuple[str, str, dict, List[dict]]:
     """Resolve, fetch, normalize, print, and persist financials for a ticker.
 
     Shared by both ``fetch`` and ``analyze`` so the two subcommands stay in
@@ -93,7 +113,7 @@ def _fetch_normalize_store(args: argparse.Namespace) -> Tuple[dict, List[dict]]:
             ``no_cache`` attributes.
 
     Returns:
-        The ``(normalized, ratios)`` pair produced for this ticker.
+        ``(cik, name, normalized, ratios)``.
     """
     client = SecHttpClient()
 
@@ -111,7 +131,7 @@ def _fetch_normalize_store(args: argparse.Namespace) -> Tuple[dict, List[dict]]:
     save_normalized(args.ticker, cik, name, normalized, ratios, db_path=Config.DB_PATH)
     print(f"\nSaved to database: {Config.DB_PATH}")
 
-    return normalized, ratios
+    return cik, name, normalized, ratios
 
 
 def cmd_fetch(args: argparse.Namespace) -> None:
@@ -119,13 +139,411 @@ def cmd_fetch(args: argparse.Namespace) -> None:
     _fetch_normalize_store(args)
 
 
+def _fetch_price_and_technical(
+    ticker: str, horizon: str, no_cache: bool
+):
+    """Fetch price history and derive the merged technical indicators/verdict.
+
+    Fully graceful: if price data can't be obtained (Stooq and yfinance both
+    fail, or the ticker simply has too little history), this logs a warning
+    and returns ``(None, None, None, None)`` rather than raising -- the
+    fundamental side of ``analyze`` must keep working even when there's no
+    usable price data at all.
+
+    Returns:
+        ``(price, as_of, technical, price_df)`` where ``technical`` is the
+        merged ``{**indicators, **technical_verdict_result}`` dict expected
+        by :func:`sec_analyzer.interpret.analyzer.interpret`, and
+        ``price_df`` is the raw OHLCV DataFrame (kept so the caller can
+        persist it without re-fetching). All four are ``None`` if price data
+        is unavailable.
+    """
+    try:
+        price_df, source = get_price_history(ticker, no_cache=no_cache)
+        price, as_of = latest_price(price_df)
+        indicators = compute_indicators(price_df)
+        verdict_result = technical_verdict(indicators, horizon)
+        technical = {**indicators, **verdict_result}
+        logger.info(
+            "Price data for %s from %s: %.2f as of %s", ticker, source, price, as_of
+        )
+        return price, as_of, technical, price_df
+    except PriceDataError as exc:
+        logger.warning("Price data unavailable for %s: %s", ticker, exc)
+        return None, None, None, None
+
+
+def _fetch_submissions(cik: str, ticker: str, no_cache: bool) -> Optional[dict]:
+    """Best-effort fetch of a filer's raw SEC submissions document; never raises.
+
+    Fetched exactly once per ``analyze`` run (SPEC.md Sec.13) and reused for
+    both the next-earnings catalyst estimate (:func:`_fetch_catalyst`) and
+    SIC-based sector classification (passed straight through to
+    :func:`sec_analyzer.interpret.analyzer.interpret` as ``submissions=``).
+
+    Returns:
+        The dict returned by
+        :func:`sec_analyzer.fetch.companyfacts.get_submissions`, or ``None``
+        if the fetch fails for any reason.
+    """
+    try:
+        client = SecHttpClient()
+        return get_submissions(cik, client, no_cache=no_cache)
+    except Exception:  # noqa: BLE001 - submissions are best-effort, never fatal
+        logger.warning("Could not fetch SEC submissions for %s", ticker, exc_info=True)
+        return None
+
+
+def _fetch_catalyst(submissions: Optional[dict], ticker: str) -> Optional[dict]:
+    """Best-effort next-earnings estimate from already-fetched submissions; never raises.
+
+    Args:
+        submissions: The dict returned by :func:`_fetch_submissions`, or
+            ``None``.
+        ticker: Stock ticker symbol, used only for the warning log message.
+
+    Returns:
+        The dict returned by
+        :func:`sec_analyzer.fetch.filings.estimate_next_earnings`, or
+        ``None`` if ``submissions`` is unavailable or the estimate itself
+        fails for any reason.
+    """
+    if not submissions:
+        return None
+    try:
+        return estimate_next_earnings(submissions)
+    except Exception:  # noqa: BLE001 - a catalyst estimate is a nice-to-have, never fatal
+        logger.warning("Could not estimate next earnings date for %s", ticker, exc_info=True)
+        return None
+
+
+def _save_price_rows(cik: str, price_df) -> None:
+    """Convert a price-history DataFrame to row dicts and persist them.
+
+    Never raises: a failure to persist price history must not prevent the
+    rest of ``analyze`` (interpretation, verdict card, HTML report) from
+    completing.
+    """
+    try:
+        rows = [
+            {
+                "date": row["Date"].strftime("%Y-%m-%d") if hasattr(row["Date"], "strftime") else str(row["Date"]),
+                "open": float(row["Open"]),
+                "high": float(row["High"]),
+                "low": float(row["Low"]),
+                "close": float(row["Close"]),
+                "volume": float(row["Volume"]),
+            }
+            for _, row in price_df.reset_index().iterrows()
+        ]
+        save_prices(cik, rows, db_path=Config.DB_PATH)
+    except Exception:  # noqa: BLE001 - persistence failure must not be fatal
+        logger.warning("Failed to save price history for CIK %s", cik, exc_info=True)
+
+
+def _fmt_money(value) -> str:
+    """Format a number as a dollar amount for the terminal verdict card.
+
+    No decimals for a whole number (``"$115"``), 2 decimals otherwise
+    (``"$128.40"``). Returns :data:`_DASH` for ``None``/unparseable input.
+    """
+    if value is None:
+        return _DASH
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return _DASH
+    if value == int(value):
+        return f"${value:,.0f}"
+    return f"${value:,.2f}"
+
+
+def _dr_suffix(value) -> str:
+    """Append a trailing ``" dr"`` to a discount-rate string like ``"%12"``
+    -> ``"%12 dr"``, unless it already reads that way. ``discount_rate`` (and
+    ``growth``) values are always already-formatted, human-readable Turkish
+    strings produced upstream (e.g. by
+    :mod:`sec_analyzer.interpret.rule_based`) -- this never reformats the
+    number itself, only appends the unit label. Returns :data:`_DASH` for
+    ``None``.
+    """
+    if value is None:
+        return _DASH
+    text = str(value)
+    lowered = text.lower()
+    if "dr" in lowered or "iskonto" in lowered:
+        return text
+    return f"{text} dr"
+
+
+def _strip_leading_dollar(text: str) -> str:
+    """Drop a leading ``"$"`` from an already-formatted money string."""
+    return text[1:] if text.startswith("$") else text
+
+
+def _scenario_line(label: str, scenario: Optional[dict]) -> str:
+    """Render one bear/bull scenario, e.g. ``"bear $70–95 (%8 büyüme, %12 dr)"``."""
+    scenario = scenario or {}
+    lo, hi = scenario.get("lo"), scenario.get("hi")
+    if lo is None or hi is None:
+        range_text = _DASH
+    else:
+        range_text = f"{_fmt_money(lo)}–{_strip_leading_dollar(_fmt_money(hi))}"
+    growth = scenario.get("growth") or _DASH
+    dr = _dr_suffix(scenario.get("discount_rate"))
+    return f"{label} {range_text} ({growth}, {dr})"
+
+
+def _valuation_method_label(valuation: dict) -> str:
+    """Return the fair-value method label for the card's "Fair Value" line:
+    ``"DCF"`` normally, or ``"P/B×ROE"`` when the FCF-based DCF is disabled
+    for this filer's sector (financial/REIT -- see
+    ``valuation["dcf"]["enabled"]``, SPEC.md Sec.8/11)."""
+    dcf = (valuation or {}).get("dcf") or {}
+    return "DCF" if dcf.get("enabled", True) else "P/B×ROE"
+
+
+def _format_pct_signed(value) -> str:
+    """Render a decimal-fraction growth rate as a whole-percent Turkish
+    string, e.g. ``0.19 -> "%19"``, ``-0.05 -> "%-5"``. Returns :data:`_DASH`
+    for ``None``/non-numeric input."""
+    if value is None:
+        return _DASH
+    try:
+        return f"%{float(value) * 100:.0f}"
+    except (TypeError, ValueError):
+        return _DASH
+
+
+def _reverse_dcf_line(result: dict, valuation: dict) -> str:
+    """Render the "Reverse DCF:" card line (SPEC.md Sec.13): the price-
+    implied growth rate versus the filer's realized revenue CAGR.
+
+    Prefers the phase-2 commentary's own ``result["reverse_dcf_comment"]``
+    when present -- it already narrates the same
+    ``valuation["reverse_dcf"]`` numbers in prose. Falls back to building
+    the line directly from those numbers otherwise (e.g. the ``"script"``
+    provider, or a commentary that left the field empty).
+    """
+    label = "Reverse DCF:".ljust(_CARD_LABEL_WIDTH)
+    comment = result.get("reverse_dcf_comment")
+    if comment:
+        return f"{label}{comment}"
+
+    reverse_dcf = valuation.get("reverse_dcf") or {}
+    implied = reverse_dcf.get("implied_growth")
+    if implied is None:
+        return f"{label}{_DASH}"
+
+    realized_label = reverse_dcf.get("realized_label") or _DASH
+    realized_text = _format_pct_signed(reverse_dcf.get("realized_cagr_5y"))
+    return (
+        f"{label}fiyat 10y {_format_pct_signed(implied)} CAGR ima ediyor "
+        f"(gerçekleşen {realized_label}: {realized_text})"
+    )
+
+
+def _multiples_line(valuation: dict) -> str:
+    """Render the "Multiples:" card line (SPEC.md Sec.13): the primary
+    multiple used (P/E, falling back to P/S then P/FCF) and where the
+    current value sits within its own historical percentile, from
+    ``valuation["multiples"]``. ``"veri yetersiz"`` when none of the three
+    has a usable percentile (fewer than 5 years of price-backed history)."""
+    label = "Multiples:".ljust(_CARD_LABEL_WIDTH)
+    multiples = valuation.get("multiples") or {}
+    history_years = multiples.get("history_years") or 0
+
+    for name, percentile in (
+        ("P/E", multiples.get("pe_percentile")),
+        ("P/S", multiples.get("ps_percentile")),
+        ("P/FCF", multiples.get("pfcf_percentile")),
+    ):
+        if percentile is not None:
+            return f"{label}{name} kendi {history_years}y medyanının {percentile:.0f}. yüzdeliğinde"
+
+    return f"{label}veri yetersiz"
+
+
+def _triangulation_line(valuation: dict) -> str:
+    """Render the "Üçgenleme:" card line (SPEC.md Sec.13): each of the three
+    valuation methods' cheap/fair/expensive direction signal, plus a
+    confidence-derived closing phrase, from ``valuation["triangulation"]``.
+    ``"YÜKSEK"`` confidence reads as "yön net" (clear direction), ``"DÜŞÜK"``
+    as "yön karışık" (mixed signals); anything else (typically ``"ORTA"``)
+    falls back to the triangulation's own majority ``direction`` word."""
+    label = "Üçgenleme:".ljust(_CARD_LABEL_WIDTH)
+    triangulation = valuation.get("triangulation") or {}
+    signals = triangulation.get("signals") or {}
+    confidence = triangulation.get("confidence")
+
+    dcf_signal = signals.get("dcf") or _DASH
+    reverse_dcf_signal = signals.get("reverse_dcf") or _DASH
+    multiples_signal = signals.get("multiples") or _DASH
+
+    if confidence == "YÜKSEK":
+        suffix = "yön net"
+    elif confidence == "DÜŞÜK":
+        suffix = "yön karışık"
+    else:
+        suffix = triangulation.get("direction") or _DASH
+
+    return f"{label}DCF {dcf_signal} · rDCF {reverse_dcf_signal} · multiples {multiples_signal} → {suffix}"
+
+
+def _sensitivity_line(valuation: dict) -> str:
+    """Render the "Duyarlılık:" card line (SPEC.md Sec.13): the full price
+    range spanned by the base-scenario 3x3 growth/discount-rate sensitivity
+    matrix, from ``valuation["sensitivity"]``, appending a "yüksek
+    belirsizlik" flag when that matrix's own ``high_uncertainty`` bit is
+    set (its (hi-lo)/base-cell spread exceeds 60%)."""
+    label = "Duyarlılık:".ljust(_CARD_LABEL_WIDTH)
+    sensitivity = valuation.get("sensitivity") or {}
+    lo, hi = sensitivity.get("lo"), sensitivity.get("hi")
+    if lo is None or hi is None:
+        return f"{label}{_DASH}"
+
+    range_text = f"{_fmt_money(lo)}–{_fmt_money(hi)}"
+    line = f"{label}base {range_text} (g±2pp, r±1pp)"
+    if sensitivity.get("high_uncertainty"):
+        line += " — yüksek belirsizlik"
+    return line
+
+
+def _print_verdict_card(
+    ticker: str,
+    horizon: str,
+    result: dict,
+    metrics: Optional[dict] = None,
+    flags: Optional[List[dict]] = None,
+) -> None:
+    """Print the compact, Turkish-language terminal verdict card.
+
+    This is the default (non-``--verbose``) output of ``analyze`` -- it
+    replaces the old raw-JSON dump, which is now only shown behind
+    ``--verbose``. Every field is rendered defensively (:data:`_DASH` for
+    anything missing), and an ``{"error": ...}`` result renders a minimal
+    card (ticker/horizon/date/price plus the error) instead of crashing.
+
+    When ``result["valuation"]`` (the dict from
+    :func:`sec_analyzer.valuation.engine.run_valuation`, SPEC.md Sec.13) is
+    present, the "Fair Value" line gains a method label (``"DCF"`` or
+    ``"P/B×ROE"``) and a "Güven:" confidence suffix, and four extra lines
+    follow the bear/bull line: "Reverse DCF:", "Multiples:", "Üçgenleme:",
+    and "Duyarlılık:". Without a ``"valuation"`` key (e.g. an older stored
+    result, or a phase-2 provider failure that still reached this function)
+    the card renders exactly as it did before those additions.
+
+    Args:
+        ticker: Stock ticker symbol as typed by the user (rendered upper-case).
+        horizon: One of ``"3m"``, ``"1y"``, ``"5y"``.
+        result: The dict returned by
+            :func:`sec_analyzer.interpret.analyzer.interpret` (success or
+            error shape).
+        metrics: The dict returned by
+            :func:`sec_analyzer.normalize.metrics.compute_metrics`; its
+            ``"price"`` field is used for the "Fiyat:" line.
+        flags: The list returned by
+            :func:`sec_analyzer.normalize.red_flags.detect_red_flags`, used
+            as a fallback "Red flags:" line when ``result`` has no
+            ``red_flags_comment`` (e.g. an error result).
+    """
+    result = result or {}
+    metrics = metrics or {}
+    flags = flags or []
+
+    ticker_label = str(ticker).upper()
+    header = f"{ticker_label} — Vade: {horizon} — {date.today().isoformat()}"
+
+    print()
+    print(header)
+    print("─" * len(header))
+    print(f"Fiyat: {_fmt_money(metrics.get('price'))}")
+
+    if "error" in result:
+        print(f"Analiz kullanılamıyor ({result['error']}): {result.get('summary', _DASH)}")
+        return
+
+    fv = result.get("fair_value_range") or {}
+    base = fv.get("base") or {}
+    valuation = result.get("valuation")
+
+    if base.get("lo") is not None and base.get("hi") is not None:
+        base_range = f"{_fmt_money(base['lo'])}–{_fmt_money(base['hi'])}"
+    else:
+        base_range = _DASH
+
+    if valuation:
+        method_label = _valuation_method_label(valuation)
+        confidence = result.get("confidence") or _DASH
+        print(f"Fair Value (base, {method_label}): {base_range}   Güven: {confidence}")
+    else:
+        print(f"Fair Value (base): {base_range}")
+    print(f"  {_scenario_line('bear', fv.get('bear'))} | {_scenario_line('bull', fv.get('bull'))}")
+
+    if valuation:
+        print(_reverse_dcf_line(result, valuation))
+        print(_multiples_line(valuation))
+        print(_triangulation_line(valuation))
+        print(_sensitivity_line(valuation))
+
+    print(f"{'Fundamental:'.ljust(_CARD_LABEL_WIDTH)}{result.get('fundamental_verdict') or _DASH}")
+    print(f"{'Teknik:'.ljust(_CARD_LABEL_WIDTH)}{result.get('technical_verdict') or _DASH}")
+
+    profile = result.get("profile_fit") or {}
+    profile_verdict = profile.get("verdict") or _DASH
+    profile_reason = profile.get("reason")
+    profile_line = f"{profile_verdict} — {profile_reason}" if profile_reason else profile_verdict
+    print(f"{'Profil:'.ljust(_CARD_LABEL_WIDTH)}{profile_line}")
+
+    if "red_flags_comment" in result:
+        red_flags_line = result.get("red_flags_comment") or "yok"
+    elif flags:
+        red_flags_line = "; ".join(f.get("message", "") for f in flags if f.get("message")) or "yok"
+    else:
+        red_flags_line = "yok"
+    print(f"{'Red flags:'.ljust(_CARD_LABEL_WIDTH)}{red_flags_line}")
+
+    print(f"{'Katalizör:'.ljust(_CARD_LABEL_WIDTH)}{result.get('catalyst') or _DASH}")
+
+    summary = result.get("summary")
+    if summary:
+        print(f"Özet: {summary}")
+
+
 def cmd_analyze(args: argparse.Namespace) -> None:
-    """Handle the ``analyze`` subcommand: ``fetch`` plus an LLM analysis."""
-    normalized, ratios = _fetch_normalize_store(args)
+    """Handle the ``analyze`` subcommand: fetch/normalize/store, then a full
+    fundamental + technical interpretation, printed as a verdict card (and,
+    with ``--html``, saved as a standalone HTML report)."""
+    horizon = getattr(args, "horizon", None) or "1y"
+    cik, _name, normalized, ratios = _fetch_normalize_store(args)
 
     provider = getattr(args, "provider", None) or Config.ANALYZER_PROVIDER
-    print(f"\nRunning {provider} analysis...")
-    result = interpret(normalized, ratios, provider=provider)
+    print(f"\nRunning {provider} analysis (horizon={horizon})...")
+
+    price, as_of, technical, price_df = _fetch_price_and_technical(
+        args.ticker, horizon, args.no_cache
+    )
+
+    metrics = compute_metrics(normalized, ratios, price)
+    flags = detect_red_flags(normalized, ratios, metrics, horizon)
+    submissions = _fetch_submissions(cik, args.ticker, args.no_cache)
+    catalyst = _fetch_catalyst(submissions, args.ticker)
+
+    if price_df is not None:
+        _save_price_rows(cik, price_df)
+
+    result = interpret(
+        normalized,
+        ratios,
+        provider=provider,
+        horizon=horizon,
+        metrics=metrics,
+        technical=technical,
+        red_flags=flags,
+        catalyst=catalyst,
+        submissions=submissions,
+        price_df=price_df,
+    )
 
     if "error" in result:
         print(
@@ -135,13 +553,36 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         )
         if "raw" in result:
             logger.debug("Raw model output that failed to parse: %s", result["raw"])
-        return
+    else:
+        try:
+            save_verdict(
+                args.ticker, cik, horizon, provider, price, result,
+                db_path=Config.DB_PATH, valuation=result.get("valuation"),
+            )
+        except Exception:  # noqa: BLE001 - persistence failure must not be fatal
+            logger.warning("Failed to save verdict for %s", args.ticker, exc_info=True)
 
-    print("\n" + json.dumps(result, indent=2, ensure_ascii=False))
+    _print_verdict_card(args.ticker, horizon, result, metrics, flags)
 
-    summary = result.get("summary")
-    if summary:
-        print(f"\nSummary: {summary}")
+    if getattr(args, "verbose", False):
+        print("\n" + json.dumps(result, indent=2, ensure_ascii=False))
+
+    if getattr(args, "html", False):
+        try:
+            report_path = generate_report(
+                args.ticker,
+                horizon,
+                result,
+                metrics=metrics,
+                technical=technical,
+                flags=flags,
+                price=price,
+                as_of=as_of,
+            )
+            print(f"\nHTML report saved to: {report_path}")
+        except Exception as exc:  # noqa: BLE001 - a report-writing failure must not crash analyze
+            logger.exception("Failed to generate HTML report for %s", args.ticker)
+            print(f"\nWARNING: failed to generate HTML report: {exc}", file=sys.stderr)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -189,7 +630,22 @@ def build_parser() -> argparse.ArgumentParser:
     analyze_parser = subparsers.add_parser(
         "analyze",
         parents=[common],
-        help="Fetch/normalize/store, then run a fundamental analysis (LLM or script) for TICKER.",
+        help="Fetch/normalize/store, then run a full fundamental + technical analysis for TICKER.",
+    )
+    analyze_parser.add_argument(
+        "--horizon",
+        choices=["3m", "1y", "5y"],
+        default="1y",
+        help=(
+            "Investment horizon; controls the fundamental/technical weighting "
+            "and the framing of the verdict (default: 1y). See "
+            "Config.HORIZON_WEIGHTS."
+        ),
+    )
+    analyze_parser.add_argument(
+        "--html",
+        action="store_true",
+        help="Also save a standalone HTML verdict-card report (see Config.REPORTS_DIR).",
     )
     analyze_parser.add_argument(
         "--provider",
@@ -207,6 +663,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     """CLI entry point: parse arguments, configure logging, dispatch."""
+    # Windows consoles frequently default to a legacy code page that can't
+    # represent Turkish characters or the box-drawing characters used in the
+    # verdict card; force UTF-8 with a lossy fallback rather than crashing
+    # mid-report on an encode error. Not every stream supports reconfigure()
+    # (e.g. when stdout has been redirected to certain non-TTY targets), so
+    # this is best-effort.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 - purely a best-effort console fix-up
+        pass
+
     parser = build_parser()
     args = parser.parse_args()
 

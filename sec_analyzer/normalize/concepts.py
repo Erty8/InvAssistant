@@ -77,6 +77,9 @@ CONCEPTS: Dict[str, List[str]] = {
     ],
     "CapEx": [
         "PaymentsToAcquirePropertyPlantAndEquipment",
+        # Some filers (e.g. NVIDIA after ~2013) report capex combined with
+        # intangible purchases under this broader tag instead.
+        "PaymentsToAcquireProductiveAssets",
     ],
     "DividendsPaid": [
         "PaymentsOfDividendsCommonStock",
@@ -87,9 +90,29 @@ CONCEPTS: Dict[str, List[str]] = {
         "EarningsPerShareBasic",
     ],
     "SharesOutstanding": [
+        # The dei-taxonomy cover-page tag is preferred: it's an actual
+        # point-in-time share count (as of the filing's cover page), which
+        # is what a market-cap calculation wants, whereas the us-gaap
+        # fallbacks below are period-weighted averages. See TAG_TAXONOMY.
+        "EntityCommonStockSharesOutstanding",
         "WeightedAverageNumberOfDilutedSharesOutstanding",
         "WeightedAverageNumberOfSharesOutstandingBasic",
         "CommonStockSharesOutstanding",
+    ],
+    "LongTermDebtCurrent": [
+        "LongTermDebtCurrent",
+    ],
+    "Buyback": [
+        "PaymentsForRepurchaseOfCommonStock",
+    ],
+    "RnD": [
+        "ResearchAndDevelopmentExpense",
+    ],
+    "SBC": [
+        "ShareBasedCompensation",
+    ],
+    "Receivables": [
+        "AccountsReceivableNetCurrent",
     ],
 }
 
@@ -99,7 +122,7 @@ CONCEPTS: Dict[str, List[str]] = {
 FLOW_CONCEPTS = {
     "Revenue", "NetIncome", "OperatingCashFlow",
     "GrossProfit", "OperatingIncome", "CapEx", "DividendsPaid",
-    "EPS", "SharesOutstanding",
+    "EPS", "SharesOutstanding", "Buyback", "RnD", "SBC",
 }
 
 #: Concepts that are a point-in-time snapshot (only ``end`` is meaningful).
@@ -116,4 +139,17 @@ STOCK_CONCEPTS = set(CONCEPTS) - FLOW_CONCEPTS
 CONCEPT_UNITS: Dict[str, List[str]] = {
     "EPS": ["USD/shares"],
     "SharesOutstanding": ["shares"],
+}
+
+#: Tag name -> XBRL taxonomy it's reported under, for tags that live outside
+#: ``us-gaap``. Every tag not listed here defaults to ``"us-gaap"`` (the
+#: common case for essentially all financial-statement line items).
+#: ``EntityCommonStockSharesOutstanding`` is a "dei" (Document and Entity
+#: Information) taxonomy tag -- it's the point-in-time share count SEC
+#: filers report on their cover page, not a financial-statement fact, so
+#: SEC's companyfacts document files it under ``facts["dei"]`` rather than
+#: ``facts["us-gaap"]``. The normalizer consults this map to look each tag
+#: up in the right taxonomy sub-dict (see ``normalizer._extract_concept``).
+TAG_TAXONOMY: Dict[str, str] = {
+    "EntityCommonStockSharesOutstanding": "dei",
 }

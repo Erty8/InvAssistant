@@ -1,0 +1,917 @@
+<!--
+  sec_analyzer verdict-card report -- standalone HTML template.
+
+  This file is never served as-is: sec_analyzer.report.generator.generate_report()
+  reads it, replaces the single "{"ticker": "AAPL", "horizon": "1y", "price": 315.32000732421875, "as_of": "2026-07-10", "generated_on": "2026-07-13", "result": {"fundamental_verdict": "PAHALI", "profile_fit": {"verdict": "KISMEN", "reason": "PROFIL.md bulunamadı; nötr profil varsayıldı (dosyayı oluşturmanız önerilir)."}, "reverse_dcf_comment": "Fiyat, 10 yıllık ufukta %26.2 büyüme ima ediyor (gerçekleşen 5y: %8.7); piyasa, şirketin geçmiş performansından daha hızlı bir büyümeyi fiyatlıyor -- pahalılık sinyali.", "cyclical_risk": "Olgun sektör sınıflandırması altında döngüsellik riski sınırlı kabul edildi.", "horizon_note": "1y ufkunda fundamental (%50) ve teknik (%50) sinyaller dengeli şekilde değerlendirilir.", "key_risks": ["Alacaklar gelirden daha hızlı büyüyor", "Damodaran sektör verisi bulunamadı; sektör medyanları gösterilemiyor."], "red_flags_comment": "Alacaklar gelirden daha hızlı büyüyor", "catalyst": "Q3 earnings ~31 Tem", "summary": "Değerleme motoru baz senaryoda $110.44-134.98 aralığını işaret ediyor; üçgenleme güveni YÜKSEK. Fiyat okuması: PAHALI. Sektör sınıflandırması: mature. Deterministik, kural tabanlı yorum; eğitim amaçlıdır, yatırım tavsiyesi değildir.", "technical_verdict": "NÖTR (RSI 63, SMA50 +%6)", "confidence": "YÜKSEK", "fair_value_range": {"bear": {"lo": 64.74, "hi": 79.12, "growth": "%4 büyüme", "discount_rate": "%12", "note": "Kötümser (bear) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %3.7, iskonto oranı %12.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "base": {"lo": 110.44, "hi": 134.98, "growth": "%9 büyüme", "discount_rate": "%10", "note": "Temel (base) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %8.7, iskonto oranı %10.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "bull": {"lo": 171.1, "hi": 209.12, "growth": "%14 büyüme", "discount_rate": "%9", "note": "İyimser (bull) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %13.7, iskonto oranı %9.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}}, "valuation": {"sector_type": "mature", "fcf0": 98767000000, "fcf0_source": "ttm", "dcf": {"enabled": true, "disabled_reason": null, "scenarios": {"bear": {"per_share": 71.93, "lo": 64.74, "hi": 79.12}, "base": {"per_share": 122.71, "lo": 110.44, "hi": 134.98}, "bull": {"per_share": 190.11, "lo": 171.1, "hi": 209.12}}, "normalized_variant": null}, "pb_roe": null, "fair_value_range": {"bear": {"lo": 64.74, "hi": 79.12, "growth": "%4 büyüme", "discount_rate": "%12", "note": "Kötümser (bear) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %3.7, iskonto oranı %12.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "base": {"lo": 110.44, "hi": 134.98, "growth": "%9 büyüme", "discount_rate": "%10", "note": "Temel (base) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %8.7, iskonto oranı %10.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "bull": {"lo": 171.1, "hi": 209.12, "growth": "%14 büyüme", "discount_rate": "%9", "note": "İyimser (bull) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %13.7, iskonto oranı %9.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}}, "reverse_dcf": {"implied_growth": 0.2619, "realized_cagr_5y": 0.0868, "realized_label": "5y"}, "multiples": {"history": [{"fy": 2014, "end": "2014-09-27", "price": 22.197763442993164, "pe": 3.441513712091963, "ps": 0.743507343828698, "pfcf": 2.7104907047019835}, {"fy": 2015, "end": "2015-09-26", "price": 25.70554542541504, "pe": 2.7880201112163814, "ps": 0.6371606372379336, "pfcf": 2.1267655683752076}, {"fy": 2016, "end": "2016-09-24", "price": 25.797382354736328, "pe": 3.104378141364179, "ps": 0.6580110834101971, "pfcf": 2.652351571405714}, {"fy": 2017, "end": "2017-09-30", "price": 35.897666931152344, "pe": 3.897683705879733, "ps": 0.8224063194857539, "pfcf": 3.6412772866882475}, {"fy": 2018, "end": "2018-09-29", "price": 53.37442398071289, "pe": 17.91088053044057, "ps": 4.019321513916638, "pfcf": 16.648394402593368}, {"fy": 2019, "end": "2019-09-28", "price": 52.541107177734375, "pe": 17.690608477351642, "ps": 3.755317949644251, "pfcf": 16.58917570345598}, {"fy": 2020, "end": "2020-09-26", "price": 108.9086456298828, "pe": 33.20385537496427, "ps": 6.953988113767009, "pfcf": 26.020228270302603}, {"fy": 2021, "end": "2021-09-25", "price": 143.4251251220703, "pe": 25.56597595758829, "ps": 6.61219439705804, "pfcf": 26.022324376282434}, {"fy": 2022, "end": "2022-09-24", "price": 147.6745147705078, "pe": 24.169315019723044, "ps": 6.113964514455319, "pfcf": 21.633547186060472}, {"fy": 2023, "end": "2023-09-30", "price": 169.0709686279297, "pe": 27.580908422174502, "ps": 6.975077651785652, "pfcf": 26.846106179352745}, {"fy": 2024, "end": "2024-09-28", "price": 226.09510803222656, "pe": 37.186695400037266, "ps": 8.908908163197182, "pfcf": 32.01719469883197}, {"fy": 2025, "end": "2025-09-27", "price": 254.7393341064453, "pe": 34.14736382123932, "ps": 9.184634125372098, "pfcf": 38.70003667468869}], "current": {"pe": 42.2681, "ps": 11.3689, "pfcf": 47.9035}, "pe_percentile": 100.0, "ps_percentile": 100.0, "pfcf_percentile": 100.0, "history_years": 12, "sector": {"available": false, "industry": null, "pe_median": null, "ps_median": null, "pfcf_median": null}}, "sensitivity": {"growth_values": [0.0668, 0.0868, 0.1068], "dr_values": [0.09, 0.1, 0.11], "matrix": [[127.79, 109.62, 95.75], [143.35, 122.71, 106.97], [160.62, 137.23, 119.4]], "lo": 95.75, "hi": 160.62, "high_uncertainty": false}, "triangulation": {"signals": {"dcf": "pahali", "reverse_dcf": "pahali", "multiples": "pahali"}, "confidence": "YÜKSEK", "direction": "pahali"}, "assumptions": {"bear": {"growth_5y": 0.0368, "terminal_growth": 0.025, "discount_rate": 0.12000000000000001, "story": "Kötümser (bear) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %3.7, iskonto oranı %12.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "base": {"growth_5y": 0.0868, "terminal_growth": 0.025, "discount_rate": 0.1, "story": "Temel (base) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %8.7, iskonto oranı %10.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "bull": {"growth_5y": 0.1368, "terminal_growth": 0.025, "discount_rate": 0.09000000000000001, "story": "İyimser (bull) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %13.7, iskonto oranı %9.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}}, "notes": ["Damodaran sektör verisi bulunamadı; sektör medyanları gösterilemiyor."]}, "_provider": "script", "_model": "rule-based-v2", "_horizon": "1y", "_weights": {"fundamental": 0.5, "technical": 0.5}}, "metrics": {"price": 315.32, "shares": 15004697000, "eps": 7.46, "market_cap": 4731281167937.684, "total_debt": 90678000000, "net_debt": 54744000000, "pe": 42.2681, "ps": 11.3689, "pfcf": 47.9035, "revenue_cagr_3y": 0.0181, "revenue_cagr_5y": 0.0868, "sbc_revenue": 0.0309, "shares_yoy": -0.0262, "buyback_latest": 90711000000, "dividends_latest": 15421000000, "rnd_revenue": 0.083, "fcf": 98767000000, "fcf_per_share": 6.58, "latest_fy": 2025}, "technical": {"price": 315.32, "as_of": "2026-07-10", "rsi14": 62.9, "sma50": 297.73, "sma200": 272.1, "dist_sma50_pct": 5.9, "dist_sma200_pct": 15.9, "high_52w": 316.22, "low_52w": 201.58, "range_position_pct": 99.2, "volatility_20d": 0.3515, "golden_cross": false, "death_cross": false, "sma50_above_sma200": true, "verdict": "NÖTR", "verdict_detail": "RSI 63, SMA50 +%6", "horizon_summary": "RSI 62.9 seviyesinde. 50 günlük ortalama, 200 günlük ortalamanın üzerinde (SMA50 > SMA200). Fiyat, 200 günlük ortalamanın +%16 üzerinde. Fiyat, 52 haftalık aralığın %99 seviyesinde.", "horizon": "1y"}, "red_flags": [{"code": "RECEIVABLES_OUTPACE", "message": "Alacaklar gelirden daha hızlı büyüyor", "detail": "Son 3 yılda alacak büyümesi gelir büyümesini geride bıraktı (FY2025: alacak %+19.1 vs gelir %+6.4; FY2024: alacak %+13.2 vs gelir %+2.0; FY2023: alacak %+4.7 vs gelir %-2.8). Bu, tahsilatların zayıfladığına veya gelirin erken kaydedildiğine işaret edebilir."}]}" placeholder below (inside the
+  <script type="application/json"> element) with a JSON blob describing one
+  ticker/horizon verdict, and writes the result to disk as one self-contained
+  file -- no external CSS/JS/fonts/CDNs, so it opens correctly straight from
+  disk (file://...) or as an email attachment.
+
+  All actual rendering happens client-side in the <script> at the bottom:
+  this file is a fixed shell, the data blob is the only variable part.
+
+  Layout (see sec_analyzer/valuation/SPEC.md Sec.16 for the binding spec):
+    1. Header: ticker + price + date + data-source note; horizon badge right.
+    2. Signal-weight bar (fundamental/technical % from result._weights).
+    3. Fan chart: interactive bear/base/bull price-scenario strips.
+    4. Three verdict boxes: Fundamental / Teknik / Profil.
+    5. Triangulation row: DCF / reverse-DCF / multiples signals + confidence.
+    6. Sensitivity 3x3 mini-table.
+    7. Red-flags warning box (only if flags exist).
+    8. Catalyst + summary panel, incl. the reverse-DCF comment line.
+  Sections 5-6 (and the reverse-DCF line in section 8) only render when
+  result.valuation is present -- older/simpler result dicts (no valuation
+  engine wired up yet, or an LLM error that never reached phase 2) degrade
+  to a simpler card with just sections 1-4, 7-8, never a crash.
+-->
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Verdict Report</title>
+<style>
+  :root {
+    --bg: #0d1420;
+    --card-bg: #111b2b;
+    --border: #223349;
+    --text: #e7ecf5;
+    --text-dim: #8a96ab;
+    --red: #ff6b5e;
+    --amber: #ffb648;
+    --green: #4ade80;
+    --band-bear: #ff6b5e;
+    --band-base: #5aa7ff;
+    --band-bull: #4ade80;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.45;
+  }
+
+  .page {
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 28px 16px 56px;
+  }
+
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 20px;
+  }
+
+  .muted { color: var(--text-dim); }
+  .mono { font-family: var(--mono); }
+
+  /* ---- 1. Header ------------------------------------------------------ */
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .ticker {
+    font-family: var(--mono);
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .price-line {
+    font-family: var(--mono);
+    font-size: 1.05rem;
+    margin-top: 2px;
+  }
+  .source-note {
+    font-size: 0.76rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+  .horizon-pill {
+    flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 5px 14px;
+    font-size: 0.8rem;
+    font-family: var(--mono);
+    color: var(--text);
+    height: fit-content;
+  }
+
+  /* ---- 2. Signal-weight bar -------------------------------------------*/
+  .weight-bar {
+    display: flex;
+    height: 24px;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 20px;
+    border: 1px solid var(--border);
+  }
+  .weight-seg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    overflow: hidden;
+    font-size: 0.68rem;
+    font-family: var(--mono);
+  }
+  .weight-fundamental { background: rgba(90, 167, 255, 0.28); color: #cfe3ff; }
+  .weight-technical { background: rgba(255, 182, 72, 0.28); color: #ffe3b0; }
+
+  /* ---- Section titles ---------------------------------------------------*/
+  .section-title {
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+
+  /* ---- 3. Fan chart -----------------------------------------------------*/
+  .fan-empty {
+    font-size: 0.85rem;
+    margin-bottom: 18px;
+  }
+  .fan-outer {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .fan-labels {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    width: 34px;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    padding-top: 2px;
+  }
+  .fan-labels span {
+    height: 24px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+  }
+  .fan-labels span:last-child { margin-bottom: 0; }
+  .fan-plot {
+    position: relative;
+    flex: 1;
+    padding-top: 2px;
+  }
+  .fan-row-track {
+    position: relative;
+    height: 24px;
+    margin-bottom: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .fan-row-track:last-child { margin-bottom: 0; }
+  .fan-row-track.selected {
+    box-shadow: 0 0 0 1px var(--text-dim) inset;
+  }
+  .fan-band {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-radius: 5px;
+    border: 1px solid;
+  }
+  .fan-marker {
+    position: absolute;
+    top: -16px;
+    bottom: 0;
+    width: 0;
+    border-left: 1px dashed #cfd6e4;
+    pointer-events: none;
+  }
+  .fan-marker-arrow {
+    position: absolute;
+    top: -15px;
+    left: -6px;
+    font-size: 10px;
+    color: var(--text);
+  }
+  .fan-marker-price {
+    position: absolute;
+    top: -30px;
+    left: -22px;
+    font-size: 0.66rem;
+    font-family: var(--mono);
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .fan-ticks {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--text-dim);
+    margin: 8px 0 6px 42px;
+  }
+  .fan-assumptions {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--text-dim);
+    min-height: 1.3em;
+    margin: 0 0 20px 42px;
+  }
+
+  /* ---- 4. Verdict boxes --------------------------------------------------*/
+  .verdicts-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  @media (max-width: 480px) {
+    .verdicts-grid { grid-template-columns: 1fr; }
+  }
+  .verdict-box {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .verdict-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+  .verdict-pill {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    margin-bottom: 10px;
+    max-width: 100%;
+    overflow-wrap: break-word;
+  }
+  .verdict-green { background: rgba(74, 222, 128, 0.15); color: var(--green); border: 1px solid rgba(74, 222, 128, 0.4); }
+  .verdict-amber { background: rgba(255, 182, 72, 0.15); color: var(--amber); border: 1px solid rgba(255, 182, 72, 0.4); }
+  .verdict-red { background: rgba(255, 107, 94, 0.15); color: var(--red); border: 1px solid rgba(255, 107, 94, 0.4); }
+  .gauge {
+    position: relative;
+    height: 6px;
+    border-radius: 3px;
+    margin: 0 4px 10px 4px;
+    background: linear-gradient(to right, var(--green), var(--amber), var(--red));
+  }
+  .gauge-marker {
+    position: absolute;
+    top: -9px;
+    transform: translateX(-50%);
+    font-size: 0.7rem;
+    color: var(--text);
+  }
+  .verdict-note {
+    font-size: 0.74rem;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+
+  /* ---- 5. Triangulation ---------------------------------------------------*/
+  .triangulation-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .tri-chips {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .tri-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 0.76rem;
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .tri-icon { font-size: 0.85rem; font-weight: 700; line-height: 1; }
+  .tri-agree .tri-icon { color: var(--green); }
+  .tri-disagree .tri-icon { color: var(--red); }
+  .tri-muted .tri-icon { color: var(--text-dim); }
+  .tri-label { color: var(--text-dim); }
+  .tri-signal { font-family: var(--mono); }
+  .confidence-badge { margin: 0; flex-shrink: 0; white-space: nowrap; }
+
+  /* ---- 6. Sensitivity table -----------------------------------------------*/
+  .uncertainty-tag {
+    display: inline-block;
+    background: rgba(255, 182, 72, 0.15);
+    color: var(--amber);
+    border: 1px solid rgba(255, 182, 72, 0.4);
+    border-radius: 999px;
+    padding: 1px 8px;
+    font-size: 0.66rem;
+    margin-left: 6px;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .sensitivity-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    margin-bottom: 20px;
+  }
+  .sensitivity-table th, .sensitivity-table td {
+    border: 1px solid var(--border);
+    padding: 6px 4px;
+    text-align: center;
+  }
+  .sensitivity-table thead th {
+    color: var(--text-dim);
+    font-weight: 400;
+  }
+  .sens-row-h {
+    color: var(--text-dim);
+    font-weight: 400;
+  }
+  .sens-base {
+    background: rgba(90, 167, 255, 0.18);
+    border-color: var(--band-base);
+    font-weight: 700;
+  }
+
+  /* ---- 7. Red flags --------------------------------------------------------*/
+  .flags-box {
+    border: 1px solid rgba(255, 182, 72, 0.4);
+    background: rgba(255, 182, 72, 0.06);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 18px;
+  }
+  .flags-title {
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--amber);
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+  .flags-box ul {
+    margin: 0;
+    padding-left: 18px;
+  }
+  .flags-box li {
+    margin-bottom: 8px;
+    font-size: 0.84rem;
+  }
+  .flags-box li:last-child { margin-bottom: 0; }
+  .flags-box li .flag-detail {
+    display: block;
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    margin-top: 2px;
+  }
+
+  /* ---- 8. Catalyst + summary -----------------------------------------------*/
+  .panel { margin-bottom: 18px; }
+  .catalyst-line {
+    font-family: var(--mono);
+    font-size: 0.86rem;
+    margin: 0 0 10px;
+  }
+  .reverse-dcf-line {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    margin: 0 0 10px;
+  }
+  .summary-text {
+    font-size: 0.9rem;
+    line-height: 1.55;
+    margin: 0;
+  }
+
+  /* ---- Footer -------------------------------------------------------- */
+  .footer {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+    line-height: 1.5;
+  }
+
+  /* ---- Error card ------------------------------------------------------*/
+  .error-box {
+    border: 1px solid rgba(255, 107, 94, 0.5);
+    background: rgba(255, 107, 94, 0.08);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin: 16px 0;
+  }
+  .error-box strong {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--red);
+  }
+  .error-box p { margin: 0; font-size: 0.88rem; }
+</style>
+</head>
+<body>
+
+<script id="report-data" type="application/json">{"ticker": "AAPL", "horizon": "1y", "price": 315.32000732421875, "as_of": "2026-07-10", "generated_on": "2026-07-13", "result": {"fundamental_verdict": "PAHALI", "profile_fit": {"verdict": "KISMEN", "reason": "PROFIL.md bulunamadı; nötr profil varsayıldı (dosyayı oluşturmanız önerilir)."}, "reverse_dcf_comment": "Fiyat, 10 yıllık ufukta %26.2 büyüme ima ediyor (gerçekleşen 5y: %8.7); piyasa, şirketin geçmiş performansından daha hızlı bir büyümeyi fiyatlıyor -- pahalılık sinyali.", "cyclical_risk": "Olgun sektör sınıflandırması altında döngüsellik riski sınırlı kabul edildi.", "horizon_note": "1y ufkunda fundamental (%50) ve teknik (%50) sinyaller dengeli şekilde değerlendirilir.", "key_risks": ["Alacaklar gelirden daha hızlı büyüyor", "Damodaran sektör verisi bulunamadı; sektör medyanları gösterilemiyor."], "red_flags_comment": "Alacaklar gelirden daha hızlı büyüyor", "catalyst": "Q3 earnings ~31 Tem", "summary": "Değerleme motoru baz senaryoda $110.44-134.98 aralığını işaret ediyor; üçgenleme güveni YÜKSEK. Fiyat okuması: PAHALI. Sektör sınıflandırması: mature. Deterministik, kural tabanlı yorum; eğitim amaçlıdır, yatırım tavsiyesi değildir.", "technical_verdict": "NÖTR (RSI 63, SMA50 +%6)", "confidence": "YÜKSEK", "fair_value_range": {"bear": {"lo": 64.74, "hi": 79.12, "growth": "%4 büyüme", "discount_rate": "%12", "note": "Kötümser (bear) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %3.7, iskonto oranı %12.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "base": {"lo": 110.44, "hi": 134.98, "growth": "%9 büyüme", "discount_rate": "%10", "note": "Temel (base) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %8.7, iskonto oranı %10.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "bull": {"lo": 171.1, "hi": 209.12, "growth": "%14 büyüme", "discount_rate": "%9", "note": "İyimser (bull) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %13.7, iskonto oranı %9.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}}, "valuation": {"sector_type": "mature", "fcf0": 98767000000, "fcf0_source": "ttm", "dcf": {"enabled": true, "disabled_reason": null, "scenarios": {"bear": {"per_share": 71.93, "lo": 64.74, "hi": 79.12}, "base": {"per_share": 122.71, "lo": 110.44, "hi": 134.98}, "bull": {"per_share": 190.11, "lo": 171.1, "hi": 209.12}}, "normalized_variant": null}, "pb_roe": null, "fair_value_range": {"bear": {"lo": 64.74, "hi": 79.12, "growth": "%4 büyüme", "discount_rate": "%12", "note": "Kötümser (bear) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %3.7, iskonto oranı %12.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "base": {"lo": 110.44, "hi": 134.98, "growth": "%9 büyüme", "discount_rate": "%10", "note": "Temel (base) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %8.7, iskonto oranı %10.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "bull": {"lo": 171.1, "hi": 209.12, "growth": "%14 büyüme", "discount_rate": "%9", "note": "İyimser (bull) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %13.7, iskonto oranı %9.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}}, "reverse_dcf": {"implied_growth": 0.2619, "realized_cagr_5y": 0.0868, "realized_label": "5y"}, "multiples": {"history": [{"fy": 2014, "end": "2014-09-27", "price": 22.197763442993164, "pe": 3.441513712091963, "ps": 0.743507343828698, "pfcf": 2.7104907047019835}, {"fy": 2015, "end": "2015-09-26", "price": 25.70554542541504, "pe": 2.7880201112163814, "ps": 0.6371606372379336, "pfcf": 2.1267655683752076}, {"fy": 2016, "end": "2016-09-24", "price": 25.797382354736328, "pe": 3.104378141364179, "ps": 0.6580110834101971, "pfcf": 2.652351571405714}, {"fy": 2017, "end": "2017-09-30", "price": 35.897666931152344, "pe": 3.897683705879733, "ps": 0.8224063194857539, "pfcf": 3.6412772866882475}, {"fy": 2018, "end": "2018-09-29", "price": 53.37442398071289, "pe": 17.91088053044057, "ps": 4.019321513916638, "pfcf": 16.648394402593368}, {"fy": 2019, "end": "2019-09-28", "price": 52.541107177734375, "pe": 17.690608477351642, "ps": 3.755317949644251, "pfcf": 16.58917570345598}, {"fy": 2020, "end": "2020-09-26", "price": 108.9086456298828, "pe": 33.20385537496427, "ps": 6.953988113767009, "pfcf": 26.020228270302603}, {"fy": 2021, "end": "2021-09-25", "price": 143.4251251220703, "pe": 25.56597595758829, "ps": 6.61219439705804, "pfcf": 26.022324376282434}, {"fy": 2022, "end": "2022-09-24", "price": 147.6745147705078, "pe": 24.169315019723044, "ps": 6.113964514455319, "pfcf": 21.633547186060472}, {"fy": 2023, "end": "2023-09-30", "price": 169.0709686279297, "pe": 27.580908422174502, "ps": 6.975077651785652, "pfcf": 26.846106179352745}, {"fy": 2024, "end": "2024-09-28", "price": 226.09510803222656, "pe": 37.186695400037266, "ps": 8.908908163197182, "pfcf": 32.01719469883197}, {"fy": 2025, "end": "2025-09-27", "price": 254.7393341064453, "pe": 34.14736382123932, "ps": 9.184634125372098, "pfcf": 38.70003667468869}], "current": {"pe": 42.2681, "ps": 11.3689, "pfcf": 47.9035}, "pe_percentile": 100.0, "ps_percentile": 100.0, "pfcf_percentile": 100.0, "history_years": 12, "sector": {"available": false, "industry": null, "pe_median": null, "ps_median": null, "pfcf_median": null}}, "sensitivity": {"growth_values": [0.0668, 0.0868, 0.1068], "dr_values": [0.09, 0.1, 0.11], "matrix": [[127.79, 109.62, 95.75], [143.35, 122.71, 106.97], [160.62, 137.23, 119.4]], "lo": 95.75, "hi": 160.62, "high_uncertainty": false}, "triangulation": {"signals": {"dcf": "pahali", "reverse_dcf": "pahali", "multiples": "pahali"}, "confidence": "YÜKSEK", "direction": "pahali"}, "assumptions": {"bear": {"growth_5y": 0.0368, "terminal_growth": 0.025, "discount_rate": 0.12000000000000001, "story": "Kötümser (bear) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %3.7, iskonto oranı %12.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "base": {"growth_5y": 0.0868, "terminal_growth": 0.025, "discount_rate": 0.1, "story": "Temel (base) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %8.7, iskonto oranı %10.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "bull": {"growth_5y": 0.1368, "terminal_growth": 0.025, "discount_rate": 0.09000000000000001, "story": "İyimser (bull) senaryo: deterministik varsayılan -- büyüme kaynağı 5 yıllık gelir CAGR (%8.7), bu senaryoda uygulanan büyüme %13.7, iskonto oranı %9.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}}, "notes": ["Damodaran sektör verisi bulunamadı; sektör medyanları gösterilemiyor."]}, "_provider": "script", "_model": "rule-based-v2", "_horizon": "1y", "_weights": {"fundamental": 0.5, "technical": 0.5}}, "metrics": {"price": 315.32, "shares": 15004697000, "eps": 7.46, "market_cap": 4731281167937.684, "total_debt": 90678000000, "net_debt": 54744000000, "pe": 42.2681, "ps": 11.3689, "pfcf": 47.9035, "revenue_cagr_3y": 0.0181, "revenue_cagr_5y": 0.0868, "sbc_revenue": 0.0309, "shares_yoy": -0.0262, "buyback_latest": 90711000000, "dividends_latest": 15421000000, "rnd_revenue": 0.083, "fcf": 98767000000, "fcf_per_share": 6.58, "latest_fy": 2025}, "technical": {"price": 315.32, "as_of": "2026-07-10", "rsi14": 62.9, "sma50": 297.73, "sma200": 272.1, "dist_sma50_pct": 5.9, "dist_sma200_pct": 15.9, "high_52w": 316.22, "low_52w": 201.58, "range_position_pct": 99.2, "volatility_20d": 0.3515, "golden_cross": false, "death_cross": false, "sma50_above_sma200": true, "verdict": "NÖTR", "verdict_detail": "RSI 63, SMA50 +%6", "horizon_summary": "RSI 62.9 seviyesinde. 50 günlük ortalama, 200 günlük ortalamanın üzerinde (SMA50 > SMA200). Fiyat, 200 günlük ortalamanın +%16 üzerinde. Fiyat, 52 haftalık aralığın %99 seviyesinde.", "horizon": "1y"}, "red_flags": [{"code": "RECEIVABLES_OUTPACE", "message": "Alacaklar gelirden daha hızlı büyüyor", "detail": "Son 3 yılda alacak büyümesi gelir büyümesini geride bıraktı (FY2025: alacak %+19.1 vs gelir %+6.4; FY2024: alacak %+13.2 vs gelir %+2.0; FY2023: alacak %+4.7 vs gelir %-2.8). Bu, tahsilatların zayıfladığına veya gelirin erken kaydedildiğine işaret edebilir."}]}</script>
+
+<script>
+(function () {
+  "use strict";
+
+  var raw = document.getElementById("report-data").textContent;
+  var data;
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    document.body.innerHTML = '<div class="page"><div class="card"><p>Rapor verisi okunamadı.</p></div></div>';
+    return;
+  }
+
+  // -------------------------------------------------------------------
+  // Formatting helpers
+  // -------------------------------------------------------------------
+
+  function isNum(v) {
+    return v !== null && v !== undefined && v !== "" && !Number.isNaN(Number(v));
+  }
+
+  function escapeHtml(value) {
+    var div = document.createElement("div");
+    div.textContent = value === null || value === undefined ? "" : String(value);
+    return div.innerHTML;
+  }
+
+  function fmtMoney(v) {
+    if (!isNum(v)) return "—";
+    var num = Number(v);
+    var sign = num < 0 ? "-" : "";
+    var abs = Math.abs(num);
+    var decimals = Number.isInteger(abs) ? 0 : 2;
+    return sign + "$" + abs.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  }
+
+  // Renders a decimal fraction (0.08 -> "%8") the Turkish way used across
+  // this app's verdict-facing output: a literal "%" before the magnitude,
+  // no sign for non-negative values.
+  function fmtPct(v) {
+    if (!isNum(v)) return "—";
+    var pct = Number(v) * 100;
+    var rounded = Math.round(pct * 10) / 10;
+    var text = (Math.abs(rounded % 1) < 1e-9) ? rounded.toFixed(0) : rounded.toFixed(1);
+    return "%" + text;
+  }
+
+  // growth/discount_rate arrive as ready-made, human-readable Turkish
+  // strings (e.g. "%8 büyüme", "%12") from every provider -- never reformat
+  // them, just guard against missing values and append the " dr" suffix to
+  // a bare discount-rate figure if it isn't already there.
+  function growthText(v) {
+    return v === null || v === undefined || v === "" ? "—" : String(v);
+  }
+
+  function drText(v) {
+    if (v === null || v === undefined || v === "") return "—";
+    var text = String(v);
+    var lowered = text.toLowerCase();
+    if (lowered.indexOf("dr") !== -1 || lowered.indexOf("iskonto") !== -1) return text;
+    return text + " dr";
+  }
+
+  function hexToRgba(hex, alpha) {
+    var h = hex.replace("#", "");
+    var r = parseInt(h.substring(0, 2), 16);
+    var g = parseInt(h.substring(2, 4), 16);
+    var b = parseInt(h.substring(4, 6), 16);
+    return "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
+  }
+
+  // Maps a verdict/label string onto one of three color buckets. Order
+  // matters: red-bucket keywords are checked before falling back to amber,
+  // so e.g. "AŞIRI ALIM" (contains "ALIM") is never mistaken for something
+  // else, and unrecognized/empty text defaults to the neutral amber bucket.
+  // Matches Sec.16's gauge zones: UCUZ/AŞIRI SATIM/UYUMLU -> green,
+  // MAKUL/NÖTR/KISMEN -> amber, PAHALI/AŞIRI ALIM/UYUMSUZ -> red.
+  function bucketColor(text) {
+    if (!text) return "amber";
+    var s = String(text).toUpperCase();
+    if (s.indexOf("UCUZ") !== -1 || s.indexOf("AŞIRI SATIM") !== -1 || s.indexOf("UYUMLU") !== -1) return "green";
+    if (s.indexOf("PAHALI") !== -1 || s.indexOf("AŞIRI ALIM") !== -1 || s.indexOf("UYUMSUZ") !== -1) return "red";
+    return "amber";
+  }
+
+  // Confidence-badge color: YÜKSEK -> green, ORTA -> amber, DÜŞÜK -> red.
+  function confidenceColor(text) {
+    if (!text) return "amber";
+    var s = String(text).toUpperCase();
+    if (s.indexOf("YÜKSEK") !== -1 || s.indexOf("YUKSEK") !== -1) return "green";
+    if (s.indexOf("DÜŞÜK") !== -1 || s.indexOf("DUSUK") !== -1) return "red";
+    return "amber";
+  }
+
+  var GAUGE_POSITION = { green: 10, amber: 50, red: 90 };
+  var SCENARIO_NAME_TR = { bear: "Ayı", base: "Baz", bull: "Boğa" };
+  var SCENARIO_ORDER = ["bull", "base", "bear"];
+  var SCENARIO_HEX = { bear: "#ff6b5e", base: "#5aa7ff", bull: "#4ade80" };
+  var SIGNAL_TR = { ucuz: "Ucuz", makul: "Makul", pahali: "Pahalı", "pahalı": "Pahalı", veri_yok: "Veri yok" };
+
+  function signalLabel(s) {
+    if (!s) return "—";
+    return SIGNAL_TR[String(s).toLowerCase()] || String(s);
+  }
+
+  // -------------------------------------------------------------------
+  // Section builders
+  // -------------------------------------------------------------------
+
+  // ---- 1. Header ------------------------------------------------------
+  function headerHtml() {
+    var priceText = fmtMoney(data.price);
+    var sourceNote = data.as_of
+      ? "Fiyat verisi: " + escapeHtml(data.as_of)
+      : "Fiyat verisi mevcut değil";
+    var reportDate = data.generated_on ? " · Rapor: " + escapeHtml(data.generated_on) : "";
+    return (
+      '<div class="header">' +
+        '<div>' +
+          '<div class="ticker">' + escapeHtml(data.ticker) + '</div>' +
+          '<div class="price-line">' + priceText + '</div>' +
+          '<div class="source-note">' + sourceNote + reportDate + '</div>' +
+        '</div>' +
+        '<div class="horizon-pill">' + escapeHtml(data.horizon) + '</div>' +
+      '</div>'
+    );
+  }
+
+  // ---- 2. Signal-weight bar --------------------------------------------
+  function weightBarHtml(weights) {
+    var w = weights || {};
+    var f = typeof w.fundamental === "number" ? w.fundamental : 0.5;
+    var t = typeof w.technical === "number" ? w.technical : 0.5;
+    var fPct = Math.round(f * 100);
+    var tPct = Math.round(t * 100);
+    return (
+      '<div class="weight-bar">' +
+        '<div class="weight-seg weight-fundamental" style="width:' + fPct + '%;">Fundamental %' + fPct + '</div>' +
+        '<div class="weight-seg weight-technical" style="width:' + tPct + '%;">Teknik %' + tPct + '</div>' +
+      '</div>'
+    );
+  }
+
+  // ---- 3. Fan chart ------------------------------------------------------
+  function scenarioText(fv, key) {
+    var b = (fv || {})[key] || {};
+    var name = SCENARIO_NAME_TR[key] || key;
+    var parts = [name];
+    parts.push("büyüme " + growthText(b.growth));
+    parts.push("iskonto " + drText(b.discount_rate));
+    if (b.note) parts.push(String(b.note));
+    return parts.join(" · ");
+  }
+
+  // Horizontal price-scale anchors per Sec.16: min(bear.lo, price)*0.95 ..
+  // max(bull.hi, price)*1.05. Falls back to whatever numeric values *are*
+  // available (base band, the opposite scenario's bound, ...) when bear/
+  // bull/price are partially missing, so the chart still renders something
+  // useful instead of an all-or-nothing empty state.
+  function computeFanScale(fv, price) {
+    var bear = fv.bear || {}, bull = fv.bull || {}, base = fv.base || {};
+    var bearLo = isNum(bear.lo) ? Number(bear.lo) : null;
+    var bullHi = isNum(bull.hi) ? Number(bull.hi) : null;
+    var p = isNum(price) ? Number(price) : null;
+    var fallback = [bearLo, bullHi, p, base.lo, base.hi, bear.hi, bull.lo]
+      .map(function (v) { return isNum(v) ? Number(v) : null; })
+      .filter(function (v) { return v !== null; });
+    if (fallback.length === 0) return null;
+
+    var lowAnchor = (bearLo !== null && p !== null) ? Math.min(bearLo, p) :
+      (bearLo !== null ? bearLo : (p !== null ? p : Math.min.apply(null, fallback)));
+    var highAnchor = (bullHi !== null && p !== null) ? Math.max(bullHi, p) :
+      (bullHi !== null ? bullHi : (p !== null ? p : Math.max.apply(null, fallback)));
+
+    var minV = lowAnchor * 0.95;
+    var maxV = highAnchor * 1.05;
+    if (minV > maxV) { var t = minV; minV = maxV; maxV = t; }
+    if (minV === maxV) {
+      var bump = Math.max(1, Math.abs(minV) * 0.1);
+      minV -= bump;
+      maxV += bump;
+    }
+    return { minV: minV, maxV: maxV };
+  }
+
+  function buildFanChart(fv, price) {
+    fv = fv || {};
+    var scale = computeFanScale(fv, price);
+    if (!scale) {
+      return '<div class="fan-empty muted">Değerleme senaryosu için yeterli veri yok.</div>';
+    }
+    var minV = scale.minV, maxV = scale.maxV;
+    var span = (maxV - minV) || 1;
+    function pctOf(v) { return ((v - minV) / span) * 100; }
+
+    var labelsHtml = SCENARIO_ORDER.map(function (k) {
+      return "<span>" + SCENARIO_NAME_TR[k] + "</span>";
+    }).join("");
+
+    var rowsHtml = SCENARIO_ORDER.map(function (key) {
+      var b = fv[key];
+      var bandHtml = "";
+      if (b && isNum(b.lo) && isNum(b.hi)) {
+        var left = pctOf(Number(b.lo));
+        var width = Math.max(0.6, pctOf(Number(b.hi)) - left);
+        var hex = SCENARIO_HEX[key];
+        bandHtml =
+          '<div class="fan-band" style="left:' + left + '%; width:' + width + '%; ' +
+          'background:' + hexToRgba(hex, 0.35) + '; border-color:' + hex + ';"></div>';
+      }
+      return '<div class="fan-row-track" data-scenario="' + key + '">' + bandHtml + '</div>';
+    }).join("");
+
+    var markerHtml = "";
+    if (isNum(price)) {
+      var markerLeft = Math.min(99, Math.max(0, pctOf(Number(price))));
+      markerHtml =
+        '<div class="fan-marker" style="left:' + markerLeft + '%;">' +
+          '<span class="fan-marker-price">' + fmtMoney(price) + '</span>' +
+          '<span class="fan-marker-arrow">▼</span>' +
+        '</div>';
+    }
+
+    return (
+      '<div class="fan-outer">' +
+        '<div class="fan-labels">' + labelsHtml + '</div>' +
+        '<div class="fan-plot">' + rowsHtml + markerHtml + '</div>' +
+      '</div>' +
+      '<div class="fan-ticks">' +
+        '<span>' + fmtMoney(minV) + '</span>' +
+        '<span>' + fmtMoney((minV + maxV) / 2) + '</span>' +
+        '<span>' + fmtMoney(maxV) + '</span>' +
+      '</div>' +
+      '<div class="fan-assumptions" id="fan-assumptions"></div>'
+    );
+  }
+
+  // ---- 4. Verdict boxes ---------------------------------------------------
+  function verdictBoxHtml(label, verdictText, noteText) {
+    var color = bucketColor(verdictText);
+    var pos = GAUGE_POSITION[color];
+    return (
+      '<div class="verdict-box">' +
+        '<div class="verdict-label">' + escapeHtml(label) + '</div>' +
+        '<div class="verdict-pill verdict-' + color + '">' + escapeHtml(verdictText || "—") + '</div>' +
+        '<div class="gauge"><div class="gauge-marker" style="left:' + pos + '%;">▲</div></div>' +
+        '<div class="verdict-note">' + escapeHtml(noteText || "—") + '</div>' +
+      '</div>'
+    );
+  }
+
+  function fundamentalNote(fv, price) {
+    var base = (fv || {}).base;
+    if (!base || !isNum(base.lo) || !isNum(base.hi)) {
+      return "Baz aralık verisi yok.";
+    }
+    var lo = Number(base.lo), hi = Number(base.hi);
+    var rangeText = fmtMoney(lo) + "–" + fmtMoney(hi);
+    if (!isNum(price)) return "Baz aralık: " + rangeText + ".";
+    var p = Number(price);
+    if (p < lo) return "Fiyat " + fmtMoney(p) + ", baz aralığın (" + rangeText + ") altında.";
+    if (p > hi) return "Fiyat " + fmtMoney(p) + ", baz aralığın (" + rangeText + ") üstünde.";
+    return "Fiyat " + fmtMoney(p) + ", baz aralık (" + rangeText + ") içinde.";
+  }
+
+  // ---- 5. Triangulation row -------------------------------------------------
+  // Only rendered when result.valuation.triangulation is present (see
+  // Sec.11); older/simpler result dicts simply skip this section.
+  function triangulationRowHtml(valuation, confidenceOverride) {
+    var tri = (valuation || {}).triangulation;
+    if (!tri) return "";
+    var signals = tri.signals || {};
+    var direction = tri.direction;
+    var confidence = confidenceOverride || tri.confidence;
+
+    // Sec.13: for financial/reit sectors the DCF slot is really the P/B×ROE
+    // anchor (dcf.enabled === false in that case) -- label it accordingly.
+    var dcfLabel = (valuation.dcf && valuation.dcf.enabled === false) ? "P/B×ROE" : "DCF";
+    var methods = [
+      { key: "dcf", label: dcfLabel },
+      { key: "reverse_dcf", label: "Ters DCF" },
+      { key: "multiples", label: "Çarpanlar" },
+    ];
+
+    var chips = methods.map(function (m) {
+      var sig = signals[m.key];
+      var icon = "–", cls = "tri-muted";
+      if (sig && String(sig).toLowerCase() !== "veri_yok") {
+        if (direction && String(direction).toLowerCase() !== "belirsiz" &&
+            String(sig).toLowerCase() === String(direction).toLowerCase()) {
+          icon = "✓";
+          cls = "tri-agree";
+        } else {
+          icon = "✗";
+          cls = "tri-disagree";
+        }
+      }
+      return (
+        '<div class="tri-chip ' + cls + '">' +
+          '<span class="tri-icon">' + icon + '</span>' +
+          '<span class="tri-label">' + escapeHtml(m.label) + '</span>' +
+          '<span class="tri-signal">' + escapeHtml(signalLabel(sig)) + '</span>' +
+        '</div>'
+      );
+    }).join("");
+
+    var confColor = confidenceColor(confidence);
+    return (
+      '<div class="section-title">Üçgenleme</div>' +
+      '<div class="triangulation-row">' +
+        '<div class="tri-chips">' + chips + '</div>' +
+        '<div class="verdict-pill verdict-' + confColor + ' confidence-badge">Güven: ' +
+          escapeHtml(confidence || "—") + '</div>' +
+      '</div>'
+    );
+  }
+
+  // ---- 6. Sensitivity mini-table -------------------------------------------
+  // Only rendered when result.valuation.sensitivity is present (see Sec.9).
+  function sensitivityTableHtml(sens) {
+    if (!sens || !sens.matrix || !sens.matrix.length) return "";
+    var growthValues = sens.growth_values || [];
+    var drValues = sens.dr_values || [];
+    var matrix = sens.matrix || [];
+    var baseRow = Math.floor(matrix.length / 2);
+    var baseCol = Math.floor((matrix[0] || []).length / 2);
+
+    var headerCells = drValues.map(function (d) {
+      return '<th class="sens-col-h">' + fmtPct(d) + '</th>';
+    }).join("");
+
+    var bodyRows = matrix.map(function (rowArr, ri) {
+      var cells = (rowArr || []).map(function (val, ci) {
+        var isBase = ri === baseRow && ci === baseCol;
+        return '<td class="sens-cell' + (isBase ? " sens-base" : "") + '">' + fmtMoney(val) + '</td>';
+      }).join("");
+      var rowLabel = growthValues[ri] !== undefined ? fmtPct(growthValues[ri]) : "—";
+      return '<tr><th class="sens-row-h">' + rowLabel + '</th>' + cells + '</tr>';
+    }).join("");
+
+    var uncertaintyTag = sens.high_uncertainty
+      ? '<span class="uncertainty-tag">yüksek belirsizlik</span>'
+      : "";
+
+    return (
+      '<div class="section-title">Duyarlılık' + uncertaintyTag + '</div>' +
+      '<table class="sensitivity-table">' +
+        '<thead><tr><th></th>' + headerCells + '</tr></thead>' +
+        '<tbody>' + bodyRows + '</tbody>' +
+      '</table>'
+    );
+  }
+
+  // ---- 7. Red flags --------------------------------------------------------
+  function flagsBoxHtml(flags) {
+    if (!flags || flags.length === 0) return "";
+    var items = flags.map(function (f) {
+      return (
+        '<li>' + escapeHtml(f.message || f.code || "") +
+        (f.detail ? '<span class="flag-detail">' + escapeHtml(f.detail) + '</span>' : '') +
+        '</li>'
+      );
+    }).join("");
+    return (
+      '<div class="flags-box">' +
+        '<div class="flags-title">Red Flags</div>' +
+        '<ul>' + items + '</ul>' +
+      '</div>'
+    );
+  }
+
+  // ---- 8. Catalyst + summary panel -----------------------------------------
+  function catalystSummaryHtml(result) {
+    var catalyst = result.catalyst;
+    var summary = result.summary;
+    var reverseDcfComment = result.reverse_dcf_comment;
+    var catalystHtml = catalyst ? '<p class="catalyst-line">Katalizör: ' + escapeHtml(catalyst) + '</p>' : "";
+    var reverseHtml = reverseDcfComment
+      ? '<p class="reverse-dcf-line">Ters DCF: ' + escapeHtml(reverseDcfComment) + '</p>'
+      : "";
+    return (
+      '<div class="panel">' +
+        catalystHtml +
+        reverseHtml +
+        '<p class="summary-text">' + escapeHtml(summary || "Özet bulunmuyor.") + '</p>' +
+      '</div>'
+    );
+  }
+
+  function footerHtml(result) {
+    var provider = result._provider ? escapeHtml(result._provider) : "";
+    var model = result._model ? escapeHtml(result._model) : "";
+    var provenance = [provider, model].filter(Boolean).join(" / ");
+    return (
+      '<div class="footer">' +
+        'SEC EDGAR + fiyat verisi · eğitim amaçlı, yatırım tavsiyesi değildir.' +
+        (provenance ? '<br><span class="muted">' + provenance + '</span>' : '') +
+      '</div>'
+    );
+  }
+
+  function renderError(result) {
+    var errorLabel = result.error ? " (" + escapeHtml(String(result.error)) + ")" : "";
+    document.body.innerHTML =
+      '<div class="page"><div class="card">' +
+        headerHtml() +
+        '<div class="error-box">' +
+          '<strong>Analiz kullanılamıyor' + errorLabel + '</strong>' +
+          '<p>' + escapeHtml(result.summary || "Bilinmeyen bir hata oluştu.") + '</p>' +
+        '</div>' +
+        footerHtml(result) +
+      '</div></div>';
+  }
+
+  function render() {
+    document.title = String(data.ticker || "") + " · " + String(data.horizon || "") + " verdict";
+
+    var result = data.result || {};
+    if (result.error) {
+      renderError(result);
+      return;
+    }
+
+    var fv = result.fair_value_range || {};
+    var profileFit = result.profile_fit || {};
+    var technicalDetail = (data.technical && data.technical.verdict_detail) || null;
+    // result.valuation (Sec.11) is the new, richer payload; it's absent for
+    // older callers or when phase-2 interpret() never ran (e.g. an LLM
+    // error) -- sections 5/6 and the reverse-DCF line simply don't render
+    // in that case, degrading to the simpler pre-valuation card.
+    var valuation = result.valuation || null;
+
+    var triHtml = valuation ? triangulationRowHtml(valuation, result.confidence) : "";
+    var sensHtml = valuation ? sensitivityTableHtml(valuation.sensitivity) : "";
+
+    var cardHtml =
+      '<div class="page"><div class="card">' +
+        headerHtml() +
+        weightBarHtml(result._weights) +
+        '<div class="section-title">Değerleme senaryoları</div>' +
+        buildFanChart(fv, data.price) +
+        '<div class="verdicts-grid">' +
+          verdictBoxHtml("Fundamental", result.fundamental_verdict, fundamentalNote(fv, data.price)) +
+          verdictBoxHtml("Teknik", result.technical_verdict, technicalDetail || "Fiyat verisi mevcut değil.") +
+          verdictBoxHtml("Profil", profileFit.verdict, profileFit.reason) +
+        '</div>' +
+        triHtml +
+        sensHtml +
+        flagsBoxHtml(data.red_flags) +
+        catalystSummaryHtml(result) +
+        footerHtml(result) +
+      '</div></div>';
+
+    document.body.innerHTML = cardHtml;
+
+    var assumptionsEl = document.getElementById("fan-assumptions");
+    var rows = document.querySelectorAll(".fan-row-track");
+    function selectScenario(key) {
+      rows.forEach(function (r) {
+        r.classList.toggle("selected", r.getAttribute("data-scenario") === key);
+      });
+      if (assumptionsEl) assumptionsEl.textContent = scenarioText(fv, key);
+    }
+    rows.forEach(function (r) {
+      r.addEventListener("click", function () {
+        selectScenario(r.getAttribute("data-scenario"));
+      });
+    });
+    selectScenario("base");
+  }
+
+  render();
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,1534 @@
+<!--
+  sec_analyzer "Verdict Terminal" -- unified, self-contained HTML template.
+
+  This single file serves BOTH consumers of the verdict card:
+    - CLI `analyze --html` / GET /report (sec_analyzer.report.generator):
+      a baked, one-shot report for one ticker/horizon, opened from disk
+      (file://...) or served as a response body. No network calls of any
+      kind -- fully self-contained.
+    - GET / (sec_analyzer.web.app, via generator.render_search_page): the
+      interactive ticker search. Same shell, same rendering code, but the
+      top nav carries live controls and a POST to /api/analyze feeds the
+      exact same body-rendering function.
+
+  The single "{"mode": "report", "ticker": "RDDT", "horizon": "5y", "price": 200.32000732421875, "as_of": "2026-07-13", "generated_on": "2026-07-13", "result": {"fundamental_verdict": "PAHALI", "profile_fit": {"verdict": "KISMEN", "reason": "PROFIL.md bulunamadı; nötr profil varsayıldı (dosyayı oluşturmanız önerilir)."}, "reverse_dcf_comment": "Ters DCF hesaplanamadı; fiyatın ima ettiği büyüme oranı belirlenemedi.", "cyclical_risk": "Olgun sektör sınıflandırması altında döngüsellik riski sınırlı kabul edildi.", "horizon_note": "5 yıllık ufukta fundamental sinyaller öncelikli (fundamental %80 / teknik %20).", "key_risks": ["Hisse sayısı hızla artıyor (seyrelme riski)", "Hisse bazlı ödemeler gelire göre yüksek", "Son yılın FCF'i 3 yıllık ortalamadan %50'den fazla saptı; ancak FCF istikrarlı bir trend izlediği için (tek seferlik bir sıçrama değil, yapısal bir artış/azalış) DCF için başlangıç FCF (fcf0) olarak yine de son yılın rakamı kullanıldı.", "Hiper-büyüme hedef olgun FCF marjı için brüt marj verisi eksik; %20 varsayılan tavan kullanıldı, bugünkü FCF marjına (%31) tabanlandı.", "Hiper-büyüme modu: manşet aralığı revenue-first DCF'ten (büyüme fade + olgun hedef marj) alındı; standart FCF-DCF ikincil olarak 'dcf.scenarios'ta."], "red_flags_comment": "Hisse sayısı hızla artıyor (seyrelme riski); Hisse bazlı ödemeler gelire göre yüksek", "catalyst": "Q2 earnings ~31 Tem", "summary": "Değerleme motoru baz senaryoda $107.06-130.85 aralığını işaret ediyor; üçgenleme güveni DÜŞÜK. Fiyat okuması: PAHALI. Sektör sınıflandırması: mature. Deterministik, kural tabanlı yorum; eğitim amaçlıdır, yatırım tavsiyesi değildir.", "technical_verdict": "NÖTR (RSI 62, SMA50 +%18)", "confidence": "DÜŞÜK", "fair_value_range": {"bear": {"lo": 35.12, "hi": 42.92, "growth": "%24 başlangıç → %2.5 terminale fade", "discount_rate": "%12", "note": "Hiper-büyüme kötümser: başlangıç büyüme %24 (10 yılda %2.5 terminale fade), olgun FCF marjı %22, iskonto %12."}, "base": {"lo": 107.06, "hi": 130.85, "growth": "%40 başlangıç → %2.5 terminale fade", "discount_rate": "%10", "note": "Hiper-büyüme temel: başlangıç büyüme %40 (10 yılda %2.5 terminale fade), olgun FCF marjı %31, iskonto %10."}, "bull": {"lo": 148.33, "hi": 181.29, "growth": "%40 başlangıç → %2.5 terminale fade", "discount_rate": "%9", "note": "Hiper-büyüme iyimser: başlangıç büyüme %40 (10 yılda %2.5 terminale fade), olgun FCF marjı %37, iskonto %9."}}, "scenario_returns": {"bear": {"ret_lo_pct": -82.5, "ret_hi_pct": -78.6}, "base": {"ret_lo_pct": -46.6, "ret_hi_pct": -34.7}, "bull": {"ret_lo_pct": -26.0, "ret_hi_pct": -9.5}}, "entry_plan": [{"n": 1, "trigger": "Günlük kapanış 182.67 USD seviyesinin altına inerse (bölge 179.93-185.41 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 179.93, "hi": 185.41}, "size_pct": 6.7, "invalidation": 33.36, "target": 181.29, "rr": -0.0, "note": null}, {"n": 2, "trigger": "Günlük kapanış 169.97 USD seviyesinin altına inerse (bölge 167.42-172.52 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 167.42, "hi": 172.52}, "size_pct": 13.3, "invalidation": 33.36, "target": 181.29, "rr": 0.1, "note": null}, {"n": 3, "trigger": "Günlük kapanış 130.85 USD seviyesinin altına inerse (bölge 128.89-132.81 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 128.89, "hi": 132.81}, "size_pct": 20.0, "invalidation": 33.36, "target": 181.29, "rr": 0.5, "note": null}, {"n": 4, "trigger": "Günlük kapanış 121.84 USD seviyesinin altına inerse (bölge 120.01-123.67 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 120.01, "hi": 123.67}, "size_pct": 26.7, "invalidation": 33.36, "target": 181.29, "rr": 0.7, "note": null}, {"n": 5, "trigger": "Günlük kapanış 107.06 USD seviyesinin altına inerse (bölge 105.45-108.67 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 105.45, "hi": 108.67}, "size_pct": 33.3, "invalidation": 33.36, "target": 181.29, "rr": 1.0, "note": null}], "stop_adding": [{"code": "ACTIVE_RED_FLAG", "message": "Aktif red flag(lar) nedeniyle temkinli olunmalı: Hisse sayısı hızla artıyor (seyrelme riski); Hisse bazlı ödemeler gelire göre yüksek"}, {"code": "BINARY_CATALYST_NEAR", "message": "Yaklaşan binary katalizör: Q2 earnings ~31 Tem; katalizör tarihinden önce tetiksiz pozisyon büyütülmesi önerilmez."}], "thesis_metric": {"name": "Net Kâr Marjı", "latest_value": "%24.1", "trend": "iyileşiyor", "rationale": "Olgun sektörlerde tezin sağlığı kâr marjının istikrarında görülür; bu yüzden net kâr marjı (hesaplanamıyorsa ROE) tek çapa metrik olarak izlenir. METODOLOJI §7 kuralı: bu metrik iki ardışık çeyrek boyunca tezin aksini gösterirse tez geçersiz sayılır ve bu açıkça belirtilir."}, "valuation": {"sector_type": "mature", "fcf0": 684169000, "fcf0_source": "ttm", "dcf": {"enabled": true, "disabled_reason": null, "scenarios": {"bear": {"per_share": 17.49, "lo": 15.74, "hi": 19.24}, "base": {"per_share": 29.82, "lo": 26.84, "hi": 32.8}, "bull": {"per_share": 45.59, "lo": 41.03, "hi": 50.15}}, "normalized_variant": null}, "pb_roe": null, "fair_value_range": {"bear": {"lo": 35.12, "hi": 42.92, "growth": "%24 başlangıç → %2.5 terminale fade", "discount_rate": "%12", "note": "Hiper-büyüme kötümser: başlangıç büyüme %24 (10 yılda %2.5 terminale fade), olgun FCF marjı %22, iskonto %12."}, "base": {"lo": 107.06, "hi": 130.85, "growth": "%40 başlangıç → %2.5 terminale fade", "discount_rate": "%10", "note": "Hiper-büyüme temel: başlangıç büyüme %40 (10 yılda %2.5 terminale fade), olgun FCF marjı %31, iskonto %10."}, "bull": {"lo": 148.33, "hi": 181.29, "growth": "%40 başlangıç → %2.5 terminale fade", "discount_rate": "%9", "note": "Hiper-büyüme iyimser: başlangıç büyüme %40 (10 yılda %2.5 terminale fade), olgun FCF marjı %37, iskonto %9."}}, "reverse_dcf": {"implied_growth": null, "realized_cagr_5y": 0.4893, "realized_label": "3y"}, "multiples": {"history": [{"fy": 2024, "end": "2024-12-31", "price": 163.44000244140625, "pe": null, "ps": 18.28635300842344, "pfcf": 110.16591424945418}, {"fy": 2025, "end": "2025-12-31", "price": 229.8699951171875, "pe": 87.73663935770514, "ps": 21.093499820660938, "pfcf": 67.90509350175854}], "current": {"pe": 76.458, "ps": 18.3819, "pfcf": 59.1758}, "pe_percentile": null, "ps_percentile": null, "pfcf_percentile": null, "history_years": 2, "sector": {"available": true, "industry": "Computer Services", "pe_median": 26.06, "ps_median": 1.24, "pfcf_median": null}}, "sensitivity": {"growth_values": [0.23, 0.25, 0.27], "dr_values": [0.09, 0.1, 0.11], "matrix": [[31.74, 26.9, 23.23], [35.25, 29.82, 25.71], [39.1, 33.03, 28.43]], "lo": 23.23, "hi": 39.1, "high_uncertainty": false}, "triangulation": {"signals": {"dcf": "pahali", "reverse_dcf": "veri_yok", "multiples": "veri_yok"}, "confidence": "DÜŞÜK", "direction": "belirsiz"}, "hyper_growth": true, "hyper_growth_detail": {"reasons": ["Gelir CAGR %48.9 (>%25)", "Ar-Ge + SBC / gelir %40'ı aşıyor (agresif büyüme yatırımı)"], "scenarios": {"bear": {"per_share": 39.02, "lo": 35.12, "hi": 42.92, "start_growth": 0.24, "target_fcf_margin": 0.2174, "final_year_revenue": 7504156667.988797, "revenue_multiple": 3.4070993077834055}, "base": {"per_share": 118.95, "lo": 107.06, "hi": 130.85, "start_growth": 0.4, "target_fcf_margin": 0.3106, "final_year_revenue": 14401031651.85288, "revenue_multiple": 6.538475560045185}, "bull": {"per_share": 164.81, "lo": 148.33, "hi": 181.29, "start_growth": 0.4, "target_fcf_margin": 0.3728, "final_year_revenue": 14401031651.85288, "revenue_multiple": 6.538475560045185}}, "probabilities": {"bear": 0.25, "base": 0.5, "bull": 0.25}, "expected_value": 110.43, "arrival_flag": "makul", "tam_usd": null, "implied": {"growth": 0.5509, "revenue_10y": 25378308623.192265, "revenue_multiple": 11.522469688251594, "steady_state_margin": 0.5627, "tam_share": null}, "target_margin_source": "brüt marj yok: %20 varsayılan tavan, bugünkü FCF marjına (%31) tabanlanmış", "notes": ["Hiper-büyüme hedef olgun FCF marjı için brüt marj verisi eksik; %20 varsayılan tavan kullanıldı, bugünkü FCF marjına (%31) tabanlandı."]}, "assumptions": {"bear": {"growth_5y": 0.2, "terminal_growth": 0.025, "discount_rate": 0.12000000000000001, "story": "Kötümser (bear) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%48.9), bu senaryoda uygulanan büyüme %20.0, iskonto oranı %12.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "base": {"growth_5y": 0.25, "terminal_growth": 0.025, "discount_rate": 0.1, "story": "Temel (base) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%48.9), bu senaryoda uygulanan büyüme %25.0, iskonto oranı %10.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "bull": {"growth_5y": 0.3, "terminal_growth": 0.025, "discount_rate": 0.09000000000000001, "story": "İyimser (bull) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%48.9), bu senaryoda uygulanan büyüme %30.0, iskonto oranı %9.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}}, "notes": ["Son yılın FCF'i 3 yıllık ortalamadan %50'den fazla saptı; ancak FCF istikrarlı bir trend izlediği için (tek seferlik bir sıçrama değil, yapısal bir artış/azalış) DCF için başlangıç FCF (fcf0) olarak yine de son yılın rakamı kullanıldı.", "Hiper-büyüme hedef olgun FCF marjı için brüt marj verisi eksik; %20 varsayılan tavan kullanıldı, bugünkü FCF marjına (%31) tabanlandı.", "Hiper-büyüme modu: manşet aralığı revenue-first DCF'ten (büyüme fade + olgun hedef marj) alındı; standart FCF-DCF ikincil olarak 'dcf.scenarios'ta.", "Ters DCF (fiyatın ima ettiği büyüme) hesaplanamadı."]}, "_provider": "script", "_model": "rule-based-v2", "_horizon": "5y", "_weights": {"fundamental": 0.8, "technical": 0.2}}, "metrics": {"price": 200.32, "shares": 202107978, "eps": 2.62, "market_cap": 40486271633.24304, "total_debt": null, "net_debt": null, "pe": 76.458, "ps": 18.3819, "pfcf": 59.1758, "revenue_cagr_3y": 0.4893, "revenue_cagr_5y": null, "sbc_revenue": 0.1558, "shares_yoy": 0.3893, "buyback_latest": null, "dividends_latest": null, "rnd_revenue": 0.3556, "fcf": 684169000, "fcf_per_share": 3.39, "latest_fy": 2025}, "technical": {"price": 200.32, "as_of": "2026-07-13", "rsi14": 61.8, "sma50": 169.97, "sma200": 182.67, "dist_sma50_pct": 17.9, "dist_sma200_pct": 9.7, "high_52w": 270.71, "low_52w": 121.84, "range_position_pct": 52.7, "volatility_20d": 0.8584, "golden_cross": false, "death_cross": false, "sma50_above_sma200": false, "verdict": "NÖTR", "verdict_detail": "RSI 62, SMA50 +%18", "horizon_summary": "5 yıllık ufukta RSI gibi kısa vadeli momentum göstergeleri karar açısından belirleyici değildir. Fiyat şu anda SMA200'ün +%10 üzerinde; bu, uzun vadeli tez için bir sinyal değil, yalnızca olası bir giriş zamanlaması notu olarak değerlendirilmelidir.", "horizon": "5y"}, "red_flags": [{"code": "DILUTION", "message": "Hisse sayısı hızla artıyor (seyrelme riski)", "detail": "Dolaşımdaki hisse sayısı yıllık %38.9 arttı (eşik %5). Mevcut ortaklar önemli ölçüde seyreliyor."}, {"code": "SBC_HIGH", "message": "Hisse bazlı ödemeler gelire göre yüksek", "detail": "Hisse bazlı ödemeler (SBC), gelirin %15.6'i (eşik %10). Bu, raporlanan kârlılığın gerçek nakit ekonomisini abartabileceği anlamına gelir."}], "entity_name": null}" placeholder (inside the
+  <script type="application/json"> element below) is replaced by
+  sec_analyzer.report.generator with one JSON payload whose "mode" field
+  selects which of the two behaviors above this script runs:
+
+    {"mode": "report", ticker, horizon, price, as_of, generated_on, result,
+     metrics, technical, red_flags, entity_name}
+    {"mode": "search", horizons, providers, default_horizon,
+     default_provider, default_model}
+
+  In both modes, once a result payload of the "report" shape is available
+  (baked immediately, or fetched live from /api/analyze and reshaped
+  client-side), the exact same renderBody() function draws the terminal:
+  header, signal-weight bar, fair-value fan chart, triangulation row, three
+  verdict cards, sensitivity grid, the four planning cards (entry plan,
+  stop-adding, thesis metric, scenario returns), red flags, and the
+  catalyst/summary panel. Nothing here is fabricated: every value not
+  present in the payload renders "--" or the whole card/section is omitted,
+  never "None"/"NaN"/"undefined", and no line is invented that isn't backed
+  by a real field (see e.g. footerAnalysisHtml -- no "Recommendation: ..."
+  line unless a real field carried one).
+
+  No external resources anywhere: one inline <style>, unicode/inline-SVG
+  glyphs only (no icon fonts), and (in report mode) zero network requests
+  -- the file opens correctly straight from disk or inside an <iframe>.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Verdict Terminal</title>
+<style>
+  /* Dark-only "terminal" palette -- this design deliberately commits to a
+     single dark theme (see sec_analyzer/web/templates' prior design intent
+     for the same call), matching the supplied mockup. */
+  :root {
+    color-scheme: dark;
+    --bg: #0d1420;
+    --card: #111b2b;
+    --border: #223349;
+    --text: #e0e2ea;
+    --muted: #8b919d;
+    --outline: #c0c7d3;
+    --primary: #5aa7ff;
+    --primary-light: #a2c9ff;
+    --green: #4de082;
+    --amber: #ffb953;
+    --caution: #ff8a3d;
+    --red: #ffb4ab;
+    --red-container: #93000a;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.45;
+  }
+
+  .page {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0 16px 48px;
+  }
+
+  .muted { color: var(--muted); }
+  .mono { font-family: var(--mono); }
+
+  /* ---- Top nav ---------------------------------------------------------*/
+  .topnav {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: rgba(13, 20, 32, 0.94);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 0;
+    margin: 0 0 20px;
+  }
+  .nav-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+  }
+  .brand {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: var(--primary-light);
+    letter-spacing: 0.01em;
+    flex-shrink: 0;
+  }
+  .nav-date {
+    font-size: 0.78rem;
+    color: var(--muted);
+    font-family: var(--mono);
+  }
+  .nav-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    flex: 1 1 auto;
+  }
+  .ticker-input {
+    width: 11ch;
+    text-transform: uppercase;
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 0.95rem;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+  }
+  .ticker-input:focus {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+  }
+  .provider-select {
+    font-size: 0.82rem;
+    padding: 7px 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+    font-family: var(--sans);
+    max-width: 220px;
+  }
+  .analyze-btn {
+    font-size: 0.86rem;
+    font-weight: 700;
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--primary);
+    background: var(--primary);
+    color: #06111f;
+    cursor: pointer;
+  }
+  .analyze-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  /* ---- Shared horizon-toggle pill row ------------------------------------*/
+  .horizon-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .horizon-pill {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    font-weight: 600;
+    padding: 6px 12px;
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    border-right: 1px solid var(--border);
+    cursor: default;
+  }
+  .horizon-pill:last-child { border-right: none; }
+  .horizon-toggle.interactive .horizon-pill { cursor: pointer; }
+  .horizon-pill.active {
+    background: rgba(90, 167, 255, 0.18);
+    color: var(--primary-light);
+  }
+
+  /* ---- Cards -------------------------------------------------------------*/
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* ---- Header card ---------------------------------------------------- */
+  .header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .header-left .ticker-line {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .ticker {
+    font-family: var(--mono);
+    font-size: 1.6rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .entity-name {
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+  .source-note {
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .header-right {
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .price-value {
+    font-family: var(--mono);
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  /* ---- Signal-weight bar ------------------------------------------------*/
+  .weight-bar {
+    display: flex;
+    height: 24px;
+    border-radius: 6px;
+    overflow: hidden;
+    margin: 0 0 16px;
+    border: 1px solid var(--border);
+  }
+  .weight-seg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    overflow: hidden;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    font-family: var(--mono);
+  }
+  .weight-fundamental { background: rgba(90, 167, 255, 0.28); color: var(--primary-light); }
+  .weight-technical { background: rgba(255, 185, 83, 0.28); color: var(--amber); }
+
+  /* ---- Fan chart (fair-value ruler) --------------------------------------*/
+  .fan-empty {
+    font-size: 0.85rem;
+  }
+  .fan-outer {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .fan-labels {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    width: 38px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+    padding-top: 2px;
+    font-family: var(--mono);
+  }
+  .fan-labels span {
+    height: 24px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+  }
+  .fan-labels span:last-child { margin-bottom: 0; }
+  .fan-plot {
+    position: relative;
+    flex: 1;
+    padding-top: 2px;
+  }
+  .fan-row-track {
+    position: relative;
+    height: 24px;
+    margin-bottom: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .fan-row-track:last-child { margin-bottom: 0; }
+  .fan-row-track.selected {
+    box-shadow: 0 0 0 1px var(--outline) inset;
+  }
+  .fan-band {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-radius: 5px;
+    border: 1px solid;
+  }
+  .fan-marker {
+    position: absolute;
+    top: -16px;
+    bottom: 0;
+    width: 0;
+    border-left: 1px dashed var(--outline);
+    pointer-events: none;
+  }
+  .fan-marker-arrow {
+    position: absolute;
+    top: -15px;
+    left: -6px;
+    font-size: 10px;
+    color: var(--text);
+  }
+  .fan-marker-price {
+    position: absolute;
+    top: -30px;
+    left: -24px;
+    font-size: 0.66rem;
+    font-family: var(--mono);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .fan-ticks {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--muted);
+    margin: 10px 0 14px 46px;
+  }
+
+  /* ---- Hyper-grower "Fiyatın iması" / expected-value note ----------------*/
+  .hyper-note {
+    margin: 12px 0 0 46px;
+    font-size: 0.76rem;
+    color: var(--outline);
+    line-height: 1.5;
+  }
+  .hyper-implied-line { color: var(--caution); }
+  .hyper-ev-line { color: var(--muted); margin-top: 4px; }
+  @media (max-width: 560px) {
+    .hyper-note { margin-left: 0; }
+  }
+
+  /* ---- Assumption strip (SCENARIO / GROWTH / DISCOUNT / RATIONALE) -------*/
+  .assumption-strip {
+    display: grid;
+    grid-template-columns: auto auto auto 1fr;
+    gap: 6px 18px;
+    margin: 0 0 0 46px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  @media (max-width: 560px) {
+    .assumption-strip { grid-template-columns: 1fr 1fr; margin-left: 0; }
+  }
+  .assum-label {
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin-bottom: 3px;
+  }
+  .assum-value {
+    font-size: 0.8rem;
+    font-family: var(--mono);
+  }
+  .assum-rationale .assum-value {
+    font-family: var(--sans);
+    color: var(--outline);
+  }
+
+  /* ---- Triangulation card --------------------------------------------- */
+  .triangulation-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .tri-chips {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .tri-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 0.74rem;
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .tri-icon { font-size: 0.85rem; font-weight: 700; line-height: 1; }
+  .tri-agree .tri-icon { color: var(--green); }
+  .tri-disagree .tri-icon { color: var(--red); }
+  .tri-muted .tri-icon { color: var(--muted); }
+  .tri-label {
+    color: var(--muted);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-size: 0.68rem;
+  }
+  .tri-signal { font-family: var(--mono); }
+
+  /* ---- Badges (status / confidence) -------------------------------------*/
+  .badge {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 3px 11px;
+    font-size: 0.76rem;
+    font-weight: 700;
+    max-width: 100%;
+    overflow-wrap: break-word;
+    white-space: nowrap;
+  }
+  .badge-green { background: rgba(77, 224, 130, 0.15); color: var(--green); border: 1px solid rgba(77, 224, 130, 0.4); }
+  .badge-amber { background: rgba(255, 185, 83, 0.15); color: var(--amber); border: 1px solid rgba(255, 185, 83, 0.4); }
+  /* Distinct "caution" bucket for the hyper-grower YÜKSEK BEKLENTİ FİYATLANMIŞ
+     verdict -- deliberately a different hue from both the neutral MAKUL
+     amber and the PAHALI red, since it signals a different kind of risk
+     (price implies an aggressive-but-not-yet-disqualified growth path). */
+  .badge-caution { background: rgba(255, 138, 61, 0.16); color: var(--caution); border: 1px solid rgba(255, 138, 61, 0.5); }
+  .badge-red { background: rgba(255, 180, 171, 0.15); color: var(--red); border: 1px solid rgba(147, 0, 10, 0.55); }
+  .badge-label {
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin-right: 6px;
+  }
+
+  /* ---- Verdict cards (fundamental/technical/profile fit) -----------------*/
+  .verdict-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .gauge {
+    position: relative;
+    height: 6px;
+    border-radius: 3px;
+    margin: 2px 2px 2px;
+    background: linear-gradient(to right, var(--green), var(--amber), var(--red));
+  }
+  .gauge-marker {
+    position: absolute;
+    top: -9px;
+    transform: translateX(-50%);
+    font-size: 0.7rem;
+    color: var(--text);
+  }
+  .verdict-note {
+    font-size: 0.82rem;
+    color: var(--outline);
+    line-height: 1.45;
+  }
+
+  /* ---- Sensitivity table -------------------------------------------------*/
+  .uncertainty-tag {
+    display: inline-block;
+    background: rgba(255, 185, 83, 0.15);
+    color: var(--amber);
+    border: 1px solid rgba(255, 185, 83, 0.4);
+    border-radius: 999px;
+    padding: 1px 8px;
+    font-size: 0.64rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .sensitivity-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+  }
+  .sensitivity-table th, .sensitivity-table td {
+    border: 1px solid var(--border);
+    padding: 6px 4px;
+    text-align: center;
+  }
+  .sensitivity-table thead th {
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .sens-row-h {
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .sens-base {
+    background: rgba(90, 167, 255, 0.18);
+    border-color: var(--primary);
+    font-weight: 700;
+  }
+  .sens-axis-note {
+    font-size: 0.68rem;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+
+  /* ---- Entry plan table (reuses .sensitivity-table/.sens-base) -----------*/
+  .entry-plan-table td.entry-trigger {
+    text-align: left;
+    font-family: var(--sans);
+    font-size: 0.72rem;
+    line-height: 1.4;
+  }
+  .entry-plan-table tr.entry-note-row td {
+    text-align: left;
+    color: var(--amber);
+    font-family: var(--sans);
+    font-size: 0.72rem;
+  }
+  .card-sub {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin: -8px 0 14px;
+    line-height: 1.5;
+  }
+
+  /* ---- Scenario returns list ---------------------------------------------*/
+  .scenario-returns-list { display: flex; flex-direction: column; gap: 6px; }
+  .scen-ret-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82rem;
+  }
+  .scen-ret-name { color: var(--muted); font-family: var(--mono); font-weight: 700; }
+  .scen-ret-value { font-family: var(--mono); }
+
+  /* ---- Thesis metric -------------------------------------------------- */
+  .thesis-metric-line { font-size: 0.9rem; margin: 0 0 8px; }
+  .thesis-rationale {
+    font-size: 0.78rem;
+    color: var(--outline);
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  /* ---- Alert-style boxes (red flags / stop-adding) -----------------------*/
+  .alert-box ul {
+    margin: 0;
+    padding-left: 18px;
+  }
+  .alert-box li {
+    margin-bottom: 8px;
+    font-size: 0.84rem;
+  }
+  .alert-box li:last-child { margin-bottom: 0; }
+  .alert-box li .item-detail {
+    display: block;
+    color: var(--muted);
+    font-size: 0.78rem;
+    margin-top: 2px;
+  }
+  .empty-note {
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+
+  /* ---- Footer analysis (catalyst + summary) -------------------------------*/
+  .catalyst-line {
+    font-family: var(--mono);
+    font-size: 0.86rem;
+    margin: 0 0 10px;
+  }
+  .summary-text {
+    font-size: 0.9rem;
+    line-height: 1.55;
+    margin: 0;
+    color: var(--outline);
+  }
+
+  /* ---- Global footer ---------------------------------------------------- */
+  .global-footer {
+    font-size: 0.72rem;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+    margin-top: 4px;
+    line-height: 1.6;
+    text-align: center;
+  }
+  .global-footer a { color: var(--muted); }
+
+  /* ---- Search-mode empty/loading/error states -----------------------------*/
+  .empty-state, .loading-state {
+    text-align: center;
+    padding: 34px 16px;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-top-color: var(--primary-light);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: -2px;
+    margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error-banner {
+    border: 1px solid rgba(255, 180, 171, 0.5);
+    background: rgba(147, 0, 10, 0.18);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    font-size: 0.86rem;
+    color: var(--red);
+  }
+
+  /* ---- Error card (analysis failed / result.error) ------------------------*/
+  .error-box {
+    border: 1px solid rgba(255, 180, 171, 0.5);
+    background: rgba(147, 0, 10, 0.15);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .error-box strong {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--red);
+  }
+  .error-box p { margin: 0; font-size: 0.88rem; color: var(--outline); }
+</style>
+</head>
+<body>
+
+<script id="report-data" type="application/json">{"mode": "report", "ticker": "RDDT", "horizon": "5y", "price": 200.32000732421875, "as_of": "2026-07-13", "generated_on": "2026-07-13", "result": {"fundamental_verdict": "PAHALI", "profile_fit": {"verdict": "KISMEN", "reason": "PROFIL.md bulunamadı; nötr profil varsayıldı (dosyayı oluşturmanız önerilir)."}, "reverse_dcf_comment": "Ters DCF hesaplanamadı; fiyatın ima ettiği büyüme oranı belirlenemedi.", "cyclical_risk": "Olgun sektör sınıflandırması altında döngüsellik riski sınırlı kabul edildi.", "horizon_note": "5 yıllık ufukta fundamental sinyaller öncelikli (fundamental %80 / teknik %20).", "key_risks": ["Hisse sayısı hızla artıyor (seyrelme riski)", "Hisse bazlı ödemeler gelire göre yüksek", "Son yılın FCF'i 3 yıllık ortalamadan %50'den fazla saptı; ancak FCF istikrarlı bir trend izlediği için (tek seferlik bir sıçrama değil, yapısal bir artış/azalış) DCF için başlangıç FCF (fcf0) olarak yine de son yılın rakamı kullanıldı.", "Hiper-büyüme hedef olgun FCF marjı için brüt marj verisi eksik; %20 varsayılan tavan kullanıldı, bugünkü FCF marjına (%31) tabanlandı.", "Hiper-büyüme modu: manşet aralığı revenue-first DCF'ten (büyüme fade + olgun hedef marj) alındı; standart FCF-DCF ikincil olarak 'dcf.scenarios'ta."], "red_flags_comment": "Hisse sayısı hızla artıyor (seyrelme riski); Hisse bazlı ödemeler gelire göre yüksek", "catalyst": "Q2 earnings ~31 Tem", "summary": "Değerleme motoru baz senaryoda $107.06-130.85 aralığını işaret ediyor; üçgenleme güveni DÜŞÜK. Fiyat okuması: PAHALI. Sektör sınıflandırması: mature. Deterministik, kural tabanlı yorum; eğitim amaçlıdır, yatırım tavsiyesi değildir.", "technical_verdict": "NÖTR (RSI 62, SMA50 +%18)", "confidence": "DÜŞÜK", "fair_value_range": {"bear": {"lo": 35.12, "hi": 42.92, "growth": "%24 başlangıç → %2.5 terminale fade", "discount_rate": "%12", "note": "Hiper-büyüme kötümser: başlangıç büyüme %24 (10 yılda %2.5 terminale fade), olgun FCF marjı %22, iskonto %12."}, "base": {"lo": 107.06, "hi": 130.85, "growth": "%40 başlangıç → %2.5 terminale fade", "discount_rate": "%10", "note": "Hiper-büyüme temel: başlangıç büyüme %40 (10 yılda %2.5 terminale fade), olgun FCF marjı %31, iskonto %10."}, "bull": {"lo": 148.33, "hi": 181.29, "growth": "%40 başlangıç → %2.5 terminale fade", "discount_rate": "%9", "note": "Hiper-büyüme iyimser: başlangıç büyüme %40 (10 yılda %2.5 terminale fade), olgun FCF marjı %37, iskonto %9."}}, "scenario_returns": {"bear": {"ret_lo_pct": -82.5, "ret_hi_pct": -78.6}, "base": {"ret_lo_pct": -46.6, "ret_hi_pct": -34.7}, "bull": {"ret_lo_pct": -26.0, "ret_hi_pct": -9.5}}, "entry_plan": [{"n": 1, "trigger": "Günlük kapanış 182.67 USD seviyesinin altına inerse (bölge 179.93-185.41 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 179.93, "hi": 185.41}, "size_pct": 6.7, "invalidation": 33.36, "target": 181.29, "rr": -0.0, "note": null}, {"n": 2, "trigger": "Günlük kapanış 169.97 USD seviyesinin altına inerse (bölge 167.42-172.52 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 167.42, "hi": 172.52}, "size_pct": 13.3, "invalidation": 33.36, "target": 181.29, "rr": 0.1, "note": null}, {"n": 3, "trigger": "Günlük kapanış 130.85 USD seviyesinin altına inerse (bölge 128.89-132.81 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 128.89, "hi": 132.81}, "size_pct": 20.0, "invalidation": 33.36, "target": 181.29, "rr": 0.5, "note": null}, {"n": 4, "trigger": "Günlük kapanış 121.84 USD seviyesinin altına inerse (bölge 120.01-123.67 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 120.01, "hi": 123.67}, "size_pct": 26.7, "invalidation": 33.36, "target": 181.29, "rr": 0.7, "note": null}, {"n": 5, "trigger": "Günlük kapanış 107.06 USD seviyesinin altına inerse (bölge 105.45-108.67 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 105.45, "hi": 108.67}, "size_pct": 33.3, "invalidation": 33.36, "target": 181.29, "rr": 1.0, "note": null}], "stop_adding": [{"code": "ACTIVE_RED_FLAG", "message": "Aktif red flag(lar) nedeniyle temkinli olunmalı: Hisse sayısı hızla artıyor (seyrelme riski); Hisse bazlı ödemeler gelire göre yüksek"}, {"code": "BINARY_CATALYST_NEAR", "message": "Yaklaşan binary katalizör: Q2 earnings ~31 Tem; katalizör tarihinden önce tetiksiz pozisyon büyütülmesi önerilmez."}], "thesis_metric": {"name": "Net Kâr Marjı", "latest_value": "%24.1", "trend": "iyileşiyor", "rationale": "Olgun sektörlerde tezin sağlığı kâr marjının istikrarında görülür; bu yüzden net kâr marjı (hesaplanamıyorsa ROE) tek çapa metrik olarak izlenir. METODOLOJI §7 kuralı: bu metrik iki ardışık çeyrek boyunca tezin aksini gösterirse tez geçersiz sayılır ve bu açıkça belirtilir."}, "valuation": {"sector_type": "mature", "fcf0": 684169000, "fcf0_source": "ttm", "dcf": {"enabled": true, "disabled_reason": null, "scenarios": {"bear": {"per_share": 17.49, "lo": 15.74, "hi": 19.24}, "base": {"per_share": 29.82, "lo": 26.84, "hi": 32.8}, "bull": {"per_share": 45.59, "lo": 41.03, "hi": 50.15}}, "normalized_variant": null}, "pb_roe": null, "fair_value_range": {"bear": {"lo": 35.12, "hi": 42.92, "growth": "%24 başlangıç → %2.5 terminale fade", "discount_rate": "%12", "note": "Hiper-büyüme kötümser: başlangıç büyüme %24 (10 yılda %2.5 terminale fade), olgun FCF marjı %22, iskonto %12."}, "base": {"lo": 107.06, "hi": 130.85, "growth": "%40 başlangıç → %2.5 terminale fade", "discount_rate": "%10", "note": "Hiper-büyüme temel: başlangıç büyüme %40 (10 yılda %2.5 terminale fade), olgun FCF marjı %31, iskonto %10."}, "bull": {"lo": 148.33, "hi": 181.29, "growth": "%40 başlangıç → %2.5 terminale fade", "discount_rate": "%9", "note": "Hiper-büyüme iyimser: başlangıç büyüme %40 (10 yılda %2.5 terminale fade), olgun FCF marjı %37, iskonto %9."}}, "reverse_dcf": {"implied_growth": null, "realized_cagr_5y": 0.4893, "realized_label": "3y"}, "multiples": {"history": [{"fy": 2024, "end": "2024-12-31", "price": 163.44000244140625, "pe": null, "ps": 18.28635300842344, "pfcf": 110.16591424945418}, {"fy": 2025, "end": "2025-12-31", "price": 229.8699951171875, "pe": 87.73663935770514, "ps": 21.093499820660938, "pfcf": 67.90509350175854}], "current": {"pe": 76.458, "ps": 18.3819, "pfcf": 59.1758}, "pe_percentile": null, "ps_percentile": null, "pfcf_percentile": null, "history_years": 2, "sector": {"available": true, "industry": "Computer Services", "pe_median": 26.06, "ps_median": 1.24, "pfcf_median": null}}, "sensitivity": {"growth_values": [0.23, 0.25, 0.27], "dr_values": [0.09, 0.1, 0.11], "matrix": [[31.74, 26.9, 23.23], [35.25, 29.82, 25.71], [39.1, 33.03, 28.43]], "lo": 23.23, "hi": 39.1, "high_uncertainty": false}, "triangulation": {"signals": {"dcf": "pahali", "reverse_dcf": "veri_yok", "multiples": "veri_yok"}, "confidence": "DÜŞÜK", "direction": "belirsiz"}, "hyper_growth": true, "hyper_growth_detail": {"reasons": ["Gelir CAGR %48.9 (>%25)", "Ar-Ge + SBC / gelir %40'ı aşıyor (agresif büyüme yatırımı)"], "scenarios": {"bear": {"per_share": 39.02, "lo": 35.12, "hi": 42.92, "start_growth": 0.24, "target_fcf_margin": 0.2174, "final_year_revenue": 7504156667.988797, "revenue_multiple": 3.4070993077834055}, "base": {"per_share": 118.95, "lo": 107.06, "hi": 130.85, "start_growth": 0.4, "target_fcf_margin": 0.3106, "final_year_revenue": 14401031651.85288, "revenue_multiple": 6.538475560045185}, "bull": {"per_share": 164.81, "lo": 148.33, "hi": 181.29, "start_growth": 0.4, "target_fcf_margin": 0.3728, "final_year_revenue": 14401031651.85288, "revenue_multiple": 6.538475560045185}}, "probabilities": {"bear": 0.25, "base": 0.5, "bull": 0.25}, "expected_value": 110.43, "arrival_flag": "makul", "tam_usd": null, "implied": {"growth": 0.5509, "revenue_10y": 25378308623.192265, "revenue_multiple": 11.522469688251594, "steady_state_margin": 0.5627, "tam_share": null}, "target_margin_source": "brüt marj yok: %20 varsayılan tavan, bugünkü FCF marjına (%31) tabanlanmış", "notes": ["Hiper-büyüme hedef olgun FCF marjı için brüt marj verisi eksik; %20 varsayılan tavan kullanıldı, bugünkü FCF marjına (%31) tabanlandı."]}, "assumptions": {"bear": {"growth_5y": 0.2, "terminal_growth": 0.025, "discount_rate": 0.12000000000000001, "story": "Kötümser (bear) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%48.9), bu senaryoda uygulanan büyüme %20.0, iskonto oranı %12.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "base": {"growth_5y": 0.25, "terminal_growth": 0.025, "discount_rate": 0.1, "story": "Temel (base) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%48.9), bu senaryoda uygulanan büyüme %25.0, iskonto oranı %10.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "bull": {"growth_5y": 0.3, "terminal_growth": 0.025, "discount_rate": 0.09000000000000001, "story": "İyimser (bull) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%48.9), bu senaryoda uygulanan büyüme %30.0, iskonto oranı %9.0 (olgun sektör sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}}, "notes": ["Son yılın FCF'i 3 yıllık ortalamadan %50'den fazla saptı; ancak FCF istikrarlı bir trend izlediği için (tek seferlik bir sıçrama değil, yapısal bir artış/azalış) DCF için başlangıç FCF (fcf0) olarak yine de son yılın rakamı kullanıldı.", "Hiper-büyüme hedef olgun FCF marjı için brüt marj verisi eksik; %20 varsayılan tavan kullanıldı, bugünkü FCF marjına (%31) tabanlandı.", "Hiper-büyüme modu: manşet aralığı revenue-first DCF'ten (büyüme fade + olgun hedef marj) alındı; standart FCF-DCF ikincil olarak 'dcf.scenarios'ta.", "Ters DCF (fiyatın ima ettiği büyüme) hesaplanamadı."]}, "_provider": "script", "_model": "rule-based-v2", "_horizon": "5y", "_weights": {"fundamental": 0.8, "technical": 0.2}}, "metrics": {"price": 200.32, "shares": 202107978, "eps": 2.62, "market_cap": 40486271633.24304, "total_debt": null, "net_debt": null, "pe": 76.458, "ps": 18.3819, "pfcf": 59.1758, "revenue_cagr_3y": 0.4893, "revenue_cagr_5y": null, "sbc_revenue": 0.1558, "shares_yoy": 0.3893, "buyback_latest": null, "dividends_latest": null, "rnd_revenue": 0.3556, "fcf": 684169000, "fcf_per_share": 3.39, "latest_fy": 2025}, "technical": {"price": 200.32, "as_of": "2026-07-13", "rsi14": 61.8, "sma50": 169.97, "sma200": 182.67, "dist_sma50_pct": 17.9, "dist_sma200_pct": 9.7, "high_52w": 270.71, "low_52w": 121.84, "range_position_pct": 52.7, "volatility_20d": 0.8584, "golden_cross": false, "death_cross": false, "sma50_above_sma200": false, "verdict": "NÖTR", "verdict_detail": "RSI 62, SMA50 +%18", "horizon_summary": "5 yıllık ufukta RSI gibi kısa vadeli momentum göstergeleri karar açısından belirleyici değildir. Fiyat şu anda SMA200'ün +%10 üzerinde; bu, uzun vadeli tez için bir sinyal değil, yalnızca olası bir giriş zamanlaması notu olarak değerlendirilmelidir.", "horizon": "5y"}, "red_flags": [{"code": "DILUTION", "message": "Hisse sayısı hızla artıyor (seyrelme riski)", "detail": "Dolaşımdaki hisse sayısı yıllık %38.9 arttı (eşik %5). Mevcut ortaklar önemli ölçüde seyreliyor."}, {"code": "SBC_HIGH", "message": "Hisse bazlı ödemeler gelire göre yüksek", "detail": "Hisse bazlı ödemeler (SBC), gelirin %15.6'i (eşik %10). Bu, raporlanan kârlılığın gerçek nakit ekonomisini abartabileceği anlamına gelir."}], "entity_name": null}</script>
+
+<div class="page">
+  <nav class="topnav" id="topnav"></nav>
+  <div id="body"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var raw = document.getElementById("report-data").textContent;
+  var data;
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    document.getElementById("body").innerHTML =
+      '<div class="card"><p>Report data could not be read.</p></div>';
+    return;
+  }
+
+  var topnavEl = document.getElementById("topnav");
+  var bodyEl = document.getElementById("body");
+
+  // -------------------------------------------------------------------
+  // Formatting helpers -- every one of these is None-safe: a missing/
+  // non-numeric value always renders "--", never "None"/"NaN"/"undefined".
+  // -------------------------------------------------------------------
+
+  function isNum(v) {
+    return v !== null && v !== undefined && v !== "" && !Number.isNaN(Number(v));
+  }
+
+  function escapeHtml(value) {
+    var div = document.createElement("div");
+    div.textContent = value === null || value === undefined ? "" : String(value);
+    return div.innerHTML;
+  }
+
+  function fmtMoney(v) {
+    if (!isNum(v)) return "—";
+    var num = Number(v);
+    var sign = num < 0 ? "-" : "";
+    var abs = Math.abs(num);
+    var decimals = Number.isInteger(abs) ? 0 : 2;
+    return sign + "$" + abs.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  }
+
+  // Renders a decimal fraction (0.08 -> "8%") -- used for sensitivity-table
+  // axis labels (growth_values/dr_values, which arrive as decimal fractions).
+  function fmtPct(v) {
+    if (!isNum(v)) return "—";
+    var pct = Number(v) * 100;
+    var rounded = Math.round(pct * 10) / 10;
+    var text = (Math.abs(rounded % 1) < 1e-9) ? rounded.toFixed(0) : rounded.toFixed(1);
+    return text + "%";
+  }
+
+  // Renders an already-percentage number (e.g. 40.0, NOT a decimal fraction)
+  // with no sign -- used for entry_plan's size_pct (interpret layer already
+  // computes this as a percentage, not a decimal fraction).
+  function fmtRawPct(v) {
+    if (!isNum(v)) return "—";
+    var num = Number(v);
+    var rounded = Math.round(num * 10) / 10;
+    var text = (Math.abs(rounded % 1) < 1e-9) ? rounded.toFixed(0) : rounded.toFixed(1);
+    return text + "%";
+  }
+
+  // Renders an already-percentage number with an explicit +/- sign -- used
+  // for scenario_returns' ret_lo_pct/ret_hi_pct.
+  function fmtSignedPct(v) {
+    if (!isNum(v)) return "—";
+    var num = Number(v);
+    var sign = num < 0 ? "-" : "+";
+    return sign + Math.abs(num).toFixed(1) + "%";
+  }
+
+  // Compact dollar formatting for large revenue figures (e.g. 25378308623.19
+  // -> "$25.4B") -- used only by the hyper-grower "Fiyatın iması" line, where
+  // fmtMoney's full-precision output would be unreadable.
+  function fmtCompactMoney(v) {
+    if (!isNum(v)) return "—";
+    var num = Number(v);
+    var sign = num < 0 ? "-" : "";
+    var abs = Math.abs(num);
+    var scaled = abs, suffix = "";
+    if (abs >= 1e12) { scaled = abs / 1e12; suffix = "T"; }
+    else if (abs >= 1e9) { scaled = abs / 1e9; suffix = "B"; }
+    else if (abs >= 1e6) { scaled = abs / 1e6; suffix = "M"; }
+    else if (abs >= 1e3) { scaled = abs / 1e3; suffix = "K"; }
+    return sign + "$" + scaled.toFixed(1) + suffix;
+  }
+
+  // Renders a decimal fraction in the Turkish percent-first convention
+  // (0.481 -> "%48.1") -- matches the style already used by the engine's
+  // own Turkish strings (e.g. hyper_growth_detail.reasons' "Gelir CAGR
+  // %48.9"); fmtPct/fmtRawPct above are English-style (number-then-%) and
+  // stay as-is for their existing (non-Turkish-prose) call sites.
+  function fmtPctTr(v, decimals) {
+    if (!isNum(v)) return "—";
+    var pct = Number(v) * 100;
+    var d = decimals === undefined ? 1 : decimals;
+    return "%" + pct.toFixed(d);
+  }
+
+  // growth/discount_rate/note arrive as ready-made, human-readable strings
+  // (often Turkish, e.g. "%8 büyüme") from every provider -- never reformat
+  // or translate them, just guard against missing values.
+  function safeText(v) {
+    return v === null || v === undefined || v === "" ? "—" : String(v);
+  }
+
+  function hexToRgba(hex, alpha) {
+    var h = hex.replace("#", "");
+    var r = parseInt(h.substring(0, 2), 16);
+    var g = parseInt(h.substring(2, 4), 16);
+    var b = parseInt(h.substring(4, 6), 16);
+    return "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
+  }
+
+  // Maps a verdict/label string onto one of four color buckets. Order
+  // matters: the "YÜKSEK BEKLENTİ" (hyper-grower) check runs before the red
+  // check so its distinct caution styling is never swallowed by a
+  // coincidental substring match, red-bucket keywords are checked before
+  // falling back to amber, so e.g. "AŞIRI ALIM" (contains "ALIM") is never
+  // mistaken for something else, and unrecognized/empty text defaults to
+  // the neutral amber bucket.
+  // UCUZ/AŞIRI SATIM/UYUMLU -> green, MAKUL/NÖTR/KISMEN -> amber,
+  // YÜKSEK BEKLENTİ FİYATLANMIŞ -> caution (distinct amber/orange),
+  // PAHALI/AŞIRI ALIM/UYUMSUZ -> red.
+  function bucketColor(text) {
+    if (!text) return "amber";
+    var s = String(text).toUpperCase();
+    if (s.indexOf("UCUZ") !== -1 || s.indexOf("AŞIRI SATIM") !== -1 || s.indexOf("UYUMLU") !== -1) return "green";
+    if (s.indexOf("YÜKSEK BEKLENTİ") !== -1 || s.indexOf("YUKSEK BEKLENTI") !== -1) return "caution";
+    if (s.indexOf("PAHALI") !== -1 || s.indexOf("AŞIRI ALIM") !== -1 || s.indexOf("UYUMSUZ") !== -1) return "red";
+    return "amber";
+  }
+
+  // Confidence-badge color: YÜKSEK -> green, ORTA -> amber, DÜŞÜK -> red.
+  function confidenceColor(text) {
+    if (!text) return "amber";
+    var s = String(text).toUpperCase();
+    if (s.indexOf("YÜKSEK") !== -1 || s.indexOf("YUKSEK") !== -1) return "green";
+    if (s.indexOf("DÜŞÜK") !== -1 || s.indexOf("DUSUK") !== -1) return "red";
+    return "amber";
+  }
+
+  var GAUGE_POSITION = { green: 10, amber: 50, caution: 72, red: 90 };
+  var SCENARIO_LABEL = { bear: "BEAR", base: "BASE", bull: "BULL" };
+  var SCENARIO_ORDER = ["bull", "base", "bear"];
+  var SCENARIO_HEX = { bear: "#ffb4ab", base: "#5aa7ff", bull: "#4de082" };
+  // Chrome-level labels for the raw triangulation signal codes
+  // (valuation.triangulation.signals -- lowercase internal codes, not
+  // free-text meant for direct display).
+  var SIGNAL_LABEL = { ucuz: "CHEAP", makul: "FAIR", pahali: "EXPENSIVE", veri_yok: "NO DATA" };
+  var HORIZON_SHORT = { "3m": "3M", "1y": "1Y", "5y": "5Y" };
+
+  function signalLabel(s) {
+    if (!s) return "—";
+    return SIGNAL_LABEL[String(s).toLowerCase()] || String(s).toUpperCase();
+  }
+
+  function horizonLabel(v) {
+    return HORIZON_SHORT[v] || String(v || "—").toUpperCase();
+  }
+
+  // -------------------------------------------------------------------
+  // Shared horizon-toggle pill row. `values` is the ordered list of
+  // horizon codes to show (defaults to the standard three); `interactive`
+  // wires a click handler that calls `onSelect(value)` -- used by the
+  // search-mode nav control, while the header's own toggle is a plain
+  // read-only indicator of which horizon the current report reflects.
+  // -------------------------------------------------------------------
+  function horizonToggleHtml(values, current, interactive, idAttr) {
+    var pills = (values || ["3m", "1y", "5y"]).map(function (v) {
+      var active = v === current ? " active" : "";
+      return '<button type="button" class="horizon-pill' + active + '" data-horizon="' +
+        escapeHtml(v) + '">' + escapeHtml(horizonLabel(v)) + '</button>';
+    }).join("");
+    var idHtml = idAttr ? ' id="' + idAttr + '"' : "";
+    return '<div class="horizon-toggle' + (interactive ? " interactive" : "") + '"' + idHtml + '>' + pills + '</div>';
+  }
+
+  // ===================================================================
+  // Section builders -- shared by both modes via renderBody().
+  // ===================================================================
+
+  // ---- Header card ------------------------------------------------------
+  function headerCardHtml(payload) {
+    var priceText = fmtMoney(payload.price);
+    var sourceNote = "SEC EDGAR + Stooq" + (payload.as_of ? " · as of " + escapeHtml(payload.as_of) : "");
+    var entityHtml = payload.entity_name
+      ? '<span class="entity-name">' + escapeHtml(payload.entity_name) + '</span>'
+      : "";
+    return (
+      '<div class="card">' +
+        '<div class="header-row">' +
+          '<div class="header-left">' +
+            '<div class="ticker-line">' +
+              '<span class="ticker">' + escapeHtml(payload.ticker || "—") + '</span>' +
+              entityHtml +
+            '</div>' +
+            '<div class="source-note">' + sourceNote + '</div>' +
+          '</div>' +
+          '<div class="header-right">' +
+            '<div class="price-value">' + priceText + '</div>' +
+            horizonToggleHtml(["3m", "1y", "5y"], payload.horizon, false) +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  // ---- Signal-weight bar --------------------------------------------------
+  function weightBarHtml(weights) {
+    var w = weights || {};
+    var f = typeof w.fundamental === "number" ? w.fundamental : 0.5;
+    var t = typeof w.technical === "number" ? w.technical : 0.5;
+    var fPct = Math.round(f * 100);
+    var tPct = Math.round(t * 100);
+    return (
+      '<div class="weight-bar">' +
+        '<div class="weight-seg weight-fundamental" style="width:' + fPct + '%;">FUNDAMENTAL ' + fPct + '%</div>' +
+        '<div class="weight-seg weight-technical" style="width:' + tPct + '%;">TECHNICAL ' + tPct + '%</div>' +
+      '</div>'
+    );
+  }
+
+  // ---- Fair-value fan chart ------------------------------------------------
+  // Horizontal-ruler price scale per scenario band: min(bear.lo, price)*0.95
+  // .. max(bull.hi, price)*1.05, falling back to whatever numeric values
+  // *are* available when bear/bull/price are partially missing, so the
+  // chart still renders something useful rather than an all-or-nothing
+  // empty state.
+  function computeFanScale(fv, price) {
+    var bear = fv.bear || {}, bull = fv.bull || {}, base = fv.base || {};
+    var bearLo = isNum(bear.lo) ? Number(bear.lo) : null;
+    var bullHi = isNum(bull.hi) ? Number(bull.hi) : null;
+    var p = isNum(price) ? Number(price) : null;
+    var fallback = [bearLo, bullHi, p, base.lo, base.hi, bear.hi, bull.lo]
+      .map(function (v) { return isNum(v) ? Number(v) : null; })
+      .filter(function (v) { return v !== null; });
+    if (fallback.length === 0) return null;
+
+    var lowAnchor = (bearLo !== null && p !== null) ? Math.min(bearLo, p) :
+      (bearLo !== null ? bearLo : (p !== null ? p : Math.min.apply(null, fallback)));
+    var highAnchor = (bullHi !== null && p !== null) ? Math.max(bullHi, p) :
+      (bullHi !== null ? bullHi : (p !== null ? p : Math.max.apply(null, fallback)));
+
+    var minV = lowAnchor * 0.95;
+    var maxV = highAnchor * 1.05;
+    if (minV > maxV) { var t = minV; minV = maxV; maxV = t; }
+    if (minV === maxV) {
+      var bump = Math.max(1, Math.abs(minV) * 0.1);
+      minV -= bump;
+      maxV += bump;
+    }
+    return { minV: minV, maxV: maxV };
+  }
+
+  // ---- Hyper-grower "Fiyatın iması" + expected-value note (Milestone E) --
+  // Only rendered when valuation.hyper_growth is true; every existing
+  // non-hyper render path is unaffected since this returns "" otherwise.
+  // Degrades through the three tiers HYPER_SPEC.md Sec.6 describes,
+  // depending on which implied fields the engine's reverse bisection
+  // managed to solve for (it can fail to converge for either growth or
+  // margin independently) -- never renders "None"/"NaN".
+  function hyperGrowthExtraHtml(valuation) {
+    if (!valuation || !valuation.hyper_growth) return "";
+    var detail = valuation.hyper_growth_detail || {};
+    var implied = detail.implied || {};
+    var impliedText;
+    if (isNum(implied.growth) && isNum(implied.revenue_10y)) {
+      var revText = fmtCompactMoney(implied.revenue_10y);
+      var multText = isNum(implied.revenue_multiple) ? Number(implied.revenue_multiple).toFixed(1) : "—";
+      impliedText = "Fiyatın iması: 10 yılda " + revText + " revenue (bugünün " + multText + " katı), ~" +
+        fmtPctTr(implied.growth) + " büyüme, " + fmtPctTr(implied.steady_state_margin) + " olgun FCF marjı";
+      if (isNum(implied.tam_share)) {
+        impliedText += " = TAM'ın " + fmtPctTr(implied.tam_share) + "'si";
+      }
+    } else if (isNum(implied.steady_state_margin)) {
+      impliedText = "Fiyatın iması: %40 büyümede bile ~" + fmtPctTr(implied.steady_state_margin) +
+        " olgun FCF marjı gerektiriyor (makul büyüme aralığının çok üstünde)";
+    } else {
+      impliedText = "Fiyat, makul büyüme aralığının belirgin şekilde dışında bir beklenti ima ediyor.";
+    }
+
+    var evHtml = isNum(detail.expected_value)
+      ? '<div class="hyper-ev-line">Olasılık-ağırlıklı beklenen değer: ' + fmtMoney(detail.expected_value) + '</div>'
+      : "";
+
+    return (
+      '<div class="hyper-note">' +
+        '<div class="hyper-implied-line">' + escapeHtml(impliedText) + '</div>' +
+        evHtml +
+      '</div>'
+    );
+  }
+
+  function fanChartCardHtml(result, price) {
+    var fv = result.fair_value_range || {};
+    var scale = computeFanScale(fv, price);
+    var innerHtml;
+    if (!scale) {
+      innerHtml = '<div class="fan-empty muted">Not enough data for a valuation scenario.</div>';
+    } else {
+      var minV = scale.minV, maxV = scale.maxV;
+      var span = (maxV - minV) || 1;
+      var pctOf = function (v) { return ((v - minV) / span) * 100; };
+
+      var labelsHtml = SCENARIO_ORDER.map(function (k) {
+        return "<span>" + SCENARIO_LABEL[k] + "</span>";
+      }).join("");
+
+      var rowsHtml = SCENARIO_ORDER.map(function (key) {
+        var b = fv[key];
+        var bandHtml = "";
+        if (b && isNum(b.lo) && isNum(b.hi)) {
+          var left = pctOf(Number(b.lo));
+          var width = Math.max(0.6, pctOf(Number(b.hi)) - left);
+          var hex = SCENARIO_HEX[key];
+          bandHtml =
+            '<div class="fan-band" style="left:' + left + '%; width:' + width + '%; ' +
+            'background:' + hexToRgba(hex, 0.35) + '; border-color:' + hex + ';"></div>';
+        }
+        return '<div class="fan-row-track" data-scenario="' + key + '">' + bandHtml + '</div>';
+      }).join("");
+
+      var markerHtml = "";
+      if (isNum(price)) {
+        var markerLeft = Math.min(99, Math.max(0, pctOf(Number(price))));
+        markerHtml =
+          '<div class="fan-marker" style="left:' + markerLeft + '%;">' +
+            '<span class="fan-marker-price">▼ ' + fmtMoney(price) + '</span>' +
+            '<span class="fan-marker-arrow">▼</span>' +
+          '</div>';
+      }
+
+      innerHtml =
+        '<div class="fan-outer">' +
+          '<div class="fan-labels">' + labelsHtml + '</div>' +
+          '<div class="fan-plot">' + rowsHtml + markerHtml + '</div>' +
+        '</div>' +
+        '<div class="fan-ticks">' +
+          '<span>' + fmtMoney(minV) + '</span>' +
+          '<span>' + fmtMoney((minV + maxV) / 2) + '</span>' +
+          '<span>' + fmtMoney(maxV) + '</span>' +
+        '</div>' +
+        '<div class="assumption-strip" id="assumption-strip">' +
+          '<div class="assum-col"><div class="assum-label">Scenario</div><div class="assum-value" id="assum-scenario">—</div></div>' +
+          '<div class="assum-col"><div class="assum-label">Growth</div><div class="assum-value" id="assum-growth">—</div></div>' +
+          '<div class="assum-col"><div class="assum-label">Discount</div><div class="assum-value" id="assum-discount">—</div></div>' +
+          '<div class="assum-col assum-rationale"><div class="assum-label">Rationale</div><div class="assum-value" id="assum-rationale">—</div></div>' +
+        '</div>';
+    }
+    innerHtml += hyperGrowthExtraHtml(result.valuation);
+    return '<div class="card"><div class="card-title">Fair Value Fan Chart</div>' + innerHtml + '</div>';
+  }
+
+  // Updates the assumption strip's four cells for one scenario key
+  // (bear/base/bull) and highlights the matching fan row -- called once on
+  // initial render (defaulting to "base") and again on every row click.
+  function selectFanScenario(fv, key, scenarioReturns) {
+    var rows = bodyEl.querySelectorAll(".fan-row-track");
+    rows.forEach(function (r) {
+      r.classList.toggle("selected", r.getAttribute("data-scenario") === key);
+    });
+    var b = (fv || {})[key] || {};
+    var scenarioEl = document.getElementById("assum-scenario");
+    var growthEl = document.getElementById("assum-growth");
+    var discountEl = document.getElementById("assum-discount");
+    var rationaleEl = document.getElementById("assum-rationale");
+    if (!scenarioEl) return;
+    scenarioEl.textContent = SCENARIO_LABEL[key] || String(key || "—").toUpperCase();
+    growthEl.textContent = safeText(b.growth);
+    discountEl.textContent = safeText(b.discount_rate);
+    var ret = (scenarioReturns || {})[key];
+    var rationale = safeText(b.note);
+    if (ret && (isNum(ret.ret_lo_pct) || isNum(ret.ret_hi_pct))) {
+      var retText = "Return " + fmtSignedPct(ret.ret_lo_pct) + " to " + fmtSignedPct(ret.ret_hi_pct);
+      rationale = rationale === "—" ? retText : rationale + " · " + retText;
+    }
+    rationaleEl.textContent = rationale;
+  }
+
+  function wireFanChart(fv, scenarioReturns) {
+    var rows = bodyEl.querySelectorAll(".fan-row-track");
+    if (rows.length === 0) return;
+    rows.forEach(function (r) {
+      r.addEventListener("click", function () {
+        selectFanScenario(fv, r.getAttribute("data-scenario"), scenarioReturns);
+      });
+    });
+    selectFanScenario(fv, "base", scenarioReturns);
+  }
+
+  // ---- Triangulation card ---------------------------------------------
+  // Only rendered when result.valuation.triangulation is present; older/
+  // simpler result dicts simply skip this card.
+  function triangulationRowHtml(valuation, confidenceOverride) {
+    var tri = (valuation || {}).triangulation;
+    if (!tri) return "";
+    var signals = tri.signals || {};
+    var direction = tri.direction;
+    var confidence = confidenceOverride || tri.confidence;
+
+    // For financial/reit sectors the DCF slot is really the P/B×ROE anchor
+    // (dcf.enabled === false in that case) -- label it accordingly.
+    var dcfLabel = (valuation.dcf && valuation.dcf.enabled === false) ? "P/B×ROE" : "DCF";
+    var methods = [
+      { key: "dcf", label: dcfLabel },
+      { key: "reverse_dcf", label: "REVERSE DCF" },
+      { key: "multiples", label: "MULTIPLES" },
+    ];
+
+    var chips = methods.map(function (m) {
+      var sig = signals[m.key];
+      var icon = "–", cls = "tri-muted";
+      if (sig && String(sig).toLowerCase() !== "veri_yok") {
+        if (direction && String(direction).toLowerCase() !== "belirsiz" &&
+            String(sig).toLowerCase() === String(direction).toLowerCase()) {
+          icon = "✓";
+          cls = "tri-agree";
+        } else {
+          icon = "✗";
+          cls = "tri-disagree";
+        }
+      }
+      return (
+        '<div class="tri-chip ' + cls + '">' +
+          '<span class="tri-icon">' + icon + '</span>' +
+          '<span class="tri-label">' + escapeHtml(m.label) + '</span>' +
+          '<span class="tri-signal">' + escapeHtml(signalLabel(sig)) + '</span>' +
+        '</div>'
+      );
+    }).join("");
+
+    var confColor = confidenceColor(confidence);
+    return (
+      '<div class="card">' +
+        '<div class="card-title">Triangulation</div>' +
+        '<div class="triangulation-row">' +
+          '<div class="tri-chips">' + chips + '</div>' +
+          '<span><span class="badge-label">Confidence</span><span class="badge badge-' + confColor + '">' +
+            escapeHtml(confidence || "—") + '</span></span>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  // ---- Verdict cards (fundamental/technical/profile fit) ------------------
+  function verdictCardHtml(label, verdictText, noteText) {
+    var color = bucketColor(verdictText);
+    var pos = GAUGE_POSITION[color];
+    return (
+      '<div class="card">' +
+        '<div class="card-title">' + escapeHtml(label) + '</div>' +
+        '<div class="verdict-card-body">' +
+          '<div class="gauge"><div class="gauge-marker" style="left:' + pos + '%;">▲</div></div>' +
+          '<div><span class="badge badge-' + color + '">' + escapeHtml(verdictText || "—") + '</span></div>' +
+          '<div class="verdict-note">' + escapeHtml(noteText || "—") + '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  // ---- Sensitivity analysis card -------------------------------------------
+  // Only rendered when result.valuation.sensitivity is present.
+  function sensitivityTableHtml(sens) {
+    if (!sens || !sens.matrix || !sens.matrix.length) return "";
+    var growthValues = sens.growth_values || [];
+    var drValues = sens.dr_values || [];
+    var matrix = sens.matrix || [];
+    var baseRow = Math.floor(matrix.length / 2);
+    var baseCol = Math.floor((matrix[0] || []).length / 2);
+
+    var headerCells = drValues.map(function (d) {
+      return '<th class="sens-col-h">' + fmtPct(d) + '</th>';
+    }).join("");
+
+    var bodyRows = matrix.map(function (rowArr, ri) {
+      var cells = (rowArr || []).map(function (val, ci) {
+        var isBase = ri === baseRow && ci === baseCol;
+        return '<td class="sens-cell' + (isBase ? " sens-base" : "") + '">' + fmtMoney(val) + '</td>';
+      }).join("");
+      var rowLabel = growthValues[ri] !== undefined ? fmtPct(growthValues[ri]) : "—";
+      return '<tr><th class="sens-row-h">' + rowLabel + '</th>' + cells + '</tr>';
+    }).join("");
+
+    var uncertaintyTag = sens.high_uncertainty
+      ? '<span class="uncertainty-tag">High Uncertainty</span>'
+      : "";
+
+    return (
+      '<div class="card">' +
+        '<div class="card-title">Sensitivity Analysis' + (uncertaintyTag ? " " + uncertaintyTag : "") + '</div>' +
+        '<table class="sensitivity-table">' +
+          '<thead><tr><th></th>' + headerCells + '</tr></thead>' +
+          '<tbody>' + bodyRows + '</tbody>' +
+        '</table>' +
+        '<div class="sens-axis-note">Rows: growth · Columns: discount rate · center cell = base case</div>' +
+      '</div>'
+    );
+  }
+
+  // ---- Staged entry plan card ----------------------------------------------
+  // Only rendered when result.entry_plan is present; an empty list means the
+  // planning layer found no usable mechanical trigger levels (missing price
+  // or structural reference levels), not an error -- degrades to a plain
+  // sentence rather than an empty table.
+  function entryPlanHtml(entryPlan) {
+    var sub = '<div class="card-sub">These levels are a mechanical reference -- not a buy order or investment advice.</div>';
+    if (!entryPlan || entryPlan.length === 0) {
+      return (
+        '<div class="card"><div class="card-title">Staged Entry Plan</div>' + sub +
+        '<p class="empty-note">Not enough price or structural reference levels (bear/base/bull range, 52-week low, SMA50/SMA200) to build a mechanical tranche plan.</p></div>'
+      );
+    }
+    var rows = entryPlan.map(function (t) {
+      var zone = t.price_zone || {};
+      var mainRow =
+        '<tr>' +
+          '<td>' + escapeHtml(isNum(t.n) ? String(t.n) : "—") + '</td>' +
+          '<td class="entry-trigger">' + escapeHtml(t.trigger || "—") + '</td>' +
+          '<td>' + fmtMoney(zone.lo) + '–' + fmtMoney(zone.hi) + '</td>' +
+          '<td>' + fmtRawPct(t.size_pct) + '</td>' +
+          '<td>' + fmtMoney(t.invalidation) + '</td>' +
+          '<td>' + fmtMoney(t.target) + '</td>' +
+          '<td>' + (isNum(t.rr) ? Number(t.rr).toFixed(1) + ":1" : "—") + '</td>' +
+        '</tr>';
+      var noteRow = t.note
+        ? '<tr class="entry-note-row"><td colspan="7">' + escapeHtml(t.note) + '</td></tr>'
+        : "";
+      return mainRow + noteRow;
+    }).join("");
+    return (
+      '<div class="card"><div class="card-title">Staged Entry Plan</div>' + sub +
+        '<table class="sensitivity-table entry-plan-table">' +
+          '<thead><tr>' +
+            '<th>#</th><th>Trigger</th><th>Price Zone</th><th>Size</th>' +
+            '<th>Invalidation</th><th>Target</th><th>R:R</th>' +
+          '</tr></thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+      '</div>'
+    );
+  }
+
+  // ---- Stop-adding signals card ---------------------------------------
+  // An empty list is the common case (no signal active), not an error.
+  function stopAddingHtml(stopAdding) {
+    if (!stopAdding || stopAdding.length === 0) {
+      return (
+        '<div class="card"><div class="card-title">Stop-Adding Signals</div>' +
+        '<p class="empty-note">No active stop-adding signal right now.</p></div>'
+      );
+    }
+    var items = stopAdding.map(function (s) {
+      return '<li>' + escapeHtml(s.message || s.code || "") + '</li>';
+    }).join("");
+    return (
+      '<div class="card"><div class="card-title">Stop-Adding Signals</div>' +
+        '<div class="alert-box"><ul>' + items + '</ul></div>' +
+      '</div>'
+    );
+  }
+
+  // ---- Thesis metric card ---------------------------------------------
+  // result.thesis_metric is always a dict (never null) per planning.py, but
+  // every field inside it may still be None -- degrades to "not available"
+  // rather than "None"/blank.
+  function thesisMetricHtml(tm) {
+    if (!tm) return "";
+    var name = tm.name ? escapeHtml(tm.name) : "Thesis Metric";
+    var valueText = tm.latest_value ? escapeHtml(tm.latest_value) : "not available";
+    var trendColor = "amber";
+    if (tm.trend) {
+      var s = String(tm.trend).toLowerCase();
+      if (s.indexOf("iyileş") !== -1 || s.indexOf("iyiles") !== -1) trendColor = "green";
+      else if (s.indexOf("boz") !== -1) trendColor = "red";
+    }
+    var trendHtml = tm.trend
+      ? ' <span class="badge badge-' + trendColor + '">' + escapeHtml(tm.trend) + '</span>'
+      : "";
+    var rationaleHtml = tm.rationale
+      ? '<p class="thesis-rationale">' + escapeHtml(tm.rationale) + '</p>'
+      : "";
+    return (
+      '<div class="card"><div class="card-title">Thesis Metric</div>' +
+        '<p class="thesis-metric-line">' + name + ': <b>' + valueText + '</b>' + trendHtml + '</p>' +
+        rationaleHtml +
+      '</div>'
+    );
+  }
+
+  // ---- Scenario returns card -----------------------------------------------
+  // None-safe: a scenario with no computable return renders "—" rather than
+  // "None". Returns "" (card omitted) when the field is entirely absent.
+  function scenarioReturnsListHtml(scenarioReturns) {
+    if (!scenarioReturns) return "";
+    var rows = SCENARIO_ORDER.map(function (key) {
+      var b = scenarioReturns[key] || {};
+      var loOk = isNum(b.ret_lo_pct), hiOk = isNum(b.ret_hi_pct);
+      var text = (loOk || hiOk) ? (fmtSignedPct(b.ret_lo_pct) + " to " + fmtSignedPct(b.ret_hi_pct)) : "—";
+      return (
+        '<div class="scen-ret-row">' +
+          '<span class="scen-ret-name">' + escapeHtml(SCENARIO_LABEL[key] || key) + '</span>' +
+          '<span class="scen-ret-value">' + text + '</span>' +
+        '</div>'
+      );
+    }).join("");
+    return (
+      '<div class="card"><div class="card-title">Scenario Returns</div>' +
+        '<div class="scenario-returns-list">' + rows + '</div>' +
+      '</div>'
+    );
+  }
+
+  // ---- Red flags card (only if flags exist) --------------------------------
+  function flagsCardHtml(flags) {
+    if (!flags || flags.length === 0) return "";
+    var items = flags.map(function (f) {
+      return (
+        '<li>' + escapeHtml(f.message || f.code || "") +
+        (f.detail ? '<span class="item-detail">' + escapeHtml(f.detail) + '</span>' : '') +
+        '</li>'
+      );
+    }).join("");
+    return (
+      '<div class="card"><div class="card-title">⚠ Red Flags</div>' +
+        '<div class="alert-box"><ul>' + items + '</ul></div>' +
+      '</div>'
+    );
+  }
+
+  // ---- Footer analysis (catalyst + summary) --------------------------------
+  // No fabricated "Recommendation: ..." line -- only the real catalyst/
+  // summary fields the pipeline actually produced.
+  function footerAnalysisHtml(result) {
+    var catalyst = result.catalyst;
+    var summary = result.summary;
+    var catalystHtml = catalyst
+      ? '<p class="catalyst-line"><span class="badge-label">Catalyst</span>' + escapeHtml(catalyst) + '</p>'
+      : "";
+    return (
+      '<div class="card">' +
+        catalystHtml +
+        '<p class="summary-text">' + escapeHtml(summary || "No summary available.") + '</p>' +
+      '</div>'
+    );
+  }
+
+  function globalFooterHtml() {
+    return (
+      '<div class="global-footer">' +
+        '© Verdict Analysis Systems · SEC EDGAR + price data · educational use only, not investment advice.' +
+      '</div>'
+    );
+  }
+
+  // ---- Error card (result.error) -------------------------------------------
+  function errorCardHtml(payload, result) {
+    var errorLabel = result.error ? " (" + escapeHtml(String(result.error)) + ")" : "";
+    return (
+      headerCardHtml(payload) +
+      '<div class="card">' +
+        '<div class="error-box">' +
+          '<strong>Analysis unavailable' + errorLabel + '</strong>' +
+          '<p>' + escapeHtml(result.summary || "An unknown error occurred.") + '</p>' +
+        '</div>' +
+      '</div>' +
+      globalFooterHtml()
+    );
+  }
+
+  // ===================================================================
+  // renderBody -- the single body-rendering function shared by report
+  // mode (called once, directly on `data`) and search mode (called again
+  // on every successful /api/analyze fetch, on a reshaped payload).
+  // `payload` shape: {ticker, horizon, price, as_of, result, metrics,
+  // technical, red_flags, entity_name}.
+  // ===================================================================
+  function renderBody(payload) {
+    var result = payload.result || {};
+
+    if (result.error) {
+      bodyEl.innerHTML = errorCardHtml(payload, result);
+      return;
+    }
+
+    var fv = result.fair_value_range || {};
+    var profileFit = result.profile_fit || {};
+    var technical = payload.technical || {};
+    var technicalDetail = technical.verdict_detail || null;
+    // result.valuation (SPEC.md Sec.11) is the richer engine payload; it's
+    // absent for older callers or when phase-2 interpret() never ran (e.g.
+    // an LLM error) -- the triangulation/sensitivity cards simply don't
+    // render in that case, degrading to the simpler pre-valuation card set.
+    var valuation = result.valuation || null;
+
+    var html =
+      headerCardHtml(payload) +
+      weightBarHtml(result._weights) +
+      fanChartCardHtml(result, payload.price) +
+      (valuation ? triangulationRowHtml(valuation, result.confidence) : "") +
+      verdictCardHtml("Fundamental", result.fundamental_verdict, result.horizon_note) +
+      verdictCardHtml("Technical", result.technical_verdict, technicalDetail || "Price data unavailable.") +
+      verdictCardHtml("Profile Fit", profileFit.verdict, profileFit.reason) +
+      (valuation ? sensitivityTableHtml(valuation.sensitivity) : "") +
+      entryPlanHtml(result.entry_plan) +
+      stopAddingHtml(result.stop_adding) +
+      thesisMetricHtml(result.thesis_metric) +
+      scenarioReturnsListHtml(result.scenario_returns) +
+      flagsCardHtml(payload.red_flags) +
+      footerAnalysisHtml(result) +
+      globalFooterHtml();
+
+    bodyEl.innerHTML = html;
+    wireFanChart(fv, result.scenario_returns);
+  }
+
+  // ===================================================================
+  // Report mode: nav = brand + generated date; body renders immediately
+  // from the baked payload.
+  // ===================================================================
+  function renderReportMode() {
+    document.title = String(data.ticker || "") + " · " + String(data.horizon || "") + " · Verdict Terminal";
+    topnavEl.innerHTML =
+      '<div class="nav-inner">' +
+        '<span class="brand">VERDICT</span>' +
+        (data.generated_on ? '<span class="nav-date">Generated ' + escapeHtml(data.generated_on) + '</span>' : "") +
+      '</div>';
+    renderBody(data);
+  }
+
+  // ===================================================================
+  // Search mode: nav carries live ticker/horizon/provider controls; the
+  // body starts in a prompt state and is replaced by renderBody() (the
+  // exact same function report mode uses) once /api/analyze succeeds.
+  // ===================================================================
+  function renderSearchMode() {
+    document.title = "Verdict Terminal";
+    var horizons = data.horizons || [["3m", "3m"], ["1y", "1y"], ["5y", "5y"]];
+    var providers = data.providers || [];
+    var state = {
+      horizon: data.default_horizon || "1y",
+      provider: data.default_provider || (providers[0] && providers[0][0]) || "",
+    };
+
+    var providerOptions = providers.map(function (p) {
+      var sel = p[0] === state.provider ? " selected" : "";
+      return '<option value="' + escapeHtml(p[0]) + '"' + sel + '>' + escapeHtml(p[1]) + '</option>';
+    }).join("");
+
+    topnavEl.innerHTML =
+      '<div class="nav-inner">' +
+        '<span class="brand">VERDICT</span>' +
+        '<div class="nav-controls">' +
+          '<input type="text" class="ticker-input" id="ticker-input" placeholder="TICKER" autocomplete="off" />' +
+          horizonToggleHtml(horizons.map(function (h) { return h[0]; }), state.horizon, true, "nav-horizon-toggle") +
+          '<select class="provider-select" id="provider-select">' + providerOptions + '</select>' +
+          '<button type="button" class="analyze-btn" id="analyze-btn">Analyse</button>' +
+        '</div>' +
+      '</div>';
+
+    bodyEl.innerHTML = '<div class="card"><div class="empty-state">Enter a ticker above and press Analyse to generate a Verdict Terminal report.</div></div>';
+
+    var tickerInput = document.getElementById("ticker-input");
+    var providerSelect = document.getElementById("provider-select");
+    var analyzeBtn = document.getElementById("analyze-btn");
+    var horizonToggleEl = document.getElementById("nav-horizon-toggle");
+
+    horizonToggleEl.addEventListener("click", function (e) {
+      var btn = e.target.closest ? e.target.closest(".horizon-pill") : null;
+      if (!btn) return;
+      state.horizon = btn.getAttribute("data-horizon");
+      horizonToggleEl.querySelectorAll(".horizon-pill").forEach(function (p) {
+        p.classList.toggle("active", p === btn);
+      });
+    });
+
+    providerSelect.addEventListener("change", function () {
+      state.provider = providerSelect.value;
+    });
+
+    function showError(message) {
+      bodyEl.innerHTML = '<div class="error-banner">' + escapeHtml(message) + '</div>';
+    }
+
+    function runAnalyze() {
+      var ticker = tickerInput.value.trim().toUpperCase();
+      if (!ticker) {
+        showError("Please enter a ticker symbol.");
+        return;
+      }
+      analyzeBtn.disabled = true;
+      tickerInput.disabled = true;
+      bodyEl.innerHTML =
+        '<div class="card"><div class="loading-state"><span class="spinner"></span>' +
+        'Running analysis for ' + escapeHtml(ticker) + ' -- this can take 10-40 seconds...</div></div>';
+
+      fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticker: ticker,
+          years: 12,
+          horizon: state.horizon,
+          provider: state.provider,
+          no_cache: false,
+        }),
+      })
+        .then(function (response) {
+          return response.json().then(function (json) {
+            return { ok: response.ok, json: json };
+          });
+        })
+        .then(function (res) {
+          if (!res.ok || !res.json || !res.json.ok) {
+            var message = (res.json && res.json.error) || "Failed to run analysis.";
+            showError(message);
+            return;
+          }
+          var json = res.json;
+          var technical = json.technical || null;
+          var reportPayload = {
+            ticker: ticker,
+            horizon: state.horizon,
+            price: (json.metrics || {}).price,
+            as_of: technical ? technical.as_of : null,
+            result: json.analysis || {},
+            metrics: json.metrics || {},
+            technical: technical || {},
+            red_flags: json.red_flags || [],
+            entity_name: json.name || null,
+          };
+          renderBody(reportPayload);
+        })
+        .catch(function (err) {
+          showError("Network error: " + err.message);
+        })
+        .finally(function () {
+          analyzeBtn.disabled = false;
+          tickerInput.disabled = false;
+        });
+    }
+
+    analyzeBtn.addEventListener("click", runAnalyze);
+    tickerInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        runAnalyze();
+      }
+    });
+  }
+
+  function render() {
+    if (data.mode === "search") {
+      renderSearchMode();
+    } else {
+      renderReportMode();
+    }
+  }
+
+  render();
+})();
+</script>
+
+</body>
+</html>

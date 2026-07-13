@@ -1,0 +1,673 @@
+<!--
+  sec_analyzer verdict-card report -- standalone HTML template.
+
+  This file is never served as-is: sec_analyzer.report.generator.generate_report()
+  reads it, replaces the single "{"ticker": "NVDA", "horizon": "5y", "price": 210.9600067138672, "as_of": "2026-07-10", "generated_on": "2026-07-12", "result": {"fair_value_range": {"bear": {"lo": 57.09, "hi": 69.78, "growth": "%12 büyüme", "discount_rate": "%12", "note": "FCF/hisse çapası (3.94); büyüme kaynağı: 3 yıllık net kâr CAGR (FY2023->FY2026) (uygulanan büyüme %12 büyüme); 5 yıllık iki aşamalı model + %2.5 terminal büyüme; iskonto oranı %12."}, "base": {"lo": 118.28, "hi": 144.56, "growth": "%25 büyüme", "discount_rate": "%10", "note": "FCF/hisse çapası (3.94); büyüme kaynağı: 3 yıllık net kâr CAGR (FY2023->FY2026) (uygulanan büyüme %25 büyüme); 5 yıllık iki aşamalı model + %2.5 terminal büyüme; iskonto oranı %10."}, "bull": {"lo": 165.96, "hi": 202.84, "growth": "%30 büyüme", "discount_rate": "%9", "note": "FCF/hisse çapası (3.94); büyüme kaynağı: 3 yıllık net kâr CAGR (FY2023->FY2026) (uygulanan büyüme %30 büyüme); 5 yıllık iki aşamalı model + %2.5 terminal büyüme; iskonto oranı %9."}}, "fundamental_verdict": "PAHALI", "technical_verdict": "NÖTR (RSI 57, SMA50 +%1)", "profile_fit": {"verdict": "KISMEN", "reason": "PROFIL.md bulunamadı; nötr profil varsayıldı (dosyayı oluşturmanız önerilir)."}, "cyclical_risk": "high cyclicality (stdev of YoY revenue growth = 57.1% across 4 fiscal years).", "horizon_note": "5 yıllık ufukta fundamental sinyaller öncelikli (fundamental %80 / teknik %20); RSI gibi kısa vadeli göstergeler önemsizdir. Döngüsel tepe riski kontrolü tetiklenmedi.", "key_risks": ["Alacaklar gelirden daha hızlı büyüyor"], "red_flags_comment": "Alacaklar gelirden daha hızlı büyüyor", "catalyst": "Q2 earnings ~19 Ağu", "summary": "NVIDIA CORP scores 10/10 on the deterministic checklist for FY2026 (strong (10/10 checks passed)). Strengths flagged by the screen: Profitable, Margin quality, Margin trend, Revenue growth, Earnings growth, Liquidity, Leverage, Earnings quality, FCF positive, Shareholder returns. high cyclicality (stdev of YoY revenue growth = 57.1% across 4 fiscal years). A base-scenario two-stage DCF puts fair value roughly between $118.28 and $144.56 per share, versus a current price read as PAHALI for a 5y horizon. Deterministic rule-based screen of SEC filings; educational use only, not investment advice.", "_provider": "script", "_model": "rule-based-v2", "score": {"points": 10, "max_points": 10, "checks": [{"name": "Profitable", "passed": true, "detail": "NetIncome (FY2026) = 120,067,000,000."}, {"name": "Margin quality", "passed": true, "detail": "Net margin (FY2026) = 55.6% (threshold 8.0%)."}, {"name": "Margin trend", "passed": true, "detail": "Net margin FY2026 55.6% vs FY2023 16.2% (relative change +243.4%; threshold -20%)."}, {"name": "Revenue growth", "passed": true, "detail": "Revenue CAGR FY2023->FY2026 (3y) = 100.0%."}, {"name": "Earnings growth", "passed": true, "detail": "Net income CAGR FY2023->FY2026 (3y) = 201.8%."}, {"name": "Liquidity", "passed": true, "detail": "Current ratio (FY2026) = 3.91 (threshold 1.00)."}, {"name": "Leverage", "passed": true, "detail": "Debt-to-equity (FY2026) = 0.31 (threshold 2.00)."}, {"name": "Earnings quality", "passed": true, "detail": "OperatingCashFlow (FY2026) = 102,718,000,000 vs 0.8x NetIncome = 96,053,600,000."}, {"name": "FCF positive", "passed": true, "detail": "Free cash flow (FY2026) = 96,676,000,000."}, {"name": "Shareholder returns", "passed": true, "detail": "Dividends paid (FY2026) = 974,000,000."}]}, "_horizon": "5y", "_weights": {"fundamental": 0.8, "technical": 0.2}}, "metrics": {"price": 210.96, "shares": 24514000000, "eps": 4.9, "market_cap": 5171473604583.74, "total_debt": 8468000000, "net_debt": -2137000000, "pe": 43.0531, "ps": 23.9489, "pfcf": 53.4928, "revenue_cagr_3y": 1.0005, "revenue_cagr_5y": null, "sbc_revenue": 0.0296, "shares_yoy": -0.0117, "buyback_latest": 40086000000, "dividends_latest": 974000000, "rnd_revenue": 0.0857, "fcf": 96676000000, "fcf_per_share": 3.94, "latest_fy": 2026}, "technical": {"price": 210.96, "as_of": "2026-07-10", "rsi14": 57.0, "sma50": 209.07, "sma200": 191.47, "dist_sma50_pct": 0.9, "dist_sma200_pct": 10.2, "high_52w": 235.47, "low_52w": 163.85, "range_position_pct": 65.8, "volatility_20d": 0.3611, "golden_cross": false, "death_cross": false, "sma50_above_sma200": true, "verdict": "NÖTR", "verdict_detail": "RSI 57, SMA50 +%1", "horizon_summary": "5 yıllık ufukta RSI gibi kısa vadeli momentum göstergeleri karar açısından belirleyici değildir. Fiyat şu anda SMA200'ün +%10 üzerinde; bu, uzun vadeli tez için bir sinyal değil, yalnızca olası bir giriş zamanlaması notu olarak değerlendirilmelidir.", "horizon": "5y"}, "red_flags": [{"code": "RECEIVABLES_OUTPACE", "message": "Alacaklar gelirden daha hızlı büyüyor", "detail": "Son 3 yılda alacak büyümesi gelir büyümesini geride bıraktı (FY2026: alacak %+66.8 vs gelir %+65.5; FY2025: alacak %+130.7 vs gelir %+114.2; FY2024: alacak %+161.3 vs gelir %+125.9). Bu, tahsilatların zayıfladığına veya gelirin erken kaydedildiğine işaret edebilir."}]}" placeholder below (inside the
+  <script type="application/json"> element) with a JSON blob describing one
+  ticker/horizon verdict, and writes the result to disk as one self-contained
+  file -- no external CSS/JS/fonts/CDNs, so it opens correctly straight from
+  disk (file://...) or as an email attachment.
+
+  All actual rendering happens client-side in the <script> at the bottom:
+  this file is a fixed shell, the data blob is the only variable part.
+-->
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Verdict Report</title>
+<style>
+  :root {
+    --bg: #0d1420;
+    --card-bg: #111b2b;
+    --border: #223349;
+    --text: #e7ecf5;
+    --text-dim: #8a96ab;
+    --red: #ff6b5e;
+    --amber: #ffb648;
+    --green: #4ade80;
+    --band-bear: #ff6b5e;
+    --band-base: #5aa7ff;
+    --band-bull: #4ade80;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.45;
+  }
+
+  .page {
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 28px 16px 56px;
+  }
+
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 20px;
+  }
+
+  .muted { color: var(--text-dim); }
+  .mono { font-family: var(--mono); }
+
+  /* ---- Header ------------------------------------------------------- */
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .ticker {
+    font-family: var(--mono);
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .price-line {
+    font-family: var(--mono);
+    font-size: 1.05rem;
+    margin-top: 2px;
+  }
+  .source-note {
+    font-size: 0.76rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+  .horizon-pill {
+    flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 5px 14px;
+    font-size: 0.8rem;
+    font-family: var(--mono);
+    color: var(--text);
+    height: fit-content;
+  }
+
+  /* ---- Signal-weight bar --------------------------------------------- */
+  .weight-bar {
+    display: flex;
+    height: 24px;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 20px;
+    border: 1px solid var(--border);
+  }
+  .weight-seg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    overflow: hidden;
+    font-size: 0.68rem;
+    font-family: var(--mono);
+  }
+  .weight-fundamental { background: rgba(90, 167, 255, 0.28); color: #cfe3ff; }
+  .weight-technical { background: rgba(255, 182, 72, 0.28); color: #ffe3b0; }
+
+  /* ---- Section titles -------------------------------------------------*/
+  .section-title {
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+
+  /* ---- Fan chart ------------------------------------------------------*/
+  .fan-empty {
+    font-size: 0.85rem;
+    margin-bottom: 18px;
+  }
+  .fan-outer {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .fan-labels {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    width: 34px;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    padding-top: 2px;
+  }
+  .fan-labels span {
+    height: 24px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+  }
+  .fan-labels span:last-child { margin-bottom: 0; }
+  .fan-plot {
+    position: relative;
+    flex: 1;
+    padding-top: 2px;
+  }
+  .fan-row-track {
+    position: relative;
+    height: 24px;
+    margin-bottom: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .fan-row-track:last-child { margin-bottom: 0; }
+  .fan-row-track.selected {
+    box-shadow: 0 0 0 1px var(--text-dim) inset;
+  }
+  .fan-band {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-radius: 5px;
+    border: 1px solid;
+  }
+  .fan-marker {
+    position: absolute;
+    top: -16px;
+    bottom: 0;
+    width: 0;
+    border-left: 1px dashed #cfd6e4;
+    pointer-events: none;
+  }
+  .fan-marker-arrow {
+    position: absolute;
+    top: -15px;
+    left: -6px;
+    font-size: 10px;
+    color: var(--text);
+  }
+  .fan-marker-price {
+    position: absolute;
+    top: -30px;
+    left: -22px;
+    font-size: 0.66rem;
+    font-family: var(--mono);
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .fan-ticks {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--text-dim);
+    margin: 8px 0 6px 42px;
+  }
+  .fan-assumptions {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--text-dim);
+    min-height: 1.3em;
+    margin: 0 0 20px 42px;
+  }
+
+  /* ---- Verdict boxes ---------------------------------------------------*/
+  .verdicts-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  @media (max-width: 480px) {
+    .verdicts-grid { grid-template-columns: 1fr; }
+  }
+  .verdict-box {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .verdict-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+  .verdict-pill {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    margin-bottom: 10px;
+    max-width: 100%;
+    overflow-wrap: break-word;
+  }
+  .verdict-green { background: rgba(74, 222, 128, 0.15); color: var(--green); border: 1px solid rgba(74, 222, 128, 0.4); }
+  .verdict-amber { background: rgba(255, 182, 72, 0.15); color: var(--amber); border: 1px solid rgba(255, 182, 72, 0.4); }
+  .verdict-red { background: rgba(255, 107, 94, 0.15); color: var(--red); border: 1px solid rgba(255, 107, 94, 0.4); }
+  .gauge {
+    position: relative;
+    height: 6px;
+    border-radius: 3px;
+    margin: 0 4px 10px 4px;
+    background: linear-gradient(to right, var(--green), var(--amber), var(--red));
+  }
+  .gauge-marker {
+    position: absolute;
+    top: -9px;
+    transform: translateX(-50%);
+    font-size: 0.7rem;
+    color: var(--text);
+  }
+  .verdict-note {
+    font-size: 0.74rem;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+
+  /* ---- Red flags --------------------------------------------------------*/
+  .flags-box {
+    border: 1px solid rgba(255, 182, 72, 0.4);
+    background: rgba(255, 182, 72, 0.06);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 18px;
+  }
+  .flags-title {
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--amber);
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+  .flags-box ul {
+    margin: 0;
+    padding-left: 18px;
+  }
+  .flags-box li {
+    margin-bottom: 8px;
+    font-size: 0.84rem;
+  }
+  .flags-box li:last-child { margin-bottom: 0; }
+  .flags-box li .flag-detail {
+    display: block;
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    margin-top: 2px;
+  }
+
+  /* ---- Catalyst + summary -----------------------------------------------*/
+  .panel { margin-bottom: 18px; }
+  .catalyst-line {
+    font-family: var(--mono);
+    font-size: 0.86rem;
+    margin: 0 0 10px;
+  }
+  .summary-text {
+    font-size: 0.9rem;
+    line-height: 1.55;
+    margin: 0;
+  }
+
+  /* ---- Footer -------------------------------------------------------- */
+  .footer {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+    line-height: 1.5;
+  }
+
+  /* ---- Error card ------------------------------------------------------*/
+  .error-box {
+    border: 1px solid rgba(255, 107, 94, 0.5);
+    background: rgba(255, 107, 94, 0.08);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin: 16px 0;
+  }
+  .error-box strong {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--red);
+  }
+  .error-box p { margin: 0; font-size: 0.88rem; }
+</style>
+</head>
+<body>
+
+<script id="report-data" type="application/json">{"ticker": "NVDA", "horizon": "5y", "price": 210.9600067138672, "as_of": "2026-07-10", "generated_on": "2026-07-12", "result": {"fair_value_range": {"bear": {"lo": 57.09, "hi": 69.78, "growth": "%12 büyüme", "discount_rate": "%12", "note": "FCF/hisse çapası (3.94); büyüme kaynağı: 3 yıllık net kâr CAGR (FY2023->FY2026) (uygulanan büyüme %12 büyüme); 5 yıllık iki aşamalı model + %2.5 terminal büyüme; iskonto oranı %12."}, "base": {"lo": 118.28, "hi": 144.56, "growth": "%25 büyüme", "discount_rate": "%10", "note": "FCF/hisse çapası (3.94); büyüme kaynağı: 3 yıllık net kâr CAGR (FY2023->FY2026) (uygulanan büyüme %25 büyüme); 5 yıllık iki aşamalı model + %2.5 terminal büyüme; iskonto oranı %10."}, "bull": {"lo": 165.96, "hi": 202.84, "growth": "%30 büyüme", "discount_rate": "%9", "note": "FCF/hisse çapası (3.94); büyüme kaynağı: 3 yıllık net kâr CAGR (FY2023->FY2026) (uygulanan büyüme %30 büyüme); 5 yıllık iki aşamalı model + %2.5 terminal büyüme; iskonto oranı %9."}}, "fundamental_verdict": "PAHALI", "technical_verdict": "NÖTR (RSI 57, SMA50 +%1)", "profile_fit": {"verdict": "KISMEN", "reason": "PROFIL.md bulunamadı; nötr profil varsayıldı (dosyayı oluşturmanız önerilir)."}, "cyclical_risk": "high cyclicality (stdev of YoY revenue growth = 57.1% across 4 fiscal years).", "horizon_note": "5 yıllık ufukta fundamental sinyaller öncelikli (fundamental %80 / teknik %20); RSI gibi kısa vadeli göstergeler önemsizdir. Döngüsel tepe riski kontrolü tetiklenmedi.", "key_risks": ["Alacaklar gelirden daha hızlı büyüyor"], "red_flags_comment": "Alacaklar gelirden daha hızlı büyüyor", "catalyst": "Q2 earnings ~19 Ağu", "summary": "NVIDIA CORP scores 10/10 on the deterministic checklist for FY2026 (strong (10/10 checks passed)). Strengths flagged by the screen: Profitable, Margin quality, Margin trend, Revenue growth, Earnings growth, Liquidity, Leverage, Earnings quality, FCF positive, Shareholder returns. high cyclicality (stdev of YoY revenue growth = 57.1% across 4 fiscal years). A base-scenario two-stage DCF puts fair value roughly between $118.28 and $144.56 per share, versus a current price read as PAHALI for a 5y horizon. Deterministic rule-based screen of SEC filings; educational use only, not investment advice.", "_provider": "script", "_model": "rule-based-v2", "score": {"points": 10, "max_points": 10, "checks": [{"name": "Profitable", "passed": true, "detail": "NetIncome (FY2026) = 120,067,000,000."}, {"name": "Margin quality", "passed": true, "detail": "Net margin (FY2026) = 55.6% (threshold 8.0%)."}, {"name": "Margin trend", "passed": true, "detail": "Net margin FY2026 55.6% vs FY2023 16.2% (relative change +243.4%; threshold -20%)."}, {"name": "Revenue growth", "passed": true, "detail": "Revenue CAGR FY2023->FY2026 (3y) = 100.0%."}, {"name": "Earnings growth", "passed": true, "detail": "Net income CAGR FY2023->FY2026 (3y) = 201.8%."}, {"name": "Liquidity", "passed": true, "detail": "Current ratio (FY2026) = 3.91 (threshold 1.00)."}, {"name": "Leverage", "passed": true, "detail": "Debt-to-equity (FY2026) = 0.31 (threshold 2.00)."}, {"name": "Earnings quality", "passed": true, "detail": "OperatingCashFlow (FY2026) = 102,718,000,000 vs 0.8x NetIncome = 96,053,600,000."}, {"name": "FCF positive", "passed": true, "detail": "Free cash flow (FY2026) = 96,676,000,000."}, {"name": "Shareholder returns", "passed": true, "detail": "Dividends paid (FY2026) = 974,000,000."}]}, "_horizon": "5y", "_weights": {"fundamental": 0.8, "technical": 0.2}}, "metrics": {"price": 210.96, "shares": 24514000000, "eps": 4.9, "market_cap": 5171473604583.74, "total_debt": 8468000000, "net_debt": -2137000000, "pe": 43.0531, "ps": 23.9489, "pfcf": 53.4928, "revenue_cagr_3y": 1.0005, "revenue_cagr_5y": null, "sbc_revenue": 0.0296, "shares_yoy": -0.0117, "buyback_latest": 40086000000, "dividends_latest": 974000000, "rnd_revenue": 0.0857, "fcf": 96676000000, "fcf_per_share": 3.94, "latest_fy": 2026}, "technical": {"price": 210.96, "as_of": "2026-07-10", "rsi14": 57.0, "sma50": 209.07, "sma200": 191.47, "dist_sma50_pct": 0.9, "dist_sma200_pct": 10.2, "high_52w": 235.47, "low_52w": 163.85, "range_position_pct": 65.8, "volatility_20d": 0.3611, "golden_cross": false, "death_cross": false, "sma50_above_sma200": true, "verdict": "NÖTR", "verdict_detail": "RSI 57, SMA50 +%1", "horizon_summary": "5 yıllık ufukta RSI gibi kısa vadeli momentum göstergeleri karar açısından belirleyici değildir. Fiyat şu anda SMA200'ün +%10 üzerinde; bu, uzun vadeli tez için bir sinyal değil, yalnızca olası bir giriş zamanlaması notu olarak değerlendirilmelidir.", "horizon": "5y"}, "red_flags": [{"code": "RECEIVABLES_OUTPACE", "message": "Alacaklar gelirden daha hızlı büyüyor", "detail": "Son 3 yılda alacak büyümesi gelir büyümesini geride bıraktı (FY2026: alacak %+66.8 vs gelir %+65.5; FY2025: alacak %+130.7 vs gelir %+114.2; FY2024: alacak %+161.3 vs gelir %+125.9). Bu, tahsilatların zayıfladığına veya gelirin erken kaydedildiğine işaret edebilir."}]}</script>
+
+<script>
+(function () {
+  "use strict";
+
+  var raw = document.getElementById("report-data").textContent;
+  var data;
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    document.body.innerHTML = '<div class="page"><div class="card"><p>Rapor verisi okunamadı.</p></div></div>';
+    return;
+  }
+
+  // -------------------------------------------------------------------
+  // Formatting helpers
+  // -------------------------------------------------------------------
+
+  function escapeHtml(value) {
+    var div = document.createElement("div");
+    div.textContent = value === null || value === undefined ? "" : String(value);
+    return div.innerHTML;
+  }
+
+  function fmtMoney(v) {
+    if (v === null || v === undefined || v === "" || Number.isNaN(Number(v))) return "—";
+    var num = Number(v);
+    var sign = num < 0 ? "-" : "";
+    var abs = Math.abs(num);
+    var decimals = Number.isInteger(abs) ? 0 : 2;
+    return sign + "$" + abs.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  }
+
+  // growth/discount_rate arrive as ready-made, human-readable Turkish
+  // strings (e.g. "%8 büyüme", "%12") from every provider -- never reformat
+  // them, just guard against missing values and append the " dr" suffix to
+  // a bare discount-rate figure if it isn't already there.
+  function growthText(v) {
+    return v === null || v === undefined || v === "" ? "—" : String(v);
+  }
+
+  function drText(v) {
+    if (v === null || v === undefined || v === "") return "—";
+    var text = String(v);
+    var lowered = text.toLowerCase();
+    if (lowered.indexOf("dr") !== -1 || lowered.indexOf("iskonto") !== -1) return text;
+    return text + " dr";
+  }
+
+  function hexToRgba(hex, alpha) {
+    var h = hex.replace("#", "");
+    var r = parseInt(h.substring(0, 2), 16);
+    var g = parseInt(h.substring(2, 4), 16);
+    var b = parseInt(h.substring(4, 6), 16);
+    return "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
+  }
+
+  // Maps a verdict/label string onto one of three color buckets. Order
+  // matters: red-bucket keywords are checked before falling back to amber,
+  // so e.g. "AŞIRI ALIM" (contains "ALIM") is never mistaken for something
+  // else, and unrecognized/empty text defaults to the neutral amber bucket.
+  function bucketColor(text) {
+    if (!text) return "amber";
+    var s = String(text).toUpperCase();
+    if (s.indexOf("UCUZ") !== -1 || s.indexOf("AŞIRI SATIM") !== -1 || s.indexOf("UYUMLU") !== -1) return "green";
+    if (s.indexOf("PAHALI") !== -1 || s.indexOf("AŞIRI ALIM") !== -1 || s.indexOf("UYUMSUZ") !== -1) return "red";
+    return "amber";
+  }
+
+  var GAUGE_POSITION = { green: 10, amber: 50, red: 90 };
+  var SCENARIO_NAME_TR = { bear: "Ayı", base: "Baz", bull: "Boğa" };
+  var SCENARIO_ORDER = ["bull", "base", "bear"];
+  var SCENARIO_HEX = { bear: "#ff6b5e", base: "#5aa7ff", bull: "#4ade80" };
+
+  // -------------------------------------------------------------------
+  // Section builders
+  // -------------------------------------------------------------------
+
+  function headerHtml() {
+    var priceText = fmtMoney(data.price);
+    var sourceNote = data.as_of
+      ? "Fiyat verisi: " + escapeHtml(data.as_of)
+      : "Fiyat verisi mevcut değil";
+    return (
+      '<div class="header">' +
+        '<div>' +
+          '<div class="ticker">' + escapeHtml(data.ticker) + '</div>' +
+          '<div class="price-line">' + priceText + '</div>' +
+          '<div class="source-note">' + sourceNote + '</div>' +
+        '</div>' +
+        '<div class="horizon-pill">' + escapeHtml(data.horizon) + '</div>' +
+      '</div>'
+    );
+  }
+
+  function weightBarHtml(weights) {
+    var w = weights || {};
+    var f = typeof w.fundamental === "number" ? w.fundamental : 0.5;
+    var t = typeof w.technical === "number" ? w.technical : 0.5;
+    var fPct = Math.round(f * 100);
+    var tPct = Math.round(t * 100);
+    return (
+      '<div class="weight-bar">' +
+        '<div class="weight-seg weight-fundamental" style="width:' + fPct + '%;">Fundamental %' + fPct + '</div>' +
+        '<div class="weight-seg weight-technical" style="width:' + tPct + '%;">Teknik %' + tPct + '</div>' +
+      '</div>'
+    );
+  }
+
+  function scenarioText(fv, key) {
+    var b = (fv || {})[key] || {};
+    var name = SCENARIO_NAME_TR[key] || key;
+    var parts = [name];
+    parts.push("büyüme " + growthText(b.growth));
+    parts.push("iskonto " + drText(b.discount_rate));
+    if (b.note) parts.push(String(b.note));
+    return parts.join(" · ");
+  }
+
+  function buildFanChart(fv, price) {
+    fv = fv || {};
+    var values = [];
+    SCENARIO_ORDER.forEach(function (key) {
+      var b = fv[key];
+      if (b) {
+        if (b.lo !== null && b.lo !== undefined) values.push(Number(b.lo));
+        if (b.hi !== null && b.hi !== undefined) values.push(Number(b.hi));
+      }
+    });
+    if (price !== null && price !== undefined) values.push(Number(price));
+    values = values.filter(function (v) { return !Number.isNaN(v); });
+
+    if (values.length === 0) {
+      return '<div class="fan-empty muted">Değerleme senaryosu için yeterli veri yok.</div>';
+    }
+
+    var minV = Math.min.apply(null, values);
+    var maxV = Math.max.apply(null, values);
+    if (minV === maxV) {
+      var bump = Math.max(1, Math.abs(minV) * 0.1);
+      minV -= bump;
+      maxV += bump;
+    }
+    var pad = (maxV - minV) * 0.08;
+    minV -= pad;
+    maxV += pad;
+    var span = (maxV - minV) || 1;
+    function pctOf(v) { return ((v - minV) / span) * 100; }
+
+    var labelsHtml = SCENARIO_ORDER.map(function (k) {
+      return "<span>" + SCENARIO_NAME_TR[k] + "</span>";
+    }).join("");
+
+    var rowsHtml = SCENARIO_ORDER.map(function (key) {
+      var b = fv[key];
+      var bandHtml = "";
+      if (b && b.lo !== null && b.lo !== undefined && b.hi !== null && b.hi !== undefined) {
+        var left = pctOf(Number(b.lo));
+        var width = Math.max(0.6, pctOf(Number(b.hi)) - left);
+        var hex = SCENARIO_HEX[key];
+        bandHtml =
+          '<div class="fan-band" style="left:' + left + '%; width:' + width + '%; ' +
+          'background:' + hexToRgba(hex, 0.35) + '; border-color:' + hex + ';"></div>';
+      }
+      return '<div class="fan-row-track" data-scenario="' + key + '">' + bandHtml + '</div>';
+    }).join("");
+
+    var markerHtml = "";
+    if (price !== null && price !== undefined && !Number.isNaN(Number(price))) {
+      var markerLeft = Math.min(99, Math.max(0, pctOf(Number(price))));
+      markerHtml =
+        '<div class="fan-marker" style="left:' + markerLeft + '%;">' +
+          '<span class="fan-marker-price">' + fmtMoney(price) + '</span>' +
+          '<span class="fan-marker-arrow">▼</span>' +
+        '</div>';
+    }
+
+    return (
+      '<div class="fan-outer">' +
+        '<div class="fan-labels">' + labelsHtml + '</div>' +
+        '<div class="fan-plot">' + rowsHtml + markerHtml + '</div>' +
+      '</div>' +
+      '<div class="fan-ticks">' +
+        '<span>' + fmtMoney(minV) + '</span>' +
+        '<span>' + fmtMoney((minV + maxV) / 2) + '</span>' +
+        '<span>' + fmtMoney(maxV) + '</span>' +
+      '</div>' +
+      '<div class="fan-assumptions" id="fan-assumptions"></div>'
+    );
+  }
+
+  function verdictBoxHtml(label, verdictText, noteText) {
+    var color = bucketColor(verdictText);
+    var pos = GAUGE_POSITION[color];
+    return (
+      '<div class="verdict-box">' +
+        '<div class="verdict-label">' + escapeHtml(label) + '</div>' +
+        '<div class="verdict-pill verdict-' + color + '">' + escapeHtml(verdictText || "—") + '</div>' +
+        '<div class="gauge"><div class="gauge-marker" style="left:' + pos + '%;">▲</div></div>' +
+        '<div class="verdict-note">' + escapeHtml(noteText || "—") + '</div>' +
+      '</div>'
+    );
+  }
+
+  function fundamentalNote(fv, price) {
+    var base = (fv || {}).base;
+    if (!base || base.lo === null || base.lo === undefined || base.hi === null || base.hi === undefined) {
+      return "Baz aralık verisi yok.";
+    }
+    var lo = Number(base.lo), hi = Number(base.hi);
+    var rangeText = fmtMoney(lo) + "–" + fmtMoney(hi);
+    if (price === null || price === undefined) return "Baz aralık: " + rangeText + ".";
+    var p = Number(price);
+    if (p < lo) return "Fiyat " + fmtMoney(p) + ", baz aralığın (" + rangeText + ") altında.";
+    if (p > hi) return "Fiyat " + fmtMoney(p) + ", baz aralığın (" + rangeText + ") üstünde.";
+    return "Fiyat " + fmtMoney(p) + ", baz aralık (" + rangeText + ") içinde.";
+  }
+
+  function flagsBoxHtml(flags) {
+    if (!flags || flags.length === 0) return "";
+    var items = flags.map(function (f) {
+      return (
+        '<li>' + escapeHtml(f.message || f.code || "") +
+        (f.detail ? '<span class="flag-detail">' + escapeHtml(f.detail) + '</span>' : '') +
+        '</li>'
+      );
+    }).join("");
+    return (
+      '<div class="flags-box">' +
+        '<div class="flags-title">Red Flags</div>' +
+        '<ul>' + items + '</ul>' +
+      '</div>'
+    );
+  }
+
+  function catalystSummaryHtml(result) {
+    var catalyst = result.catalyst;
+    var summary = result.summary;
+    var catalystHtml = catalyst ? '<p class="catalyst-line">Katalizör: ' + escapeHtml(catalyst) + '</p>' : "";
+    return (
+      '<div class="panel">' +
+        catalystHtml +
+        '<p class="summary-text">' + escapeHtml(summary || "Özet bulunmuyor.") + '</p>' +
+      '</div>'
+    );
+  }
+
+  function footerHtml(result) {
+    var provider = result._provider ? escapeHtml(result._provider) : "";
+    var model = result._model ? escapeHtml(result._model) : "";
+    var provenance = [provider, model].filter(Boolean).join(" / ");
+    return (
+      '<div class="footer">' +
+        'SEC EDGAR + fiyat verisi · eğitim amaçlı, yatırım tavsiyesi değildir.' +
+        (provenance ? '<br><span class="muted">' + provenance + '</span>' : '') +
+      '</div>'
+    );
+  }
+
+  function renderError(result) {
+    var errorLabel = result.error ? " (" + escapeHtml(String(result.error)) + ")" : "";
+    document.body.innerHTML =
+      '<div class="page"><div class="card">' +
+        headerHtml() +
+        '<div class="error-box">' +
+          '<strong>Analiz kullanılamıyor' + errorLabel + '</strong>' +
+          '<p>' + escapeHtml(result.summary || "Bilinmeyen bir hata oluştu.") + '</p>' +
+        '</div>' +
+        footerHtml(result) +
+      '</div></div>';
+  }
+
+  function render() {
+    document.title = String(data.ticker || "") + " · " + String(data.horizon || "") + " verdict";
+
+    var result = data.result || {};
+    if (result.error) {
+      renderError(result);
+      return;
+    }
+
+    var fv = result.fair_value_range || {};
+    var profileFit = result.profile_fit || {};
+    var technicalDetail = (data.technical && data.technical.verdict_detail) || null;
+
+    var cardHtml =
+      '<div class="page"><div class="card">' +
+        headerHtml() +
+        weightBarHtml(result._weights) +
+        '<div class="section-title">Değerleme senaryoları</div>' +
+        buildFanChart(fv, data.price) +
+        '<div class="verdicts-grid">' +
+          verdictBoxHtml("Fundamental", result.fundamental_verdict, fundamentalNote(fv, data.price)) +
+          verdictBoxHtml("Teknik", result.technical_verdict, technicalDetail || "Fiyat verisi mevcut değil.") +
+          verdictBoxHtml("Profil", profileFit.verdict, profileFit.reason) +
+        '</div>' +
+        flagsBoxHtml(data.red_flags) +
+        catalystSummaryHtml(result) +
+        footerHtml(result) +
+      '</div></div>';
+
+    document.body.innerHTML = cardHtml;
+
+    var assumptionsEl = document.getElementById("fan-assumptions");
+    var rows = document.querySelectorAll(".fan-row-track");
+    function selectScenario(key) {
+      rows.forEach(function (r) {
+        r.classList.toggle("selected", r.getAttribute("data-scenario") === key);
+      });
+      if (assumptionsEl) assumptionsEl.textContent = scenarioText(fv, key);
+    }
+    rows.forEach(function (r) {
+      r.addEventListener("click", function () {
+        selectScenario(r.getAttribute("data-scenario"));
+      });
+    });
+    selectScenario("base");
+  }
+
+  render();
+})();
+</script>
+
+</body>
+</html>

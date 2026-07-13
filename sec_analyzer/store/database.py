@@ -26,9 +26,11 @@ Typical usage::
     )
 """
 
+import json
 import logging
 import os
 import sqlite3
+from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from sec_analyzer.config import Config
@@ -53,6 +55,17 @@ _RATIOS_EXTRA_COLUMNS: List[Tuple[str, str]] = [
     ("debt_to_equity", "REAL"),
     ("fcf", "REAL"),
     ("fcf_margin", "REAL"),
+]
+
+#: Same idea as ``_FINANCIALS_EXTRA_COLUMNS``, for the ``verdicts`` table --
+#: added once the deterministic valuation engine (SPEC.md Sec.11/14) started
+#: producing a ``valuation`` dict alongside the LLM/rule-based commentary.
+_VERDICTS_EXTRA_COLUMNS: List[Tuple[str, str]] = [
+    ("confidence", "TEXT"),
+    ("sector_type", "TEXT"),
+    ("implied_growth", "REAL"),
+    ("fair_value_json", "TEXT"),
+    ("valuation_json", "TEXT"),
 ]
 
 
@@ -109,11 +122,12 @@ def get_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
 
 
 def init_db(db_path: Optional[str] = None) -> None:
-    """Create the ``companies``, ``financials``, and ``ratios`` tables.
+    """Create the ``companies``, ``financials``, ``ratios``, ``prices``, and
+    ``verdicts`` tables.
 
     Safe to call any number of times: every statement is
-    ``CREATE TABLE IF NOT EXISTS``, and any columns added to ``financials``
-    or ``ratios`` since a database file was first created are backfilled
+    ``CREATE TABLE IF NOT EXISTS``, and any columns added to ``financials``,
+    ``ratios``, or ``verdicts`` since a database file was first created are backfilled
     via ``ALTER TABLE ... ADD COLUMN`` (see ``_ensure_columns``).
 
     Args:
@@ -168,6 +182,43 @@ def init_db(db_path: Optional[str] = None) -> None:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS prices (
+                    cik    TEXT,
+                    date   TEXT,
+                    open   REAL,
+                    high   REAL,
+                    low    REAL,
+                    close  REAL,
+                    volume REAL,
+                    PRIMARY KEY (cik, date)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS verdicts (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cik                 TEXT,
+                    ticker              TEXT,
+                    analyzed_at         TEXT,
+                    horizon             TEXT,
+                    provider            TEXT,
+                    price               REAL,
+                    fundamental_verdict TEXT,
+                    technical_verdict   TEXT,
+                    profile_fit         TEXT,
+                    fv_bear_lo          REAL,
+                    fv_bear_hi          REAL,
+                    fv_base_lo          REAL,
+                    fv_base_hi          REAL,
+                    fv_bull_lo          REAL,
+                    fv_bull_hi          REAL,
+                    result_json         TEXT
+                )
+                """
+            )
 
             # Migrate pre-existing database files (created by an older
             # version of this module) to the current column set. No-op on
@@ -175,6 +226,7 @@ def init_db(db_path: Optional[str] = None) -> None:
             # present there.
             _ensure_columns(conn, "financials", _FINANCIALS_EXTRA_COLUMNS)
             _ensure_columns(conn, "ratios", _RATIOS_EXTRA_COLUMNS)
+            _ensure_columns(conn, "verdicts", _VERDICTS_EXTRA_COLUMNS)
         logger.debug("Schema ensured at %s", db_path or Config.DB_PATH)
     finally:
         conn.close()
@@ -327,6 +379,185 @@ def upsert_ratios(conn: sqlite3.Connection, cik: str, ratios: Iterable[dict]) ->
         rows,
     )
     return len(rows)
+
+
+def save_prices(cik, price_rows: Iterable[dict], db_path: Optional[str] = None) -> int:
+    """Insert or update a batch of daily OHLCV price rows for a filer.
+
+    This is the DB layer's own entry point (unlike ``upsert_financials``/
+    ``upsert_ratios``, which take an already-open connection): callers such
+    as the CLI hold price history in a pandas DataFrame, convert it to
+    plain dicts, and call this directly. The DB layer itself stays
+    pandas-free.
+
+    Args:
+        cik: Central Index Key. Accepted as ``int`` or ``str``; stored as
+            ``str(cik)``.
+        price_rows: An iterable of dicts, each shaped
+            ``{"date": "YYYY-MM-DD", "open", "high", "low", "close",
+            "volume"}``.
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+
+    Returns:
+        The number of rows written (upserted).
+    """
+    cik_str = str(cik)
+    rows = [
+        (
+            cik_str,
+            row.get("date"),
+            row.get("open"),
+            row.get("high"),
+            row.get("low"),
+            row.get("close"),
+            row.get("volume"),
+        )
+        for row in price_rows
+        if row.get("date") is not None
+    ]
+
+    if not rows:
+        logger.debug("save_prices: nothing to write for CIK %s", cik_str)
+        return 0
+
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            conn.executemany(
+                """
+                INSERT INTO prices (cik, date, open, high, low, close, volume)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(cik, date) DO UPDATE SET
+                    open   = excluded.open,
+                    high   = excluded.high,
+                    low    = excluded.low,
+                    close  = excluded.close,
+                    volume = excluded.volume
+                """,
+                rows,
+            )
+        logger.info("Saved %d price row(s) for CIK %s to %s", len(rows), cik_str, db_path or Config.DB_PATH)
+        return len(rows)
+    finally:
+        conn.close()
+
+
+def save_verdict(
+    ticker: str,
+    cik,
+    horizon: str,
+    provider: str,
+    price: Optional[float],
+    result: dict,
+    db_path: Optional[str] = None,
+    analyzed_at: Optional[str] = None,
+    valuation: Optional[dict] = None,
+) -> int:
+    """Append one analysis result to the ``verdicts`` history table.
+
+    Unlike the other ``save_*``/``upsert_*`` functions, this is a plain
+    ``INSERT`` rather than an upsert: ``verdicts`` is an append-only history
+    table by design, so every analysis run is preserved (rather than
+    overwriting a prior run for the same filer/horizon) to support future
+    backtesting of the verdicts against subsequent price action.
+
+    Args:
+        ticker: Exchange ticker symbol, e.g. ``"AAPL"``.
+        cik: Central Index Key. Accepted as ``int`` or ``str``; stored as
+            ``str(cik)``.
+        horizon: Investment horizon used for this analysis, e.g. ``"1y"``.
+        provider: Analyzer provider that produced ``result``, e.g.
+            ``"script"``, ``"ollama"``, or ``"anthropic"``.
+        price: The current market price used for the analysis, or ``None``.
+        result: The dict returned by
+            :func:`sec_analyzer.interpret.analyzer.interpret` (or
+            :func:`sec_analyzer.interpret.rule_based.analyze`), matching the
+            unified bear/base/bull schema. Band values are extracted
+            ``None``-safely from ``result["fair_value_range"]``;
+            ``profile_fit`` is stored as just its ``"verdict"`` string;
+            ``confidence`` (``result["confidence"]``, per SPEC.md Sec.14) is
+            stored in its own column. The full result is also stored
+            verbatim (as JSON) in ``result_json``.
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+        analyzed_at: ISO-8601 timestamp to record. Defaults to
+            ``datetime.now().isoformat(timespec="seconds")``.
+        valuation: The dict returned by
+            :func:`sec_analyzer.valuation.engine.run_valuation` (typically
+            ``result.get("valuation")``), or ``None``. When given, populates
+            ``sector_type``, ``implied_growth`` (from
+            ``valuation["reverse_dcf"]["implied_growth"]``),
+            ``fair_value_json`` (``valuation["fair_value_range"]`` as JSON),
+            and ``valuation_json`` (the full dict as JSON); all four stay
+            ``None`` when omitted, e.g. for legacy callers or an error
+            result with no valuation to attach.
+
+    Returns:
+        The id (``rowid``) of the newly inserted row.
+    """
+    cik_str = str(cik)
+    result = result or {}
+    fair_value_range = result.get("fair_value_range") or {}
+    bear = fair_value_range.get("bear") or {}
+    base = fair_value_range.get("base") or {}
+    bull = fair_value_range.get("bull") or {}
+    profile_fit = result.get("profile_fit") or {}
+    profile_fit_verdict = profile_fit.get("verdict") if isinstance(profile_fit, dict) else profile_fit
+
+    sector_type = (valuation or {}).get("sector_type")
+    implied_growth = ((valuation or {}).get("reverse_dcf") or {}).get("implied_growth")
+    fair_value_json = json.dumps(valuation.get("fair_value_range"), ensure_ascii=False) if valuation else None
+    valuation_json = json.dumps(valuation, ensure_ascii=False) if valuation else None
+
+    row = (
+        cik_str,
+        ticker,
+        analyzed_at or datetime.now().isoformat(timespec="seconds"),
+        horizon,
+        provider,
+        price,
+        result.get("fundamental_verdict"),
+        result.get("technical_verdict"),
+        profile_fit_verdict,
+        bear.get("lo"),
+        bear.get("hi"),
+        base.get("lo"),
+        base.get("hi"),
+        bull.get("lo"),
+        bull.get("hi"),
+        json.dumps(result, ensure_ascii=False),
+        result.get("confidence"),
+        sector_type,
+        implied_growth,
+        fair_value_json,
+        valuation_json,
+    )
+
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO verdicts (
+                    cik, ticker, analyzed_at, horizon, provider, price,
+                    fundamental_verdict, technical_verdict, profile_fit,
+                    fv_bear_lo, fv_bear_hi, fv_base_lo, fv_base_hi, fv_bull_lo, fv_bull_hi,
+                    result_json, confidence, sector_type, implied_growth,
+                    fair_value_json, valuation_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                row,
+            )
+            verdict_id = cursor.lastrowid
+        logger.info(
+            "Saved verdict for %s (CIK %s, horizon %s, provider %s) to %s",
+            ticker, cik_str, horizon, provider, db_path or Config.DB_PATH,
+        )
+        return verdict_id
+    finally:
+        conn.close()
 
 
 def _flatten_records(normalized: dict) -> List[dict]:

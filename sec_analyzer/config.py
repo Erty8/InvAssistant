@@ -73,6 +73,36 @@ class Config:
     OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:latest")
 
+    # Per-hold-horizon (fundamental_weight, technical_weight) pairs, used by
+    # the interpret layer to tell the LLM/rule-based analyzer how much to
+    # lean on fundamentals vs. technicals for a given investment horizon.
+    # Short horizons (3m) lean technical; long horizons (5y) lean
+    # fundamental. Weights sum to 1.0 for each horizon.
+    HORIZON_WEIGHTS = {"3m": (0.3, 0.7), "1y": (0.5, 0.5), "5y": (0.8, 0.2)}
+
+    # Path to an optional investor-profile document (risk tolerance,
+    # investment style, position-size limits, behavioral notes, etc.). When
+    # present, its contents are merged into the interpret layer's LLM system
+    # prompt so the analysis can be judged for "profile fit". Overridable
+    # via PROFIL_PATH. Not required -- if missing, a neutral-default
+    # investor profile is assumed instead.
+    PROFIL_PATH = os.getenv("PROFIL_PATH", os.path.join(os.getcwd(), "PROFIL.md"))
+
+    # Directory where generated analysis reports are written. Overridable
+    # via REPORTS_DIR.
+    REPORTS_DIR = os.getenv("REPORTS_DIR", os.path.join(os.getcwd(), "reports"))
+
+    # Path to the valuation-methodology document (DCF/reverse-DCF/multiples
+    # conventions, scenario philosophy, etc.) merged into the two-phase
+    # interpret flow's phase-1 (assumption proposal) system prompt, after
+    # METODOLOJI.md and before PROFIL.md. Overridable via VALUATION_PATH.
+    VALUATION_PATH = os.getenv("VALUATION_PATH", os.path.join(BASE_DIR, "VALUATION.md"))
+
+    # Directory holding local Damodaran sector-multiple/ERP reference CSVs
+    # (see sec_analyzer/valuation/damodaran.py) -- optional, not fetched
+    # over the network. Overridable via DAMODARAN_DIR.
+    DAMODARAN_DIR = os.getenv("DAMODARAN_DIR", os.path.join(os.getcwd(), "data", "damodaran"))
+
     @classmethod
     def get_user_agent(cls) -> str:
         """Return the User-Agent string SEC requires for all EDGAR requests.

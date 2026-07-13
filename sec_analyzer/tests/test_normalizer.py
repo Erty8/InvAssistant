@@ -531,6 +531,90 @@ def test_usd_concept_still_extracted_and_tagged_with_usd_unit():
     assert annual[0]["unit"] == "USD"
 
 
+def test_shares_outstanding_prefers_dei_cover_page_tag():
+    """`EntityCommonStockSharesOutstanding` is a dei-taxonomy tag (not
+    us-gaap) -- see `concepts.TAG_TAXONOMY`. It's the highest-priority
+    fallback for SharesOutstanding, and must be looked up in
+    `facts["dei"]`, not `facts["us-gaap"]`."""
+    usgaap = {
+        "Revenues": _usd_tag(
+            [
+                {
+                    "start": "2022-01-01",
+                    "end": "2022-12-31",
+                    "val": 1000,
+                    "fy": 2022,
+                    "fp": "FY",
+                    "form": "10-K",
+                    "filed": "2023-02-01",
+                }
+            ]
+        ),
+    }
+    dei = {
+        "EntityCommonStockSharesOutstanding": {
+            "units": {
+                "shares": [
+                    {
+                        "end": "2022-12-31",
+                        "val": 12_000_000,
+                        "fy": 2022,
+                        "fp": "FY",
+                        "form": "10-K",
+                        "filed": "2023-02-01",
+                    }
+                ]
+            }
+        },
+    }
+    facts_json = {
+        "entityName": "Dei Test Co",
+        "cik": 999,
+        "facts": {"us-gaap": usgaap, "dei": dei},
+    }
+    result = normalize_facts(facts_json)
+
+    annual = result["annual"]["SharesOutstanding"]
+    assert annual is not None
+    assert len(annual) == 1
+    assert annual[0]["value"] == 12_000_000
+    assert annual[0]["unit"] == "shares"
+    assert annual[0]["tag"] == "EntityCommonStockSharesOutstanding"
+    assert result["matched_tags"]["SharesOutstanding"] == ["EntityCommonStockSharesOutstanding"]
+
+    # A concept whose tags are all us-gaap (Revenue) is unaffected by the
+    # presence of a `dei` taxonomy sub-dict elsewhere in `facts`.
+    assert result["annual"]["Revenue"] is not None
+    assert result["annual"]["Revenue"][0]["value"] == 1000
+
+
+def test_dei_tag_absent_falls_back_to_usgaap_shares_tag():
+    """When the dei cover-page tag isn't present at all, SharesOutstanding
+    must still fall back to the us-gaap tags, exactly as before this
+    taxonomy support was added."""
+    usgaap = {
+        "CommonStockSharesOutstanding": _unit_tag(
+            "shares",
+            [
+                {
+                    "end": "2022-12-31",
+                    "val": 15_000_000_000,
+                    "fy": 2022,
+                    "fp": "FY",
+                    "form": "10-K",
+                    "filed": "2023-02-01",
+                }
+            ],
+        ),
+    }
+    result = normalize_facts(_make_facts(usgaap=usgaap))
+
+    annual = result["annual"]["SharesOutstanding"]
+    assert annual is not None
+    assert annual[0]["value"] == 15_000_000_000
+    assert annual[0]["tag"] == "CommonStockSharesOutstanding"
+
+
 def test_concept_with_tag_present_but_wrong_unit_is_missing():
     """A tag that exists but only carries units outside the concept's
     acceptable list must not contribute any rows -- the concept is reported
