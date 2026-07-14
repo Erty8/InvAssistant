@@ -136,6 +136,17 @@ Koddan gelen "fiyatın ima ettiği growth" değeri şöyle yorumlanır:
   (ör. iş modeli değişti, margin yapısı kalıcı iyileşti — "bu sefer farklı" iddiası ancak kanıtla).
 - EV bazlı çarpanları (EV/EBITDA) borçlu şirketlerde P/E'ye tercih et.
 
+### Growth-ayarlı çarpanlar (PEG katmanı)
+
+Motor, ham çarpanın yanında bir **growth-ayarlı çarpan** üretir: standart modda **PEG = güncel P/E ÷ base büyüme** (assumptions pipeline'ın base senaryosundan, yüzde puan olarak — ör. %15 → 15); hiper-grower modunda P/E anlamsız olduğundan yerini **growth-ayarlı EV/Satış = güncel EV/Satış ÷ base büyüme** alır. Kurallar:
+
+- **PEG bağımsız verdict ÜRETMEZ; yalnızca multiples sinyalini rafine eder.** Üçgenlemeye ayrı bir yöntem olarak girmez.
+- **Mutlak eşik kuralı YOK.** "PEG < 1 = ucuz" gibi doğrusal eşikler KULLANILMAZ (PEG'in doğrusallık kusuru); yalnızca (a) şirketin KENDİ tarihsel PEG serisine göre GÖRELİ konum (percentile) ve (b) — veri varsa — sektör medyan PEG'i kullanılır. Tarihsel seri: her geçmiş yılın yıl-sonu çarpanı, o yılı takip eden 3 yılda GERÇEKLEŞEN gelir CAGR'ına bölünür (verisi tam olan yıllar için).
+- **Payda her zaman assumptions pipeline'ın base büyümesidir** ve çıktıda `base_growth_pct` olarak GÖRÜNÜR. Şeffaflık için pay/payda gizlenmez.
+- **Uygulanabilirlik:** PEG yalnızca TTM kâr pozitifken (P/E > 0) VE base büyüme ≥ %5 iken hesaplanır. Aksi halde "uygulanamaz" olarak raporlanır — asla negatif ya da patlamış (payda → 0) bir PEG gösterilmez. Aynı %5 tabanı growth-ayarlı EV/Satış için de geçerlidir.
+- **İki bileşen ayrışırsa sinyal "karışık"tır.** Ham çarpanın percentile'ı ile growth-ayarlı percentile FARKLI yönlere düşerse (ör. ham %88 → pahalı, PEG %45 → ortada) multiples sinyali `karisik` olur ve verdict'te tek cümleyle açıklanır ("çarpan yüksek ama büyümeye göre normalize edildiğinde tarihsel ortalamasında"). İkisi aynı yöndeyse ham çarpan sinyali korunur. Bu, §5'teki "yöntem çelişkisini gizleme" ilkesinin multiples içi uygulamasıdır.
+- **Sektör medyan PEG** yalnızca Damodaran referans verisinde beklenen büyüme (veya doğrudan PEG) sütunu VARSA hesaplanır (nice-to-have); yoksa boş geçilir.
+
 ## 8. Yasak davranışlar
 
 - Sahte hassasiyet: "$103.47" gibi tek sayı verme; her zaman bant + varsayım.

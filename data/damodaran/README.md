@@ -28,6 +28,13 @@ Retail (General),18.6,1.1,17.2
 - `pe`, `ps`, `pfcf` — o sektörün medyan Fiyat/Kazanç, Fiyat/Satış,
   Fiyat/Serbest Nakit Akışı çoklusu (ondalık sayı, örn. `28.4`, `%` işareti
   veya para birimi simgesi olmadan).
+- `growth` ve/veya `peg` — **isteğe bağlı** kolonlar; yalnızca sektör medyan
+  PEG karşılaştırması için kullanılır (VALUATION.md §7). `growth`, sektörün
+  beklenen çok-yıllı büyümesidir ve **oran** olarak yazılır (örn. `%15` büyüme
+  → `0.15`); motor sektör PEG'ini `pe / (growth × 100)` ile türetir. Doğrudan
+  `peg` kolonu verilirse o kullanılır. Her ikisi de yoksa (mevcut dört-kolonlu
+  format) sektör PEG'i boş (`None`) geçilir, başka hiçbir şey etkilenmez. Örnek
+  başlık: `industry,pe,ps,pfcf,growth`.
 
 ### `erp.csv`
 

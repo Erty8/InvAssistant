@@ -57,14 +57,16 @@ class Config:
     # safely under that ceiling. Overridable via SEC_MAX_RPS.
     SEC_MAX_REQUESTS_PER_SEC = int(os.getenv("SEC_MAX_RPS", "8"))
 
-    # Analyzer LLM backend selection. This chooses which model the
-    # `interpret` layer talks to for fundamental analysis:
-    #   * "ollama"    -- a local Gemma model served by Ollama (DEFAULT; free,
-    #                    private, no API key required, requires Ollama to be
-    #                    running locally).
+    # Analyzer backend selection. This chooses how the `interpret` layer
+    # produces the fundamental analysis:
+    #   * "script"    -- the deterministic, rule-based analyzer (DEFAULT; no
+    #                    AI, no API key, no external server, fully offline and
+    #                    reproducible).
+    #   * "ollama"    -- a local Gemma model served by Ollama (free, private,
+    #                    requires Ollama running locally).
     #   * "anthropic" -- the hosted Claude API (requires ANTHROPIC_API_KEY).
     # Overridable via ANALYZER_PROVIDER.
-    ANALYZER_PROVIDER = os.getenv("ANALYZER_PROVIDER", "ollama").lower()
+    ANALYZER_PROVIDER = os.getenv("ANALYZER_PROVIDER", "script").lower()
 
     # Local Ollama settings (used when ANALYZER_PROVIDER == "ollama").
     # OLLAMA_HOST is the base URL of the Ollama server's REST API (the

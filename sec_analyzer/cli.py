@@ -8,9 +8,9 @@ Two subcommands:
 * ``analyze TICKER`` -- everything ``fetch`` does, plus price/technical data,
   valuation metrics, red flags, an earnings-date estimate, and a full
   fundamental+technical interpretation (fair-value range, verdicts,
-  cyclicality, and a summary) from a selectable backend: local Ollama/Gemma
-  (default), the hosted Anthropic Claude API, or a deterministic script-based
-  (no-AI) analyzer. The result is printed as a compact Turkish-language
+  cyclicality, and a summary) from a selectable backend: a deterministic
+  script-based (no-AI) analyzer (default), a local Ollama/Gemma model, or the
+  hosted Anthropic Claude API. The result is printed as a compact Turkish-language
   verdict card and, optionally, saved as a standalone HTML report.
 
 Usage::
@@ -344,22 +344,62 @@ def _reverse_dcf_line(result: dict, valuation: dict) -> str:
 
 
 def _multiples_line(valuation: dict) -> str:
-    """Render the "Multiples:" card line (SPEC.md Sec.13): the primary
-    multiple used (P/E, falling back to P/S then P/FCF) and where the
-    current value sits within its own historical percentile, from
-    ``valuation["multiples"]``. ``"veri yetersiz"`` when none of the three
-    has a usable percentile (fewer than 5 years of price-backed history)."""
+    """Render the "Multiples:" card line (SPEC.md Sec.13).
+
+    When a growth-adjusted multiple (PEG in standard mode, growth-adjusted
+    EV/Sales in hyper-grower mode) is applicable, renders the compact
+    two-component form -- raw percentile · growth-adjusted value (percentile)
+    -- appending "→ karışık sinyal" when the triangulation multiples signal
+    is ``"karisik"`` (the two components disagree on direction, VALUATION.md
+    Sec.7), e.g. ``"P/E 88. pctile · PEG 1.4 (45. pctile) → karışık
+    sinyal"``. When the growth-adjusted figure is not applicable, falls back
+    to the original descriptive form (``"P/E kendi Ny medyanının N.
+    yüzdeliğinde"``). ``"veri yetersiz"`` when no raw percentile is usable
+    (fewer than 5 years of price-backed history)."""
     label = "Multiples:".ljust(_CARD_LABEL_WIDTH)
     multiples = valuation.get("multiples") or {}
     history_years = multiples.get("history_years") or 0
+    growth_adjusted = multiples.get("growth_adjusted") or {}
+    multiples_signal = ((valuation.get("triangulation") or {}).get("signals") or {}).get("multiples")
 
+    # Primary raw multiple, using the same P/E → P/S → P/FCF fallback order.
+    primary = None
     for name, percentile in (
         ("P/E", multiples.get("pe_percentile")),
         ("P/S", multiples.get("ps_percentile")),
         ("P/FCF", multiples.get("pfcf_percentile")),
     ):
         if percentile is not None:
-            return f"{label}{name} kendi {history_years}y medyanının {percentile:.0f}. yüzdeliğinde"
+            primary = (name, percentile)
+            break
+
+    if growth_adjusted.get("applicable"):
+        raw_name = growth_adjusted.get("raw_label")
+        raw_pct = growth_adjusted.get("raw_percentile")
+        if raw_pct is None and primary is not None:
+            raw_name, raw_pct = primary
+
+        parts = []
+        if raw_pct is not None:
+            parts.append(f"{raw_name} {raw_pct:.0f}. pctile")
+
+        ga_label = growth_adjusted.get("label") or "PEG"
+        ga_value = growth_adjusted.get("value")
+        ga_pct = growth_adjusted.get("percentile")
+        if ga_value is not None and ga_pct is not None:
+            parts.append(f"{ga_label} {ga_value:.2f} ({ga_pct:.0f}. pctile)")
+        elif ga_value is not None:
+            parts.append(f"{ga_label} {ga_value:.2f}")
+
+        if parts:
+            line = " · ".join(parts)
+            if multiples_signal == "karisik":
+                line += " → karışık sinyal"
+            return f"{label}{line}"
+
+    if primary is not None:
+        name, percentile = primary
+        return f"{label}{name} kendi {history_years}y medyanının {percentile:.0f}. yüzdeliğinde"
 
     return f"{label}veri yetersiz"
 
@@ -409,12 +449,135 @@ def _sensitivity_line(valuation: dict) -> str:
     return line
 
 
+def _signed_pct_tr(value) -> str:
+    """Turkish signed-percent, sign-first then ``%``: ``4 -> "+%4"``,
+    ``-7.5 -> "-%8"`` (0 decimals, matching the compact card style)."""
+    if value is None:
+        return _DASH
+    sign = "+" if value >= 0 else "-"
+    return f"{sign}%{abs(value):.0f}"
+
+
+def _momentum_line(technical: dict) -> Optional[str]:
+    """Compact momentum sub-line for the technical card, e.g.
+    ``"Momentum:  1a +%4 · 3a +%13 · 6a -%3 · Trend: yükseliş (GC) · 52h %68"``.
+    ``None`` when no momentum figure is available."""
+    parts: List[str] = []
+    for label, key in (("1a", "return_1m_pct"), ("3a", "return_3m_pct"), ("6a", "return_6m_pct")):
+        value = technical.get(key)
+        if value is not None:
+            parts.append(f"{label} {_signed_pct_tr(value)}")
+
+    above = technical.get("sma50_above_sma200")
+    if above is True:
+        parts.append("Trend: yükseliş" + (" (GC)" if technical.get("golden_cross") else ""))
+    elif above is False:
+        parts.append("Trend: düşüş" + (" (DC)" if technical.get("death_cross") else ""))
+
+    range_position = technical.get("range_position_pct")
+    if range_position is not None:
+        parts.append(f"52h %{range_position:.0f}")
+
+    if not parts:
+        return None
+    return "Momentum:  " + " · ".join(parts)
+
+
+def _rsi_divergence_line(technical: dict) -> Optional[str]:
+    """Explanatory RSI-divergence sub-line (a reversal warning worth spelling
+    out), or ``None`` when there's no divergence."""
+    detail = technical.get("rsi_divergence_detail")
+    if not detail:
+        return None
+    price_prev, price_last = _fmt_money(detail.get("price_prev")), _fmt_money(detail.get("price_last"))
+    rsi_prev, rsi_last = detail.get("rsi_prev"), detail.get("rsi_last")
+    if detail.get("type") == "bearish":
+        return (
+            f"RSI uyumsuzluğu (ayı): fiyat {price_prev}→{price_last} daha yüksek zirve ama "
+            f"RSI {rsi_prev:.0f}→{rsi_last:.0f} düştü — momentum teyit etmiyor."
+        )
+    return (
+        f"RSI uyumsuzluğu (boğa): fiyat {price_prev}→{price_last} daha düşük dip ama "
+        f"RSI {rsi_prev:.0f}→{rsi_last:.0f} yükseldi — satış baskısı azalıyor."
+    )
+
+
+def _signal_volume_line(technical: dict) -> Optional[str]:
+    """Compact MACD + volume sub-line, e.g.
+    ``"MACD/Hacim:  MACD boğa (kesişim ↑) · Hacim 1.3× · OBV ↑"``. ``None``
+    when neither MACD nor volume signals are available."""
+    parts: List[str] = []
+
+    macd_hist = technical.get("macd_hist")
+    if macd_hist is not None:
+        state = "boğa" if macd_hist > 0 else ("ayı" if macd_hist < 0 else "nötr")
+        segment = f"MACD {state}"
+        cross = technical.get("macd_cross")
+        if cross == "bullish":
+            segment += " (kesişim ↑)"
+        elif cross == "bearish":
+            segment += " (kesişim ↓)"
+        parts.append(segment)
+
+    rel_volume = technical.get("rel_volume")
+    if rel_volume is not None:
+        parts.append(f"Hacim {rel_volume:.1f}×")
+
+    obv_trend = technical.get("obv_trend")
+    if obv_trend:
+        parts.append({"up": "OBV ↑", "down": "OBV ↓", "flat": "OBV yatay"}.get(obv_trend, f"OBV {obv_trend}"))
+
+    if not parts:
+        return None
+    return "MACD/Hacim:  " + " · ".join(parts)
+
+
+def _support_resistance_line(technical: dict) -> Optional[str]:
+    """Compact support/resistance sub-line for the technical card, e.g.
+    ``"Destek/Direnç:  Direnç $108 (+%8), $118 (+%18) | Destek $92.50 (-%8)"``.
+    Shows up to two nearest levels per side. ``None`` when none exist."""
+    def _range(z: dict) -> str:
+        lo, hi = z.get("low"), z.get("high")
+        if lo is not None and hi is not None and (hi - lo) > 0.01:
+            return f"{_fmt_money(lo)}–{_fmt_money(hi)}"
+        return _fmt_money(z.get("price") if z.get("price") is not None else lo)
+
+    def _one(z: dict) -> str:
+        touches = z.get("touches") or 0
+        parts = []
+        if z.get("is_52w_high"):
+            parts.append("52h zirve")
+        elif z.get("is_52w_low"):
+            parts.append("52h dip")
+        if touches >= 1:
+            parts.append(f"{touches}×")
+        if z.get("fib"):
+            parts.append(f"Fib {z['fib']}")
+        note = " + ".join(parts) or "seviye"
+        return f"{_range(z)} ({_signed_pct_tr(z.get('dist_pct'))} · {note})"
+
+    def _levels(items: list) -> str:
+        return ", ".join(_one(z) for z in items[:2])
+
+    resistances = technical.get("resistance_levels") or []
+    supports = technical.get("support_levels") or []
+    segments: List[str] = []
+    if resistances:
+        segments.append(f"Direnç {_levels(resistances)}")
+    if supports:
+        segments.append(f"Destek {_levels(supports)}")
+    if not segments:
+        return None
+    return "Destek/Direnç:  " + " | ".join(segments)
+
+
 def _print_verdict_card(
     ticker: str,
     horizon: str,
     result: dict,
     metrics: Optional[dict] = None,
     flags: Optional[List[dict]] = None,
+    technical: Optional[dict] = None,
 ) -> None:
     """Print the compact, Turkish-language terminal verdict card.
 
@@ -487,7 +650,27 @@ def _print_verdict_card(
         print(_sensitivity_line(valuation))
 
     print(f"{'Fundamental:'.ljust(_CARD_LABEL_WIDTH)}{result.get('fundamental_verdict') or _DASH}")
-    print(f"{'Teknik:'.ljust(_CARD_LABEL_WIDTH)}{result.get('technical_verdict') or _DASH}")
+
+    technical = technical or {}
+    technical_verdict = result.get("technical_verdict") or technical.get("verdict") or _DASH
+    verdict_detail = technical.get("verdict_detail")
+    technical_line = technical_verdict
+    if verdict_detail and verdict_detail != "yetersiz veri":
+        technical_line = f"{technical_verdict} ({verdict_detail})"
+    print(f"{'Teknik:'.ljust(_CARD_LABEL_WIDTH)}{technical_line}")
+
+    momentum_line = _momentum_line(technical)
+    if momentum_line:
+        print(f"  {momentum_line}")
+    signal_line = _signal_volume_line(technical)
+    if signal_line:
+        print(f"  {signal_line}")
+    divergence_line = _rsi_divergence_line(technical)
+    if divergence_line:
+        print(f"  {divergence_line}")
+    sr_line = _support_resistance_line(technical)
+    if sr_line:
+        print(f"  {sr_line}")
 
     profile = result.get("profile_fit") or {}
     profile_verdict = profile.get("verdict") or _DASH
@@ -562,7 +745,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         except Exception:  # noqa: BLE001 - persistence failure must not be fatal
             logger.warning("Failed to save verdict for %s", args.ticker, exc_info=True)
 
-    _print_verdict_card(args.ticker, horizon, result, metrics, flags)
+    _print_verdict_card(args.ticker, horizon, result, metrics, flags, technical)
 
     if getattr(args, "verbose", False):
         print("\n" + json.dumps(result, indent=2, ensure_ascii=False))
@@ -652,7 +835,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["ollama", "gemma", "anthropic", "script"],
         default=None,
         help=(
-            "Analysis backend (default: ANALYZER_PROVIDER env, i.e. 'ollama'). "
+            "Analysis backend (default: ANALYZER_PROVIDER env, i.e. 'script'). "
             "script = deterministic rule-based analysis, no AI/LLM required."
         ),
     )

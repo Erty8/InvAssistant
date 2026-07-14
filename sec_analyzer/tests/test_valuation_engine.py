@@ -135,6 +135,54 @@ def test_triangulate_multiples_uses_ps_first_for_growth_unprofitable():
 
 
 # ---------------------------------------------------------------------------
+# 8b. triangulate -- growth-adjusted (PEG / EV-Sales) divergence -> "karisik"
+# multiples signal (VALUATION.md Sec.7).
+# ---------------------------------------------------------------------------
+
+
+def test_triangulate_multiples_karisik_when_raw_and_growth_adjusted_diverge():
+    # Raw P/E percentile 88 (expensive) but growth-adjusted PEG percentile 45
+    # (fair) -> the two components land in different buckets -> "karisik".
+    result = triangulate(
+        None, None, None, None, None, 88, None, None, "mature",
+        raw_growth_pair_pct=88, growth_adj_pct=45,
+    )
+    assert result["signals"]["multiples"] == "karisik"
+    assert "karışık" in result["rationale"]["multiples"]
+
+
+def test_triangulate_multiples_not_karisik_when_both_components_agree():
+    # Raw 88 (expensive) and growth-adjusted 82 (expensive) agree -> the
+    # existing raw signal stands unchanged ("pahali"), not "karisik".
+    result = triangulate(
+        None, None, None, None, None, 88, None, None, "mature",
+        raw_growth_pair_pct=88, growth_adj_pct=82,
+    )
+    assert result["signals"]["multiples"] == "pahali"
+
+
+def test_triangulate_multiples_unchanged_when_growth_adjusted_missing():
+    # No growth-adjusted percentile -> pre-PEG behavior preserved exactly.
+    result = triangulate(
+        None, None, None, None, None, 88, None, None, "mature",
+        raw_growth_pair_pct=88, growth_adj_pct=None,
+    )
+    assert result["signals"]["multiples"] == "pahali"
+
+
+def test_triangulate_multiples_karisik_lowers_confidence_vs_agreement():
+    # DCF + reverse-DCF both say "pahali"; a "karisik" multiples signal can't
+    # join that majority, so confidence is ORTA (2 agree), not YÜKSEK.
+    result = triangulate(
+        110, {"lo": 90, "hi": 100}, 0.20, 0.10, 0.10, 88, None, None, "mature",
+        raw_growth_pair_pct=88, growth_adj_pct=45,
+    )
+    assert result["signals"]["multiples"] == "karisik"
+    assert result["signals"]["dcf"] == "pahali"
+    assert result["confidence"] == "ORTA"
+
+
+# ---------------------------------------------------------------------------
 # 8a. triangulate -- hyper-grower "yuksek_beklenti" DCF signal (HYPER_SPEC.md
 # Sec.4): base band [100,120], bull band hi=150.
 # ---------------------------------------------------------------------------

@@ -10,7 +10,13 @@ style of ``test_metrics.py``.
 import pandas as pd
 import pytest
 
-from sec_analyzer.valuation.multiples import multiples_history, percentile_position
+from sec_analyzer.valuation.multiples import (
+    forward_revenue_cagr,
+    growth_adjusted_history,
+    growth_adjusted_value,
+    multiples_history,
+    percentile_position,
+)
 from sec_analyzer.valuation.sensitivity import sensitivity_matrix
 
 # ---------------------------------------------------------------------------
@@ -254,3 +260,108 @@ def test_sensitivity_matrix_high_uncertainty_flagged_false_when_spread_is_small(
 def test_sensitivity_matrix_returns_none_when_shares_unusable():
     assert sensitivity_matrix({"growth_5y": 0.1, "terminal_growth": 0.02, "discount_rate": 0.1}, fcf0=100.0, shares=0.0) is None
     assert sensitivity_matrix({"growth_5y": 0.1, "terminal_growth": 0.02, "discount_rate": 0.1}, fcf0=None, shares=10.0) is None
+
+
+# ---------------------------------------------------------------------------
+# 8. Growth-adjusted multiples: forward_revenue_cagr / growth_adjusted_value /
+#    growth_adjusted_history + EV/Sales history (SPEC Sec.6, VALUATION.md Sec.7)
+# ---------------------------------------------------------------------------
+
+
+def test_forward_revenue_cagr_uses_the_following_n_years():
+    # revenue at fy=2016 is 100, at fy+3=2019 is 200 -> (200/100)^(1/3)-1.
+    rev = {2016: 100.0, 2017: 130.0, 2018: 160.0, 2019: 200.0}
+    assert forward_revenue_cagr(rev, 2016, 3) == pytest.approx((200.0 / 100.0) ** (1 / 3) - 1)
+    # No fy+3 endpoint -> None.
+    assert forward_revenue_cagr(rev, 2019, 3) is None
+    # Non-positive endpoint -> None (a CAGR across zero/negative isn't meaningful).
+    assert forward_revenue_cagr({2016: 100.0, 2019: 0.0}, 2016, 3) is None
+    assert forward_revenue_cagr({2016: -10.0, 2019: 200.0}, 2016, 3) is None
+
+
+def test_growth_adjusted_value_divides_by_growth_in_percentage_points():
+    # PEG = P/E / (growth * 100): 30 / (0.15 * 100) = 30 / 15 = 2.0.
+    assert growth_adjusted_value(30.0, 0.15) == pytest.approx(2.0)
+    # Exactly 5% growth is allowed (>= floor): 30 / 5 = 6.0.
+    assert growth_adjusted_value(30.0, 0.05) == pytest.approx(6.0)
+
+
+def test_growth_adjusted_value_not_applicable_cases_return_none():
+    # EPS <= 0 (non-positive multiple) -> None, never a negative PEG.
+    assert growth_adjusted_value(-5.0, 0.15) is None
+    assert growth_adjusted_value(0.0, 0.15) is None
+    # Growth strictly below the 5% floor -> None (linearity flaw guard).
+    assert growth_adjusted_value(30.0, 0.049) is None
+    assert growth_adjusted_value(30.0, None) is None
+    # Missing multiple -> None.
+    assert growth_adjusted_value(None, 0.15) is None
+
+
+def test_growth_adjusted_history_pairs_each_year_with_its_forward_cagr():
+    # Two complete rows: 2016 (pe=20, fwd CAGR 2016->2019) and 2017 (pe=25,
+    # fwd 2017->2020). 2018/2019 lack a full fy+3 window -> omitted.
+    # revenue: 2016=100, 2017=110, 2018=130, 2019=200, 2020=242.
+    #   fy2016 fwd CAGR = (200/100)^(1/3)-1 = 0.259921 -> *100 = 25.9921
+    #     PEG2016 = 20 / 25.9921 = 0.7695 -> round 0.77
+    #   fy2017 fwd CAGR = (242/110)^(1/3)-1 = 0.30044 -> *100 = 30.0437
+    #     PEG2017 = 25 / 30.0437 = 0.8321 -> round 0.83
+    history = [
+        {"fy": 2016, "pe": 20.0},
+        {"fy": 2017, "pe": 25.0},
+        {"fy": 2018, "pe": 30.0},
+        {"fy": 2019, "pe": 35.0},
+    ]
+    rev = {2016: 100.0, 2017: 110.0, 2018: 130.0, 2019: 200.0, 2020: 242.0}
+    result = growth_adjusted_history(history, rev, "pe")
+    assert result == [pytest.approx(0.77, abs=0.01), pytest.approx(0.83, abs=0.01)]
+
+
+def test_growth_adjusted_history_skips_years_below_growth_floor():
+    # fy2016's forward CAGR is only ~3.2% (< 5% floor) -> that year contributes
+    # nothing; fy2017's is ~26% -> included. Result has exactly one value.
+    history = [{"fy": 2016, "pe": 20.0}, {"fy": 2017, "pe": 25.0}]
+    rev = {2016: 100.0, 2017: 100.0, 2018: 105.0, 2019: 110.0, 2020: 200.0}
+    result = growth_adjusted_history(history, rev, "pe")
+    assert len(result) == 1
+
+
+def _ev_sales_normalized():
+    """FY2020-2022 with long-term debt and cash, so ev_sales != ps.
+
+    FY2021: price 10, shares 100 -> market cap 1000; debt 300, cash 100 ->
+    net debt 200; EV 1200; revenue 1000 -> ev_sales = 1.2 (ps = 1.0).
+    """
+    def r(fy, v):
+        return _mh_record(fy, v, f"{fy}-12-31")
+
+    concepts = {
+        "Revenue": [r(2020, 900.0), r(2021, 1000.0), r(2022, 1100.0)],
+        "EPS": [r(2020, 0.8), r(2021, 1.0), r(2022, 1.2)],
+        "SharesOutstanding": [r(2020, 100.0), r(2021, 100.0), r(2022, 100.0)],
+        "OperatingCashFlow": [r(2020, 140.0), r(2021, 150.0), r(2022, 160.0)],
+        "CapEx": [r(2020, 50.0), r(2021, 50.0), r(2022, 60.0)],
+        "LongTermDebt": [r(2020, 300.0), r(2021, 300.0), r(2022, 300.0)],
+        "Cash": [r(2020, 100.0), r(2021, 100.0), r(2022, 100.0)],
+    }
+    return {"cik": 1, "entity_name": "EV Co", "currency": "USD", "annual": concepts, "quarterly": {}, "missing": [], "matched_tags": {}}
+
+
+def test_multiples_history_computes_ev_sales_with_net_debt():
+    dates = pd.to_datetime(["2020-12-31", "2021-12-31", "2022-12-31"])
+    df = pd.DataFrame({"Close": [8.0, 10.0, 12.0]}, index=dates)
+    df.index.name = "Date"
+
+    history = multiples_history(_ev_sales_normalized(), df)
+    fy2021 = next(h for h in history if h["fy"] == 2021)
+    # EV = 10*100 + (300 - 100) = 1200; ev_sales = 1200 / 1000 = 1.2.
+    assert fy2021["ev_sales"] == pytest.approx(1.2)
+    # ps stays market-cap based: 10*100 / 1000 = 1.0 (so ev_sales != ps here).
+    assert fy2021["ps"] == pytest.approx(1.0)
+
+
+def test_multiples_history_ev_sales_equals_ps_when_no_debt_or_cash_concepts():
+    # _mh_normalized() carries no LongTermDebt/LongTermDebtCurrent/Cash, so
+    # net debt is treated as 0 and ev_sales collapses to ps.
+    history = multiples_history(_mh_normalized(), _mh_price_df())
+    fy2021 = next(h for h in history if h["fy"] == 2021)
+    assert fy2021["ev_sales"] == pytest.approx(fy2021["ps"])

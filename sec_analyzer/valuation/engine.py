@@ -139,6 +139,7 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
             "pfcf_percentile": None,
             "history_years": 0,
             "sector": {"available": False, "industry": None, "pe_median": None, "ps_median": None, "pfcf_median": None},
+            "growth_adjusted": _empty_growth_adjusted("peg", "PEG", "P/E", None),
         },
         "sensitivity": None,
         "triangulation": {
@@ -1093,6 +1094,116 @@ def _derive_current_multiples(
     return current, notes
 
 
+def _empty_growth_adjusted(metric: str, label: str, raw_label: str, base_growth: Optional[float]) -> dict:
+    """A fully-shaped, not-applicable growth-adjusted block (all ratio fields
+    ``None``), so every downstream consumer can read the same keys whether or
+    not a PEG / growth-adjusted EV/Sales could actually be computed."""
+    return {
+        "metric": metric,
+        "label": label,
+        "raw_label": raw_label,
+        "value": None,
+        "percentile": None,
+        "raw_percentile": None,
+        "applicable": False,
+        "reason": None,
+        "base_growth_pct": round(base_growth * 100.0, 1) if _is_number(base_growth) else None,
+        "sector_peg": None,
+    }
+
+
+def _sector_peg(sector_medians_result: Optional[dict]) -> Optional[float]:
+    """Damodaran sector-median PEG, IF the (optional) reference data carries
+    it: a direct ``peg`` column wins, else derived from the sector median
+    ``pe`` and expected ``growth`` (decimal fraction) when both are present
+    and growth clears the :data:`multiples._PEG_MIN_GROWTH` floor. Returns
+    ``None`` whenever the growth/peg columns are absent (the default data
+    shape) -- sector PEG is a nice-to-have enrichment (VALUATION.md Sec.7)."""
+    if not sector_medians_result:
+        return None
+    direct = sector_medians_result.get("peg")
+    if _is_number(direct) and direct > 0:
+        return round(direct, 2)
+    sec_pe = sector_medians_result.get("pe")
+    sec_growth = sector_medians_result.get("growth")
+    if _is_number(sec_pe) and sec_pe > 0 and _is_number(sec_growth) and sec_growth >= multiples._PEG_MIN_GROWTH:
+        return round(sec_pe / (sec_growth * 100.0), 2)
+    return None
+
+
+def _build_growth_adjusted(
+    history: list,
+    current: dict,
+    metrics: dict,
+    normalized: dict,
+    base_growth: Optional[float],
+    hyper_growth_active: bool,
+    pe_pct: Optional[float],
+    sector_medians_result: Optional[dict],
+) -> "tuple[dict, Optional[float], Optional[float]]":
+    """Build the ``multiples.growth_adjusted`` block (SPEC.md Sec.6).
+
+    Standard mode ranks PEG = current P/E / base growth (in % points), paired
+    with the raw P/E percentile. Hyper-grower mode ranks growth-adjusted
+    EV/Sales = current EV/Sales / base growth, paired with the raw EV/Sales
+    percentile -- P/E is meaningless for these filers, so EV/Sales stands in
+    as the raw multiple. The denominator is ALWAYS the assumptions pipeline's
+    base ``growth_5y`` (surfaced as ``base_growth_pct``); the ratio is only
+    computed when the raw multiple is positive AND base growth clears the 5%
+    floor (:data:`multiples._PEG_MIN_GROWTH`) -- otherwise it degrades to
+    ``applicable=False`` with a Turkish reason, never a negative/exploded
+    figure.
+
+    Returns:
+        A ``(block, raw_pair_pct, growth_adj_pct)`` tuple. ``block`` is the
+        output dict; ``raw_pair_pct``/``growth_adj_pct`` are the two
+        percentiles the triangulation divergence check compares (either may
+        be ``None``). Never raises.
+    """
+    if hyper_growth_active:
+        metric, label, raw_label, raw_key = "growth_adj_ps", "Büyüme-ayarlı EV/Satış", "EV/S", "ev_sales"
+        market_cap = metrics.get("market_cap")
+        net_debt = metrics.get("net_debt")
+        ps_current = current.get("ps")
+        if ps_current is not None and market_cap and market_cap > 0:
+            # EV/Sales = P/S * EV/market_cap = P/S * (1 + net_debt/market_cap).
+            raw_current = ps_current * (1.0 + (net_debt or 0.0) / market_cap)
+        else:
+            raw_current = None
+        raw_pct = multiples.percentile_position([h.get("ev_sales") for h in history], raw_current)
+    else:
+        metric, label, raw_label, raw_key = "peg", "PEG", "P/E", "pe"
+        raw_current = current.get("pe")
+        raw_pct = pe_pct
+
+    block = _empty_growth_adjusted(metric, label, raw_label, base_growth)
+    block["raw_percentile"] = raw_pct
+    block["sector_peg"] = _sector_peg(sector_medians_result) if metric == "peg" else None
+
+    ga_value = multiples.growth_adjusted_value(raw_current, base_growth)
+    if ga_value is None:
+        if not _is_number(base_growth) or base_growth < multiples._PEG_MIN_GROWTH:
+            block["reason"] = (
+                f"Büyümeye göre ayarlı çarpan ({label}) uygulanamaz: base büyüme %5'in altında "
+                "(payda güvenilir değil)."
+            )
+        elif raw_current is None or raw_current <= 0:
+            detail = "TTM kâr pozitif değil (P/E yok)" if metric == "peg" else "EV/Satış hesaplanamadı"
+            block["reason"] = f"Büyümeye göre ayarlı çarpan ({label}) uygulanamaz: {detail}."
+        else:
+            block["reason"] = f"Büyümeye göre ayarlı çarpan ({label}) uygulanamaz."
+        return block, raw_pct, None
+
+    revenue_series = to_annual_series(normalized, "Revenue")
+    ga_hist = multiples.growth_adjusted_history(history, revenue_series, raw_key)
+    ga_pct = multiples.percentile_position(ga_hist, ga_value)
+
+    block["value"] = ga_value
+    block["percentile"] = ga_pct
+    block["applicable"] = True
+    return block, raw_pct, ga_pct
+
+
 def _format_growth_pct(value: float) -> str:
     """Turkish growth string, e.g. ``0.08 -> "%8 büyüme"`` (Sec.4)."""
     return f"%{value * 100:.0f} büyüme"
@@ -1469,6 +1580,20 @@ def _run_valuation(
         "pfcf_median": (sector_medians_result or {}).get("pfcf"),
     }
 
+    # --- Growth-adjusted multiple (PEG / growth-adjusted EV/Sales) ----------
+    # Refines (never replaces) the raw multiples signal by dividing the raw
+    # multiple by the assumptions pipeline's base growth (in % points).
+    # Standard mode ranks PEG (= current P/E / base growth); hyper-grower
+    # mode -- where P/E is meaningless -- ranks growth-adjusted EV/Sales
+    # instead (SPEC.md Sec.6, VALUATION.md Sec.7). Denominator is ALWAYS the
+    # base growth_5y, surfaced in the output as `base_growth_pct`.
+    growth_adjusted, ga_raw_pct, ga_pct = _build_growth_adjusted(
+        history, current, metrics, normalized, base_growth, hyper_growth_active,
+        pe_pct, sector_medians_result,
+    )
+    if growth_adjusted.get("reason"):
+        notes.append(growth_adjusted["reason"])
+
     multiples_out = {
         "history": history,
         "current": current,
@@ -1477,6 +1602,7 @@ def _run_valuation(
         "pfcf_percentile": pfcf_pct,
         "history_years": len(history),
         "sector": sector_info,
+        "growth_adjusted": growth_adjusted,
     }
 
     # --- Sensitivity (base scenario only) -----------------------------------
@@ -1514,6 +1640,7 @@ def _run_valuation(
     triangulation = triangulate.triangulate(
         price, base_band, output_implied, output_realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
         hyper_growth=hyper_growth_active, bull_band=hyper_bull_band, reverse_dcf_status=output_bracket_status,
+        raw_growth_pair_pct=ga_raw_pct, growth_adj_pct=ga_pct,
     )
 
     return {

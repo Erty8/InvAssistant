@@ -22,6 +22,19 @@ logger = logging.getLogger(__name__)
 #: ``percentile_position`` to return a result rather than ``None``.
 _MIN_PERCENTILE_SAMPLE = 5
 
+#: Minimum growth rate (as a decimal fraction, so ``0.05`` == 5%) below
+#: which a growth-adjusted multiple (PEG / growth-adjusted EV/Sales) is NOT
+#: computed. Guards against the PEG linearity flaw blowing up (or flipping
+#: sign) as the denominator approaches zero -- see ``growth_adjusted_value``
+#: and ``growth_adjusted_history``. Matches VALUATION.md Sec.7.
+_PEG_MIN_GROWTH = 0.05
+
+#: Forward window (in fiscal years) over which each historical year's own
+#: realized revenue CAGR is measured to build the historical growth-adjusted
+#: multiple series: a fiscal year's period-end multiple is divided by the
+#: revenue CAGR *it went on to realize* over the following 3 years.
+_GROWTH_ADJ_FORWARD_YEARS = 3
+
 
 def _period_end_by_fy(normalized: dict) -> Dict[int, str]:
     """Build a ``{fiscal_year: period_end}`` lookup across all annual
@@ -71,6 +84,13 @@ def multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Lis
     * ``pfcf = fy_price * shares_fy / fcf_fy`` (``None`` unless
       ``fcf_fy > 0`` -- ``fcf_fy = OperatingCashFlow_fy - CapEx_fy`` -- and
       ``shares_fy`` is present)
+    * ``ev_sales = (fy_price * shares_fy + net_debt_fy) / revenue_fy``
+      (``None`` unless ``revenue_fy > 0`` and ``shares_fy`` is present),
+      where ``net_debt_fy = (LongTermDebt_fy or 0) + (LongTermDebtCurrent_fy
+      or 0) - (Cash_fy or 0)`` -- treated as ``0.0`` (i.e. an unlevered EV
+      equal to market cap) when none of those three concepts is present for
+      that fiscal year. This is the sales multiple the hyper-grower
+      growth-adjusted EV/Sales layer ranks against (VALUATION.md Sec.7).
 
     Args:
         normalized: The dict returned by
@@ -80,9 +100,9 @@ def multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Lis
             ``Close`` column), or ``None``.
 
     Returns:
-        A list of ``{"fy", "end", "price", "pe", "ps", "pfcf"}`` dicts
-        sorted by ``fy`` ascending. Empty list if no fiscal year has both a
-        period-end date and price coverage. Never raises.
+        A list of ``{"fy", "end", "price", "pe", "ps", "pfcf", "ev_sales"}``
+        dicts sorted by ``fy`` ascending. Empty list if no fiscal year has
+        both a period-end date and price coverage. Never raises.
     """
     try:
         return _multiples_history(normalized or {}, price_df)
@@ -97,6 +117,9 @@ def _multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Li
     shares_series = to_annual_series(normalized, "SharesOutstanding")
     ocf_series = to_annual_series(normalized, "OperatingCashFlow")
     capex_series = to_annual_series(normalized, "CapEx")
+    ltd_series = to_annual_series(normalized, "LongTermDebt")
+    ltdc_series = to_annual_series(normalized, "LongTermDebtCurrent")
+    cash_series = to_annual_series(normalized, "Cash")
     end_by_fy = _period_end_by_fy(normalized)
 
     history: List[dict] = []
@@ -125,8 +148,22 @@ def _multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Li
             else None
         )
 
+        # EV/Sales: net debt = long-term debt (noncurrent + current) minus
+        # cash; when NONE of those three concepts is present for this fiscal
+        # year, EV degrades to market cap (unlevered), so ev_sales == ps.
+        ev_sales = None
+        if revenue is not None and revenue > 0 and shares:
+            ltd = ltd_series.get(fy)
+            ltdc = ltdc_series.get(fy)
+            cash = cash_series.get(fy)
+            if ltd is None and ltdc is None and cash is None:
+                net_debt = 0.0
+            else:
+                net_debt = (ltd or 0.0) + (ltdc or 0.0) - (cash or 0.0)
+            ev_sales = (fy_price * shares + net_debt) / revenue
+
         history.append(
-            {"fy": fy, "end": period_end, "price": fy_price, "pe": pe, "ps": ps, "pfcf": pfcf}
+            {"fy": fy, "end": period_end, "price": fy_price, "pe": pe, "ps": ps, "pfcf": pfcf, "ev_sales": ev_sales}
         )
 
     return history
@@ -160,3 +197,107 @@ def percentile_position(history_values: List[Optional[float]], current: Optional
     equal_count = sum(1 for v in valid if v == current)
     pct = (less_count + 0.5 * equal_count) / len(valid) * 100.0
     return round(pct, 1)
+
+
+def forward_revenue_cagr(
+    revenue_series: Dict[int, Optional[float]],
+    fy: int,
+    years: int = _GROWTH_ADJ_FORWARD_YEARS,
+) -> Optional[float]:
+    """Realized revenue CAGR over the ``years`` fiscal years *following* ``fy``.
+
+    ``(revenue_{fy+years} / revenue_fy) ** (1/years) - 1``, computed only
+    when both endpoints are present in ``revenue_series`` AND strictly
+    positive (a CAGR across a zero/negative endpoint isn't meaningful).
+    Returns a decimal fraction (e.g. ``0.15`` for 15%), or ``None``.
+
+    This is the denominator each historical year's multiple is
+    growth-adjusted by (see :func:`growth_adjusted_history`): the multiple
+    the market assigned at ``fy``'s period-end, divided by the growth that
+    year actually went on to deliver.
+    """
+    start = revenue_series.get(fy)
+    end = revenue_series.get(fy + years)
+    if start is not None and end is not None and start > 0 and end > 0:
+        return (end / start) ** (1.0 / years) - 1.0
+    return None
+
+
+def growth_adjusted_value(
+    multiple: Optional[float],
+    growth_fraction: Optional[float],
+    min_growth: float = _PEG_MIN_GROWTH,
+) -> Optional[float]:
+    """Growth-adjusted multiple: ``multiple / (growth_fraction * 100)``.
+
+    Divides a raw multiple (P/E for PEG, EV/Sales for the hyper-grower
+    growth-adjusted sales multiple) by growth expressed in *percentage
+    points* (so a 15% growth denominator is ``15``, yielding the familiar
+    "PEG ~1" scale), matching the PEG convention.
+
+    Returns ``None`` -- i.e. "not applicable", never a negative or exploded
+    figure -- unless the multiple is present and strictly positive AND
+    ``growth_fraction`` is present and at least ``min_growth`` (5% by
+    default). The floor is what keeps the PEG linearity flaw from producing
+    nonsense as the denominator approaches zero (VALUATION.md Sec.7).
+
+    Args:
+        multiple: The raw multiple (e.g. current P/E), or ``None``.
+        growth_fraction: The growth rate as a decimal fraction (e.g. ``0.15``
+            for 15%), typically the assumptions pipeline's base ``growth_5y``.
+        min_growth: Minimum growth fraction below which ``None`` is returned.
+
+    Returns:
+        The growth-adjusted multiple rounded to 2 decimals, or ``None``.
+    """
+    if multiple is None or multiple <= 0:
+        return None
+    if growth_fraction is None or growth_fraction < min_growth:
+        return None
+    return round(multiple / (growth_fraction * 100.0), 2)
+
+
+def growth_adjusted_history(
+    history: List[dict],
+    revenue_series: Dict[int, Optional[float]],
+    multiple_key: str,
+    min_growth: float = _PEG_MIN_GROWTH,
+) -> List[float]:
+    """Historical growth-adjusted multiple series for percentile ranking.
+
+    For every year in ``history``, divides that year's ``multiple_key``
+    multiple (``"pe"`` for PEG, ``"ev_sales"`` for the hyper-grower sales
+    multiple) by the revenue CAGR that year went on to realize over the
+    following :data:`_GROWTH_ADJ_FORWARD_YEARS` fiscal years (see
+    :func:`forward_revenue_cagr`), expressed in percentage points.
+
+    Only fiscal years with a *complete* pairing -- a positive multiple AND a
+    forward CAGR at or above ``min_growth`` -- contribute a value; every
+    other year is simply omitted (not emitted as ``None``), so the returned
+    list is ready to hand straight to :func:`percentile_position`. The most
+    recent ~3 fiscal years naturally drop out (their forward window isn't
+    complete yet), which is expected.
+
+    Args:
+        history: The list returned by :func:`multiples_history`.
+        revenue_series: The ``{fy: revenue}`` annual series (from
+            ``normalize.normalizer.to_annual_series(normalized, "Revenue")``).
+        multiple_key: Which per-year multiple to growth-adjust (``"pe"`` or
+            ``"ev_sales"``).
+        min_growth: Minimum forward-CAGR fraction for a year to qualify.
+
+    Returns:
+        A list of growth-adjusted multiple floats (already ``None``-free).
+        Never raises.
+    """
+    values: List[float] = []
+    for row in (history or []):
+        fy = row.get("fy")
+        if fy is None:
+            continue
+        multiple = row.get(multiple_key)
+        fwd_cagr = forward_revenue_cagr(revenue_series, fy)
+        adjusted = growth_adjusted_value(multiple, fwd_cagr, min_growth)
+        if adjusted is not None:
+            values.append(adjusted)
+    return values

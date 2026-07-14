@@ -2,9 +2,9 @@
 
 Serves a single-page, vanilla-JS front end that lets a user type a stock
 ticker, fetch its earnings/financials straight from SEC EDGAR, and
-optionally run a fundamental analysis using a selectable backend: local
-Ollama/Gemma (default), the hosted Anthropic Claude API, or a deterministic
-script-based (no-AI) analyzer.
+optionally run a fundamental analysis using a selectable backend: a
+deterministic script-based (no-AI) analyzer (default), a local Ollama/Gemma
+model, or the hosted Anthropic Claude API.
 
 This module is a thin HTTP wrapper around the existing fetch/normalize/
 store/interpret pipeline (see ``sec_analyzer.cli`` for the equivalent CLI
@@ -14,7 +14,7 @@ Run it with::
 
     python -m sec_analyzer.web.app
 
-Then open http://127.0.0.1:5000 in a browser.
+Then open http://127.0.0.1:5050 in a browser.
 
 Before starting the server, ``SEC_USER_AGENT`` must be set (typically via a
 ``.env`` file in the working directory) -- SEC EDGAR requires every request
@@ -677,9 +677,9 @@ def report():
 
 
 def main() -> None:
-    """Configure logging and start the development server on 127.0.0.1:5000."""
+    """Configure logging and start the development server on 127.0.0.1:5050."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host="127.0.0.1", port=5050, debug=False)
 
 
 if __name__ == "__main__":
