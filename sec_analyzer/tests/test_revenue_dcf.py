@@ -167,16 +167,21 @@ def _normalized(revenue_2023):
     }
 
 
-def _metrics(revenue_cagr_5y, fcf, rnd_revenue=0.0, sbc_revenue=0.0):
+def _metrics(revenue_cagr_5y, fcf, rnd_revenue=0.0, sbc_revenue=0.0, ps=None):
     return {
         "revenue_cagr_5y": revenue_cagr_5y, "revenue_cagr_3y": None,
         "latest_fy": 2023, "fcf": fcf,
         "rnd_revenue": rnd_revenue, "sbc_revenue": sbc_revenue,
+        "ps": ps,
     }
 
 
 def test_detect_hyper_grower_growth_exactly_threshold_not_triggered():
-    # realized_cagr == 0.25 exactly -> growth condition fails (strict >).
+    # realized_cagr == 0.25 exactly -> no longer fails the strong tier's
+    # strict ">" for its own sake (0.25 is now inside the gray zone,
+    # (0.20, 0.25]); it fails because this call has no "ps" key, so
+    # metrics.get("ps") is None -> high_ps is False -> the gray zone's
+    # P/S gate blocks the trigger regardless of clause (a) firing.
     metrics = _metrics(revenue_cagr_5y=0.25, fcf=-10.0)
     triggered, reasons = detect_hyper_grower(metrics, [], _normalized(1000.0))
     assert triggered is False
@@ -253,6 +258,70 @@ def test_detect_hyper_grower_never_raises_on_malformed_metrics():
     triggered, reasons = detect_hyper_grower(None, None, None)
     assert triggered is False
     assert reasons == []
+
+
+# ---------------------------------------------------------------------------
+# 2b. detect_hyper_grower gray-zone tier (SPEC Sec.8): CAGR in (0.20, 0.25]
+#     AND a fired clause AND P/S > 8.0.
+# ---------------------------------------------------------------------------
+
+
+def test_detect_hyper_grower_gray_zone_fires_with_clause_a_and_high_ps():
+    # CAGR=0.22 is in the gray zone, fcf=-10 <= 0 fires clause (a), and
+    # ps=12.0 > 8.0 -> gray zone triggers.
+    metrics = _metrics(revenue_cagr_5y=0.22, fcf=-10.0, ps=12.0)
+    triggered, reasons = detect_hyper_grower(metrics, [], _normalized(1000.0))
+    assert triggered is True
+    assert "gri bölge" in reasons[0]
+    assert "FCF negatif veya sıfır" in reasons
+
+
+def test_detect_hyper_grower_gray_zone_blocked_by_low_ps():
+    # Same clause (a) as above, but ps=5.0 <= 8.0 -> P/S gate blocks it.
+    metrics = _metrics(revenue_cagr_5y=0.22, fcf=-10.0, ps=5.0)
+    triggered, reasons = detect_hyper_grower(metrics, [], _normalized(1000.0))
+    assert triggered is False
+    assert reasons == []
+
+
+def test_detect_hyper_grower_gray_zone_blocked_by_no_clause():
+    # High P/S but fcf=100 is positive, high margin, and no opex intensity
+    # -> no clause fires -> gray zone doesn't trigger even with high P/S.
+    metrics = _metrics(revenue_cagr_5y=0.22, fcf=100.0, ps=12.0)
+    triggered, reasons = detect_hyper_grower(metrics, [], _normalized(1000.0))
+    assert triggered is False
+    assert reasons == []
+
+
+def test_detect_hyper_grower_gray_zone_lower_boundary_not_qualified():
+    # CAGR == 0.20 exactly is not strictly above the gray-zone min -> falls
+    # below the gray zone entirely, regardless of clause/P/S.
+    metrics = _metrics(revenue_cagr_5y=0.20, fcf=-10.0, ps=12.0)
+    triggered, reasons = detect_hyper_grower(metrics, [], _normalized(1000.0))
+    assert triggered is False
+    assert reasons == []
+
+
+def test_detect_hyper_grower_gray_zone_upper_boundary_at_25_triggers():
+    # CAGR == 0.25 exactly is now inside the gray zone (<=0.25, not the
+    # strong tier's strict >0.25); with clause (a) and high P/S it triggers.
+    metrics = _metrics(revenue_cagr_5y=0.25, fcf=-10.0, ps=12.0)
+    triggered, reasons = detect_hyper_grower(metrics, [], _normalized(1000.0))
+    assert triggered is True
+    assert "gri bölge" in reasons[0]
+
+
+def test_detect_hyper_grower_gray_zone_clause_c_via_opex_mrvl_like():
+    # MRVL-like case: CAGR=0.225 in the gray zone, fcf positive (no clause
+    # a/b) but rnd_revenue + sbc_revenue = 0.30 + 0.12 = 0.42 > 0.40 fires
+    # clause (c), and ps=25.0 > 8.0 -> gray zone triggers.
+    metrics = _metrics(
+        revenue_cagr_5y=0.225, fcf=100.0, rnd_revenue=0.30, sbc_revenue=0.12, ps=25.0,
+    )
+    triggered, reasons = detect_hyper_grower(metrics, [], _normalized(1000.0))
+    assert triggered is True
+    assert "gri bölge" in reasons[0]
+    assert "Ar-Ge + SBC / gelir %40'ı aşıyor (agresif büyüme yatırımı)" in reasons
 
 
 # ---------------------------------------------------------------------------

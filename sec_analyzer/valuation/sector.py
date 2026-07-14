@@ -47,14 +47,45 @@ _CYCLICAL_SIC_RANGES = (
 )
 
 #: Individual cyclical SIC codes that don't fall inside a clean range:
-#: 2911 (petroleum refining), 3559 (special industry machinery), 3674
-#: (semiconductors).
-_CYCLICAL_SIC_SINGLES = {2911, 3559, 3674}
+#: 2911 (petroleum refining), 3559 (special industry machinery). 3674
+#: (semiconductors) used to live here unconditionally but is now handled
+#: by a dedicated growth-aware branch in ``classify_sector`` (see
+#: ``_SEMICONDUCTOR_SIC`` below) -- a secular-growth semi is no longer
+#: force-classified as cyclical.
+_CYCLICAL_SIC_SINGLES = {2911, 3559}
+
+#: SIC code for semiconductors -- handled separately from the blanket
+#: cyclical set: a commodity/memory-type or unknown-growth semi stays
+#: cyclical, but a secular-growth semi (realized revenue CAGR above
+#: ``_SEMICONDUCTOR_GROWTH_CAGR_MIN``) falls through to the ordinary
+#: profitability-based classification so it can also be picked up by
+#: ``detect_hyper_grower`` (SPEC.md Sec.8).
+_SEMICONDUCTOR_SIC = 3674
 
 #: Realized revenue CAGR (5y, falling back to 3y) strictly above this
-#: triggers hyper-grower consideration (SPEC.md Sec.1). Exactly 25% does
-#: NOT trigger.
+#: means a semiconductor filer is treated as a secular grower rather than
+#: a classic through-the-cycle cyclical. Exactly 15% (or unknown/None
+#: CAGR) keeps the filer classified as ``"cyclical"``.
+_SEMICONDUCTOR_GROWTH_CAGR_MIN = 0.15
+
+#: Realized revenue CAGR (5y, falling back to 3y) strictly above this
+#: triggers hyper-grower consideration (SPEC.md Sec.1/Sec.8). Exactly 25%
+#: does NOT trigger the strong tier on its own -- it now falls inside the
+#: gray zone below (which additionally requires a fired clause and a high
+#: P/S).
 _HYPER_GROWTH_CAGR_THRESHOLD = 0.25
+
+#: Lower bound (exclusive) of the hyper-grower "gray zone": realized CAGR
+#: in ``(_HYPER_GROWTH_CAGR_GRAY_ZONE_MIN, _HYPER_GROWTH_CAGR_THRESHOLD]``
+#: can still trigger hyper-grower mode, but only with a fired clause AND a
+#: high P/S (SPEC.md Sec.8). Exactly 20% does NOT qualify for the gray
+#: zone.
+_HYPER_GROWTH_CAGR_GRAY_ZONE_MIN = 0.20
+
+#: Current P/S strictly above this, inside the gray zone, signals that the
+#: market is already pricing in strong growth -- required (together with a
+#: fired clause) for the gray zone to trigger.
+_HYPER_GROWTH_GRAY_ZONE_PS_THRESHOLD = 8.0
 
 #: FCF margin strictly below this counts as "suppressed cash flow" for
 #: hyper-grower clause (b). Exactly 5% does NOT trigger.
@@ -100,10 +131,14 @@ def classify_sector(sic: Optional[Union[int, str]], normalized: dict, metrics: d
         One of ``"reit"``, ``"financial"``, ``"cyclical"``,
         ``"growth_unprofitable"``, ``"mature"``. Deterministic, never
         raises: SIC 6798 -> reit; SIC 6000-6999 (excl. 6798) -> financial;
-        SIC in the cyclical set -> cyclical; else, if the latest fiscal
-        year's ``NetIncome`` is negative -> growth_unprofitable; else ->
-        mature. An unparseable/missing ``sic`` returns ``"mature"`` (see
-        the module docstring for the SIC-missing engine-wiring fallback).
+        SIC 3674 (semiconductors) -> cyclical when the realized revenue
+        CAGR (5y, falling back to 3y) is unknown or <= 15%, otherwise falls
+        through to the profitability check below like any other SIC; SIC
+        in the (remaining) cyclical set -> cyclical; else, if the latest
+        fiscal year's ``NetIncome`` is negative -> growth_unprofitable;
+        else -> mature. An unparseable/missing ``sic`` returns ``"mature"``
+        (see the module docstring for the SIC-missing engine-wiring
+        fallback).
     """
     sic_int = _to_int_sic(sic)
     if sic_int is None:
@@ -113,7 +148,19 @@ def classify_sector(sic: Optional[Union[int, str]], normalized: dict, metrics: d
         return SECTOR_REIT
     if _FINANCIAL_SIC_RANGE[0] <= sic_int <= _FINANCIAL_SIC_RANGE[1]:
         return SECTOR_FINANCIAL
-    if _is_cyclical_sic(sic_int):
+
+    if sic_int == _SEMICONDUCTOR_SIC:
+        cagr = (metrics or {}).get("revenue_cagr_5y")
+        if cagr is None:
+            cagr = (metrics or {}).get("revenue_cagr_3y")
+        if cagr is None or cagr <= _SEMICONDUCTOR_GROWTH_CAGR_MIN:
+            # Commodity/memory-type or unknown-growth semi: keep the
+            # through-cycle normalization treatment.
+            return SECTOR_CYCLICAL
+        # Secular-growth semi: fall through to the profitability check
+        # below instead of forcing "cyclical" -- this also lets
+        # detect_hyper_grower pick it up independently.
+    elif _is_cyclical_sic(sic_int):
         return SECTOR_CYCLICAL
 
     latest_fy = (metrics or {}).get("latest_fy")
@@ -137,23 +184,36 @@ def detect_hyper_grower(metrics: dict, ratios: List[dict], normalized: dict) -> 
     This function only *detects* the condition from financials; it has no
     say in how the engine values the filer once detected.
 
-    Triggered when the realized revenue CAGR (5-year, falling back to
-    3-year) is strictly above 25% AND at least one of:
-      (a) latest-FY FCF is zero or negative ("FCF negatif veya sıfır");
-      (b) latest-FY FCF margin is strictly below 5% ("FCF marjı %5'in
-          altında (bastırılmış nakit akışı)");
-      (c) R&D + SBC as a fraction of revenue (an S&M proxy -- no
-          standalone S&M line exists in the normalized concepts) is
-          strictly above 40% ("Ar-Ge + SBC / gelir %40'ı aşıyor (agresif
-          büyüme yatırımı)").
-    All boundary values (growth exactly 25%, FCF margin exactly 5%, opex
-    intensity exactly 40%) do NOT trigger their respective clause.
+    Two tiers, both keyed off the realized revenue CAGR (5-year, falling
+    back to 3-year):
+
+    - **Strong tier** -- CAGR strictly above 25% AND at least one of:
+        (a) latest-FY FCF is zero or negative ("FCF negatif veya sıfır");
+        (b) latest-FY FCF margin is strictly below 5% ("FCF marjı %5'in
+            altında (bastırılmış nakit akışı)");
+        (c) R&D + SBC as a fraction of revenue (an S&M proxy -- no
+            standalone S&M line exists in the normalized concepts) is
+            strictly above 40% ("Ar-Ge + SBC / gelir %40'ı aşıyor (agresif
+            büyüme yatırımı)").
+      Exactly 25% CAGR does NOT qualify for the strong tier (see gray zone
+      below); FCF margin exactly 5% and opex intensity exactly 40% do NOT
+      trigger their respective clause.
+    - **Gray zone** -- CAGR strictly above 20% and less-than-or-equal to
+      25% (i.e. ``(0.20, 0.25]``; exactly 20% does NOT qualify) AND at
+      least one of clauses (a)/(b)/(c) above AND the current P/S is
+      strictly above 8.0 ("market is clearly pricing high growth"). This
+      narrower tier exists for filers (e.g. fast-growing semiconductors)
+      whose realized growth sits just under the strong-tier bar but whose
+      valuation already implies the market expects hyper-growth -- without
+      the P/S gate, a merely fast-but-not-extreme grower with a modest
+      multiple would be swept in too aggressively.
+    - CAGR at or below 20% never triggers, regardless of clauses or P/S.
 
     Args:
         metrics: The dict returned by
             ``sec_analyzer.normalize.metrics.compute_metrics`` (uses
             ``revenue_cagr_5y``, ``revenue_cagr_3y``, ``latest_fy``,
-            ``fcf``, ``rnd_revenue``, ``sbc_revenue``).
+            ``fcf``, ``rnd_revenue``, ``sbc_revenue``, ``ps``).
         ratios: The list of per-fiscal-year ratio dicts (accepted for a
             uniform call signature alongside ``metrics``/``normalized``;
             not currently consulted -- ``fcf``/margin inputs already come
@@ -165,9 +225,10 @@ def detect_hyper_grower(metrics: dict, ratios: List[dict], normalized: dict) -> 
     Returns:
         A ``(triggered, reasons)`` tuple. ``reasons`` is empty when
         ``triggered`` is ``False``. When ``triggered`` is ``True``,
-        ``reasons`` starts with a CAGR summary line followed by one entry
-        per clause that fired. Never raises: any unexpected shape in
-        ``metrics``/``normalized`` degrades to ``(False, [])``.
+        ``reasons`` starts with a CAGR (and, for the gray zone, P/S)
+        summary line followed by one entry per clause that fired. Never
+        raises: any unexpected shape in ``metrics``/``normalized``
+        degrades to ``(False, [])``.
     """
     try:
         metrics = metrics or {}
@@ -175,7 +236,7 @@ def detect_hyper_grower(metrics: dict, ratios: List[dict], normalized: dict) -> 
         if realized_cagr is None:
             realized_cagr = metrics.get("revenue_cagr_3y")
 
-        if realized_cagr is None or realized_cagr <= _HYPER_GROWTH_CAGR_THRESHOLD:
+        if realized_cagr is None:
             return False, []
 
         latest_fy = metrics.get("latest_fy")
@@ -190,20 +251,37 @@ def detect_hyper_grower(metrics: dict, ratios: List[dict], normalized: dict) -> 
 
         opex_intensity = (metrics.get("rnd_revenue") or 0.0) + (metrics.get("sbc_revenue") or 0.0)
 
-        reasons = [f"Gelir CAGR %{realized_cagr * 100:.1f} (>%25)"]
+        clause_a = fcf is not None and fcf <= 0
+        clause_b = fcf_margin is not None and fcf_margin < _HYPER_GROWTH_FCF_MARGIN_THRESHOLD
+        clause_c = opex_intensity > _HYPER_GROWTH_OPEX_INTENSITY_THRESHOLD
+        any_clause = clause_a or clause_b or clause_c
 
-        if fcf is not None and fcf <= 0:
-            reasons.append("FCF negatif veya sıfır")
-        if fcf_margin is not None and fcf_margin < _HYPER_GROWTH_FCF_MARGIN_THRESHOLD:
-            reasons.append("FCF marjı %5'in altında (bastırılmış nakit akışı)")
-        if opex_intensity > _HYPER_GROWTH_OPEX_INTENSITY_THRESHOLD:
-            reasons.append("Ar-Ge + SBC / gelir %40'ı aşıyor (agresif büyüme yatırımı)")
+        clause_reasons = []
+        if clause_a:
+            clause_reasons.append("FCF negatif veya sıfır")
+        if clause_b:
+            clause_reasons.append("FCF marjı %5'in altında (bastırılmış nakit akışı)")
+        if clause_c:
+            clause_reasons.append("Ar-Ge + SBC / gelir %40'ı aşıyor (agresif büyüme yatırımı)")
 
-        if len(reasons) == 1:
-            # Growth condition met but none of (a)/(b)/(c) fired.
-            return False, []
+        if realized_cagr > _HYPER_GROWTH_CAGR_THRESHOLD:
+            if not any_clause:
+                return False, []
+            reasons = [f"Gelir CAGR %{realized_cagr * 100:.1f} (>%25)"] + clause_reasons
+            return True, reasons
 
-        return True, reasons
+        if realized_cagr > _HYPER_GROWTH_CAGR_GRAY_ZONE_MIN:
+            ps = metrics.get("ps")
+            high_ps = ps is not None and ps > _HYPER_GROWTH_GRAY_ZONE_PS_THRESHOLD
+            if not (any_clause and high_ps):
+                return False, []
+            reasons = [
+                f"Gelir CAGR %{realized_cagr * 100:.1f} (gri bölge %20-25) ve yüksek P/S "
+                f"(%{ps:.1f}x) — piyasa güçlü büyüme fiyatlıyor"
+            ] + clause_reasons
+            return True, reasons
+
+        return False, []
     except Exception:
         logger.warning("detect_hyper_grower: unexpected error computing hyper-grower detection.", exc_info=True)
         return False, []

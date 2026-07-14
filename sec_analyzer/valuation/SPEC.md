@@ -259,8 +259,15 @@ Deterministic from SIC (int or str), with financial-statement overrides:
 - 6798 → `"reit"`
 - 6000–6999 (except 6798) → `"financial"`
 - SIC in cyclical set → `"cyclical"`: 1000–1499 (mining/energy), 2911,
-  2800–2899 (chemicals), 3310–3399 (metals), 3559, 3674 (semis), 3711–3716
-  (autos), 4400–4599 (shipping/air)
+  2800–2899 (chemicals), 3310–3399 (metals), 3559, 3711–3716 (autos),
+  4400–4599 (shipping/air)
+- 3674 (semiconductors) → no longer unconditionally cyclical: `"cyclical"`
+  only when realized revenue CAGR (5y, falling back to 3y) is unknown or
+  `<= 15%` (through-cycle/commodity/memory-type semi); otherwise falls
+  through to the profitability check below like any other SIC, so a
+  secular-growth semi classifies as `"mature"`/`"growth_unprofitable"` and
+  can independently enter hyper-grower mode (see the gray-zone tier
+  cross-referenced below)
 - else if latest-FY `NetIncome < 0` → `"growth_unprofitable"`
 - else → `"mature"`
 If SIC missing → fall back to the LLM's phase-1 `sector_type` (engine wiring),
@@ -303,6 +310,26 @@ cyclical `normalized_variant` and the raw `dcf.scenarios` band — see
 itself is gated off entirely for `sector_type in ("financial", "reit")` — a
 revenue-margin hyper-DCF doesn't make sense for those sectors, which use
 P/B×ROE instead.
+
+`sector.detect_hyper_grower(metrics, ratios, normalized)`'s trigger
+condition, keyed off the realized revenue CAGR (5y, falling back to 3y),
+has two tiers:
+- **Strong tier**: CAGR strictly above 25% AND at least one of (a) FCF ≤ 0,
+  (b) FCF margin < 5%, (c) (R&D + SBC)/revenue > 40%.
+- **Gray zone**: CAGR in `(0.20, 0.25]` (strictly above 20%, up to and
+  including 25%) AND at least one of clauses (a)/(b)/(c) above AND current
+  P/S strictly above 8.0 — a fired clause alone isn't enough in the gray
+  zone; the market also has to already be pricing in high growth. This is
+  what lets a filer like a fast-growing semiconductor (22–24% realized
+  CAGR, negative or thin FCF from R&D/SBC intensity, but a rich P/S) enter
+  hyper-grower mode instead of being valued by a trailing-FCF DCF that
+  systematically undervalues it — see the semiconductor bullet above.
+- CAGR at or below 20% never triggers, regardless of clauses or P/S.
+
+Both tiers apply uniformly (independently of `sector_type`, subject to the
+financial/reit gating above) — the gray zone is not semiconductor-specific,
+it's just the tier most likely to matter for SIC 3674 given the 15%
+secular-growth threshold used by `classify_sector` above.
 
 ## 9. Sensitivity — `sensitivity.sensitivity_matrix(base_assumptions, fcf0, shares, dilution_rate) -> dict`
 

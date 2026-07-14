@@ -321,6 +321,29 @@
     border-radius: 5px;
     border: 1px solid;
   }
+  .fan-val {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .fan-val-outside {
+    color: var(--muted);
+  }
+  .fan-val-inside {
+    color: var(--text);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+    padding: 0 4px;
+  }
+  .fan-val-lo.fan-val-outside { right: 100%; margin-right: 6px; justify-content: flex-end; }
+  .fan-val-hi.fan-val-outside { left: 100%; margin-left: 6px; justify-content: flex-start; }
+  .fan-val-lo.fan-val-inside { left: 0; margin-left: 6px; justify-content: flex-start; }
+  .fan-val-hi.fan-val-inside { right: 0; margin-right: 6px; justify-content: flex-end; }
   .fan-marker {
     position: absolute;
     top: -16px;
@@ -397,6 +420,8 @@
   }
 
   /* ---- Triangulation card --------------------------------------------- */
+  /* Legacy compact chip-row layout -- used only as a fallback when a
+     payload doesn't carry tri.rationale (older result shape). */
   .triangulation-row {
     display: flex;
     align-items: center;
@@ -432,6 +457,48 @@
   }
   .tri-signal { font-family: var(--mono); }
 
+  /* Rationale layout -- one row per valuation method, each with its own
+     signal badge, an agreement marker against the overall direction, and
+     a muted note line explaining *why* (tri.rationale[method]). Falls
+     through to the compact chip row above when rationale is absent. */
+  .tri-methods {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .tri-method + .tri-method {
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .tri-method-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .tri-method-head .tri-label {
+    min-width: 84px;
+  }
+  .tri-marker {
+    font-size: 0.85rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .tri-marker-agree { color: var(--green); }
+  .tri-marker-disagree { color: var(--red); }
+  .tri-marker-muted { color: var(--muted); }
+  .tri-reason {
+    font-size: 0.78rem;
+    color: var(--outline);
+    line-height: 1.45;
+    margin-top: 4px;
+  }
+  .tri-confidence {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
   /* ---- Badges (status / confidence) -------------------------------------*/
   .badge {
     display: inline-block;
@@ -451,6 +518,11 @@
      (price implies an aggressive-but-not-yet-disqualified growth path). */
   .badge-caution { background: rgba(255, 138, 61, 0.16); color: var(--caution); border: 1px solid rgba(255, 138, 61, 0.5); }
   .badge-red { background: rgba(255, 180, 171, 0.15); color: var(--red); border: 1px solid rgba(147, 0, 10, 0.55); }
+  /* Neutral bucket for a triangulation method with no usable signal
+     (veri_yok) -- deliberately muted/gray rather than any of the four
+     verdict colors, since "no data" isn't a point on the cheap<->expensive
+     spectrum. */
+  .badge-muted { background: rgba(139, 145, 157, 0.14); color: var(--muted); border: 1px solid rgba(139, 145, 157, 0.4); }
   .badge-label {
     font-size: 0.66rem;
     font-weight: 700;
@@ -816,7 +888,7 @@
   // Chrome-level labels for the raw triangulation signal codes
   // (valuation.triangulation.signals -- lowercase internal codes, not
   // free-text meant for direct display).
-  var SIGNAL_LABEL = { ucuz: "CHEAP", makul: "FAIR", pahali: "EXPENSIVE", veri_yok: "NO DATA" };
+  var SIGNAL_LABEL = { ucuz: "CHEAP", makul: "FAIR", yuksek_beklenti: "HIGH EXP", pahali: "EXPENSIVE", veri_yok: "NO DATA" };
   var HORIZON_SHORT = { "3m": "3M", "1y": "1Y", "5y": "5Y" };
 
   function signalLabel(s) {
@@ -976,16 +1048,33 @@
         return "<span>" + SCENARIO_LABEL[k] + "</span>";
       }).join("");
 
+      var EDGE_THRESHOLD_PCT = 12;
+
       var rowsHtml = SCENARIO_ORDER.map(function (key) {
         var b = fv[key];
         var bandHtml = "";
         if (b && isNum(b.lo) && isNum(b.hi)) {
           var left = pctOf(Number(b.lo));
-          var width = Math.max(0.6, pctOf(Number(b.hi)) - left);
+          var right = pctOf(Number(b.hi));
+          var width = Math.max(0.6, right - left);
           var hex = SCENARIO_HEX[key];
+
+          var loInside = left < EDGE_THRESHOLD_PCT;
+          var hiInside = (100 - right) < EDGE_THRESHOLD_PCT;
+          var loValHtml =
+            '<span class="fan-val fan-val-lo ' + (loInside ? "fan-val-inside" : "fan-val-outside") + '">' +
+              fmtMoney(b.lo) +
+            '</span>';
+          var hiValHtml =
+            '<span class="fan-val fan-val-hi ' + (hiInside ? "fan-val-inside" : "fan-val-outside") + '">' +
+              fmtMoney(b.hi) +
+            '</span>';
+
           bandHtml =
             '<div class="fan-band" style="left:' + left + '%; width:' + width + '%; ' +
-            'background:' + hexToRgba(hex, 0.35) + '; border-color:' + hex + ';"></div>';
+            'background:' + hexToRgba(hex, 0.35) + '; border-color:' + hex + ';">' +
+              loValHtml + hiValHtml +
+            '</div>';
         }
         return '<div class="fan-row-track" data-scenario="' + key + '">' + bandHtml + '</div>';
       }).join("");
@@ -1061,12 +1150,44 @@
   // ---- Triangulation card ---------------------------------------------
   // Only rendered when result.valuation.triangulation is present; older/
   // simpler result dicts simply skip this card.
+
+  // Badge color for one method's OWN signal (independent of consensus):
+  // ucuz -> green, makul -> amber, yuksek_beklenti -> caution, pahali ->
+  // red, veri_yok/unknown -> muted (no-data is not a point on the
+  // cheap<->expensive spectrum, so it gets a neutral bucket, not amber).
+  function signalBadgeColor(sig) {
+    var s = sig ? String(sig).toLowerCase() : "";
+    if (s === "ucuz") return "green";
+    if (s === "makul") return "amber";
+    if (s === "yuksek_beklenti") return "caution";
+    if (s === "pahali") return "red";
+    return "muted";
+  }
+
+  // Agreement-marker kind for one method against the overall consensus
+  // direction. Deliberately distinguishes "no consensus" from "this method
+  // dissents": a veri_yok method, or any method when tri.direction is
+  // "belirsiz" (no real consensus), gets a neutral "muted" marker rather
+  // than a red X -- showing X on every method when there simply isn't an
+  // agreed direction reads as "all methods are wrong", which is false.
+  function triAgreementKind(sig, direction) {
+    var s = sig ? String(sig).toLowerCase() : "";
+    if (!s || s === "veri_yok") return "muted";
+    var dir = direction ? String(direction).toLowerCase() : "";
+    if (!dir || dir === "belirsiz") return "muted";
+    return s === dir ? "agree" : "disagree";
+  }
+
+  var TRI_MARKER_ICON = { agree: "✓", disagree: "✗", muted: "•" };
+
   function triangulationRowHtml(valuation, confidenceOverride) {
     var tri = (valuation || {}).triangulation;
     if (!tri) return "";
     var signals = tri.signals || {};
     var direction = tri.direction;
     var confidence = confidenceOverride || tri.confidence;
+    var rationale = tri.rationale;
+    var confColor = confidenceColor(confidence);
 
     // For financial/reit sectors the DCF slot is really the P/B×ROE anchor
     // (dcf.enabled === false in that case) -- label it accordingly.
@@ -1077,36 +1198,60 @@
       { key: "multiples", label: "MULTIPLES" },
     ];
 
-    var chips = methods.map(function (m) {
-      var sig = signals[m.key];
-      var icon = "–", cls = "tri-muted";
-      if (sig && String(sig).toLowerCase() !== "veri_yok") {
-        if (direction && String(direction).toLowerCase() !== "belirsiz" &&
-            String(sig).toLowerCase() === String(direction).toLowerCase()) {
-          icon = "✓";
-          cls = "tri-agree";
-        } else {
-          icon = "✗";
-          cls = "tri-disagree";
-        }
-      }
+    // Defensive fallback: older payloads without tri.rationale render the
+    // original compact chip-only row, no rationale lines, so this never
+    // crashes on a payload predating the rationale field.
+    if (!rationale) {
+      var chips = methods.map(function (m) {
+        var sig = signals[m.key];
+        var kind = triAgreementKind(sig, direction);
+        return (
+          '<div class="tri-chip tri-' + kind + '">' +
+            '<span class="tri-icon">' + TRI_MARKER_ICON[kind] + '</span>' +
+            '<span class="tri-label">' + escapeHtml(m.label) + '</span>' +
+            '<span class="tri-signal">' + escapeHtml(signalLabel(sig)) + '</span>' +
+          '</div>'
+        );
+      }).join("");
       return (
-        '<div class="tri-chip ' + cls + '">' +
-          '<span class="tri-icon">' + icon + '</span>' +
-          '<span class="tri-label">' + escapeHtml(m.label) + '</span>' +
-          '<span class="tri-signal">' + escapeHtml(signalLabel(sig)) + '</span>' +
+        '<div class="card">' +
+          '<div class="card-title">Triangulation</div>' +
+          '<div class="triangulation-row">' +
+            '<div class="tri-chips">' + chips + '</div>' +
+            '<span><span class="badge-label">Confidence</span><span class="badge badge-' + confColor + '">' +
+              escapeHtml(confidence || "—") + '</span></span>' +
+          '</div>' +
+        '</div>'
+      );
+    }
+
+    var rows = methods.map(function (m) {
+      var sig = signals[m.key];
+      var kind = triAgreementKind(sig, direction);
+      var reason = rationale[m.key];
+      return (
+        '<div class="tri-method">' +
+          '<div class="tri-method-head">' +
+            '<span class="tri-label">' + escapeHtml(m.label) + '</span>' +
+            '<span class="badge badge-' + signalBadgeColor(sig) + '">' + escapeHtml(signalLabel(sig)) + '</span>' +
+            '<span class="tri-marker tri-marker-' + kind + '">' + TRI_MARKER_ICON[kind] + '</span>' +
+          '</div>' +
+          (reason ? '<div class="tri-reason">' + escapeHtml(reason) + '</div>' : "") +
         '</div>'
       );
     }).join("");
 
-    var confColor = confidenceColor(confidence);
+    var confReason = rationale.confidence;
     return (
       '<div class="card">' +
         '<div class="card-title">Triangulation</div>' +
-        '<div class="triangulation-row">' +
-          '<div class="tri-chips">' + chips + '</div>' +
-          '<span><span class="badge-label">Confidence</span><span class="badge badge-' + confColor + '">' +
-            escapeHtml(confidence || "—") + '</span></span>' +
+        '<div class="tri-methods">' + rows + '</div>' +
+        '<div class="tri-confidence">' +
+          '<div class="tri-method-head">' +
+            '<span class="badge-label">Confidence</span>' +
+            '<span class="badge badge-' + confColor + '">' + escapeHtml(confidence || "—") + '</span>' +
+          '</div>' +
+          (confReason ? '<div class="tri-reason">' + escapeHtml(confReason) + '</div>' : "") +
         '</div>' +
       '</div>'
     );

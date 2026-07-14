@@ -258,6 +258,10 @@ def test_classify_sector_financial_sic_range():
 
 
 def test_classify_sector_cyclical_sic_singleton_semiconductors():
+    # Unknown-growth semi (empty metrics -> CAGR is None) -> stays on the
+    # "cyclical" default path. A secular-growth semi (CAGR > 15%) instead
+    # falls through to the profitability check -- see the dedicated
+    # semiconductor tests below.
     assert classify_sector(3674, {}, {}) == "cyclical"
 
 
@@ -285,6 +289,29 @@ def test_classify_sector_positive_net_income_gives_mature():
 def test_classify_sector_missing_sic_falls_back_to_mature():
     assert classify_sector(None, {}, {}) == "mature"
     assert classify_sector("not-a-sic", {}, {}) == "mature"
+
+
+def test_classify_sector_secular_growth_semiconductor_profitable_gives_mature():
+    # SIC 3674 with realized revenue CAGR (0.30) above the 15% secular-growth
+    # threshold falls through to the profitability check instead of being
+    # force-classified as cyclical; positive latest-FY NetIncome -> mature.
+    normalized = {"annual": {"NetIncome": [_ni_record(2023, 50.0)]}}
+    metrics = {"latest_fy": 2023, "revenue_cagr_5y": 0.30}
+    assert classify_sector(3674, normalized, metrics) == "mature"
+
+
+def test_classify_sector_secular_growth_semiconductor_unprofitable_gives_growth_unprofitable():
+    # Same secular-growth semi, but negative latest-FY NetIncome ->
+    # growth_unprofitable (independent of hyper-grower detection).
+    normalized = {"annual": {"NetIncome": [_ni_record(2023, -50.0)]}}
+    metrics = {"latest_fy": 2023, "revenue_cagr_5y": 0.30}
+    assert classify_sector(3674, normalized, metrics) == "growth_unprofitable"
+
+
+def test_classify_sector_low_growth_semiconductor_stays_cyclical():
+    # Realized CAGR (0.10) at or below the 15% threshold -> stays cyclical
+    # (commodity/memory-type semi), even with no normalized/NetIncome data.
+    assert classify_sector(3674, {}, {"revenue_cagr_5y": 0.10}) == "cyclical"
 
 
 # ---------------------------------------------------------------------------
