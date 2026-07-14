@@ -231,8 +231,14 @@ cover it). Then:
 - `pe = fy_price / eps_fy` (eps > 0 else None)
 - `ps = fy_price * shares_fy / revenue_fy` (revenue > 0 and shares else None)
 - `pfcf = fy_price * shares_fy / fcf_fy` (fcf > 0 and shares else None)
+- `ev_sales = (fy_price * shares_fy + net_debt_fy) / revenue_fy` (revenue > 0
+  and shares else None), where `net_debt_fy = (LongTermDebt_fy or 0) +
+  (LongTermDebtCurrent_fy or 0) - (Cash_fy or 0)`, treated as `0.0` (EV = market
+  cap) when none of those three concepts is present for that fy. This is the
+  sales multiple the hyper-grower growth-adjusted EV/Sales layer ranks against.
 
-Returns `[{"fy", "end", "price", "pe", "ps", "pfcf"}, ...]` sorted by fy.
+Returns `[{"fy", "end", "price", "pe", "ps", "pfcf", "ev_sales"}, ...]` sorted
+by fy.
 
 `multiples.percentile_position(history_values: list[float], current: float) ->
 Optional[float]` — percentage (0–100) of historical values strictly less than
@@ -241,11 +247,39 @@ else `None`.
 
 Current multiples come from `metrics["pe"|"ps"|"pfcf"]`.
 
+### Growth-adjusted multiples (PEG layer, VALUATION.md Sec.7)
+
+- `multiples.forward_revenue_cagr(revenue_series, fy, years=3) -> Optional[float]`
+  — realized revenue CAGR over the `years` fiscal years *following* `fy`
+  (`(rev_{fy+years}/rev_fy)**(1/years) - 1`; both endpoints present and > 0,
+  else `None`).
+- `multiples.growth_adjusted_value(multiple, growth_fraction, min_growth=0.05)
+  -> Optional[float]` — `multiple / (growth_fraction * 100)` (growth in
+  percentage points, so a 15% denominator is `15`). Returns `None` (never a
+  negative/exploded figure) unless `multiple > 0` AND `growth_fraction >=
+  min_growth` (5% floor guards the PEG linearity flaw).
+- `multiples.growth_adjusted_history(history, revenue_series, multiple_key,
+  min_growth=0.05) -> list[float]` — each history year's `multiple_key` value
+  (`"pe"` for PEG, `"ev_sales"` for the hyper sales multiple) growth-adjusted by
+  *its own* forward-3y revenue CAGR; only complete years contribute (the most
+  recent ~3 fys drop out), the list is already `None`-free for
+  `percentile_position`.
+
+The engine assembles these into the `multiples.growth_adjusted` output block
+(Sec.11): standard mode ranks PEG (current P/E ÷ base growth) against the raw
+P/E percentile; hyper-grower mode ranks growth-adjusted EV/Sales (current
+EV/Sales ÷ base growth) against the raw EV/Sales percentile. The denominator is
+ALWAYS the assumptions base `growth_5y` (surfaced as `base_growth_pct`).
+
 ## 7. Damodaran — `damodaran.load_sector_data(dir_path) -> Optional[dict]`
 
 Reads `data/damodaran/` (path from `Config.DAMODARAN_DIR`, default
 `<cwd>/data/damodaran`). Expected files (documented in that folder's README):
-- `multiples.csv` — columns: `industry, pe, ps, pfcf` (medians per industry)
+- `multiples.csv` — columns: `industry, pe, ps, pfcf` (medians per industry),
+  plus OPTIONAL `growth` (expected multi-year growth, decimal fraction e.g.
+  `0.15`) and/or `peg` columns used only for the sector-median PEG comparison
+  (VALUATION.md Sec.7); both default to `None` when absent, so older
+  four-column CSVs keep working
 - `erp.csv` — columns: `region, erp` (only the row `region == "US"` is used)
 
 Loader is tolerant: missing dir/file/columns → return what's available and log
@@ -365,12 +399,21 @@ Direction signal per method (`"ucuz" | "makul" | "pahali" | "veri_yok"`):
   original implied-vs-reference comparison.
 - **Multiples**: primary percentile = pe (fallback ps, then pfcf; for
   growth_unprofitable use ps first). pct > 70 → pahali; pct < 30 → ucuz; else
-  makul.
+  makul. **Two-component (VALUATION.md Sec.7):** when both `raw_growth_pair_pct`
+  (the raw multiple's percentile — P/E in standard mode, EV/Sales in
+  hyper-grower mode) and `growth_adj_pct` (the growth-adjusted multiple's
+  percentile) are present AND fall in different directional buckets, the signal
+  becomes `"karisik"` (mixed); when they agree, or either is `None`, the raw
+  signal above stands unchanged. `karisik` is a substantive signal (not
+  `veri_yok`), so it naturally can't join a pahali/ucuz/makul majority — it
+  lowers confidence exactly as a genuine disagreement should.
 
 Confidence: all three agree (ignoring veri_yok) → `"YÜKSEK"`; exactly two agree
 → `"ORTA"`; else (scattered, or ≥2 veri_yok) → `"DÜŞÜK"`. Returns
 `{"signals": {"dcf": .., "reverse_dcf": .., "multiples": ..},
-  "confidence": .., "direction": <majority signal or "belirsiz">}`.
+  "confidence": .., "direction": <majority signal or "belirsiz">,
+  "rationale": {...}}`. Signal codes are ASCII: `ucuz`/`makul`/`pahali`/
+`yuksek_beklenti`/`karisik`/`veri_yok`.
 
 ## 11. Engine — `engine.run_valuation(normalized, ratios, metrics, price, price_df, assumptions, sector_type, damodaran_dir=None, sic_description=None, hyper_growth_extras=None) -> dict`
 
@@ -408,7 +451,17 @@ consumed by interpret phase 2, CLI card, HTML report, and store):
                  "pe_percentile", "ps_percentile", "pfcf_percentile",
                  "history_years": int,
                  "sector": {"available": bool, "industry": str|None,
-                             "pe_median","ps_median","pfcf_median"}},
+                             "pe_median","ps_median","pfcf_median"},
+                 "growth_adjusted": {   # PEG layer, §6 / VALUATION.md §7
+                    "metric": "peg"|"growth_adj_ps",  # peg standard, ev/sales-based in hyper mode
+                    "label": str, "raw_label": "P/E"|"EV/S",
+                    "value": float|None,          # the growth-adjusted ratio (PEG etc.)
+                    "percentile": float|None,     # its position in the historical growth-adjusted series
+                    "raw_percentile": float|None, # the raw multiple's own percentile (the divergence pair)
+                    "applicable": bool,           # False when P/E<=0 or base growth < 5%
+                    "reason": str|None,           # Turkish "uygulanamaz" reason when not applicable
+                    "base_growth_pct": float|None,# denominator (base growth_5y in % points), always shown
+                    "sector_peg": float|None}},   # Damodaran sector-median PEG, only if growth/peg column present
   "sensitivity": <shape from §9>|None,
   "triangulation": <shape from §10>,
   "hyper_growth": bool,

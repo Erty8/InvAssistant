@@ -145,6 +145,98 @@ def test_print_verdict_card_multiples_line_falls_back_and_veri_yetersiz(capsys):
     assert "Multiples:   veri yetersiz" in out
 
 
+def test_print_verdict_card_multiples_line_peg_applicable_not_mixed(capsys):
+    result = _result_with_valuation()
+    result["valuation"]["multiples"]["growth_adjusted"] = {
+        "metric": "peg", "label": "PEG", "raw_label": "P/E",
+        "value": 1.4, "percentile": 82.0, "raw_percentile": 88.0,
+        "applicable": True, "reason": None, "base_growth_pct": 12.0, "sector_peg": None,
+    }
+    # triangulation multiples signal stays "pahali" (both components agree).
+    _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
+    out = capsys.readouterr().out
+
+    assert "Multiples:   P/E 88. pctile · PEG 1.40 (82. pctile)" in out
+    assert "karışık sinyal" not in out
+
+
+def test_print_verdict_card_multiples_line_peg_mixed_signal(capsys):
+    result = _result_with_valuation()
+    result["valuation"]["multiples"]["growth_adjusted"] = {
+        "metric": "peg", "label": "PEG", "raw_label": "P/E",
+        "value": 1.4, "percentile": 45.0, "raw_percentile": 88.0,
+        "applicable": True, "reason": None, "base_growth_pct": 12.0, "sector_peg": None,
+    }
+    result["valuation"]["triangulation"]["signals"]["multiples"] = "karisik"
+    _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
+    out = capsys.readouterr().out
+
+    assert "Multiples:   P/E 88. pctile · PEG 1.40 (45. pctile) → karışık sinyal" in out
+
+
+def _technical_fixture():
+    return {
+        "price": 100.0, "rsi14": 59.0,
+        "sma50_above_sma200": True, "golden_cross": True, "death_cross": False,
+        "range_position_pct": 68.0,
+        "return_1m_pct": 4.2, "return_3m_pct": 12.5, "return_6m_pct": -3.1,
+        "macd": 1.234, "macd_signal": 0.9, "macd_hist": 0.334, "macd_cross": "bullish",
+        "rel_volume": 1.3, "obv_trend": "up",
+        "rsi_divergence": "bearish",
+        "rsi_divergence_detail": {
+            "type": "bearish", "price_prev": 140.0, "price_last": 142.0,
+            "rsi_prev": 78.0, "rsi_last": 71.0, "last_date": "2025-05-20",
+        },
+        "verdict": "NÖTR", "verdict_detail": "RSI 59, SMA50 +%14",
+        "resistance_levels": [
+            {"low": 107.0, "high": 109.0, "price": 108.0, "dist_pct": 8.0, "strength": 4, "touches": 4, "fib": None, "last_touch": "2024-11-01", "is_52w_high": False, "is_52w_low": False},
+            {"low": 117.0, "high": 119.0, "price": 118.0, "dist_pct": 18.0, "strength": 2, "touches": 2, "fib": None, "last_touch": "2024-06-01", "is_52w_high": True, "is_52w_low": False},
+        ],
+        "support_levels": [{"low": 91.0, "high": 94.0, "price": 92.5, "dist_pct": -7.5, "strength": 3, "touches": 3, "fib": None, "last_touch": "2025-01-15", "is_52w_high": False, "is_52w_low": False}],
+    }
+
+
+def test_print_verdict_card_technical_enriched_with_momentum_and_sr(capsys):
+    result = _result_with_valuation()
+    result["technical_verdict"] = "NÖTR"
+    _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0}, technical=_technical_fixture())
+    out = capsys.readouterr().out
+
+    # Verdict line gains the detail suffix.
+    assert "NÖTR (RSI 59, SMA50 +%14)" in out
+    # Momentum sub-line with returns + trend.
+    assert "Momentum:" in out
+    assert "1a +%4" in out and "3a +%12" in out and "6a -%3" in out
+    assert "Trend: yükseliş (GC)" in out
+    # MACD + volume sub-line.
+    assert "MACD/Hacim:" in out
+    assert "MACD boğa (kesişim ↑)" in out
+    assert "Hacim 1.3×" in out
+    assert "OBV ↑" in out
+    # RSI divergence sub-line.
+    assert "RSI uyumsuzluğu (ayı)" in out
+    assert "$140→$142" in out
+    # Support/resistance sub-line: price ranges + combined evidence.
+    assert "Destek/Direnç:" in out
+    assert "Direnç $107–$109 (+%8 · 4×)" in out
+    assert "$117–$119 (+%18 · 52h zirve + 2×)" in out   # 52w + touch evidence combined
+    assert "Destek $91–$94 (-%8 · 3×)" in out
+
+
+def test_print_verdict_card_technical_omitted_keeps_old_single_line(capsys):
+    # No technical dict -> no momentum/SR sub-lines, verdict word only.
+    result = _result_with_valuation()
+    result["technical_verdict"] = "NÖTR"
+    _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
+    out = capsys.readouterr().out
+
+    assert "Teknik:" in out and "NÖTR" in out
+    assert "Momentum:" not in out
+    assert "MACD/Hacim:" not in out
+    assert "RSI uyumsuzluğu" not in out
+    assert "Destek/Direnç:" not in out
+
+
 def test_print_verdict_card_triangulation_line_high_confidence_is_yon_net(capsys):
     _print_verdict_card("AAPL", "1y", _result_with_valuation(), metrics={"price": 100.0})
     out = capsys.readouterr().out

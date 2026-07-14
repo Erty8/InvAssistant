@@ -558,6 +558,99 @@
     line-height: 1.45;
   }
 
+  /* ---- Technical detail (momentum + support/resistance) ------------------*/
+  .tech-section-title {
+    font-size: 0.66rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 14px 0 8px;
+  }
+  .rsi-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .rsi-gauge {
+    position: relative;
+    flex: 1;
+    height: 8px;
+    border-radius: 4px;
+    /* oversold (<30) green zone · neutral mid · overbought (>70) red zone */
+    background: linear-gradient(to right,
+      rgba(77,224,130,0.55) 0%, rgba(77,224,130,0.55) 30%,
+      #2a3547 30%, #2a3547 70%,
+      rgba(255,180,171,0.65) 70%, rgba(255,180,171,0.65) 100%);
+  }
+  .rsi-gauge-marker {
+    position: absolute; top: -4px; width: 2px; height: 16px;
+    background: var(--text); transform: translateX(-1px); border-radius: 1px;
+  }
+  .rsi-val { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 2em; text-align: right; }
+  .rsi-side { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .tech-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+    gap: 8px;
+  }
+  .tech-stat {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 9px;
+    min-width: 0;
+  }
+  .tech-stat-label {
+    font-size: 0.6rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
+  }
+  .tech-stat-val { font-size: 0.9rem; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .tech-pos { color: var(--green); }
+  .tech-neg { color: var(--red); }
+  .tech-div-note {
+    font-size: 0.75rem; line-height: 1.4; margin-top: 8px;
+    padding: 7px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border);
+  }
+  .sr-ladder { display: flex; flex-direction: column; gap: 4px; }
+  .sr-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 5px 10px; border-radius: 7px; font-variant-numeric: tabular-nums;
+  }
+  .sr-res { background: rgba(255,180,171,0.10); }
+  .sr-sup { background: rgba(77,224,130,0.10); }
+  .sr-price { background: rgba(90,167,255,0.16); border: 1px solid var(--border); }
+  .sr-side { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); min-width: 72px; }
+  .sr-lvl { font-weight: 600; min-width: 8.5em; white-space: nowrap; }
+  .sr-dist { font-size: 0.8rem; min-width: 3.6em; }
+  .sr-why { flex: 1; color: var(--muted); font-size: 0.72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sr-strength-badge {
+    font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 1px 7px; border-radius: 6px; white-space: nowrap;
+  }
+  .sr-str-strong { color: var(--green); background: rgba(77, 224, 130, 0.14); }
+  .sr-str-medium { color: var(--amber); background: rgba(255, 185, 83, 0.14); }
+  .sr-str-weak { color: var(--muted); background: rgba(139, 145, 157, 0.16); }
+  .sr-fib-caption { font-size: 0.68rem; color: var(--muted); margin-bottom: 6px; }
+  .tech-empty { color: var(--muted); font-size: 0.82rem; }
+
+  /* ---- Price chart (price line + S/R + fair-value bands) -----------------*/
+  .pchart svg { width: 100%; height: auto; display: block; }
+  .pchart-area { fill: rgba(90, 167, 255, 0.12); stroke: none; }
+  .pchart-line { fill: none; stroke: #5aa7ff; stroke-width: 1.6; }
+  .pchart-grid { stroke: var(--border); stroke-width: 1; opacity: 0.55; }
+  .pchart-tick { fill: var(--muted); font-size: 10px; }
+  /* Support & resistance are drawn identically (a single dark-red line at
+     each zone's price, no fill) -- only the R/S label distinguishes them.
+     Simpler than a filled band: less visual clutter, no overlap fights with
+     the fair-value box. */
+  .pchart-sr-line { stroke: #7a1f1f; stroke-width: 1.5; opacity: 0.9; }
+  .pchart-band-label { font-size: 9px; font-weight: 600; fill: #c0605f; }
+  .pchart-fv-rect { fill: none; stroke-width: 1; stroke-dasharray: 4 3; }
+  .pchart-fv-bull { stroke: var(--green); }
+  .pchart-fv-base { stroke: #5aa7ff; }
+  .pchart-fv-bear { stroke: var(--red); }
+  .pchart-fv-label { font-size: 9px; }
+  .pchart-now-line { stroke: var(--text); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.75; }
+  .pchart-now-label { font-size: 10px; fill: var(--text); font-weight: 700; }
+  .pchart-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 0.7rem; color: var(--muted); }
+  .pchart-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .pchart-sw { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+
   /* ---- Sensitivity table -------------------------------------------------*/
   .uncertainty-tag {
     display: inline-block;
@@ -888,7 +981,7 @@
   // Chrome-level labels for the raw triangulation signal codes
   // (valuation.triangulation.signals -- lowercase internal codes, not
   // free-text meant for direct display).
-  var SIGNAL_LABEL = { ucuz: "CHEAP", makul: "FAIR", yuksek_beklenti: "HIGH EXP", pahali: "EXPENSIVE", veri_yok: "NO DATA" };
+  var SIGNAL_LABEL = { ucuz: "CHEAP", makul: "FAIR", yuksek_beklenti: "HIGH EXP", pahali: "EXPENSIVE", karisik: "MIXED", veri_yok: "NO DATA" };
   var HORIZON_SHORT = { "3m": "3M", "1y": "1Y", "5y": "5Y" };
 
   function signalLabel(s) {
@@ -1161,6 +1254,7 @@
     if (s === "makul") return "amber";
     if (s === "yuksek_beklenti") return "caution";
     if (s === "pahali") return "red";
+    if (s === "karisik") return "caution";
     return "muted";
   }
 
@@ -1173,6 +1267,10 @@
   function triAgreementKind(sig, direction) {
     var s = sig ? String(sig).toLowerCase() : "";
     if (!s || s === "veri_yok") return "muted";
+    // "karisik" is an ambiguity, not a dissent-against-consensus: show it
+    // neutral rather than a red ✗ (the raw multiple and its growth-adjusted
+    // counterpart simply point different ways).
+    if (s === "karisik") return "muted";
     var dir = direction ? String(direction).toLowerCase() : "";
     if (!dir || dir === "belirsiz") return "muted";
     return s === dir ? "agree" : "disagree";
@@ -1257,6 +1355,123 @@
     );
   }
 
+  // ---- Price chart: close line + S/R range bands + fair-value bands -------
+  // Self-contained inline SVG (no libraries -- CSP blocks them), same
+  // hand-rolled approach as the fan chart. Overlays only what the user asked
+  // for: support/resistance ranges and the fair-value band.
+  function priceChartCardHtml(technical, result) {
+    var t = technical || {};
+    var series = t.price_series || [];
+    if (series.length < 2) return "";
+
+    var W = 760, H = 340, PL = 48, PR = 104, PT = 14, PB = 28;
+    var plotW = W - PL - PR, plotH = H - PT - PB;
+
+    var supports = (t.support_levels || []).filter(function (z) { return isNum(z.low) && isNum(z.high); });
+    var resistances = (t.resistance_levels || []).filter(function (z) { return isNum(z.low) && isNum(z.high); });
+    var fv = (result || {}).fair_value_range || {};
+    var fvChoices = [
+      { key: "bull", label: "Bull", cls: "pchart-fv-bull", b: fv.bull },
+      { key: "base", label: "Base", cls: "pchart-fv-base", b: fv.base },
+      { key: "bear", label: "Bear", cls: "pchart-fv-bear", b: fv.bear },
+    ].filter(function (f) { return f.b && isNum(f.b.lo) && isNum(f.b.hi); });
+
+    // Show only ONE fair-value band: the one the price sits inside, else the
+    // nearest. Tie-break base > bull > bear (base is the headline scenario).
+    var fvBand = null;
+    if (fvChoices.length) {
+      var pref = { base: 0, bull: 1, bear: 2 };
+      function fvDist(f) {
+        if (!isNum(t.price)) return 0;
+        if (t.price >= f.b.lo && t.price <= f.b.hi) return 0;
+        return Math.min(Math.abs(t.price - f.b.lo), Math.abs(t.price - f.b.hi));
+      }
+      fvBand = fvChoices.slice().sort(function (a, b) {
+        var da = fvDist(a), db = fvDist(b);
+        return da !== db ? da - db : pref[a.key] - pref[b.key];
+      })[0];
+    }
+
+    // y-domain spans the price series AND every overlay band, so nothing is
+    // clipped off-chart.
+    var vals = series.map(function (p) { return p.c; });
+    if (isNum(t.price)) vals.push(t.price);
+    supports.concat(resistances).forEach(function (z) { vals.push(z.low, z.high); });
+    if (fvBand) { vals.push(fvBand.b.lo, fvBand.b.hi); }
+    var vmin = Math.min.apply(null, vals), vmax = Math.max.apply(null, vals);
+    if (vmax <= vmin) vmax = vmin + 1;
+    var padY = (vmax - vmin) * 0.06;
+    var lo = vmin - padY, hi = vmax + padY;
+
+    var n = series.length;
+    function xOf(i) { return PL + plotW * (i / (n - 1)); }
+    function yOf(v) { return PT + plotH * (hi - v) / (hi - lo); }
+
+    // Price area + line.
+    var linePts = series.map(function (p, i) { return (i ? "L" : "M") + xOf(i).toFixed(1) + " " + yOf(p.c).toFixed(1); }).join(" ");
+    var areaPath = "M" + PL + " " + (PT + plotH).toFixed(1) + " " +
+      series.map(function (p, i) { return "L" + xOf(i).toFixed(1) + " " + yOf(p.c).toFixed(1); }).join(" ") +
+      " L" + (PL + plotW).toFixed(1) + " " + (PT + plotH).toFixed(1) + " Z";
+
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Price chart">';
+
+    // Y grid + labels (4 ticks).
+    for (var g = 0; g <= 4; g++) {
+      var vy = lo + (hi - lo) * g / 4;
+      var yy = yOf(vy).toFixed(1);
+      svg += '<line class="pchart-grid" x1="' + PL + '" y1="' + yy + '" x2="' + (PL + plotW) + '" y2="' + yy + '"/>';
+      svg += '<text class="pchart-tick" x="' + (PL - 5) + '" y="' + (Number(yy) + 3) + '" text-anchor="end">' + fmtMoney(vy) + '</text>';
+    }
+    // X date ticks (first / middle / last).
+    [0, Math.floor((n - 1) / 2), n - 1].forEach(function (i) {
+      var parts = String(series[i].t || "").split("-");
+      var lbl = parts.length === 3 ? (parts[1] + "/" + parts[0].slice(2)) : series[i].t;
+      var anchor = i === 0 ? "start" : (i === n - 1 ? "end" : "middle");
+      svg += '<text class="pchart-tick" x="' + xOf(i).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="' + anchor + '">' + escapeHtml(lbl) + '</text>';
+    });
+
+    // Support/resistance: one thin dark-red line per zone (at its price),
+    // labeled at the right margin. Same color/style for both sides -- only
+    // the R/S prefix tells them apart, which keeps the chart simple.
+    function srLine(z, sideLabel) {
+      var y = yOf(z.price).toFixed(1);
+      return '<line class="pchart-sr-line" x1="' + PL + '" y1="' + y + '" x2="' + (PL + plotW) + '" y2="' + y + '"/>' +
+        '<text class="pchart-band-label" x="' + (PL + plotW + 5) + '" y="' + (Number(y) + 3) + '">' + sideLabel + " " + fmtMoney(z.price) + '</text>';
+    }
+    resistances.forEach(function (z) { svg += srLine(z, "R"); });
+    supports.forEach(function (z) { svg += srLine(z, "S"); });
+
+    // The single relevant fair-value band (dashed outline), labeled at left.
+    if (fvBand) {
+      var fvYhi = yOf(fvBand.b.hi), fvYlo = yOf(fvBand.b.lo);
+      var fvH = Math.max(2, fvYlo - fvYhi);
+      svg += '<rect class="pchart-fv-rect ' + fvBand.cls + '" x="' + PL + '" y="' + fvYhi.toFixed(1) + '" width="' + plotW + '" height="' + fvH.toFixed(1) + '"/>' +
+        '<text class="pchart-fv-label" x="' + (PL + 4) + '" y="' + (fvYhi + 10).toFixed(1) + '" fill="' +
+        (fvBand.key === "bull" ? "var(--green)" : fvBand.key === "bear" ? "var(--red)" : "#5aa7ff") +
+        '">Fair value (' + fvBand.label.toLowerCase() + ')</text>';
+    }
+
+    svg += '<path class="pchart-area" d="' + areaPath + '"/>';
+    svg += '<path class="pchart-line" d="' + linePts + '"/>';
+
+    // Current price marker.
+    if (isNum(t.price)) {
+      var yp = yOf(t.price).toFixed(1);
+      svg += '<line class="pchart-now-line" x1="' + PL + '" y1="' + yp + '" x2="' + (PL + plotW) + '" y2="' + yp + '"/>';
+      svg += '<text class="pchart-now-label" x="' + (PL + plotW + 5) + '" y="' + (Number(yp) + 3) + '">' + fmtMoney(t.price) + '</text>';
+    }
+    svg += '</svg>';
+
+    var legend =
+      '<div class="pchart-legend">' +
+        '<span><span class="pchart-sw" style="background:#5aa7ff"></span>Price</span>' +
+        ((resistances.length || supports.length) ? '<span><span class="pchart-sw" style="background:#7a1f1f"></span>Support / Resistance</span>' : "") +
+        (fvBand ? '<span><span class="pchart-sw" style="border:1px dashed #5aa7ff"></span>Fair value (' + fvBand.label.toLowerCase() + ')</span>' : "") +
+      '</div>';
+
+    return '<div class="card pchart"><div class="card-title">Price &amp; Levels</div>' + svg + legend + '</div>';
+  }
+
   // ---- Verdict cards (fundamental/technical/profile fit) ------------------
   function verdictCardHtml(label, verdictText, noteText) {
     var color = bucketColor(verdictText);
@@ -1268,6 +1483,181 @@
           '<div class="gauge"><div class="gauge-marker" style="left:' + pos + '%;">▲</div></div>' +
           '<div><span class="badge badge-' + color + '">' + escapeHtml(verdictText || "—") + '</span></div>' +
           '<div class="verdict-note">' + escapeHtml(noteText || "—") + '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  // ---- Technical card: verdict + momentum + support/resistance ------------
+  // Signed percentage-POINT value (input already in points, e.g. 14 -> "+14%"),
+  // wrapped green/red by sign. "—" when missing.
+  function techSigned(v) {
+    if (!isNum(v)) return "—";
+    var num = Number(v);
+    var txt = (num >= 0 ? "+" : "") + (Math.round(num * 10) / 10) + "%";
+    return '<span class="' + (num >= 0 ? "tech-pos" : "tech-neg") + '">' + txt + '</span>';
+  }
+
+  function technicalCardHtml(technical, verdictText) {
+    var t = technical || {};
+    // No usable indicators at all -> fall back to the plain verdict card.
+    if (!isNum(t.rsi14) && !isNum(t.price)) {
+      return verdictCardHtml("Technical", verdictText, t.verdict_detail || "Price data unavailable.");
+    }
+    var color = bucketColor(verdictText);
+
+    // RSI gauge (0-100, oversold<30 / overbought>70 zones shaded in the bar).
+    var rsiHtml = "";
+    if (isNum(t.rsi14)) {
+      var pos = Math.max(0, Math.min(100, Number(t.rsi14)));
+      rsiHtml =
+        '<div class="rsi-row">' +
+          '<span class="rsi-side">RSI 14</span>' +
+          '<div class="rsi-gauge"><div class="rsi-gauge-marker" style="left:' + pos + '%;"></div></div>' +
+          '<span class="rsi-val">' + Math.round(Number(t.rsi14)) + '</span>' +
+        '</div>';
+    }
+
+    function tile(label, valHtml) {
+      return '<div class="tech-stat"><div class="tech-stat-label">' + label +
+        '</div><div class="tech-stat-val">' + valHtml + '</div></div>';
+    }
+
+    var tiles = [
+      tile("1M", techSigned(t.return_1m_pct)),
+      tile("3M", techSigned(t.return_3m_pct)),
+      tile("6M", techSigned(t.return_6m_pct)),
+      tile("vs SMA50", techSigned(t.dist_sma50_pct)),
+      tile("vs SMA200", techSigned(t.dist_sma200_pct)),
+    ];
+    var trend = "—";
+    if (t.sma50_above_sma200 === true) trend = '<span class="tech-pos">Uptrend</span>';
+    else if (t.sma50_above_sma200 === false) trend = '<span class="tech-neg">Downtrend</span>';
+    if (t.golden_cross) trend += ' <span class="tech-pos">· GC</span>';
+    else if (t.death_cross) trend += ' <span class="tech-neg">· DC</span>';
+    tiles.push(tile("Trend", trend));
+    if (isNum(t.range_position_pct)) tiles.push(tile("52W Range", Math.round(Number(t.range_position_pct)) + "%"));
+    if (isNum(t.volatility_20d)) tiles.push(tile("Volatility", Math.round(Number(t.volatility_20d) * 100) + "%"));
+    if (isNum(t.macd_hist)) {
+      var macdState = Number(t.macd_hist) > 0
+        ? '<span class="tech-pos">Bullish</span>'
+        : (Number(t.macd_hist) < 0 ? '<span class="tech-neg">Bearish</span>' : "Flat");
+      if (t.macd_cross === "bullish") macdState += ' <span class="tech-pos">· ×↑</span>';
+      else if (t.macd_cross === "bearish") macdState += ' <span class="tech-neg">· ×↓</span>';
+      tiles.push(tile("MACD", macdState));
+    }
+    if (isNum(t.rel_volume)) {
+      var rv = Number(t.rel_volume);
+      var rvCls = rv >= 1.5 ? "tech-pos" : (rv < 0.7 ? "tech-neg" : "");
+      tiles.push(tile("Rel Vol", '<span class="' + rvCls + '">' + rv.toFixed(1) + '×</span>'));
+    }
+    if (t.obv_trend) {
+      var obvMap = {
+        up: '<span class="tech-pos">Accum ↑</span>',
+        down: '<span class="tech-neg">Distrib ↓</span>',
+        flat: "Flat",
+      };
+      tiles.push(tile("OBV", obvMap[t.obv_trend] || escapeHtml(String(t.obv_trend))));
+    }
+    if (t.rsi_divergence) {
+      tiles.push(tile("RSI Div", t.rsi_divergence === "bullish"
+        ? '<span class="tech-pos">Bullish ↑</span>'
+        : '<span class="tech-neg">Bearish ↓</span>'));
+    }
+
+    // A divergence is a notable reversal warning -> spell out the evidence.
+    var divNote = "";
+    if (t.rsi_divergence_detail) {
+      var d = t.rsi_divergence_detail;
+      if (d.type === "bearish") {
+        divNote = '<div class="tech-div-note tech-neg">Bearish RSI divergence: price made a higher high (' +
+          fmtMoney(d.price_prev) + ' → ' + fmtMoney(d.price_last) + ') but RSI fell (' +
+          d.rsi_prev + ' → ' + d.rsi_last + ') — momentum not confirming the high.</div>';
+      } else {
+        divNote = '<div class="tech-div-note tech-pos">Bullish RSI divergence: price made a lower low (' +
+          fmtMoney(d.price_prev) + ' → ' + fmtMoney(d.price_last) + ') but RSI rose (' +
+          d.rsi_prev + ' → ' + d.rsi_last + ') — selling pressure fading.</div>';
+      }
+    }
+
+    // Support/resistance ladder: resistances above (farthest first so the
+    // nearest sits just over the Price row), the Price row, then supports.
+    // Why a level matters: 52-week extreme / how many swing points tested it /
+    // Fibonacci retracement, plus when it was last tested (recency).
+    function srReason(lvl) {
+      var parts = [];
+      if (lvl.is_52w_high) parts.push("52-week high");
+      else if (lvl.is_52w_low) parts.push("52-week low");
+      else if ((lvl.touches || 0) >= 1) parts.push(lvl.touches + "× tested");
+      if (lvl.fib) parts.push("Fib " + lvl.fib);
+      var base = parts.length ? parts.join(" + ") : "level";
+      if (lvl.last_touch) base += " · last " + lvl.last_touch;
+      return base;
+    }
+    // Strength: a 52-week extreme, a repeatedly-tested swing, or a
+    // swing+Fibonacci confluence is Strong; a lone fib / single touch is
+    // Medium. (The selector already keeps only the strongest near & far.)
+    function srStrength(lvl) {
+      var touches = lvl.touches || 0;
+      if (lvl.is_52w_high || lvl.is_52w_low || touches >= 2 || (touches >= 1 && lvl.fib)) {
+        return { label: "Strong", cls: "sr-str-strong" };
+      }
+      if (touches === 1 || lvl.fib) return { label: "Medium", cls: "sr-str-medium" };
+      return { label: "Weak", cls: "sr-str-weak" };
+    }
+    // A level is a price RANGE (low–high); collapse to one number if the band
+    // is trivially thin.
+    function srRange(lvl) {
+      if (lvl.low != null && lvl.high != null && lvl.high - lvl.low > 0.01) {
+        return fmtMoney(lvl.low) + "–" + fmtMoney(lvl.high);
+      }
+      return fmtMoney(lvl.price != null ? lvl.price : lvl.low);
+    }
+    function srRow(sideLabel, cls, lvl) {
+      var s = srStrength(lvl);
+      return '<div class="sr-row ' + cls + '">' +
+        '<span class="sr-side">' + sideLabel + '</span>' +
+        '<span class="sr-lvl">' + srRange(lvl) + '</span>' +
+        '<span class="sr-dist">' + techSigned(lvl.dist_pct) + '</span>' +
+        '<span class="sr-why">' + escapeHtml(srReason(lvl)) + '</span>' +
+        '<span class="sr-strength-badge ' + s.cls + '" title="' + (lvl.touches || 0) + ' swing points">' + s.label + '</span>' +
+      '</div>';
+    }
+    var fibCaption = "";
+    if (t.fibonacci && isNum(t.fibonacci.low) && isNum(t.fibonacci.high)) {
+      fibCaption = '<div class="sr-fib-caption">Fib retracement of ' + fmtMoney(t.fibonacci.low) + '–' +
+        fmtMoney(t.fibonacci.high) + ' (' + (t.fibonacci.direction === "up" ? "uptrend" : "downtrend") + ')</div>';
+    }
+    var res = (t.resistance_levels || []).slice().reverse();
+    var sup = t.support_levels || [];
+    var srHtml;
+    if (res.length || sup.length) {
+      var rows = res.map(function (r) { return srRow("Resistance", "sr-res", r); });
+      rows.push(
+        '<div class="sr-row sr-price"><span class="sr-side">Price</span>' +
+        '<span class="sr-lvl">' + fmtMoney(t.price) + '</span>' +
+        '<span class="sr-dist">now</span><span class="sr-why"></span><span class="sr-strength-badge"></span></div>'
+      );
+      sup.forEach(function (s) { rows.push(srRow("Support", "sr-sup", s)); });
+      srHtml = '<div class="sr-ladder">' + rows.join("") + '</div>';
+    } else {
+      srHtml = '<div class="tech-empty">Not enough price history for support/resistance levels.</div>';
+    }
+
+    return (
+      '<div class="card">' +
+        '<div class="card-title">Technical</div>' +
+        '<div class="verdict-card-body">' +
+          '<div class="gauge"><div class="gauge-marker" style="left:' + GAUGE_POSITION[color] + '%;">▲</div></div>' +
+          '<div><span class="badge badge-' + color + '">' + escapeHtml(verdictText || "—") + '</span></div>' +
+          (t.verdict_detail ? '<div class="verdict-note">' + escapeHtml(t.verdict_detail) + '</div>' : "") +
+          '<div class="tech-section-title">Momentum</div>' +
+          rsiHtml +
+          '<div class="tech-stats">' + tiles.join("") + '</div>' +
+          divNote +
+          '<div class="tech-section-title">Support / Resistance</div>' +
+          fibCaption +
+          srHtml +
         '</div>' +
       '</div>'
     );
@@ -1500,7 +1890,6 @@
     var fv = result.fair_value_range || {};
     var profileFit = result.profile_fit || {};
     var technical = payload.technical || {};
-    var technicalDetail = technical.verdict_detail || null;
     // result.valuation (SPEC.md Sec.11) is the richer engine payload; it's
     // absent for older callers or when phase-2 interpret() never ran (e.g.
     // an LLM error) -- the triangulation/sensitivity cards simply don't
@@ -1510,10 +1899,11 @@
     var html =
       headerCardHtml(payload) +
       weightBarHtml(result._weights) +
+      priceChartCardHtml(technical, result) +
       fanChartCardHtml(result, payload.price) +
       (valuation ? triangulationRowHtml(valuation, result.confidence) : "") +
       verdictCardHtml("Fundamental", result.fundamental_verdict, result.horizon_note) +
-      verdictCardHtml("Technical", result.technical_verdict, technicalDetail || "Price data unavailable.") +
+      technicalCardHtml(technical, result.technical_verdict || technical.verdict) +
       verdictCardHtml("Profile Fit", profileFit.verdict, profileFit.reason) +
       (valuation ? sensitivityTableHtml(valuation.sensitivity) : "") +
       entryPlanHtml(result.entry_plan) +

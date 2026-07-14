@@ -93,7 +93,10 @@ def test_sector_medians_alias_acceptance_table(sic_description, expected_industr
 def test_sector_medians_alias_table_returns_full_row_shape():
     # Spot-check the full row shape (not just "industry") for one case.
     result = sector_medians(_sector_data(), "PHARMACEUTICAL PREPARATIONS")
-    assert result == {"industry": "Drugs (Pharmaceutical)", "pe": 19.5, "ps": 4.0, "pfcf": 18.0}
+    assert result == {
+        "industry": "Drugs (Pharmaceutical)", "pe": 19.5, "ps": 4.0, "pfcf": 18.0,
+        "growth": None, "peg": None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -186,8 +189,8 @@ def test_load_sector_data_parses_multiples_and_us_erp_from_csvs(tmp_path):
     assert result["erp"] == pytest.approx(4.6)
     assert isinstance(result["erp"], float)
     assert result["multiples"] == [
-        {"industry": "Semiconductor", "pe": 28.4, "ps": 6.1, "pfcf": 24.7},
-        {"industry": "Retail (General)", "pe": 18.6, "ps": 1.1, "pfcf": 17.2},
+        {"industry": "Semiconductor", "pe": 28.4, "ps": 6.1, "pfcf": 24.7, "growth": None, "peg": None},
+        {"industry": "Retail (General)", "pe": 18.6, "ps": 1.1, "pfcf": 17.2, "growth": None, "peg": None},
     ]
 
 

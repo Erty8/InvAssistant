@@ -210,6 +210,9 @@ def _technical():
         "verdict_detail": "RSI 74, SMA50 +%12",
         "horizon_summary": "RSI 74.0 seviyesinde.",
         "horizon": "1y",
+        "support_levels": [{"low": 118.0, "high": 120.0, "price": 119.0, "dist_pct": -7.3, "touches": 2, "fib": None, "last_touch": "2026-05-01", "is_52w_high": False, "is_52w_low": False}],
+        "resistance_levels": [{"low": 135.0, "high": 137.0, "price": 136.0, "dist_pct": 5.9, "touches": 1, "fib": "38.2%", "last_touch": "2026-06-01", "is_52w_high": False, "is_52w_low": False}],
+        "price_series": [{"t": "2026-01-02", "c": 110.0}, {"t": "2026-03-02", "c": 120.0}, {"t": "2026-07-11", "c": 128.4}],
     }
 
 
@@ -383,6 +386,11 @@ def test_generate_report_renders_planning_section_builders_and_markers(tmp_path)
     assert "fan-band" in content
     assert "triangulation-row" in content
     assert "sensitivity-table" in content
+    # Price chart: builder + CSS markers present, and the price series is
+    # carried through in the embedded JSON payload.
+    assert "priceChartCardHtml" in content
+    assert "pchart-line" in content
+    assert '"price_series"' in content
 
 
 def test_generate_report_without_valuation_still_degrades_planning_sections_gracefully(tmp_path):

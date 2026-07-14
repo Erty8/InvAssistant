@@ -54,11 +54,16 @@ def _to_float(row: dict, key: str) -> Optional[float]:
 
 
 def _parse_multiples_rows(rows: List[dict]) -> List[dict]:
-    """Convert raw ``multiples.csv`` rows into ``{"industry","pe","ps","pfcf"}``.
+    """Convert raw ``multiples.csv`` rows into
+    ``{"industry","pe","ps","pfcf","growth","peg"}``.
 
     Rows without a usable ``industry`` value are skipped; missing/malformed
     ``pe``/``ps``/``pfcf`` columns become ``None`` on that row rather than
-    dropping the whole row.
+    dropping the whole row. ``growth`` (expected multi-year growth, a decimal
+    fraction e.g. ``0.15`` for 15%) and ``peg`` are OPTIONAL columns used
+    only for the sector-median PEG comparison (VALUATION.md Sec.7); both
+    default to ``None`` when absent, so older two-/four-column CSVs keep
+    working unchanged.
     """
     parsed = []
     for row in rows:
@@ -71,6 +76,8 @@ def _parse_multiples_rows(rows: List[dict]) -> List[dict]:
                 "pe": _to_float(row, "pe"),
                 "ps": _to_float(row, "ps"),
                 "pfcf": _to_float(row, "pfcf"),
+                "growth": _to_float(row, "growth"),
+                "peg": _to_float(row, "peg"),
             }
         )
     return parsed
@@ -224,12 +231,18 @@ def _index_industries(multiples: List[dict]) -> Dict[str, dict]:
 
 
 def _row_to_result(row: dict) -> dict:
-    """Project a parsed ``multiples.csv`` row to the public result shape."""
+    """Project a parsed ``multiples.csv`` row to the public result shape.
+
+    ``growth``/``peg`` are included but are ``None`` unless the reference CSV
+    carried those optional columns (VALUATION.md Sec.7 sector-PEG comparison).
+    """
     return {
         "industry": row.get("industry"),
         "pe": row.get("pe"),
         "ps": row.get("ps"),
         "pfcf": row.get("pfcf"),
+        "growth": row.get("growth"),
+        "peg": row.get("peg"),
     }
 
 

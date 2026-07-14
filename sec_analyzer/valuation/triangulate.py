@@ -22,6 +22,14 @@ SIGNAL_FAIR = "makul"
 SIGNAL_EXPENSIVE = "pahali"
 SIGNAL_NO_DATA = "veri_yok"
 
+#: Multiples-only signal: the raw multiple's own historical percentile and
+#: the growth-adjusted multiple's percentile (PEG in standard mode,
+#: growth-adjusted EV/Sales in hyper-grower mode) land in DIFFERENT
+#: directional buckets (e.g. raw expensive, growth-adjusted fair). Surfaces
+#: the disagreement instead of hiding it behind the raw percentile alone
+#: (VALUATION.md Sec.7). Never emitted unless BOTH percentiles are present.
+SIGNAL_MIXED = "karisik"
+
 #: Hyper-grower-only DCF signal (HYPER_SPEC.md Sec.4): price sits above the
 #: base band but at/below the bull band -- "priced for high expectations",
 #: distinct from an outright "pahali" (only above the bull band).
@@ -47,8 +55,33 @@ _SIGNAL_LABEL_TR = {
     SIGNAL_FAIR: "makul",
     SIGNAL_EXPENSIVE: "pahalı",
     SIGNAL_HIGH_EXPECTATION: "yüksek beklenti",
+    SIGNAL_MIXED: "karışık",
     SIGNAL_NO_DATA: "veri yok",
 }
+
+
+def _percentile_bucket(pct: Optional[float]) -> Optional[str]:
+    """Map a 0..100 multiple percentile to its directional bucket, or
+    ``None`` if the percentile itself is ``None``. Same thresholds the raw
+    multiples signal uses: ``> 70`` expensive, ``< 30`` cheap, else fair."""
+    if pct is None:
+        return None
+    if pct > _PERCENTILE_EXPENSIVE:
+        return SIGNAL_EXPENSIVE
+    if pct < _PERCENTILE_CHEAP:
+        return SIGNAL_CHEAP
+    return SIGNAL_FAIR
+
+
+def _bucket_word_tr(pct: Optional[float]) -> str:
+    """Turkish phrase describing where a percentile sits, for the mixed-
+    signal rationale sentence (e.g. ``"pahalı tarafta"``)."""
+    bucket = _percentile_bucket(pct)
+    if bucket == SIGNAL_EXPENSIVE:
+        return "pahalı tarafta"
+    if bucket == SIGNAL_CHEAP:
+        return "ucuz tarafta"
+    return "tarihsel ortasında"
 
 
 def _money(value: Optional[float]) -> str:
@@ -222,33 +255,63 @@ def _reverse_dcf_rationale(
     return f"Fiyatın ima ettiği büyüme ({_pct(implied_growth)}) {ref_word} ({_pct(reference)}) ile uyumlu → makul."
 
 
-def _multiples_signal(
+def _raw_multiples_signal(
     pe_pct: Optional[float], ps_pct: Optional[float], pfcf_pct: Optional[float], sector_type: Optional[str]
 ) -> str:
-    """Multiples signal: uses the primary percentile (P/E, falling back to
-    P/S then P/FCF; for growth_unprofitable filers P/S is primary since P/E
-    is usually meaningless there)."""
+    """Raw multiples signal: uses the primary percentile (P/E, falling back
+    to P/S then P/FCF; for growth_unprofitable filers P/S is primary since
+    P/E is usually meaningless there). This is the pre-growth-adjustment
+    signal -- :func:`_multiples_signal` layers the growth-adjusted (PEG /
+    EV-Sales) divergence check on top of it."""
     if sector_type == "growth_unprofitable":
         candidates = (ps_pct, pe_pct, pfcf_pct)
     else:
         candidates = (pe_pct, ps_pct, pfcf_pct)
 
     pct = next((p for p in candidates if p is not None), None)
-    if pct is None:
-        return SIGNAL_NO_DATA
-    if pct > _PERCENTILE_EXPENSIVE:
-        return SIGNAL_EXPENSIVE
-    if pct < _PERCENTILE_CHEAP:
-        return SIGNAL_CHEAP
-    return SIGNAL_FAIR
+    return _percentile_bucket(pct) or SIGNAL_NO_DATA
+
+
+def _multiples_signal(
+    pe_pct: Optional[float],
+    ps_pct: Optional[float],
+    pfcf_pct: Optional[float],
+    sector_type: Optional[str],
+    raw_growth_pair_pct: Optional[float] = None,
+    growth_adj_pct: Optional[float] = None,
+) -> str:
+    """Multiples signal, two-component (VALUATION.md Sec.7).
+
+    Starts from the raw primary-percentile signal (see
+    :func:`_raw_multiples_signal`). When BOTH the raw multiple's own
+    percentile (``raw_growth_pair_pct`` -- P/E in standard mode, EV/Sales in
+    hyper-grower mode; the multiple the growth-adjusted figure is derived
+    from) and the growth-adjusted percentile (``growth_adj_pct``) are
+    present and fall in DIFFERENT directional buckets, returns
+    :data:`SIGNAL_MIXED` -- the raw multiple and its growth-normalized
+    counterpart disagree on direction. When they agree, or either is
+    missing, the raw signal is returned unchanged (existing behavior).
+    """
+    raw = _raw_multiples_signal(pe_pct, ps_pct, pfcf_pct, sector_type)
+    if raw == SIGNAL_NO_DATA:
+        return raw
+    if raw_growth_pair_pct is None or growth_adj_pct is None:
+        return raw
+    if _percentile_bucket(raw_growth_pair_pct) != _percentile_bucket(growth_adj_pct):
+        return SIGNAL_MIXED
+    return raw
 
 
 def _multiples_rationale(
-    pe_pct: Optional[float], ps_pct: Optional[float], pfcf_pct: Optional[float], sector_type: Optional[str]
+    pe_pct: Optional[float],
+    ps_pct: Optional[float],
+    pfcf_pct: Optional[float],
+    sector_type: Optional[str],
+    raw_growth_pair_pct: Optional[float] = None,
+    growth_adj_pct: Optional[float] = None,
 ) -> str:
     """Turkish display sentence explaining the multiples signal, mirroring
-    :func:`_multiples_signal`'s primary-percentile selection exactly (same
-    inputs, same thresholds)."""
+    :func:`_multiples_signal`'s branches exactly (same inputs, thresholds)."""
     if sector_type == "growth_unprofitable":
         candidates = ((ps_pct, "P/S"), (pe_pct, "P/E"), (pfcf_pct, "P/FCF"))
     else:
@@ -257,6 +320,20 @@ def _multiples_rationale(
     pct, label = next(((p, lbl) for p, lbl in candidates if p is not None), (None, None))
     if pct is None:
         return "Çarpan persentili hesaplanamadı."
+
+    # Growth-adjusted divergence takes precedence over the plain sentence,
+    # matching _multiples_signal's SIGNAL_MIXED branch.
+    if (
+        raw_growth_pair_pct is not None
+        and growth_adj_pct is not None
+        and _percentile_bucket(raw_growth_pair_pct) != _percentile_bucket(growth_adj_pct)
+    ):
+        return (
+            f"Ham çarpan persentili {_percentile(raw_growth_pair_pct)} ({_bucket_word_tr(raw_growth_pair_pct)}) "
+            f"ama büyümeye göre normalize edilince (persentil {_percentile(growth_adj_pct)}, "
+            f"{_bucket_word_tr(growth_adj_pct)}) ayrışıyor → karışık sinyal."
+        )
+
     if pct > _PERCENTILE_EXPENSIVE:
         return f"{label} persentili {_percentile(pct)} (>70) — kendi tarihsel aralığına göre pahalı."
     if pct < _PERCENTILE_CHEAP:
@@ -277,6 +354,8 @@ def triangulate(
     hyper_growth: bool = False,
     bull_band: Optional[dict] = None,
     reverse_dcf_status: Optional[str] = None,
+    raw_growth_pair_pct: Optional[float] = None,
+    growth_adj_pct: Optional[float] = None,
 ) -> dict:
     """Combine the three method signals into one confidence + direction view.
 
@@ -312,6 +391,16 @@ def triangulate(
             bracket to report a number for). ``None`` (the default,
             matching every existing caller) preserves the original
             implied-vs-reference comparison.
+        raw_growth_pair_pct: The historical percentile of the raw multiple
+            the growth-adjusted figure is derived from (P/E in standard
+            mode, EV/Sales in hyper-grower mode). Paired with
+            ``growth_adj_pct`` to detect a growth-adjustment divergence
+            (VALUATION.md Sec.7). ``None`` (default) disables the check.
+        growth_adj_pct: The historical percentile of the growth-adjusted
+            multiple (PEG / growth-adjusted EV/Sales). When it and
+            ``raw_growth_pair_pct`` fall in different directional buckets,
+            the multiples signal becomes :data:`SIGNAL_MIXED`. ``None``
+            (default) disables the check, preserving the raw signal.
 
     Returns:
         ``{"signals": {"dcf", "reverse_dcf", "multiples"}, "confidence":
@@ -331,7 +420,7 @@ def triangulate(
     try:
         return _triangulate(
             price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
-            hyper_growth, bull_band, reverse_dcf_status,
+            hyper_growth, bull_band, reverse_dcf_status, raw_growth_pair_pct, growth_adj_pct,
         )
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("triangulate() failed unexpectedly; returning a no-data result.")
@@ -350,17 +439,17 @@ def triangulate(
 
 def _triangulate(
     price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
-    hyper_growth=False, bull_band=None, reverse_dcf_status=None,
+    hyper_growth=False, bull_band=None, reverse_dcf_status=None, raw_growth_pair_pct=None, growth_adj_pct=None,
 ) -> dict:
     signals = {
         "dcf": _dcf_signal(price, dcf_base_band, hyper_growth, bull_band),
         "reverse_dcf": _reverse_dcf_signal(implied_growth, realized_cagr, base_growth, reverse_dcf_status),
-        "multiples": _multiples_signal(pe_pct, ps_pct, pfcf_pct, sector_type),
+        "multiples": _multiples_signal(pe_pct, ps_pct, pfcf_pct, sector_type, raw_growth_pair_pct, growth_adj_pct),
     }
     rationale = {
         "dcf": _dcf_rationale(price, dcf_base_band, hyper_growth, bull_band),
         "reverse_dcf": _reverse_dcf_rationale(implied_growth, realized_cagr, base_growth, reverse_dcf_status),
-        "multiples": _multiples_rationale(pe_pct, ps_pct, pfcf_pct, sector_type),
+        "multiples": _multiples_rationale(pe_pct, ps_pct, pfcf_pct, sector_type, raw_growth_pair_pct, growth_adj_pct),
     }
 
     substantive = [s for s in signals.values() if s != SIGNAL_NO_DATA]

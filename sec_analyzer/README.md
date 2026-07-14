@@ -431,7 +431,7 @@ card and `--html` report show).
 python -m sec_analyzer.web.app
 ```
 
-This serves the UI at **http://127.0.0.1:5000**. As with the CLI,
+This serves the UI at **http://127.0.0.1:5050**. As with the CLI,
 `SEC_USER_AGENT` must be set (e.g. in `.env`) before fetching anything.
 
 The page has a **Horizon** dropdown (3m / 1y / 5y, default 1y -- see

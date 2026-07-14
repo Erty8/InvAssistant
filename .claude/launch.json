@@ -5,7 +5,7 @@
       "name": "sec_analyzer_web",
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "sec_analyzer.web.app"],
-      "port": 5000
+      "port": 5050
     }
   ]
 }
