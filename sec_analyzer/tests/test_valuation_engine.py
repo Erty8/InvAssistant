@@ -7,7 +7,7 @@ methodology (independent hand arithmetic in a comment above each assertion).
 
 import pytest
 
-from sec_analyzer.valuation.engine import run_valuation
+from sec_analyzer.valuation.engine import _justified_pb, _select_latest_ffo, run_valuation
 from sec_analyzer.valuation.sector import classify_sector
 from sec_analyzer.valuation.triangulate import triangulate
 
@@ -401,6 +401,55 @@ def test_classify_sector_low_growth_semiconductor_stays_cyclical():
 
 
 # ---------------------------------------------------------------------------
+# 9a. classify_sector one-off-loss guard (P3c)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_sector_one_off_loss_with_profitable_history_gives_mature():
+    # Latest FY (2023) is a loss, but >=2 prior years (2021, 2022) are
+    # profitable, including the immediately prior year (2022) -> treated as a
+    # one-off (writedown/litigation/tax charge), classifies "mature".
+    normalized = {"annual": {"NetIncome": [
+        _ni_record(2021, 40.0), _ni_record(2022, 60.0), _ni_record(2023, -50.0),
+    ]}}
+    metrics = {"latest_fy": 2023}
+    assert classify_sector(7372, normalized, metrics) == "mature"
+
+
+def test_classify_sector_structural_loss_stays_growth_unprofitable():
+    # Latest FY loss AND the immediately prior year is also a loss (majority
+    # negative) -> structural, not a one-off -> stays growth_unprofitable.
+    normalized = {"annual": {"NetIncome": [
+        _ni_record(2021, 40.0), _ni_record(2022, -20.0), _ni_record(2023, -50.0),
+    ]}}
+    metrics = {"latest_fy": 2023}
+    assert classify_sector(7372, normalized, metrics) == "growth_unprofitable"
+
+
+def test_classify_sector_loss_with_fewer_than_two_prior_years_stays_growth_unprofitable():
+    # Only 1 prior fiscal year of data (2022) -- not enough history to call
+    # the latest-FY loss a one-off -> stays growth_unprofitable.
+    normalized = {"annual": {"NetIncome": [
+        _ni_record(2022, 60.0), _ni_record(2023, -50.0),
+    ]}}
+    metrics = {"latest_fy": 2023}
+    assert classify_sector(7372, normalized, metrics) == "growth_unprofitable"
+
+
+def test_classify_sector_loss_with_prior_year_loss_but_older_years_profitable_stays_growth_unprofitable():
+    # Profitable majority overall (2020, 2021 positive vs. 2022 negative),
+    # but the immediately PRIOR year (2022) is itself a loss -> the
+    # "immediately prior year profitable" requirement fails, so this is NOT
+    # treated as a one-off -> stays growth_unprofitable.
+    normalized = {"annual": {"NetIncome": [
+        _ni_record(2020, 30.0), _ni_record(2021, 40.0), _ni_record(2022, -10.0),
+        _ni_record(2023, -50.0),
+    ]}}
+    metrics = {"latest_fy": 2023}
+    assert classify_sector(7372, normalized, metrics) == "growth_unprofitable"
+
+
+# ---------------------------------------------------------------------------
 # 10. engine.run_valuation integration
 # ---------------------------------------------------------------------------
 
@@ -438,25 +487,30 @@ def _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10):
 
 
 def test_run_valuation_financial_sector_disables_dcf_and_computes_pb_roe():
-    # roe=0.15 (latest FY), discount_rate_base=0.10, equity_latest=1000,
-    # shares=100.
-    #   fair_pb_base = clamp(0.15/0.10, 0.5, 4.0) = clamp(1.5, ...) = 1.5
+    # roe=0.15 (latest FY), discount_rate_base=0.10, terminal_growth_base=0.03
+    # (the `_assumptions` helper's default), equity_latest=1000, shares=100.
+    #
+    # P3a: fair_pb is the growth-aware justified P/B (ROE - g) / (r - g), NOT
+    # the no-growth ROE/r:
+    #   fair_pb_base = clamp((0.15-0.03)/(0.10-0.03), 0.5, 4.0)
+    #                = clamp(0.12/0.07, ...) = 1.714286
     #   book_value_per_share = 1000/100 = 10.0
-    #   bear: fair_pb = 1.5*0.8 = 1.2 -> per_share = 12.0
-    #   base: fair_pb = 1.5*1.0 = 1.5 -> per_share = 15.0
-    #   bull: fair_pb = 1.5*1.2 = 1.8 -> per_share = 18.0
+    #   bear: fair_pb = 1.714286*0.8 -> per_share = 13.71
+    #   base: fair_pb = 1.714286*1.0 -> per_share = 17.14
+    #   bull: fair_pb = 1.714286*1.2 -> per_share = 20.57
     #
-    # F3: the band is no longer a flat +/-10% -- it's the min/max of
-    # re-clamping fair_pb at discount_rate +/- 1pp (0.09, 0.10, 0.11), scaled
-    # by this scenario's own scale/book_value_per_share:
-    #   fair_pb(dr=0.09) = clamp(0.15/0.09, 0.5, 4.0) = 1.666667
-    #   fair_pb(dr=0.10) = 1.5 (center, matches per_share above)
-    #   fair_pb(dr=0.11) = clamp(0.15/0.11, 0.5, 4.0) = 1.363636
+    # F3: the band is the min/max of re-clamping fair_pb at discount_rate +/-
+    # 1pp (0.09, 0.10, 0.11), g=0.03 held FIXED across the band (mirroring how
+    # the DCF band holds terminal_growth fixed), scaled by this scenario's own
+    # scale/book_value_per_share:
+    #   fair_pb(dr=0.09) = clamp((0.15-0.03)/(0.09-0.03), 0.5, 4.0) = 2.0
+    #   fair_pb(dr=0.10) = 1.714286 (center, matches per_share above)
+    #   fair_pb(dr=0.11) = clamp((0.15-0.03)/(0.11-0.03), 0.5, 4.0) = 1.5
     #
-    #   bear (scale=0.8): cells = 1.666667*0.8*10=13.33, 12.0, 1.363636*0.8*10=10.91
-    #     -> lo=10.91, hi=13.33
-    #   base (scale=1.0): cells = 16.67, 15.0, 13.64 -> lo=13.64, hi=16.67
-    #   bull (scale=1.2): cells = 20.00, 18.0, 16.36 -> lo=16.36, hi=20.00
+    #   bear (scale=0.8): cells = 2.0*0.8*10=16.0, 13.71, 1.5*0.8*10=12.0
+    #     -> lo=12.0, hi=16.0
+    #   base (scale=1.0): cells = 20.0, 17.14, 15.0 -> lo=15.0, hi=20.0
+    #   bull (scale=1.2): cells = 24.0, 20.57, 18.0 -> lo=18.0, hi=24.0
     normalized = _normalized({"StockholdersEquity": [_rec(2023, 1000.0)]})
     ratios = [{"fy": 2023, "roe": 0.15}]
     metrics = {"shares": 100.0, "latest_fy": 2023, "fcf": None, "net_debt": 0.0}
@@ -472,25 +526,95 @@ def test_run_valuation_financial_sector_disables_dcf_and_computes_pb_roe():
     assert result["dcf"]["scenarios"] is None
 
     pb = result["pb_roe"]["scenarios"]
-    assert pb["bear"]["per_share"] == pytest.approx(12.0)
-    assert pb["bear"]["lo"] == pytest.approx(10.91)
-    assert pb["bear"]["hi"] == pytest.approx(13.33)
-    assert pb["base"]["per_share"] == pytest.approx(15.0)
-    assert pb["base"]["lo"] == pytest.approx(13.64)
-    assert pb["base"]["hi"] == pytest.approx(16.67)
-    assert pb["bull"]["per_share"] == pytest.approx(18.0)
-    assert pb["bull"]["lo"] == pytest.approx(16.36)
-    assert pb["bull"]["hi"] == pytest.approx(20.00)
+    assert pb["bear"]["per_share"] == pytest.approx(13.71)
+    assert pb["bear"]["lo"] == pytest.approx(12.0)
+    assert pb["bear"]["hi"] == pytest.approx(16.0)
+    assert pb["base"]["per_share"] == pytest.approx(17.14)
+    assert pb["base"]["lo"] == pytest.approx(15.0)
+    assert pb["base"]["hi"] == pytest.approx(20.0)
+    assert pb["bull"]["per_share"] == pytest.approx(20.57)
+    assert pb["bull"]["lo"] == pytest.approx(18.0)
+    assert pb["bull"]["hi"] == pytest.approx(24.0)
 
     # fair_value_range must be built FROM the pb_roe scenarios when DCF is
     # disabled.
-    assert result["fair_value_range"]["base"]["lo"] == pytest.approx(13.64)
-    assert result["fair_value_range"]["base"]["hi"] == pytest.approx(16.67)
+    assert result["fair_value_range"]["base"]["lo"] == pytest.approx(15.0)
+    assert result["fair_value_range"]["base"]["hi"] == pytest.approx(20.0)
 
 
 # ---------------------------------------------------------------------------
 # 8c. REIT FFO-based Gordon-growth anchor (Package 2 / SPEC.md Sec.8c)
 # ---------------------------------------------------------------------------
+
+
+def test_select_latest_ffo_divides_by_fy_own_share_count():
+    # NetIncome[2023]=800, Depreciation[2023]=200 -> FFO=1000.
+    # SharesOutstanding[2023]=100 (the FY's OWN count) differs from
+    # metrics["shares"]=150 (a larger, later/current count, as it would be
+    # for a REIT that has issued more equity since FY2023).
+    # ffo_per_share must use the FY's own count: 1000/100 = 10.0, NOT
+    # 1000/150 = 6.666... -- proving the current point-in-time count is no
+    # longer used when the FY's own share count is available.
+    normalized = _normalized({
+        "NetIncome": [_rec(2023, 800.0)],
+        "Depreciation": [_rec(2023, 200.0)],
+        "SharesOutstanding": [_rec(2023, 100.0)],
+    })
+    metrics = {"shares": 150.0}
+
+    ffo_per_share, selected_fy = _select_latest_ffo(normalized, metrics)
+
+    assert selected_fy == 2023
+    assert ffo_per_share == pytest.approx(10.0)
+
+
+def test_select_latest_ffo_falls_back_to_metrics_shares_when_fy_shares_missing():
+    # Same FFO=1000, but NO SharesOutstanding entry at all for FY2023 (or any
+    # other FY) -> falls back to metrics["shares"]=100 -> 1000/100 = 10.0.
+    normalized = _normalized({
+        "NetIncome": [_rec(2023, 800.0)],
+        "Depreciation": [_rec(2023, 200.0)],
+    })
+    metrics = {"shares": 100.0}
+
+    ffo_per_share, selected_fy = _select_latest_ffo(normalized, metrics)
+
+    assert selected_fy == 2023
+    assert ffo_per_share == pytest.approx(10.0)
+
+
+def test_select_latest_ffo_falls_back_when_fy_shares_present_for_other_fy_only():
+    # SharesOutstanding has an entry, but not for the selected FY (2023) --
+    # only for 2022 -- so shares_series.get(2023) is None and the fallback
+    # to metrics["shares"] kicks in, same as the fully-missing case above.
+    normalized = _normalized({
+        "NetIncome": [_rec(2023, 800.0)],
+        "Depreciation": [_rec(2023, 200.0)],
+        "SharesOutstanding": [_rec(2022, 90.0)],
+    })
+    metrics = {"shares": 100.0}
+
+    ffo_per_share, selected_fy = _select_latest_ffo(normalized, metrics)
+
+    assert selected_fy == 2023
+    assert ffo_per_share == pytest.approx(10.0)
+
+
+def test_select_latest_ffo_returns_none_per_share_when_neither_shares_source_available():
+    # Neither the FY's own SharesOutstanding NOR metrics["shares"] is
+    # available (metrics["shares"] missing/0/None) -> per-share result is
+    # None, but selected_fy is still populated since FFO itself computed
+    # fine (NetIncome/Depreciation were both present).
+    normalized = _normalized({
+        "NetIncome": [_rec(2023, 800.0)],
+        "Depreciation": [_rec(2023, 200.0)],
+    })
+    metrics = {}
+
+    ffo_per_share, selected_fy = _select_latest_ffo(normalized, metrics)
+
+    assert ffo_per_share is None
+    assert selected_fy == 2023
 
 
 def test_run_valuation_reit_sector_computes_ffo_gordon_growth():
@@ -591,14 +715,15 @@ def test_run_valuation_reit_falls_back_to_pb_roe_when_depreciation_missing():
     assert result["ffo"] is None
     assert result["pb_roe"] is not None
     pb = result["pb_roe"]["scenarios"]
-    # Same numbers as test_run_valuation_financial_sector_disables_dcf_and_computes_pb_roe.
-    assert pb["base"]["per_share"] == pytest.approx(15.0)
-    assert pb["base"]["lo"] == pytest.approx(13.64)
-    assert pb["base"]["hi"] == pytest.approx(16.67)
+    # Same numbers as test_run_valuation_financial_sector_disables_dcf_and_computes_pb_roe
+    # (P3a: growth-aware justified P/B with the base scenario's terminal_growth=0.03).
+    assert pb["base"]["per_share"] == pytest.approx(17.14)
+    assert pb["base"]["lo"] == pytest.approx(15.0)
+    assert pb["base"]["hi"] == pytest.approx(20.0)
 
     # Headline fair_value_range must fall back to pb_roe too.
-    assert result["fair_value_range"]["base"]["lo"] == pytest.approx(13.64)
-    assert result["fair_value_range"]["base"]["hi"] == pytest.approx(16.67)
+    assert result["fair_value_range"]["base"]["lo"] == pytest.approx(15.0)
+    assert result["fair_value_range"]["base"]["hi"] == pytest.approx(20.0)
 
     assert any("FFO" in n and "P/B x ROE" in n for n in result["notes"])
 
@@ -625,7 +750,94 @@ def test_run_valuation_reit_falls_back_to_pb_roe_when_ffo_non_positive():
 
     assert result["ffo"] is None
     assert result["pb_roe"] is not None
-    assert result["pb_roe"]["scenarios"]["base"]["per_share"] == pytest.approx(15.0)
+    # P3a: growth-aware justified P/B (base terminal_growth=0.03), same as
+    # test_run_valuation_financial_sector_disables_dcf_and_computes_pb_roe.
+    assert result["pb_roe"]["scenarios"]["base"]["per_share"] == pytest.approx(17.14)
+
+
+def test_run_valuation_reit_ffo_reduced_by_gain_on_sale():
+    # Same base as test_run_valuation_reit_sector_computes_ffo_gordon_growth
+    # (NetIncome=800, Depreciation=200 -> base FFO=1000), but with a
+    # GainOnSaleRealEstate=150 tagged for the SAME fiscal year: Nareit FFO
+    # removes gains on real-estate sales, so FFO = 1000 - 150 = 850.
+    # ffo_per_share = 850 / 100 = 8.5.
+    normalized = _normalized({
+        "NetIncome": [_rec(2023, 800.0)],
+        "Depreciation": [_rec(2023, 200.0)],
+    })
+    normalized["annual"]["GainOnSaleRealEstate"] = [_rec(2023, 150.0)]
+    metrics = {"shares": 100.0, "latest_fy": 2023, "fcf": None, "net_debt": 0.0}
+    assumptions = _assumptions(base_discount=0.10)
+
+    result = run_valuation(
+        normalized, [], metrics, price=None, price_df=None,
+        assumptions=assumptions, sector_type="reit",
+    )
+    assert result["ffo"] is not None
+    assert result["ffo"]["ffo_per_share"] == pytest.approx(8.5)
+
+
+def test_run_valuation_reit_ffo_increased_by_impairment():
+    # Same base FFO=1000, but a RealEstateImpairment=150 for the same FY is
+    # ADDED BACK (it's a non-cash expense that already reduced net income):
+    # FFO = 1000 + 150 = 1150. ffo_per_share = 1150 / 100 = 11.5.
+    normalized = _normalized({
+        "NetIncome": [_rec(2023, 800.0)],
+        "Depreciation": [_rec(2023, 200.0)],
+    })
+    normalized["annual"]["RealEstateImpairment"] = [_rec(2023, 150.0)]
+    metrics = {"shares": 100.0, "latest_fy": 2023, "fcf": None, "net_debt": 0.0}
+    assumptions = _assumptions(base_discount=0.10)
+
+    result = run_valuation(
+        normalized, [], metrics, price=None, price_df=None,
+        assumptions=assumptions, sector_type="reit",
+    )
+    assert result["ffo"] is not None
+    assert result["ffo"]["ffo_per_share"] == pytest.approx(11.5)
+
+
+def test_run_valuation_reit_ffo_negative_gain_ie_loss_is_added_back():
+    # A negative "GainOnSaleRealEstate" value represents a LOSS on a
+    # real-estate sale (a us-gaap GainLoss element is negative for a loss).
+    # "- gain" with gain=-300 becomes "+300", so it's added back exactly
+    # like an impairment: FFO = 1000 - (-300) = 1300.
+    # ffo_per_share = 1300 / 100 = 13.0.
+    normalized = _normalized({
+        "NetIncome": [_rec(2023, 800.0)],
+        "Depreciation": [_rec(2023, 200.0)],
+    })
+    normalized["annual"]["GainOnSaleRealEstate"] = [_rec(2023, -300.0)]
+    metrics = {"shares": 100.0, "latest_fy": 2023, "fcf": None, "net_debt": 0.0}
+    assumptions = _assumptions(base_discount=0.10)
+
+    result = run_valuation(
+        normalized, [], metrics, price=None, price_df=None,
+        assumptions=assumptions, sector_type="reit",
+    )
+    assert result["ffo"] is not None
+    assert result["ffo"]["ffo_per_share"] == pytest.approx(13.0)
+
+
+def test_run_valuation_reit_ffo_unchanged_when_no_re_adjustment_tags():
+    # Backward compatibility: neither GainOnSaleRealEstate nor
+    # RealEstateImpairment is present (same fixture as the base FFO test
+    # above them) -> FFO must be IDENTICAL to before this change existed,
+    # i.e. NetIncome_fy + Depreciation_fy with no adjustment applied:
+    # ffo_per_share = 1000 / 100 = 10.0.
+    normalized = _normalized({
+        "NetIncome": [_rec(2023, 800.0)],
+        "Depreciation": [_rec(2023, 200.0)],
+    })
+    metrics = {"shares": 100.0, "latest_fy": 2023, "fcf": None, "net_debt": 0.0}
+    assumptions = _assumptions(base_discount=0.10)
+
+    result = run_valuation(
+        normalized, [], metrics, price=None, price_df=None,
+        assumptions=assumptions, sector_type="reit",
+    )
+    assert result["ffo"] is not None
+    assert result["ffo"]["ffo_per_share"] == pytest.approx(10.0)
 
 
 def test_run_valuation_cyclical_sector_produces_normalized_variant():
@@ -1130,13 +1342,17 @@ def test_run_valuation_pb_roe_uses_latest_fy_where_equity_and_roe_are_aligned():
     # filer's latest reported equity/net income). The engine must not give
     # up -- it should fall back to FY2023, the newest fiscal year where
     # BOTH the equity series and a ROE figure are actually present.
-    #   fair_pb_base = clamp(0.15/0.10, 0.5, 4.0) = 1.5
-    #   book_value_per_share = 1000/100 = 10.0
-    #   base: fair_pb = 1.5*1.0 -> per_share = 15.0
     #
-    # F3: band = min/max of fair_pb re-clamped at discount_rate +/- 1pp (see
+    # P3a: growth-aware justified P/B (base terminal_growth=0.03, the
+    # `_assumptions` helper's default):
+    #   fair_pb_base = clamp((0.15-0.03)/(0.10-0.03), 0.5, 4.0) = 1.714286
+    #   book_value_per_share = 1000/100 = 10.0
+    #   base: fair_pb = 1.714286*1.0 -> per_share = 17.14
+    #
+    # F3: band = min/max of fair_pb re-clamped at discount_rate +/- 1pp, g=0.03
+    # held fixed (see
     # test_run_valuation_financial_sector_disables_dcf_and_computes_pb_roe's
-    # comment for the full 0.09/0.10/0.11 cell derivation) -> lo=13.64, hi=16.67.
+    # comment for the full 0.09/0.10/0.11 cell derivation) -> lo=15.0, hi=20.0.
     normalized = _normalized({"StockholdersEquity": [_rec(2023, 1000.0)]})
     ratios = [{"fy": 2023, "roe": 0.15}]
     metrics = {"shares": 100.0, "latest_fy": 2024, "fcf": None, "net_debt": 0.0}
@@ -1148,9 +1364,9 @@ def test_run_valuation_pb_roe_uses_latest_fy_where_equity_and_roe_are_aligned():
     )
 
     pb = result["pb_roe"]["scenarios"]
-    assert pb["base"]["per_share"] == pytest.approx(15.0)
-    assert pb["base"]["lo"] == pytest.approx(13.64)
-    assert pb["base"]["hi"] == pytest.approx(16.67)
+    assert pb["base"]["per_share"] == pytest.approx(17.14)
+    assert pb["base"]["lo"] == pytest.approx(15.0)
+    assert pb["base"]["hi"] == pytest.approx(20.0)
     assert any("2023 mali y" in n and "P/B" in n for n in result["notes"])
 
 
@@ -1169,6 +1385,58 @@ def test_run_valuation_pb_roe_none_when_no_fiscal_year_has_both_equity_and_roe()
 
     assert result["pb_roe"] is None
     assert any("özkaynak" in n.lower() for n in result["notes"])
+
+
+# ---------------------------------------------------------------------------
+# 9b. _justified_pb / P/B x ROE growth-awareness (P3a)
+# ---------------------------------------------------------------------------
+
+
+def test_justified_pb_growth_aware_formula():
+    # (ROE - g) / (r - g) = (0.15 - 0.03) / (0.10 - 0.03) = 0.12/0.07 = 1.714286.
+    assert _justified_pb(0.15, 0.10, 0.03) == pytest.approx(1.714286, abs=1e-6)
+
+
+def test_justified_pb_degrades_to_no_growth_form_when_g_missing():
+    # g=None -> degrades to ROE/r = 0.15/0.10 = 1.5 (backward-compat).
+    assert _justified_pb(0.15, 0.10, None) == pytest.approx(1.5)
+
+
+def test_justified_pb_degrades_to_no_growth_form_when_g_negative():
+    # A negative g is treated as degenerate for this multiple -> degrades to
+    # ROE/r = 1.5, same as g missing.
+    assert _justified_pb(0.15, 0.10, -0.02) == pytest.approx(1.5)
+
+
+def test_justified_pb_degrades_to_no_growth_form_when_denominator_non_positive():
+    # g >= r makes (r - g) non-positive/meaningless -> degrades to ROE/r.
+    assert _justified_pb(0.15, 0.10, 0.10) == pytest.approx(1.5)
+    assert _justified_pb(0.15, 0.10, 0.12) == pytest.approx(1.5)
+
+
+def test_justified_pb_clamps_to_ceiling():
+    # (0.30 - 0.03) / (0.05 - 0.03) = 0.27/0.02 = 13.5, clamped to _PB_CLAMP_HI=4.0.
+    assert _justified_pb(0.30, 0.05, 0.03) == pytest.approx(4.0)
+
+
+def test_run_valuation_pb_roe_backward_compat_when_terminal_growth_missing():
+    # Same fixture as test_run_valuation_financial_sector_disables_dcf_and_computes_pb_roe
+    # but with base terminal_growth=None -> _justified_pb degrades to the old
+    # ROE/r form, so fair_pb_base = 0.15/0.10 = 1.5 (unchanged from before P3a).
+    normalized = _normalized({"StockholdersEquity": [_rec(2023, 1000.0)]})
+    ratios = [{"fy": 2023, "roe": 0.15}]
+    metrics = {"shares": 100.0, "latest_fy": 2023, "fcf": None, "net_debt": 0.0}
+    assumptions = _assumptions(base_discount=0.10, base_terminal=None)
+
+    result = run_valuation(
+        normalized, ratios, metrics, price=15.0, price_df=None,
+        assumptions=assumptions, sector_type="financial",
+    )
+
+    pb = result["pb_roe"]["scenarios"]
+    assert pb["base"]["per_share"] == pytest.approx(15.0)
+    assert pb["base"]["lo"] == pytest.approx(13.64)
+    assert pb["base"]["hi"] == pytest.approx(16.67)
 
 
 # ---------------------------------------------------------------------------

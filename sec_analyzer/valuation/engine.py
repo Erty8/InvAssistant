@@ -551,6 +551,17 @@ def _normalized_fcf0(normalized: dict, metrics: dict) -> "tuple[Optional[float],
     return normalized_margin * latest_revenue, notes
 
 
+def _justified_pb(roe: float, discount_rate: float, terminal_growth) -> float:
+    """Justified price-to-book = (ROE - g) / (r - g), clamped to
+    [_PB_CLAMP_LO, _PB_CLAMP_HI]. `r` is the cost of equity, `g` the stable
+    growth rate. Degrades to the no-growth form ROE/r when g is missing,
+    negative, or would make the denominator non-positive."""
+    g = terminal_growth if _is_number(terminal_growth) else 0.0
+    if g < 0 or (discount_rate - g) <= 0:
+        g = 0.0
+    return _clamp((roe - g) / (discount_rate - g), _PB_CLAMP_LO, _PB_CLAMP_HI)
+
+
 def _build_pb_roe(
     assumptions: dict, normalized: dict, metrics: dict, ratios: list
 ) -> "tuple[Optional[dict], List[str]]":
@@ -569,11 +580,17 @@ def _build_pb_roe(
     (the current, point-in-time count) since book value per share should be
     divided by shares outstanding *today*, not shares outstanding as of the
     equity fiscal year.
+
+    The anchor multiple is the justified price-to-book ``(ROE - g) / (r - g)``
+    (Damodaran), growth-aware via the base scenario's ``terminal_growth`` --
+    degrading to the no-growth ``ROE / r`` form when ``g`` is missing or
+    degenerate (see :func:`_justified_pb`).
     """
     notes: List[str] = []
     shares = metrics.get("shares")
     base_assumptions = assumptions.get("base") or {}
     discount_rate_base = base_assumptions.get("discount_rate")
+    terminal_growth_base = base_assumptions.get("terminal_growth")
 
     if not shares or shares <= 0 or not _is_number(discount_rate_base) or discount_rate_base <= 0:
         notes.append("P/B x ROE çapası hesaplanamadı: eksik veya geçersiz girdi (hisse sayısı/iskonto oranı).")
@@ -601,13 +618,15 @@ def _build_pb_roe(
             "(en son mali yılın temel verileriyle hisse sayısı hizalı değildi)."
         )
 
-    fair_pb_base = _clamp(roe / discount_rate_base, _PB_CLAMP_LO, _PB_CLAMP_HI)
+    fair_pb_base = _justified_pb(roe, discount_rate_base, terminal_growth_base)
     book_value_per_share = equity_latest / shares
 
     scenarios = {}
     for key, scale in _PB_SCENARIO_SCALE.items():
         per_share = round(fair_pb_base * scale * book_value_per_share, 2)
-        lo, hi, used_fallback = _pb_roe_scenario_band(roe, discount_rate_base, scale, book_value_per_share, per_share)
+        lo, hi, used_fallback = _pb_roe_scenario_band(
+            roe, discount_rate_base, scale, book_value_per_share, per_share, terminal_growth_base
+        )
         if used_fallback:
             notes.append(
                 f"{key.capitalize()} senaryosu için P/B x ROE duyarlılık bandı hesaplanamadı; "
@@ -619,15 +638,22 @@ def _build_pb_roe(
 
 
 def _pb_roe_scenario_band(
-    roe: float, discount_rate_base: float, scale: float, book_value_per_share: float, per_share: float
+    roe: float,
+    discount_rate_base: float,
+    scale: float,
+    book_value_per_share: float,
+    per_share: float,
+    terminal_growth=None,
 ) -> "tuple[float, float, bool]":
     """Derive one P/B x ROE scenario's band from ``discount_rate_base +/-
-    _DISCOUNT_RATE_STEP`` (Sec.8/F3): recompute the clamped ``fair_pb`` at
-    each of the 3 nearby discount rates, scale by this scenario's own
+    _DISCOUNT_RATE_STEP`` (Sec.8/F3): recompute the justified ``fair_pb``
+    (:func:`_justified_pb`) at each of the 3 nearby discount rates -- ``g``
+    (``terminal_growth``) held fixed across the band, exactly like the DCF
+    band holds ``terminal_growth`` fixed -- scale by this scenario's own
     ``scale``/``book_value_per_share``, and take the min/max. Falls back to
     the flat +/-10% band (:func:`_band`) when fewer than
     :data:`_MIN_GRID_CELLS_FOR_BAND` discount-rate points are usable (a
-    non-positive discount rate makes ``roe / dr`` meaningless and is
+    non-positive discount rate makes ``fair_pb`` meaningless and is
     excluded, not clamped to 0).
 
     Returns:
@@ -641,7 +667,7 @@ def _pb_roe_scenario_band(
     ):
         if dr <= 0:
             continue
-        fair_pb = _clamp(roe / dr, _PB_CLAMP_LO, _PB_CLAMP_HI)
+        fair_pb = _justified_pb(roe, dr, terminal_growth)
         cells.append(round(fair_pb * scale * book_value_per_share, 2))
 
     if len(cells) < _MIN_GRID_CELLS_FOR_BAND:
@@ -655,17 +681,25 @@ def _select_latest_ffo(
 ) -> "tuple[Optional[float], Optional[int]]":
     """Per-FY FFO (funds from operations) series and latest-usable-FY
     selection for REITs (Sec.8/FFO): ``FFO_fy = NetIncome_fy +
-    Depreciation_fy``.
+    Depreciation_fy - GainOnSaleRealEstate_fy + RealEstateImpairment_fy``.
 
-    This is a PRAGMATIC PROXY for Nareit's standardized FFO. True Nareit FFO
-    adds back only real-estate depreciation and removes gains/losses on
-    property sales and asset impairments; none of those adjustments are
-    separable from this engine's normalized data, so total D&A (the
-    cash-flow-statement depreciation/depletion/amortization add-back) is
-    used wholesale instead. This slightly OVERSTATES FFO for a filer with
-    meaningful non-real-estate amortization (e.g. intangibles from an
-    acquisition), but for a pure-play REIT -- whose D&A is overwhelmingly
-    building/property depreciation -- it is a close approximation.
+    This is a PRAGMATIC PROXY for Nareit's standardized FFO, moved closer to
+    it (Package 2/P2a) by also removing gains on real-estate sales and
+    adding back real-estate impairments WHEN those are tagged. Two gaps
+    remain, both silent (default to 0.0, never raise):
+
+    * Total D&A (the cash-flow-statement depreciation/depletion/
+      amortization add-back) is used wholesale rather than real-estate-only
+      depreciation, since the latter isn't separable from this engine's
+      normalized data. This slightly OVERSTATES FFO for a filer with
+      meaningful non-real-estate amortization (e.g. intangibles from an
+      acquisition), but for a pure-play REIT -- whose D&A is overwhelmingly
+      building/property depreciation -- it is a close approximation.
+    * ``GainOnSaleRealEstate``/``RealEstateImpairment`` (see
+      ``normalize/concepts.py``) are best-effort, real-estate-specific tag
+      lists; coverage is partial, so a filer using a tag not in the list
+      silently contributes 0.0 for that adjustment (identical to today's
+      behavior for filers that don't report these at all).
 
     Mirrors ``_build_pb_roe``'s FY-selection logic: walks the NetIncome
     series newest -> oldest and picks the first fiscal year that ALSO has a
@@ -674,15 +708,30 @@ def _select_latest_ffo(
     year. Does NOT keep walking past that first fiscal year even if its FFO
     turns out to be <= 0 -- "the latest usable FFO" means the newest fiscal
     year with both concepts present, not the newest fiscal year with a
-    positive result.
+    positive result. The gain/impairment adjustments are read for that SAME
+    selected fiscal year only -- they never affect FY selection, which
+    still requires only NetIncome + Depreciation.
 
     Args:
         normalized: The dict returned by ``normalize_facts`` (reads
-            ``NetIncome``/``Depreciation`` annual series).
-        metrics: Used only for ``shares`` (the current, point-in-time
-            count) -- FFO per share divides by shares outstanding *today*,
-            not shares outstanding as of the FFO fiscal year, exactly like
-            ``_build_pb_roe``'s book value per share.
+            ``NetIncome``/``Depreciation`` annual series, the optional
+            ``GainOnSaleRealEstate``/``RealEstateImpairment`` series, and --
+            for the per-share division below -- the ``SharesOutstanding``
+            annual series).
+        metrics: Used as a FALLBACK source for ``shares`` (the current,
+            point-in-time count), only when the selected FFO fiscal year's
+            own share count is missing from ``SharesOutstanding``. Unlike
+            ``_build_pb_roe``, which divides book value (a balance-sheet
+            STOCK, measured at a point in time -- "today's book value per
+            today's share" is coherent) by the CURRENT share count, FFO is a
+            period FLOW, so it must be divided by THAT SAME period's own
+            share count to be contemporaneous. Dividing a trailing fiscal
+            year's FFO by today's (typically larger, for a REIT that issues
+            equity regularly) share count systematically understates FFO
+            per share. This also makes the anchor consistent with
+            ``multiples.multiples_history``'s ``pffo`` column, which already
+            divides by the per-FY share count via
+            ``to_annual_series(normalized, "SharesOutstanding").get(fy)``.
 
     Returns:
         A ``(ffo_per_share, selected_fy)`` tuple. ``ffo_per_share`` is
@@ -691,22 +740,48 @@ def _select_latest_ffo(
         the fiscal year FFO was computed from (even when the per-share
         result is ``None`` because shares were invalid), or ``None`` if no
         fiscal year had both concepts.
+
+    Note:
+        Dividing by the FFO fiscal year's own share count still leaves this
+        a TRAILING (not run-rate/forward) FFO per share: for a serial
+        equity issuer whose in-year acquisitions/share issuances weren't
+        perfectly accretive, the trailing figure can still over/understate
+        the true run-rate. A forward/run-rate FFO (e.g. annualizing the
+        most recent partial period, or using next-FY guidance) would be
+        the fully-correct fix; that refinement is out of scope here.
     """
     ni_series = to_annual_series(normalized, "NetIncome")
     dep_series = to_annual_series(normalized, "Depreciation")
+    gain_series = to_annual_series(normalized, "GainOnSaleRealEstate")
+    impair_series = to_annual_series(normalized, "RealEstateImpairment")
 
     selected_fy, ffo = None, None
     for fy in sorted(ni_series, reverse=True):
         ni = ni_series.get(fy)
         dep = dep_series.get(fy)
         if ni is not None and dep is not None:
-            selected_fy, ffo = fy, ni + dep
+            # A us-gaap "GainLoss" element is positive for a realized gain
+            # (which already inflated GAAP net income) and negative for a
+            # loss, so "- gain" removes a gain and, for a negative value (a
+            # loss), adds it back -- both match Nareit's treatment.
+            # Impairments are positive expense amounts that already reduced
+            # net income, so "+ impair" adds them back. Both default to 0.0
+            # when the fiscal year has no matching tag (backward compatible
+            # with fixtures/filers that never report these).
+            gain = gain_series.get(fy) or 0.0
+            impair = impair_series.get(fy) or 0.0
+            selected_fy, ffo = fy, ni + dep - gain + impair
             break
 
     if selected_fy is None or ffo is None or ffo <= 0:
         return None, selected_fy
 
-    shares = metrics.get("shares")
+    shares_series = to_annual_series(normalized, "SharesOutstanding")
+    shares = shares_series.get(selected_fy)
+    if not shares or shares <= 0:
+        # Fall back to the current point-in-time count only when the FFO
+        # fiscal year's own share count is missing from the series.
+        shares = metrics.get("shares")
     if not shares or shares <= 0:
         return None, selected_fy
 

@@ -152,10 +152,14 @@ def classify_sector(sic: Optional[Union[int, str]], normalized: dict, metrics: d
         CAGR (5y, falling back to 3y) is unknown or <= 15%, otherwise falls
         through to the profitability check below like any other SIC; SIC
         in the (remaining) cyclical set -> cyclical; else, if the latest
-        fiscal year's ``NetIncome`` is negative -> growth_unprofitable;
-        else -> mature. An unparseable/missing ``sic`` returns ``"mature"``
-        (see the module docstring for the SIC-missing engine-wiring
-        fallback).
+        fiscal year's ``NetIncome`` is negative -> growth_unprofitable,
+        UNLESS the firm is normally profitable (>=2 prior fiscal years of
+        ``NetIncome`` data, a profitable majority among them, AND the
+        immediately prior year profitable), in which case the loss is
+        treated as a one-off (writedown/litigation/tax charge) and the
+        firm still classifies as mature; else -> mature. An unparseable/
+        missing ``sic`` returns ``"mature"`` (see the module docstring for
+        the SIC-missing engine-wiring fallback).
     """
     sic_int = _to_int_sic(sic)
     if sic_int is None:
@@ -181,12 +185,28 @@ def classify_sector(sic: Optional[Union[int, str]], normalized: dict, metrics: d
         return SECTOR_CYCLICAL
 
     latest_fy = resolve_fundamental_fy(metrics)
-    latest_net_income = None
-    if latest_fy is not None:
-        latest_net_income = to_annual_series(normalized or {}, "NetIncome").get(latest_fy)
+    ni_series = to_annual_series(normalized or {}, "NetIncome")
+    latest_net_income = ni_series.get(latest_fy) if latest_fy is not None else None
 
     if latest_net_income is not None and latest_net_income < 0:
-        return SECTOR_GROWTH_UNPROFITABLE
+        # A single loss year in an otherwise consistently profitable firm is a
+        # one-off (writedown/litigation/tax charge), not structural
+        # unprofitability -- keep it "mature" so it isn't penalized with the
+        # higher unprofitable discount floor and isn't excluded from the EPV
+        # path. Requires a real profitable history to override: >=2 prior
+        # years, a profitable majority, AND the immediately prior year
+        # profitable.
+        prior = [(fy, v) for fy, v in ni_series.items()
+                 if latest_fy is not None and fy < latest_fy and v is not None]
+        prior_values = [v for _, v in prior]
+        prior_year_ni = ni_series.get(max((fy for fy, _ in prior), default=None)) if prior else None
+        usually_profitable = (
+            len(prior_values) >= 2
+            and sum(1 for v in prior_values if v > 0) > sum(1 for v in prior_values if v < 0)
+            and prior_year_ni is not None and prior_year_ni > 0
+        )
+        if not usually_profitable:
+            return SECTOR_GROWTH_UNPROFITABLE
 
     return SECTOR_MATURE
 

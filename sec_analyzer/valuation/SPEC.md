@@ -355,7 +355,12 @@ Deterministic from SIC (int or str), with financial-statement overrides:
   secular-growth semi classifies as `"mature"`/`"growth_unprofitable"` and
   can independently enter hyper-grower mode (see the gray-zone tier
   cross-referenced below)
-- else if latest-FY `NetIncome < 0` → `"growth_unprofitable"`
+- else if latest-FY `NetIncome < 0` → `"growth_unprofitable"`, UNLESS the firm
+  is normally profitable (>= 2 prior fiscal years of `NetIncome` data, a
+  profitable majority among them, AND the immediately prior year profitable),
+  in which case the loss is treated as a one-off (writedown/litigation/tax
+  charge) and the firm still classifies `"mature"` -- a single bad year
+  shouldn't raise the discount floor or exclude the firm from the EPV path
 - else → `"mature"`
 If SIC missing → fall back to the LLM's phase-1 `sector_type` (engine wiring),
 else `"mature"`.
@@ -370,12 +375,16 @@ this file.)
   Turkish `disabled_reason`; the specific wording differs per sector, see
   below). Hyper-grower detection is never attempted for either sector (see
   the cross-reference below).
-  - `financial`: compute a P/B×ROE anchor:
-    `fair_pb = clamp(roe / discount_rate_base, 0.5, 4.0)`,
-    `per_share = fair_pb * (equity_latest / shares)`; band from a
-    `discount_rate_base ± 1pp` sensitivity re-clamp (±10% fallback, Sec.4);
-    bear/base/bull scale `fair_pb` by (0.8 / 1.0 / 1.2). Output under key
-    `"pb_roe"` mirroring the dcf scenario shape.
+  - `financial`: compute a P/B×ROE anchor using the justified (growth-aware)
+    price-to-book multiple:
+    `fair_pb = clamp((roe - g) / (discount_rate_base - g), 0.5, 4.0)`, where
+    `g` is the base scenario's `terminal_growth` (degrading to the no-growth
+    `roe / discount_rate_base` form when `g` is missing, negative, or would
+    make the denominator non-positive), `per_share = fair_pb * (equity_latest
+    / shares)`; band from a `discount_rate_base ± 1pp` sensitivity re-clamp
+    with `g` held fixed across the band (±10% fallback, Sec.4); bear/base/bull
+    scale `fair_pb` by (0.8 / 1.0 / 1.2). Output under key `"pb_roe"`
+    mirroring the dcf scenario shape.
   - `reit`: compute an FFO-based Gordon-growth anchor instead (Sec.8c) --
     P/B×ROE systematically understates a REIT, since GAAP real-estate
     depreciation is a large non-cash charge that depresses both net income
@@ -905,26 +914,61 @@ income and book equity. `financial` is UNCHANGED (still P/B×ROE, Sec.8).
 `_build_pb_roe`'s FY-selection logic (Sec.8) exactly: walks the `NetIncome`
 annual series newest → oldest and picks the first fiscal year that ALSO has a
 `Depreciation` figure for that same year (does not require alignment with
-`metrics`'s own notion of the latest fiscal year), then:
+`metrics`'s own notion of the latest fiscal year), then (Package 2/P2a):
 ```
-FFO_fy = NetIncome_fy + Depreciation_fy
-ffo_per_share = FFO_fy / shares   # metrics["shares"], current point-in-time count
+gain    = GainOnSaleRealEstate_fy or 0.0   # signed: +gain increases NI
+impair  = RealEstateImpairment_fy or 0.0   # positive expense that reduced NI
+FFO_fy  = NetIncome_fy + Depreciation_fy - gain + impair
+ffo_per_share = FFO_fy / shares   # shares = SharesOutstanding_fy, falling back to
+                                  # metrics["shares"] (current count) if that FY's
+                                  # share count is missing
 ```
-**This is a PROXY, not true Nareit FFO:** Nareit's standardized FFO adds back
-only real-estate depreciation and removes gains/losses on property sales and
-impairments; none of those adjustments are separable from this engine's
-normalized data, so total D&A (the cash-flow-statement depreciation/
-depletion/amortization add-back, via the new `Depreciation` concept in
-`normalize/concepts.py`, a `FLOW_CONCEPTS` entry falling back across
-`DepreciationDepletionAndAmortization` /
-`DepreciationAmortizationAndAccretionNet` / `DepreciationAndAmortization` /
-`Depreciation`) is added back wholesale instead. This slightly
-OVERSTATES FFO for a filer with meaningful non-real-estate amortization (e.g.
-intangibles from an acquisition); for a pure-play REIT (whose D&A is
-overwhelmingly building/property depreciation) it is a close approximation.
-If no fiscal year has both concepts, or the resulting FFO is `<= 0`, FFO is
-considered unusable (the walk does NOT continue past that first fiscal year
-looking for an older, possibly-positive one).
+(Deliberately consistent with the `pffo` column's per-FY share basis described
+below in "P/FFO multiples signal" — both divide a fiscal year's FFO by that
+SAME fiscal year's own share count, not today's.)
+`gain`/`impair` are read for the SAME selected fiscal year only and never
+affect FY selection (still only `NetIncome` + `Depreciation`); both default
+to `0.0` when untagged for that year, so a filer/fixture that never reports
+them computes byte-for-byte the same `FFO_fy` as before this change
+(backward compatible). Sign handling: a us-gaap `GainLoss` element is
+positive for a realized gain (which already inflated GAAP net income) and
+negative for a loss, so `- gain` removes a gain and, for a negative value (a
+loss), adds it back — both match Nareit. Impairments are positive expense
+amounts that already reduced net income, so `+ impair` adds them back.
+
+**This is a PROXY, still not true Nareit FFO — P2a narrows one of three
+gaps:** Nareit's standardized FFO adds back only real-estate depreciation and
+removes gains/losses on property sales and impairments. This engine now
+handles the gains/impairments piece via two new best-effort,
+real-estate-specific `FLOW_CONCEPTS` entries in `normalize/concepts.py`:
+```
+GainOnSaleRealEstate: GainLossOnSaleOfProperties /
+    GainsLossesOnSalesOfInvestmentRealEstate /
+    GainLossOnDispositionOfRealEstateInvestments
+RealEstateImpairment: ImpairmentOfRealEstate / RealEstateImpairment
+```
+Deliberately NOT broad tags like `AssetImpairmentCharges` or generic
+`GainLossOnDispositionOfAssets`, which would over-adjust for non-real-estate
+items Nareit does not touch. Coverage is necessarily partial (a filer using a
+tag not in either list silently contributes `0.0` for that adjustment); this
+is acceptable since the adjustment defaults to 0 rather than raising or
+fabricating a value. Two known gaps remain:
+* Total D&A (the cash-flow-statement depreciation/depletion/amortization
+  add-back, via the `Depreciation` concept in `normalize/concepts.py`, a
+  `FLOW_CONCEPTS` entry falling back across
+  `DepreciationDepletionAndAmortization` /
+  `DepreciationAmortizationAndAccretionNet` / `DepreciationAndAmortization` /
+  `Depreciation`) is added back wholesale instead of real-estate-only
+  depreciation, since the latter isn't separable from this engine's
+  normalized data. This slightly OVERSTATES FFO for a filer with meaningful
+  non-real-estate amortization (e.g. intangibles from an acquisition); for a
+  pure-play REIT (whose D&A is overwhelmingly building/property
+  depreciation) it is a close approximation.
+* Partial tag coverage for the gain/impairment concepts above, as noted.
+
+If no fiscal year has both `NetIncome`/`Depreciation`, or the resulting FFO
+is `<= 0`, FFO is considered unusable (the walk does NOT continue past that
+first fiscal year looking for an older, possibly-positive one).
 
 **`_build_ffo` — Gordon growth model on FFO per share, per scenario:**
 ```
@@ -962,7 +1006,8 @@ logic, since both blocks share one shape.
 **P/FFO multiples signal (Sec.6/VALUATION.md Sec.7):** `multiples.
 multiples_history` gains a `pffo` column (`fy_price * shares_fy / ffo_fy`,
 `None` unless `ffo_fy > 0` and `shares_fy` present — `ffo_fy = net_income_fy +
-depreciation_fy`, same proxy as above). The engine computes the current
+depreciation_fy - gain_on_sale_re_fy + re_impairment_fy` (gain/impairment
+default to 0.0 when untagged), same proxy as above). The engine computes the current
 P/FFO (`price / ffo_per_share`, using the same latest-usable FFO
 `_select_latest_ffo` returns) and its historical percentile (`pffo_pct`),
 threaded into `triangulate.triangulate(..., pffo_pct=...)`. For
