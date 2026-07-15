@@ -1203,8 +1203,13 @@ def _cyclical_risk_from_valuation(valuation: dict, red_flags: Optional[List[dict
         )
     elif sector_type == "growth_unprofitable":
         text = "Şirket henüz kâr etmiyor; büyüme senaryoları ve ters DCF, P/E çarpanlarından daha belirleyici."
-    elif sector_type in ("financial", "reit"):
-        text = "Finansal/GYO sınıflandırması nedeniyle döngüsellik P/B x ROE çapası üzerinden değerlendirildi."
+    elif sector_type == "financial":
+        text = "Finansal sınıflandırma nedeniyle döngüsellik P/B x ROE çapası üzerinden değerlendirildi."
+    elif sector_type == "reit":
+        text = (
+            "GYO sınıflandırması nedeniyle döngüsellik FFO tabanlı değerleme "
+            "(net kâr + amortisman) üzerinden değerlendirildi."
+        )
     else:
         text = "Olgun sektör sınıflandırması altında döngüsellik riski sınırlı kabul edildi."
 

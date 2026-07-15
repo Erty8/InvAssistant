@@ -103,7 +103,9 @@ def dcf_per_share(
     every projected year's FCF, once again as a lump-sum balance-sheet
     deduction from the PV). So ``ev`` and ``equity`` below are the same
     number; both keys are kept for backward-compatible callers that read
-    either one.
+    either one. Consequently ``discount_rate`` must be a levered cost of
+    equity, not a WACC: discounting an already-levered equity cash flow at a
+    WACC would double-count the leverage adjustment a WACC already bakes in.
 
     Dilution: ``effective_shares = shares * (1 + dilution_rate) ** 5``. Five
     years (the midpoint of the 10-year horizon, not year 0 or year 10) is
@@ -118,7 +120,11 @@ def dcf_per_share(
             fraction).
         terminal_growth: Growth rate years 6-10 fade to, and the Gordon-
             growth terminal-value growth rate.
-        discount_rate: Annual discount rate (decimal fraction).
+        discount_rate: Annual discount rate (decimal fraction) -- a levered
+            COST OF EQUITY, not a WACC (see the FCFE-direct note above: the
+            discounted cash flow is already an equity cash flow, so the
+            rate that discounts it must be the rate equity holders require,
+            not a blend with the cost of debt).
         shares: Diluted shares outstanding used as the pre-dilution base.
         dilution_rate: Annual share-count growth rate applied over 5 years
             to derive the effective share count. Defaults to ``0.0`` (no

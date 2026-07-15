@@ -209,11 +209,18 @@ chance to revise; if still invalid, a deterministic default is substituted
 instead of your proposal), per bear/base/bull scenario:
 
 - terminal_growth must not exceed 4%.
+- discount_rate is a levered COST OF EQUITY (özkaynak maliyeti), NOT a WACC
+  -- the DCF is FCFE-direct (the projected free cash flow is already a
+  levered/equity cash flow, so no net-debt bridge is applied), so it must be
+  discounted at a cost of equity. For a typical profitable large-cap this is
+  usually ~8-12%, higher for a riskier, smaller, or unprofitable company.
 - discount_rate must be at least 7% (at least 10% if the company is
   currently unprofitable) -- a low discount rate hides risk.
 - discount_rate must always be strictly greater than terminal_growth (the
   Gordon-growth terminal value is undefined otherwise; this is never
-  silently "fixed").
+  silently "fixed"), and by a comfortable margin -- a discount rate only a
+  point or two above terminal_growth implies an implausibly thin equity
+  risk premium and is rejected too.
 - growth_5y above 20% is allowed (the model structurally fades growth
   toward terminal_growth after year 5), but above 40% is rejected as
   implausible.
@@ -225,8 +232,11 @@ Sector-to-method map (final classification is made deterministically from
 the filer's SIC code by application code -- your "sector_type" guess is
 only used as a fallback when SIC is unavailable):
 
-- financial / reit: a P/B x ROE anchor is used instead of a cash-flow DCF
-  (FCF-based DCF is unreliable for banks/REITs).
+- financial: a P/B x ROE anchor is used instead of a cash-flow DCF (FCF-based
+  DCF is unreliable for banks/insurers).
+- reit: an FFO-based Gordon growth model (FFO = net income + depreciation/
+  amortization) is used instead of a cash-flow DCF, with P/FFO-based
+  multiples (FCF-based DCF is unreliable for REITs).
 - growth_unprofitable: a P/S multiple and reverse DCF are weighted most
   heavily in the triangulation (P/E and P/FCF percentiles are usually
   unavailable).

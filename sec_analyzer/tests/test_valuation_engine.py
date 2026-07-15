@@ -134,6 +134,28 @@ def test_triangulate_multiples_uses_ps_first_for_growth_unprofitable():
     assert result["signals"]["multiples"] == "ucuz"
 
 
+def test_triangulate_multiples_uses_pffo_first_for_reit_not_pe():
+    # For reit (Package 2 / SPEC.md Sec.8/FFO), P/FFO is primary, NOT P/E:
+    # pe_pct=90 (would be "pahali" if used) and ps_pct=50 (would be "makul")
+    # are both present, but pffo_pct=10 must win -> "ucuz".
+    result = triangulate(
+        None, None, None, None, None, pe_pct=90, ps_pct=50, pfcf_pct=None,
+        sector_type="reit", pffo_pct=10,
+    )
+    assert result["signals"]["multiples"] == "ucuz"
+    assert "P/FFO" in result["rationale"]["multiples"]
+
+
+def test_triangulate_multiples_reit_falls_back_to_ps_when_pffo_missing():
+    # pffo_pct absent (e.g. no Depreciation data) -> reit falls back to
+    # ps_pct as its next candidate, still never P/E.
+    result = triangulate(
+        None, None, None, None, None, pe_pct=90, ps_pct=10, pfcf_pct=None,
+        sector_type="reit", pffo_pct=None,
+    )
+    assert result["signals"]["multiples"] == "ucuz"
+
+
 # ---------------------------------------------------------------------------
 # 8b. triangulate -- growth-adjusted (PEG / EV-Sales) divergence -> "karisik"
 # multiples signal (VALUATION.md Sec.7).
@@ -299,8 +321,24 @@ def test_classify_sector_reit_sic():
     assert classify_sector(6798, {}, {}) == "reit"
 
 
+def test_classify_sector_reit_like_real_estate_operator_sic():
+    # 6500 (real estate) and 6512 (operators of apartment buildings, inside
+    # 6510-6519) get the same FFO treatment as 6798 REITs (SPEC Sec.8).
+    assert classify_sector(6500, {}, {}) == "reit"
+    assert classify_sector(6512, {}, {}) == "reit"
+
+
+def test_classify_sector_real_estate_agents_and_developers_stay_financial():
+    # 6531 (real estate agents/managers) and 6552 (land subdividers/
+    # developers) are asset-light/inventory businesses, not depreciable-
+    # property owners -- explicitly excluded from the reit widening.
+    assert classify_sector(6531, {}, {}) == "financial"
+    assert classify_sector(6552, {}, {}) == "financial"
+
+
 def test_classify_sector_financial_sic_range():
     assert classify_sector(6022, {}, {}) == "financial"  # state commercial bank
+    assert classify_sector(6021, {}, {}) == "financial"  # national commercial bank
     # 6798 itself is excluded from the financial range (tested separately).
     assert classify_sector(6799, {}, {}) == "financial"
 
@@ -369,7 +407,7 @@ def test_classify_sector_low_growth_semiconductor_stays_cyclical():
 _CONCEPTS = [
     "Revenue", "NetIncome", "OperatingCashFlow", "CapEx", "Cash",
     "LongTermDebt", "LongTermDebtCurrent", "SharesOutstanding", "EPS",
-    "SBC", "StockholdersEquity",
+    "SBC", "StockholdersEquity", "Depreciation",
 ]
 
 
@@ -448,6 +486,146 @@ def test_run_valuation_financial_sector_disables_dcf_and_computes_pb_roe():
     # disabled.
     assert result["fair_value_range"]["base"]["lo"] == pytest.approx(13.64)
     assert result["fair_value_range"]["base"]["hi"] == pytest.approx(16.67)
+
+
+# ---------------------------------------------------------------------------
+# 8c. REIT FFO-based Gordon-growth anchor (Package 2 / SPEC.md Sec.8c)
+# ---------------------------------------------------------------------------
+
+
+def test_run_valuation_reit_sector_computes_ffo_gordon_growth():
+    # NetIncome_fy=800, Depreciation_fy=200 -> FFO=1000; shares=100 ->
+    # ffo_per_share = 1000/100 = 10.0.
+    #
+    # Gordon multiple per scenario = (1+g)/(r-g); per_share = ffo_per_share *
+    # multiple. Hand arithmetic (also the spec's own worked example for
+    # base: ffo_per_share=10, r=0.09, g=0.025 -> multiple=1.025/0.065=
+    # 15.76923... -> per_share=157.69):
+    #   bear (r=0.13, g=0.02): multiple = 1.02/0.11 = 9.272727 -> 92.73
+    #   base (r=0.09, g=0.025): multiple = 1.025/0.065 = 15.769231 -> 157.69
+    #   bull (r=0.085, g=0.03): multiple = 1.03/0.055 = 18.727273 -> 187.27
+    #
+    # Bands: recompute the Gordon multiple at r +/- 1pp (g fixed at this
+    # scenario's own value), take min/max, round 2dp.
+    #   bear: r in {0.12, 0.13, 0.14}, g=0.02
+    #     r=0.12: 1.02/0.10=10.2 -> 102.00
+    #     r=0.13: 9.272727 -> 92.73 (center)
+    #     r=0.14: 1.02/0.12=8.5 -> 85.00
+    #     -> lo=85.00, hi=102.00
+    #   base: r in {0.08, 0.09, 0.10}, g=0.025
+    #     r=0.08: 1.025/0.055=18.636364 -> 186.36
+    #     r=0.09: 15.769231 -> 157.69 (center)
+    #     r=0.10: 1.025/0.075=13.666667 -> 136.67
+    #     -> lo=136.67, hi=186.36
+    #   bull: r in {0.075, 0.085, 0.095}, g=0.03
+    #     r=0.075: 1.03/0.045=22.888889 -> 228.89
+    #     r=0.085: 18.727273 -> 187.27 (center)
+    #     r=0.095: 1.03/0.065=15.846154 -> 158.46
+    #     -> lo=158.46, hi=228.89
+    normalized = _normalized({
+        "NetIncome": [_rec(2023, 800.0)],
+        "Depreciation": [_rec(2023, 200.0)],
+    })
+    metrics = {"shares": 100.0, "latest_fy": 2023, "fcf": None, "net_debt": 0.0}
+    assumptions = {
+        "bear": {"growth_5y": 0.05, "terminal_growth": 0.02, "discount_rate": 0.13, "story": "Ayı."},
+        "base": {"growth_5y": 0.08, "terminal_growth": 0.025, "discount_rate": 0.09, "story": "Baz."},
+        "bull": {"growth_5y": 0.12, "terminal_growth": 0.03, "discount_rate": 0.085, "story": "Boğa."},
+    }
+
+    result = run_valuation(
+        normalized, [], metrics, price=None, price_df=None,
+        assumptions=assumptions, sector_type="reit",
+    )
+
+    assert result["dcf"]["enabled"] is False
+    assert "FFO" in result["dcf"]["disabled_reason"]
+    assert result["pb_roe"] is None  # FFO succeeded -> no fallback needed.
+
+    ffo = result["ffo"]
+    assert ffo is not None
+    assert ffo["ffo_per_share"] == pytest.approx(10.0)
+
+    bear = ffo["scenarios"]["bear"]
+    assert bear["per_share"] == pytest.approx(92.73)
+    assert bear["lo"] == pytest.approx(85.00)
+    assert bear["hi"] == pytest.approx(102.00)
+
+    base = ffo["scenarios"]["base"]
+    assert base["per_share"] == pytest.approx(157.69)
+    assert base["lo"] == pytest.approx(136.67)
+    assert base["hi"] == pytest.approx(186.36)
+
+    bull = ffo["scenarios"]["bull"]
+    assert bull["per_share"] == pytest.approx(187.27)
+    assert bull["lo"] == pytest.approx(158.46)
+    assert bull["hi"] == pytest.approx(228.89)
+
+    # Implied fair P/FFO multiple per scenario, rounded 1dp.
+    assert ffo["implied_pffo"]["bear"] == pytest.approx(9.3)
+    assert ffo["implied_pffo"]["base"] == pytest.approx(15.8)
+    assert ffo["implied_pffo"]["bull"] == pytest.approx(18.7)
+
+    # The headline fair_value_range and the triangulation base band must
+    # come FROM the ffo block for reit, not pb_roe.
+    assert result["fair_value_range"]["base"]["lo"] == pytest.approx(136.67)
+    assert result["fair_value_range"]["base"]["hi"] == pytest.approx(186.36)
+
+
+def test_run_valuation_reit_falls_back_to_pb_roe_when_depreciation_missing():
+    # Same fixture as the financial P/B x ROE test above (equity + roe
+    # present, NO Depreciation data at all) but sector_type="reit": FFO
+    # can't be built (no fiscal year has both NetIncome and Depreciation),
+    # so the engine must gracefully fall back to the same P/B x ROE anchor
+    # `financial` uses, with a note explaining the fallback.
+    normalized = _normalized({"StockholdersEquity": [_rec(2023, 1000.0)]})
+    ratios = [{"fy": 2023, "roe": 0.15}]
+    metrics = {"shares": 100.0, "latest_fy": 2023, "fcf": None, "net_debt": 0.0}
+    assumptions = _assumptions(base_discount=0.10)
+
+    result = run_valuation(
+        normalized, ratios, metrics, price=15.0, price_df=None,
+        assumptions=assumptions, sector_type="reit",
+    )
+
+    assert result["ffo"] is None
+    assert result["pb_roe"] is not None
+    pb = result["pb_roe"]["scenarios"]
+    # Same numbers as test_run_valuation_financial_sector_disables_dcf_and_computes_pb_roe.
+    assert pb["base"]["per_share"] == pytest.approx(15.0)
+    assert pb["base"]["lo"] == pytest.approx(13.64)
+    assert pb["base"]["hi"] == pytest.approx(16.67)
+
+    # Headline fair_value_range must fall back to pb_roe too.
+    assert result["fair_value_range"]["base"]["lo"] == pytest.approx(13.64)
+    assert result["fair_value_range"]["base"]["hi"] == pytest.approx(16.67)
+
+    assert any("FFO" in n and "P/B x ROE" in n for n in result["notes"])
+
+
+def test_run_valuation_reit_falls_back_to_pb_roe_when_ffo_non_positive():
+    # Depreciation data IS present, but NetIncome_fy + Depreciation_fy <= 0
+    # (a loss-making year whose D&A add-back still isn't enough to turn FFO
+    # positive) -> _build_ffo must return None (not a negative/zero FFO
+    # headline), and the engine falls back to P/B x ROE exactly as when
+    # Depreciation was missing entirely.
+    normalized = _normalized({
+        "StockholdersEquity": [_rec(2023, 1000.0)],
+        "NetIncome": [_rec(2023, -500.0)],
+        "Depreciation": [_rec(2023, 200.0)],  # FFO = -500+200 = -300 <= 0.
+    })
+    ratios = [{"fy": 2023, "roe": 0.15}]
+    metrics = {"shares": 100.0, "latest_fy": 2023, "fcf": None, "net_debt": 0.0}
+    assumptions = _assumptions(base_discount=0.10)
+
+    result = run_valuation(
+        normalized, ratios, metrics, price=15.0, price_df=None,
+        assumptions=assumptions, sector_type="reit",
+    )
+
+    assert result["ffo"] is None
+    assert result["pb_roe"] is not None
+    assert result["pb_roe"]["scenarios"]["base"]["per_share"] == pytest.approx(15.0)
 
 
 def test_run_valuation_cyclical_sector_produces_normalized_variant():
@@ -789,6 +967,45 @@ def test_run_valuation_fcf0_deviation_rule_applies_when_trend_unassessable():
     assert result["fcf0_source"] == "3y_avg"
 
 
+def test_run_valuation_select_fcf0_uses_fundamental_fy_not_ghost_latest_fy():
+    # Reproduces the "ghost fiscal year" anchor mismatch (see
+    # test_metrics.py's ghost-year fixtures): metrics["latest_fy"]=2025 is a
+    # cover-page (SharesOutstanding-only) fiscal year with NO ratios/fcf data
+    # at all, while metrics["latest_fundamental_fy"]=2024 is the real
+    # anchor, where ratios actually reports fcf.
+    #
+    # _select_fcf0 resolves its anchor via resolve_fundamental_fy(metrics),
+    # so it must use 2024, NOT 2025:
+    #   sbc_adjusted_fcf_by_fy = {2024: 100.0 - 0 (no SBC)} = {2024: 100.0}
+    #   ttm_fcf = window.get(2024) = 100.0 (positive -> usable)
+    #   avg window = [fcf.get(2024), fcf.get(2023), fcf.get(2022)]
+    #             = [100.0, None, None] -> avg_window=[100.0] -> avg_fcf=100.0
+    #   deviation = |100.0 - 100.0| / 100.0 = 0 -> NOT > 0.50 -> ttm kept as-is.
+    #   -> fcf0=100.0, source="ttm".
+    #
+    # Contrast (the pre-fix bug): if latest_fy=2025 had been used instead,
+    # sbc_adjusted_fcf_by_fy.get(2025) would be None (ratios has no fy=2025
+    # entry at all) -> fcf0 would resolve to None -> DCF would be disabled
+    # entirely (scenarios=None) for a company with perfectly good FCF data.
+    normalized = _normalized({})
+    ratios = [{"fy": 2024, "fcf": 100.0}]
+    metrics = {
+        "shares": 10.0, "latest_fy": 2025, "latest_fundamental_fy": 2024,
+        "fcf": 100.0, "net_debt": 0.0,
+    }
+    assumptions = _assumptions()
+
+    result = run_valuation(
+        normalized, ratios, metrics, price=None, price_df=None,
+        assumptions=assumptions, sector_type="mature",
+    )
+
+    assert result["fcf0"] == pytest.approx(100.0)
+    assert result["fcf0_source"] == "ttm"
+    assert result["dcf"]["scenarios"] is not None
+    assert result["dcf"]["scenarios"]["base"]["per_share"] is not None
+
+
 def test_run_valuation_missing_price_df_degrades_multiples_with_a_note():
     normalized = _normalized({
         "Revenue": [_rec(2023, 1000.0)],
@@ -891,7 +1108,7 @@ def test_run_valuation_current_multiples_left_none_without_price_or_shares():
         normalized, [], metrics, price=None, price_df=None,
         assumptions=assumptions, sector_type="mature",
     )
-    assert result["multiples"]["current"] == {"pe": None, "ps": None, "pfcf": None}
+    assert result["multiples"]["current"] == {"pe": None, "ps": None, "pfcf": None, "pffo": None}
 
     # Price present but no shares at all -> ps/pfcf can't be derived
     # (no market-cap-style numerator to divide), but pe (price/eps, no
@@ -971,6 +1188,14 @@ def test_run_valuation_pb_roe_none_when_no_fiscal_year_has_both_equity_and_roe()
 #   final_year_revenue (~3407.10 / ~3.407x). gross_margin=0.60 ->
 #   target_base=min(0.60*0.5, 0.30)=0.30 -> bear target=0.30*0.7=0.21,
 #   base target=0.30, bull target=min(0.30*1.2, 0.60)=0.36.
+#
+# Discount rates: engine._HYPER_DISCOUNT_RATE_BY_SCENARIO is
+# {"bear": 0.14, "base": 0.12, "bull": 0.10} (raised from an earlier
+# 0.12/0.10/0.09 -- see valuation/sanity.py's ERP-spread-guard package). The
+# revenue/margin paths (and hence final_year_revenue/revenue_multiple) never
+# depend on discount_rate, only the discounted per_share/lo/hi numbers do --
+# those were re-derived by calling revenue_dcf.revenue_first_dcf directly
+# with the new rates (same function/approach as before).
 # ---------------------------------------------------------------------------
 
 _HYPER_CONCEPTS_OVERRIDES = {"Revenue": [_rec(2023, 1000.0)]}
@@ -990,25 +1215,27 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline():
     # fcf_margin=-50/1000=-0.05<0.05 (clause b) -- both fire.
     #
     # base scenario: start_growth=min(0.50,0.40)=0.40, target_fcf_margin=0.30,
-    # discount_rate=0.10 (fixed), current_margin=-50/1000=-0.05,
-    # annual_dilution=0.0 (shares_yoy None, sbc_revenue 0) -> revenue path
-    # fades 0.40->0.025 over 10y, final_year_revenue~=6538.48 (multiple
-    # ~=6.538x, comfortably <=8 -> arrival_flag "makul"). per_share~=139.73.
+    # discount_rate=0.12 (fixed hyper base rate), current_margin=-50/1000=
+    # -0.05, annual_dilution=0.0 (shares_yoy None, sbc_revenue 0) -> revenue
+    # path fades 0.40->0.025 over 10y, final_year_revenue~=6538.48 (multiple
+    # ~=6.538x, comfortably <=8 -> arrival_flag "makul"). per_share~=99.97.
     #
     # F3: financing_shares is derived once from the base scenario's own
     # (financing_shares=0) preliminary fcf_path: cumulative negative-FCF
-    # years sum to burn=-21.0 (undiscounted), financing_shares =
-    # abs(-21.0)/price(50.0) = 0.42, reused for bear/base/bull alike. The
-    # base band is then the min/max of a 3x3 grid over start_growth +/- 2pp
-    # (0.38/0.40/0.42) x discount_rate +/- 1pp (0.09/0.10/0.11), everything
-    # else (target_fcf_margin=0.30, current_margin=-0.05, steady_state=10,
-    # annual_dilution=0.0, financing_shares=0.42) held fixed --
-    # cross-checked against revenue_dcf.revenue_first_dcf directly (the
-    # same function hand-verified in test_revenue_dcf.py):
-    #   grid cells (rounded to 2dp) = [157.04, 129.43, 108.70,
-    #                                  169.58, 139.73, 117.32,
-    #                                  182.98, 150.73, 126.53]
-    #   -> lo=min=108.70, hi=max=182.98 (center cell 139.73 matches per_share
+    # years sum to burn=-21.0 (undiscounted, discount_rate-independent since
+    # it only affects the PV/TV step, not the fcf_path itself), financing_
+    # shares = abs(-21.0)/price(50.0) = 0.42, reused for bear/base/bull
+    # alike. The base band is then the min/max of a 3x3 grid over
+    # start_growth +/- 2pp (0.38/0.40/0.42) x discount_rate +/- 1pp
+    # (0.11/0.12/0.13), everything else (target_fcf_margin=0.30,
+    # current_margin=-0.05, steady_state=10, annual_dilution=0.0,
+    # financing_shares=0.42) held fixed -- cross-checked against
+    # revenue_dcf.revenue_first_dcf directly (the same function
+    # hand-verified in test_revenue_dcf.py):
+    #   grid cells (rounded to 2dp) = [108.70, 92.64, 79.91,
+    #                                  117.32, 99.97, 86.20,
+    #                                  126.53, 107.79, 92.92]
+    #   -> lo=min=79.91, hi=max=126.53 (center cell 99.97 matches per_share
     #      above, as expected).
     #
     # Standard (raw) FCF-DCF fcf0 falls back to the 3y average (ttm=-50
@@ -1030,8 +1257,8 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline():
     # Headline fair_value_range.base must equal the hyper base band...
     assert result["fair_value_range"]["base"]["lo"] == pytest.approx(detail["scenarios"]["base"]["lo"])
     assert result["fair_value_range"]["base"]["hi"] == pytest.approx(detail["scenarios"]["base"]["hi"])
-    assert result["fair_value_range"]["base"]["lo"] == pytest.approx(108.70)
-    assert result["fair_value_range"]["base"]["hi"] == pytest.approx(182.98)
+    assert result["fair_value_range"]["base"]["lo"] == pytest.approx(79.91)
+    assert result["fair_value_range"]["base"]["hi"] == pytest.approx(126.53)
 
     # ...NOT the standard FCF-DCF band, which is still computed and reported
     # (secondary) under dcf.scenarios, and is clearly a different number.
@@ -1073,7 +1300,7 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline():
 
     # Display consistency (Milestone F): fair_value_range's base scenario
     # growth/discount_rate/note must reflect the hyper revenue-first DCF's
-    # OWN inputs (start_growth=0.40, discount=0.10, target margin=0.30) --
+    # OWN inputs (start_growth=0.40, discount=0.12, target margin=0.30) --
     # NOT the standard clamped assumptions (base_growth=0.10 in the fixture
     # above), which the headline band no longer actually uses once
     # hyper-grower mode takes over.
@@ -1081,7 +1308,7 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline():
     assert "başlangıç" in base_fvr["growth"]
     assert "%40" in base_fvr["growth"]
     assert "%25 büyüme" not in base_fvr["growth"]
-    assert base_fvr["discount_rate"] == "%10"
+    assert base_fvr["discount_rate"] == "%12"
     assert "Hiper-büyüme" in base_fvr["note"]
     assert "%30" in base_fvr["note"]  # mature target FCF margin
 
@@ -1136,12 +1363,13 @@ def test_run_valuation_hyper_grower_triangulation_uses_yuksek_beklenti_signal():
     # the base/bull bands themselves are numerically different from the
     # price=50 case (per_share moves slightly with financing_shares) but the
     # key inequality this test needs -- base.hi < price <= bull.hi -- still
-    # holds comfortably: base.hi ~=183.55, bull.hi ~=275.11 (cross-checked
-    # against revenue_dcf.revenue_first_dcf directly, same approach as the
-    # headline test above), so the triangulation DCF signal must be
-    # "yuksek_beklenti" (HYPER_SPEC.md Sec.4), proving base_band/bull_band
-    # are actually threaded from hyper_growth_detail into
-    # triangulate.triangulate(), not just computed and left unused.
+    # holds comfortably: base.hi ~=126.92, bull.hi ~=221.24 (cross-checked
+    # against revenue_dcf.revenue_first_dcf directly with the base/bull
+    # discount rates of 0.12/0.10, same approach as the headline test
+    # above), so the triangulation DCF signal must be "yuksek_beklenti"
+    # (HYPER_SPEC.md Sec.4), proving base_band/bull_band are actually
+    # threaded from hyper_growth_detail into triangulate.triangulate(), not
+    # just computed and left unused.
     normalized = _normalized(_HYPER_CONCEPTS_OVERRIDES)
     assumptions = _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)
 
@@ -1155,8 +1383,8 @@ def test_run_valuation_hyper_grower_triangulation_uses_yuksek_beklenti_signal():
     base_hi = detail["scenarios"]["base"]["hi"]
     bull_hi = detail["scenarios"]["bull"]["hi"]
     assert base_hi < 200.0 <= bull_hi  # sanity-check the fixture actually lands in the intended zone
-    assert base_hi == pytest.approx(183.55, abs=0.05)
-    assert bull_hi == pytest.approx(275.11, abs=0.05)
+    assert base_hi == pytest.approx(126.92, abs=0.05)
+    assert bull_hi == pytest.approx(221.24, abs=0.05)
 
     assert result["triangulation"]["signals"]["dcf"] == "yuksek_beklenti"
 

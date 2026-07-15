@@ -295,12 +295,29 @@ def _scenario_line(label: str, scenario: Optional[dict]) -> str:
 
 
 def _valuation_method_label(valuation: dict) -> str:
-    """Return the fair-value method label for the card's "Fair Value" line:
-    ``"DCF"`` normally, or ``"P/B×ROE"`` when the FCF-based DCF is disabled
-    for this filer's sector (financial/REIT -- see
-    ``valuation["dcf"]["enabled"]``, SPEC.md Sec.8/11)."""
-    dcf = (valuation or {}).get("dcf") or {}
-    return "DCF" if dcf.get("enabled", True) else "P/B×ROE"
+    """Return the fair-value method label for the card's "Fair Value" line.
+
+    Three possible labels, depending on which anchor produced the fair-value
+    band for this filer's sector (SPEC.md Sec.8/11):
+
+    - ``"DCF"``: the FCF-based DCF is enabled (``valuation["dcf"]["enabled"]``
+      is truthy) -- the common case for non-financial, non-REIT sectors.
+    - ``"FFO"``: the DCF is disabled and ``valuation["ffo"]`` is a populated
+      FFO-based Gordon growth block (has a ``"scenarios"`` key) -- REIT/GYO
+      filers valued via FFO multiples instead of a cash-flow DCF.
+    - ``"P/B×ROE"``: the DCF is disabled and there's no populated FFO block --
+      financial (banks/insurers) filers valued via the P/B x ROE anchor, or a
+      REIT that fell back to the P/B x ROE anchor without a populated FFO
+      block.
+    """
+    valuation = valuation or {}
+    dcf = valuation.get("dcf") or {}
+    if dcf.get("enabled", True):
+        return "DCF"
+    ffo = valuation.get("ffo")
+    if isinstance(ffo, dict) and "scenarios" in ffo:
+        return "FFO"
+    return "P/B×ROE"
 
 
 def _format_pct_signed(value) -> str:
@@ -355,20 +372,38 @@ def _multiples_line(valuation: dict) -> str:
     sinyal"``. When the growth-adjusted figure is not applicable, falls back
     to the original descriptive form (``"P/E kendi Ny medyanının N.
     yüzdeliğinde"``). ``"veri yetersiz"`` when no raw percentile is usable
-    (fewer than 5 years of price-backed history)."""
+    (fewer than 5 years of price-backed history).
+
+    For ``valuation["sector_type"] == "reit"``, P/E and P/FCF (and the
+    P/E-derived PEG) are meaningless -- GAAP depreciation distorts REIT
+    earnings the same way it distorts book equity (SPEC.md Sec.8c), which is
+    why REITs get their own FFO-based anchor. The reit primary multiple is
+    P/FFO, falling back to P/S (mirroring
+    ``triangulate._raw_multiples_signal``'s reit candidate order); no
+    growth-adjusted component is ever rendered for reit."""
     label = "Multiples:".ljust(_CARD_LABEL_WIDTH)
     multiples = valuation.get("multiples") or {}
     history_years = multiples.get("history_years") or 0
-    growth_adjusted = multiples.get("growth_adjusted") or {}
+    is_reit = valuation.get("sector_type") == "reit"
+    growth_adjusted = {} if is_reit else (multiples.get("growth_adjusted") or {})
     multiples_signal = ((valuation.get("triangulation") or {}).get("signals") or {}).get("multiples")
 
-    # Primary raw multiple, using the same P/E → P/S → P/FCF fallback order.
+    # Primary raw multiple. Reit uses P/FFO -> P/S only (P/E and P/FCF are
+    # meaningless for REITs); everything else keeps the P/E -> P/S -> P/FCF
+    # fallback order.
     primary = None
-    for name, percentile in (
-        ("P/E", multiples.get("pe_percentile")),
-        ("P/S", multiples.get("ps_percentile")),
-        ("P/FCF", multiples.get("pfcf_percentile")),
-    ):
+    if is_reit:
+        primary_candidates = (
+            ("P/FFO", multiples.get("pffo_percentile")),
+            ("P/S", multiples.get("ps_percentile")),
+        )
+    else:
+        primary_candidates = (
+            ("P/E", multiples.get("pe_percentile")),
+            ("P/S", multiples.get("ps_percentile")),
+            ("P/FCF", multiples.get("pfcf_percentile")),
+        )
+    for name, percentile in primary_candidates:
         if percentile is not None:
             primary = (name, percentile)
             break
@@ -589,8 +624,9 @@ def _print_verdict_card(
 
     When ``result["valuation"]`` (the dict from
     :func:`sec_analyzer.valuation.engine.run_valuation`, SPEC.md Sec.13) is
-    present, the "Fair Value" line gains a method label (``"DCF"`` or
-    ``"P/B×ROE"``) and a "Güven:" confidence suffix, and four extra lines
+    present, the "Fair Value" line gains a method label (``"DCF"``, ``"FFO"``,
+    or ``"P/B×ROE"`` -- see :func:`_valuation_method_label`) and a "Güven:"
+    confidence suffix, and four extra lines
     follow the bear/bull line: "Reverse DCF:", "Multiples:", "Üçgenleme:",
     and "Duyarlılık:". Without a ``"valuation"`` key (e.g. an older stored
     result, or a phase-2 provider failure that still reached this function)

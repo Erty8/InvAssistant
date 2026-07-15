@@ -7,6 +7,17 @@ doesn't -- an invalid assumption is never silently "fixed" (e.g. a discount
 rate at or below the terminal growth rate, which would make the DCF's
 Gordon-growth terminal value mathematically undefined), it's just reported
 so the caller can re-prompt the LLM or fall back to a deterministic default.
+
+Throughout this module, ``discount_rate`` is a levered COST OF EQUITY
+(özkaynak maliyeti), never a WACC: the engine's DCF/revenue-DCF are
+FCFE-direct (the projected cash flow is already a levered/equity cash flow,
+so no net-debt bridge is applied -- see ``dcf.py``/``revenue_dcf.py``), so
+discounting it at anything other than a cost of equity would be internally
+inconsistent. This also motivates the minimum implied equity-risk-premium
+spread guard below: a ``discount_rate`` only a point or two above
+``terminal_growth`` implies an implausibly thin equity risk premium for a
+cost of equity, even when it clears the Gordon-growth-defined (``>
+terminal_growth``) bar.
 """
 
 import copy
@@ -23,6 +34,13 @@ _TERMINAL_GROWTH_MAX = 0.04
 #: unprofitable one, which should carry a higher risk premium (10%).
 _DISCOUNT_RATE_MIN = 0.07
 _DISCOUNT_RATE_MIN_UNPROFITABLE = 0.10
+
+#: Minimum implied equity risk premium: the spread between the discount rate
+#: (a levered COST OF EQUITY under the FCFE-direct convention) and the perpetual
+#: terminal growth rate. A discount rate only a point or two above terminal
+#: growth implies an implausibly thin equity risk premium and over-values the
+#: perpetuity; 4.5% is a conservative floor on that spread.
+_MIN_ERP_SPREAD = 0.045
 
 #: Hard upper bound on growth_5y (40%) -- above this is implausible even
 #: granting that the model always fades growth after year 5. Values above
@@ -61,6 +79,10 @@ def validate_assumptions(assumptions: Dict[str, dict], is_unprofitable: bool = F
           violation.
         * ``discount_rate <= terminal_growth`` -> violation (Gordon-growth
           terminal value undefined).
+        * ``terminal_growth < discount_rate < terminal_growth +
+          _MIN_ERP_SPREAD`` (Gordon defined, but the implied equity risk
+          premium is thinner than 4.5%) -> violation. Mutually exclusive
+          with the previous rule (only one of the two fires per scenario).
         * ``growth_5y > 0.40`` -> violation (``> 0.20`` is allowed by
           design).
         * A missing or non-numeric required field -> violation naming the
@@ -115,6 +137,13 @@ def _validate_assumptions(assumptions: Dict[str, dict], is_unprofitable: bool) -
                 f"{label}: iskonto oranı (%{discount_rate * 100:.1f}) uçtaki büyümeye "
                 f"(%{terminal_growth * 100:.1f}) eşit veya ondan düşük -- Gordon büyüme formülü tanımsız."
             )
+        elif discount_rate - terminal_growth < _MIN_ERP_SPREAD:
+            violations.append(
+                f"{label}: iskonto oranı (%{discount_rate*100:.1f}) ile uçtaki büyüme "
+                f"(%{terminal_growth*100:.1f}) arasındaki fark %{(discount_rate-terminal_growth)*100:.1f}, "
+                f"asgari risk primi %{_MIN_ERP_SPREAD*100:.1f}'in altında (iskonto oranı özkaynak "
+                f"maliyetidir; bu kadar dar bir fark perpetüiteyi aşırı değerler)."
+            )
 
         if growth_5y > _GROWTH_5Y_HARD_MAX:
             violations.append(
@@ -141,6 +170,12 @@ def clamp_assumptions(
     * ``growth_5y`` is capped at :data:`_GROWTH_5Y_HARD_MAX` (40%).
     * ``discount_rate`` is floored at :data:`_DISCOUNT_RATE_MIN` (7%), or
       :data:`_DISCOUNT_RATE_MIN_UNPROFITABLE` (10%) if ``is_unprofitable``.
+    * After the above, if ``terminal_growth < discount_rate <
+      terminal_growth + _MIN_ERP_SPREAD`` (Gordon defined, but the implied
+      equity risk premium is thinner than 4.5%), ``discount_rate`` is raised
+      to ``terminal_growth + _MIN_ERP_SPREAD``. Raising the rate is the
+      conservative direction (higher rate -> lower value), exactly like the
+      discount-rate floor clamp above.
 
     The ``discount_rate <= terminal_growth`` case is deliberately NOT
     clamped here -- the Gordon-growth terminal value is mathematically
@@ -148,7 +183,8 @@ def clamp_assumptions(
     path in ``dcf.py``/``revenue_dcf.py`` (surfaced as a per-scenario note
     by ``engine.py``) already handles it; silently nudging one of the two
     rates to "fix" it would hide a real modeling conflict instead of
-    reporting it.
+    reporting it. The new ERP-spread clamp only touches the DEFINED-but-too-
+    thin case, where the fix direction is unambiguous.
 
     A missing/non-numeric field for a scenario is left untouched (there is
     nothing sane to clamp it to); that field is simply skipped for that
@@ -216,6 +252,20 @@ def _clamp_assumptions(
             notes.append(
                 f"{label}: iskonto oranı %{discount_rate * 100:.1f} idi, "
                 f"%{min_discount_rate * 100:.0f} tabanına yükseltildi{unprofitable_note}."
+            )
+
+        # Minimum implied ERP-spread guard: operates on the already-clamped
+        # terminal_growth/discount_rate above. Only fires when Gordon is
+        # defined (tg < dr) but the spread is thinner than _MIN_ERP_SPREAD;
+        # the tg >= dr (undefined-Gordon) case stays deliberately unclamped.
+        tg = scenario.get("terminal_growth")
+        dr = scenario.get("discount_rate")
+        if _is_number(tg) and _is_number(dr) and tg < dr < tg + _MIN_ERP_SPREAD:
+            new_dr = tg + _MIN_ERP_SPREAD
+            scenario["discount_rate"] = new_dr
+            notes.append(
+                f"{label}: iskonto oranı %{dr*100:.1f} idi, uçtaki büyümeyle arasındaki "
+                f"asgari risk primi (%{_MIN_ERP_SPREAD*100:.1f}) için %{new_dr*100:.1f}'e yükseltildi."
             )
 
     bear_growth = (clamped.get("bear") or {}).get("growth_5y")

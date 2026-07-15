@@ -274,6 +274,10 @@ def test_detect_hyper_grower_gray_zone_fires_with_clause_a_and_high_ps():
     assert triggered is True
     assert "gri bölge" in reasons[0]
     assert "FCF negatif veya sıfır" in reasons
+    # P/S renders as a plain multiple ("12.0x"), never "%12.0x" (percent AND
+    # x is nonsensical).
+    assert "(12.0x)" in reasons[0]
+    assert "%12.0x" not in reasons[0]
 
 
 def test_detect_hyper_grower_gray_zone_blocked_by_low_ps():

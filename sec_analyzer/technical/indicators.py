@@ -60,14 +60,20 @@ _SR_CLUSTER_TOL = 0.015
 #: true Fibonacci ratio but is conventionally included).
 _FIB_RATIOS = (0.236, 0.382, 0.5, 0.618, 0.786)
 
-#: Zone-strength scoring weights. A 52-week extreme dominates everything else
-#: (it is more important than a Fibonacci level), touches accumulate, and a
-#: Fibonacci confluence adds a smaller boost -- so ranking prefers
-#: 52w > heavily-tested swing > fib, and combining sources ("farklı değerler")
-#: strengthens a zone.
+#: Zone-strength scoring weights. A 52-week extreme outranks everything else
+#: when it's still near price (it is more important than a Fibonacci level),
+#: touches accumulate, and a Fibonacci confluence adds a smaller boost -- so
+#: ranking prefers 52w > heavily-tested swing > fib, and combining sources
+#: ("farklı değerler") strengthens a zone. The 52w bonus is not unconditional,
+#: though -- see :data:`_SR_52W_FAR_THRESHOLD_PCT`.
 _SR_SCORE_52W = 100
 _SR_SCORE_PER_TOUCH = 10
 _SR_SCORE_FIB = 5
+
+#: Beyond this distance from price (as a percent), a 52-week extreme's score
+#: bonus starts decaying -- a 52w level 300%+ away shouldn't auto-outrank a
+#: closer, well-tested zone just because it's the all-time extreme.
+_SR_52W_FAR_THRESHOLD_PCT = 60.0
 
 #: Corroboration window: when finalizing a chosen level, all evidence within
 #: this fraction of its price is merged into it (summed touches, unioned fib
@@ -506,8 +512,16 @@ def _support_resistance(df: pd.DataFrame, price: "float | None") -> "tuple[list,
     for zone in clusters:
         zone["is_52w_high"] = hi_val is not None and abs(zone["price"] - hi_val) <= hi_val * gap
         zone["is_52w_low"] = lo_val is not None and abs(zone["price"] - lo_val) <= lo_val * gap
+        is_52w = zone["is_52w_high"] or zone["is_52w_low"]
+        score_52w = 0
+        if is_52w:
+            dist_pct = abs(zone["price"] / price - 1) * 100
+            if dist_pct <= _SR_52W_FAR_THRESHOLD_PCT:
+                score_52w = _SR_SCORE_52W
+            else:
+                score_52w = max(_SR_SCORE_PER_TOUCH, _SR_SCORE_52W * (_SR_52W_FAR_THRESHOLD_PCT / dist_pct))
         zone["score"] = (
-            (_SR_SCORE_52W if (zone["is_52w_high"] or zone["is_52w_low"]) else 0)
+            score_52w
             + zone.get("touches", 0) * _SR_SCORE_PER_TOUCH
             + (_SR_SCORE_FIB if zone.get("fib") else 0)
         )

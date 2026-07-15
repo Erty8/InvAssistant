@@ -107,6 +107,19 @@ def test_print_verdict_card_with_valuation_pb_roe_method_label_when_dcf_disabled
     assert "Fair Value (base, P/B×ROE): $95–$115   Güven: YÜKSEK" in out
 
 
+def test_print_verdict_card_with_valuation_ffo_method_label_when_reit_populated(capsys):
+    result = _result_with_valuation(dcf_enabled=False)
+    result["valuation"]["ffo"] = {
+        "scenarios": {"base": {"lo": 95.0, "hi": 115.0}},
+        "ffo_per_share": 5.0,
+        "implied_pffo": {"base": 15.0},
+    }
+    _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
+    out = capsys.readouterr().out
+
+    assert "Fair Value (base, FFO): $95–$115   Güven: YÜKSEK" in out
+
+
 def test_print_verdict_card_reverse_dcf_line_built_from_numbers(capsys):
     _print_verdict_card("AAPL", "1y", _result_with_valuation(), metrics={"price": 100.0})
     out = capsys.readouterr().out
@@ -172,6 +185,75 @@ def test_print_verdict_card_multiples_line_peg_mixed_signal(capsys):
     out = capsys.readouterr().out
 
     assert "Multiples:   P/E 88. pctile · PEG 1.40 (45. pctile) → karışık sinyal" in out
+
+
+def test_print_verdict_card_multiples_line_reit_uses_pffo_no_peg(capsys):
+    # A reit valuation with a populated pffo_percentile must render a P/FFO
+    # line -- never P/E/P/FCF or a P/E-derived PEG, even when pe_percentile
+    # and a growth_adjusted (PEG) block are both present in the payload.
+    result = _result_with_valuation()
+    result["valuation"]["sector_type"] = "reit"
+    result["valuation"]["multiples"] = {
+        "history_years": 8,
+        "pe_percentile": 88.0,
+        "ps_percentile": 60.0,
+        "pfcf_percentile": None,
+        "pffo_percentile": 72.0,
+        "growth_adjusted": {
+            "metric": "peg", "label": "PEG", "raw_label": "P/E",
+            "value": 1.4, "percentile": 82.0, "raw_percentile": 88.0,
+            "applicable": True, "reason": None, "base_growth_pct": 12.0, "sector_peg": None,
+        },
+    }
+    _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
+    out = capsys.readouterr().out
+
+    assert "Multiples:   P/FFO kendi 8y medyanının 72. yüzdeliğinde" in out
+    assert "PEG" not in out
+    assert "P/E" not in out
+
+
+def test_print_verdict_card_multiples_line_reit_falls_back_to_ps(capsys):
+    # pffo_percentile missing -> falls back to P/S (never P/E/P/FCF/PEG).
+    result = _result_with_valuation()
+    result["valuation"]["sector_type"] = "reit"
+    result["valuation"]["multiples"] = {
+        "history_years": 5,
+        "pe_percentile": 88.0,
+        "ps_percentile": 40.0,
+        "pfcf_percentile": None,
+        "pffo_percentile": None,
+    }
+    _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
+    out = capsys.readouterr().out
+
+    assert "Multiples:   P/S kendi 5y medyanının 40. yüzdeliğinde" in out
+    assert "PEG" not in out
+
+
+def test_print_verdict_card_multiples_line_reit_pffo_none_degrades_to_veri_yetersiz(capsys):
+    # Both pffo_percentile and ps_percentile missing -> the existing
+    # "veri yetersiz" fallback, never a P/E-based line or PEG.
+    result = _result_with_valuation()
+    result["valuation"]["sector_type"] = "reit"
+    result["valuation"]["multiples"] = {
+        "history_years": 8,
+        "pe_percentile": 88.0,
+        "ps_percentile": None,
+        "pfcf_percentile": None,
+        "pffo_percentile": None,
+        "growth_adjusted": {
+            "metric": "peg", "label": "PEG", "raw_label": "P/E",
+            "value": 1.4, "percentile": 82.0, "raw_percentile": 88.0,
+            "applicable": True, "reason": None, "base_growth_pct": 12.0, "sector_peg": None,
+        },
+    }
+    _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
+    out = capsys.readouterr().out
+
+    assert "Multiples:   veri yetersiz" in out
+    assert "PEG" not in out
+    assert "P/E" not in out
 
 
 def _technical_fixture():

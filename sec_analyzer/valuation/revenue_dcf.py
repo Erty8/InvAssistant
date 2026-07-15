@@ -114,7 +114,10 @@ def revenue_first_dcf(
     (equity) cash flow (interest is paid out of operating cash flow before
     it reaches this projection), so its discounted sum is divided directly
     by an "effective" (dilution- and financing-adjusted) share count for
-    the per-share result.
+    the per-share result. Consequently ``discount_rate`` must be a levered
+    cost of equity, not a WACC -- discounting an already-levered equity cash
+    flow at a WACC would double-count the leverage adjustment a WACC
+    already bakes in.
 
     Args:
         revenue0: Base-year (year 0) revenue. Must be positive.
@@ -123,8 +126,9 @@ def revenue_first_dcf(
         terminal_growth: Growth rate the projection fades to by
             ``steady_state_year`` (and the Gordon-growth terminal-value
             growth rate).
-        discount_rate: Annual discount rate (decimal fraction). Must be
-            strictly greater than ``terminal_growth``.
+        discount_rate: Annual discount rate (decimal fraction) -- a levered
+            cost of equity, not a WACC (see the FCFE-direct note above).
+            Must be strictly greater than ``terminal_growth``.
         current_margin: Today's FCF margin (decimal fraction; may be zero
             or negative for a cash-burning company).
         target_fcf_margin: Mature-state FCF margin the margin path

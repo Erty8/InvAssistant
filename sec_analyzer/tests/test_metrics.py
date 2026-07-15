@@ -7,7 +7,10 @@
 directly -- matching the style of ``test_ratios.py``.
 """
 
-from sec_analyzer.normalize.metrics import compute_metrics
+import pytest
+
+from sec_analyzer.normalize.metrics import compute_metrics, resolve_fundamental_fy
+from sec_analyzer.normalize.normalizer import to_annual_series
 
 _CONCEPTS = [
     "SharesOutstanding", "EPS", "LongTermDebt", "LongTermDebtCurrent",
@@ -161,3 +164,170 @@ def test_shares_yoy_none_when_prior_year_missing():
 
     assert metrics["shares_yoy"] is None
     assert metrics["shares"] == 100
+
+
+# ---------------------------------------------------------------------------
+# "Ghost fiscal year" anchor split: latest_fy (ALL series, incl.
+# SharesOutstanding) vs latest_fundamental_fy (every series EXCEPT
+# SharesOutstanding). A dei cover-page share count can carry a fiscal year
+# newer than the filer's actual financial statements (e.g. AMZN) -- fixture
+# below reproduces that mismatch on purpose.
+# ---------------------------------------------------------------------------
+
+
+def _ghost_year_normalized():
+    """SharesOutstanding (cover-page, point-in-time) runs one fiscal year
+    ahead (FY2022-2025) of every fundamental series (FY2022-2024) -- the
+    "ghost year" is FY2025, which has share-count data but NO revenue/EPS/
+    OCF/CapEx data at all."""
+    return _normalized(
+        {
+            "SharesOutstanding": [
+                _record(2025, 110),
+                _record(2024, 100),
+                _record(2023, 90),
+                _record(2022, 80),
+            ],
+            "EPS": [
+                _record(2024, 5.0),
+                _record(2023, 4.0),
+                _record(2022, 3.0),
+            ],
+            # 1000 -(10%/yr)-> 1100 -> 1210 -> 1331: revenue_cagr_3y off the
+            # FY2024 anchor is then exactly (1331/1000)**(1/3) - 1 == 0.10
+            # (since 1.1**3 == 1.331), a clean hand-checkable number.
+            "Revenue": [
+                _record(2024, 1331),
+                _record(2023, 1210),
+                _record(2022, 1100),
+                _record(2021, 1000),
+            ],
+            "OperatingCashFlow": [
+                _record(2024, 250),
+                _record(2023, 235),
+                _record(2022, 220),
+            ],
+            "CapEx": [
+                _record(2024, 50),
+                _record(2023, 45),
+                _record(2022, 40),
+            ],
+        }
+    )
+
+
+# ratios' fy=2024 fcf (200) agrees with OCF(250) - CapEx(50) = 200 at the
+# same FY, so the fcf figure is the same whether it comes from `ratios` or
+# the OCF-CapEx fallback -- self-consistent fixture.
+_GHOST_YEAR_RATIOS = [{"fy": 2024, "fcf": 200.0}]
+
+
+def test_ghost_year_latest_fy_is_the_shares_only_cover_page_year():
+    normalized = _ghost_year_normalized()
+    metrics = compute_metrics(normalized, _GHOST_YEAR_RATIOS, price=13.31)
+
+    # latest_fy is the max across ALL series, including SharesOutstanding
+    # -> the ghost year FY2025 (no fundamental data exists for it at all).
+    assert metrics["latest_fy"] == 2025
+    # latest_fundamental_fy excludes SharesOutstanding -> the real anchor,
+    # FY2024, where the financial statements actually report.
+    assert metrics["latest_fundamental_fy"] == 2024
+
+
+def test_ghost_year_shares_and_market_cap_use_the_freshest_share_count():
+    normalized = _ghost_year_normalized()
+    metrics = compute_metrics(normalized, _GHOST_YEAR_RATIOS, price=13.31)
+
+    # shares must still reflect FY2025 (the freshest count), NOT FY2024.
+    assert metrics["shares"] == 110
+    assert metrics["market_cap"] == pytest.approx(13.31 * 110)
+
+
+def test_ghost_year_fundamental_reads_anchor_on_latest_fundamental_fy_not_latest_fy():
+    normalized = _ghost_year_normalized()
+    metrics = compute_metrics(normalized, _GHOST_YEAR_RATIOS, price=13.31)
+
+    # Sanity check on the fixture itself: FY2025 (the ghost year) truly has
+    # no fundamental data in the underlying series. If `latest_fy` (2025)
+    # had wrongly been used as the fundamental anchor (the pre-fix bug),
+    # every read below would resolve against a fiscal year with nothing in
+    # it and come back None.
+    assert 2025 not in to_annual_series(normalized, "Revenue")
+    assert 2025 not in to_annual_series(normalized, "EPS")
+    assert 2025 not in to_annual_series(normalized, "OperatingCashFlow")
+    assert 2025 not in to_annual_series(normalized, "CapEx")
+
+    # revenue_cagr_3y: (1331/1000)**(1/3) - 1 == 0.10 exactly, computed off
+    # the FY2024 anchor (latest_fundamental_fy) -- NOT None, as it would be
+    # if anchored on the ghost FY2025 (which has no Revenue entry at all,
+    # let alone one 3 years back at FY2022... which also isn't FY2021 so
+    # the "old" lookup would have failed doubly).
+    assert metrics["revenue_cagr_3y"] == pytest.approx(0.10, abs=1e-6)
+
+    # fcf comes from ratios' FY2024 entry (latest_fundamental_fy): 200,
+    # positive.
+    assert metrics["fcf"] == 200.0
+
+    # price-dependent multiples are all computed off the FY2024 anchor +
+    # the fresh FY2025 share count -- none of them collapse to None.
+    assert metrics["pe"] is not None
+    assert metrics["ps"] is not None
+    assert metrics["pfcf"] is not None
+    # pe = price / eps = 13.31 / 5.0 = 2.662 exactly.
+    assert metrics["pe"] == pytest.approx(2.662, abs=1e-6)
+    # ps = market_cap / revenue = (13.31*110) / 1331 = 1464.1 / 1331 = 1.1
+    assert metrics["ps"] == pytest.approx(1.1, abs=1e-6)
+    # pfcf = market_cap / fcf = 1464.1 / 200 = 7.3205
+    assert metrics["pfcf"] == pytest.approx(1464.1 / 200, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# resolve_fundamental_fy unit tests (B)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_fundamental_fy_returns_explicit_key_when_present_and_not_none():
+    assert resolve_fundamental_fy({"latest_fundamental_fy": 2022, "latest_fy": 2024}) == 2022
+
+
+def test_resolve_fundamental_fy_falls_back_to_latest_fy_when_key_absent():
+    # Mirrors hand-built metrics dicts in other test modules (e.g.
+    # test_valuation_engine.py) that never produce "latest_fundamental_fy"
+    # at all -- resolve_fundamental_fy must fall back to "latest_fy" so
+    # those existing dicts keep behaving exactly as before.
+    assert resolve_fundamental_fy({"latest_fy": 2023}) == 2023
+
+
+def test_resolve_fundamental_fy_falls_back_to_latest_fy_when_value_is_none():
+    assert resolve_fundamental_fy({"latest_fundamental_fy": None, "latest_fy": 2023}) == 2023
+
+
+def test_resolve_fundamental_fy_handles_missing_or_none_metrics_dict():
+    assert resolve_fundamental_fy({}) is None
+    assert resolve_fundamental_fy(None) is None
+
+
+# ---------------------------------------------------------------------------
+# Regression guarantee (C): when every series (including SharesOutstanding)
+# tops out at the same fiscal year, latest_fundamental_fy == latest_fy and
+# every metric is unaffected by the anchor split.
+# ---------------------------------------------------------------------------
+
+
+def test_latest_fundamental_fy_matches_latest_fy_and_metrics_are_unchanged_without_mismatch():
+    normalized = _full_normalized()
+    metrics = compute_metrics(normalized, _FULL_RATIOS, price=20.0)
+
+    assert metrics["latest_fundamental_fy"] == metrics["latest_fy"] == 2023
+
+    # Same values as test_full_metrics_with_price -- the anchor split must
+    # not change a single figure when there's no fiscal-year mismatch.
+    assert metrics["shares"] == 100
+    assert metrics["eps"] == 2.0
+    assert metrics["market_cap"] == 2000.0
+    assert metrics["pe"] == 10.0
+    assert metrics["ps"] == 2.0
+    assert metrics["pfcf"] == round(2000.0 / 180, 4)
+    assert metrics["revenue_cagr_3y"] == round((1000 / 500) ** (1 / 3) - 1, 4)
+    assert metrics["revenue_cagr_5y"] == round((1000 / 250) ** (1 / 5) - 1, 4)
+    assert metrics["fcf"] == 180

@@ -1097,6 +1097,15 @@
   function hyperGrowthExtraHtml(valuation) {
     if (!valuation || !valuation.hyper_growth) return "";
     var detail = valuation.hyper_growth_detail || {};
+    if (detail.suppressed) {
+      var suppressedReason = detail.suppressed_reason ||
+        "Revenue-first DCF bu şirket için güvenilir bir değer üretemedi; DCF devre dışı bırakıldı.";
+      return (
+        '<div class="hyper-note">' +
+          '<div class="hyper-implied-line">' + escapeHtml(suppressedReason) + '</div>' +
+        '</div>'
+      );
+    }
     var implied = detail.implied || {};
     var impliedText;
     if (isNum(implied.growth) && isNum(implied.revenue_10y)) {
@@ -1599,7 +1608,8 @@
     // Medium. (The selector already keeps only the strongest near & far.)
     function srStrength(lvl) {
       var touches = lvl.touches || 0;
-      if (lvl.is_52w_high || lvl.is_52w_low || touches >= 2 || (touches >= 1 && lvl.fib)) {
+      var is52wNearEnough = (lvl.is_52w_high || lvl.is_52w_low) && Math.abs(lvl.dist_pct) <= 60;
+      if (is52wNearEnough || touches >= 2 || (touches >= 1 && lvl.fib)) {
         return { label: "Strong", cls: "sr-str-strong" };
       }
       if (touches === 1 || lvl.fib) return { label: "Medium", cls: "sr-str-medium" };
