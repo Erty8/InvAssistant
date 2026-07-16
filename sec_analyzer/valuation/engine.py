@@ -128,6 +128,22 @@ _HYPER_ARRIVAL_EXTREME_MULTIPLE = 15
 _HYPER_TAM_SHARE_AGGRESSIVE = 0.40
 _HYPER_TAM_SHARE_INVALID = 0.60
 
+#: CapEx-intensity threshold (CapEx / Revenue) strictly above which a filer
+#: is treated as "capex-heavy" and the maintenance/growth CapEx split
+#: (Sec.3.6) is applied to its starting FCF margin. Below this, the split is
+#: never applied and behavior is byte-for-byte unchanged. Shared by both the
+#: hyper-grower path (:func:`_build_hyper_growth`) via
+#: :func:`_maintenance_adjusted_margin`.
+_CAPEX_HEAVY_INTENSITY_THRESHOLD = 0.30
+
+#: Floor on the maintenance-CapEx proxy, as a fraction of revenue (Sec.3.6,
+#: reviewer Finding 2). Current-year D&A understates steady-state
+#: maintenance CapEx for a still-ramping asset base (a data-center builder's
+#: future depreciation reflects the grown-out fleet, not today's small one),
+#: so ``growth_capex = capex - max(d&a, this * revenue)`` never treats more
+#: of CapEx as "growth" (relievable) than is defensible.
+_MAINTENANCE_CAPEX_MIN_PCT_REVENUE = 0.05
+
 # --- Mature, FCF-suppressed-but-growing revenue-first DCF (VALUATION.md
 # Sec.4/4a addendum): a second growth-inclusive alternative to the
 # zero-growth EPV anchor (Sec.8a) for mature filers whose FCF is suppressed
@@ -168,6 +184,33 @@ _MATURE_STEADY_STATE_YEAR = 7
 #: Per-scenario mature-target-margin scaling factors (mirrors
 #: ``_PB_SCENARIO_SCALE``/hyper's own bear/base/bull spread).
 _MATURE_TARGET_MARGIN_SCALE = {"bear": 0.7, "base": 1.0, "bull": 1.2}
+
+# --- Mid-growth, loss-making revenue-first DCF (Roadmap Madde 2 / SPEC
+# Sec.8d): a revenue-first alternative to a multiples-only headline for
+# `growth_unprofitable` filers that grow the top line at a real but
+# sub-hyper (12-20%) rate and are not picked up by `detect_hyper_grower`
+# (which requires CAGR > 20%). Sits between the mature (Sec.8b) and
+# hyper-grower (Sec.3) revenue-first paths: a shorter fade and a lower
+# margin ceiling than hyper, but -- unlike the mature path -- a
+# gross-margin-derived target (loss-makers have no positive operating/FCF
+# margin history to anchor on) and hyper-style dilution/financing-share
+# handling (a mid-growth loss-maker still funds burn by issuing equity). ---
+
+#: Realized revenue CAGR floor (inclusive) to even attempt this method. Set
+#: at 12% deliberately below `detect_hyper_grower`'s 20% gray-zone floor so
+#: the 12-20% loss-makers that fall through hyper detection are still valued
+#: by a revenue-first model rather than multiples alone.
+_MIDGROWTH_MIN_GROWTH = 0.12
+
+#: Absolute ceiling on the mid-growth mature target FCF margin -- between
+#: the mature path's 15% and the hyper path's 30%: a still-unprofitable
+#: mid-grower's defensible steady-state margin shouldn't be modeled as high
+#: as a proven hyper-grower's.
+_MIDGROWTH_TARGET_CAP = 0.20
+
+#: Full-convergence ("steady state") year for the mid-growth fade -- between
+#: mature's 7 and hyper's 10. Must stay <= ``revenue_dcf.HORIZON_YEARS`` (10).
+_MIDGROWTH_STEADY_STATE_YEAR = 8
 
 
 def _is_number(value) -> bool:
@@ -227,6 +270,8 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
         "hyper_growth_detail": None,
         "mature_revenue_headline": False,
         "mature_revenue_detail": None,
+        "midgrowth_revenue_headline": False,
+        "midgrowth_revenue_detail": None,
         "assumptions": assumptions or {},
         "notes": ["Değerleme motoru beklenmeyen bir hatayla karşılaştı; sonuçlar eksik olabilir."],
     }
@@ -1219,6 +1264,86 @@ def _hyper_scenario_band(
     return round(min(cells), 2), round(max(cells), 2), False
 
 
+def _maintenance_adjusted_margin(
+    normalized: dict, metrics: dict, raw_current_margin: float
+) -> "tuple[float, Optional[dict]]":
+    """Compute a growth-CapEx-relieved "operating" FCF margin for capex-heavy
+    filers (Roadmap Madde 1 / SPEC Sec.3.6).
+
+    A capex-heavy hyper-grower (e.g. a data-center builder like APLD) spends
+    CapEx that is many multiples of its maintenance needs; that growth CapEx
+    builds future revenue. This returns the margin that would result if only
+    *maintenance* CapEx (proxied by D&A, floored at
+    :data:`_MAINTENANCE_CAPEX_MIN_PCT_REVENUE` of revenue) were charged.
+
+    IMPORTANT — this is NOT fed into the headline valuation. A finance review
+    showed that relieving growth CapEx from the starting margin while revenue
+    still compounds up the growth path books the revenue ramp but charges the
+    CapEx funding it *nowhere* -- a one-directional over-valuation (the same
+    owner-earnings add-back double-count SPEC Sec.8b rejects). The caller
+    (:func:`_build_hyper_growth`) therefore keeps the ACTUAL (unrelieved)
+    margin for its headline scenarios (so capex-heavy names still suppress
+    honestly) and uses ``ops_margin`` only to compute a separate,
+    explicitly-labeled AGGRESSIVE UPSIDE figure.
+
+    The relief is an *additive* correction on top of the caller's
+    ``raw_current_margin`` -- ``ops_margin = raw_current_margin + growth_capex
+    / revenue``, ``growth_capex = capex - max(d&a, min_pct * revenue)`` --
+    keeping it consistent with the caller's own margin base.
+
+    Gate (both must hold, else the raw margin is returned unchanged and the
+    returned detail is ``None``):
+
+    * ``capex / revenue > _CAPEX_HEAVY_INTENSITY_THRESHOLD`` (0.30) -- the
+      filer is genuinely capex-heavy, not an asset-light software grower.
+    * ``capex > maintenance_capex`` -- there IS growth CapEx above the
+      (floored) maintenance level to relieve.
+
+    All figures are read for the latest fundamental fiscal year
+    (``resolve_fundamental_fy``). Never raises (only reads dict data).
+
+    Returns:
+        A ``(ops_margin, capex_normalization)`` tuple. ``capex_normalization``
+        is ``None`` when the split was not applied, else a dict with keys
+        ``applied`` (always ``True`` when present), ``capex_intensity``,
+        ``maintenance_capex`` (the floored proxy), ``growth_capex``,
+        ``raw_current_margin``, ``ops_current_margin`` (the caller adds
+        ``upside_per_share``/``upside_lo``/``upside_hi``).
+    """
+    fy = resolve_fundamental_fy(metrics)
+    if fy is None:
+        return raw_current_margin, None
+
+    revenue = to_annual_series(normalized, "Revenue").get(fy)
+    capex = to_annual_series(normalized, "CapEx").get(fy)
+    dep = to_annual_series(normalized, "Depreciation").get(fy)
+
+    if revenue is None or revenue <= 0 or capex is None or dep is None or dep <= 0:
+        return raw_current_margin, None
+
+    # Finding 2: floor the maintenance-CapEx proxy so current-year D&A (which
+    # understates the maintenance burden of a still-ramping asset base)
+    # cannot make "growth CapEx" look larger than it defensibly is.
+    maintenance_capex = max(dep, _MAINTENANCE_CAPEX_MIN_PCT_REVENUE * revenue)
+
+    capex_intensity = capex / revenue
+    if not (capex_intensity > _CAPEX_HEAVY_INTENSITY_THRESHOLD and capex > maintenance_capex):
+        return raw_current_margin, None
+
+    growth_capex = capex - maintenance_capex
+    ops_margin = raw_current_margin + growth_capex / revenue
+
+    capex_normalization = {
+        "applied": True,
+        "capex_intensity": round(capex_intensity, 4),
+        "maintenance_capex": maintenance_capex,
+        "growth_capex": growth_capex,
+        "raw_current_margin": round(raw_current_margin, 4),
+        "ops_current_margin": round(ops_margin, 4),
+    }
+    return ops_margin, capex_normalization
+
+
 def _build_hyper_growth(
     metrics: dict,
     ratios: list,
@@ -1315,6 +1440,23 @@ def _build_hyper_growth(
         sbc_latest = to_annual_series(normalized, "SBC").get(latest_fy) if latest_fy is not None else None
         current_margin = (fcf - (sbc_latest or 0.0)) / latest_revenue if fcf is not None else 0.0
 
+        # --- Maintenance/growth CapEx split (Roadmap Madde 1 / SPEC Sec.3.6):
+        # for capex-heavy hyper-growers (data-center builders etc.) compute a
+        # growth-CapEx-relieved "operating" margin. This is DELIBERATELY NOT
+        # fed into the headline scenarios (the reverse-DCF review showed that
+        # relieving growth CapEx while revenue still compounds books the
+        # revenue ramp but charges the CapEx funding it nowhere -- a
+        # one-directional over-valuation). The headline keeps using today's
+        # actual (unrelieved) FCF margin, so capex-heavy names still suppress
+        # honestly; the relieved value is reported separately below as an
+        # explicitly-labeled AGGRESSIVE UPSIDE (never the headline).
+        ops_margin, capex_normalization = _maintenance_adjusted_margin(
+            normalized, metrics, current_margin
+        )
+
+        # Finding 3: the mature-target floor uses the ACTUAL (unrelieved)
+        # current margin, so a relieved margin can never leak into the
+        # terminal margin. (current_margin here is already the raw margin.)
         target_base = _hyper_target_base(gm, current_margin)
         if gm is None:
             if current_margin > 0:
@@ -1505,6 +1647,45 @@ def _build_hyper_growth(
             )
             notes.append(suppressed_reason)
 
+        # --- Aggressive capex-normalized UPSIDE (Sec.3.6) -------------------
+        # For a capex-heavy filer, also compute a base-scenario value off the
+        # growth-CapEx-relieved margin -- reported as an explicitly-labeled
+        # AGGRESSIVE UPSIDE, never the headline. The headline scenarios above
+        # already used the actual (unrelieved) margin, so this does not change
+        # the published fair value or the suppression decision; it only tells
+        # the reader what an optimistic "growth CapEx normalizes" view implies.
+        # Uses the same base start-growth / target / discount rate / dilution
+        # / financing shares as the headline base scenario -- only the
+        # starting margin differs (ops_margin vs current_margin).
+        if capex_normalization is not None:
+            try:
+                up = revenue_dcf.revenue_first_dcf(
+                    latest_revenue, start_growth_by_scenario["base"], _HYPER_TERMINAL_GROWTH,
+                    _HYPER_DISCOUNT_RATE_BY_SCENARIO["base"], ops_margin, target_by_scenario["base"],
+                    steady_state_by_scenario["base"], shares, annual_dilution, financing_shares,
+                )
+                up_ps = round(up["per_share"], 2)
+                up_lo, up_hi, _up_fallback = _hyper_scenario_band(
+                    latest_revenue, start_growth_by_scenario["base"], _HYPER_TERMINAL_GROWTH,
+                    _HYPER_DISCOUNT_RATE_BY_SCENARIO["base"], ops_margin, target_by_scenario["base"],
+                    steady_state_by_scenario["base"], shares, annual_dilution, financing_shares, up_ps,
+                )
+                capex_normalization["upside_per_share"] = up_ps
+                capex_normalization["upside_lo"] = up_lo
+                capex_normalization["upside_hi"] = up_hi
+            except ValueError:
+                capex_normalization["upside_per_share"] = None
+                capex_normalization["upside_lo"] = None
+                capex_normalization["upside_hi"] = None
+            notes.append(
+                "CapEx-yoğun hiper-büyüme: bugünkü serbest nakit akışı büyük büyüme CapEx'iyle bastırıldığı "
+                "için manşet DCF (ham marjla) güvenilir değil ve devre dışı bırakıldı. Ayrıca büyüme CapEx'i "
+                "bakım CapEx'inden (≈ D&A, gelirin en az %5'i tabanıyla) ayrılarak AGRESİF BİR ÜST-SENARYO "
+                f"(baz ${capex_normalization.get('upside_per_share')}/hisse) hesaplandı — bu MANŞET DEĞİL, "
+                "yalnızca capex normalleşirse ima edilen iyimser değeri gösterir. Not: bu üst-senaryo, geliri "
+                "büyütürken o büyümeyi finanse eden CapEx'i tam yansıtmaz, bu yüzden yukarı-yanlıdır."
+            )
+
         # --- Prob-weighted expected value: skip failed scenarios and
         # renormalize the surviving probabilities (Sec.3.3).
         weighted_sum = 0.0
@@ -1597,6 +1778,7 @@ def _build_hyper_growth(
                 "tam_share": implied_tam_share,
             },
             "target_margin_source": target_margin_source,
+            "capex_normalization": capex_normalization,
             "suppressed": suppressed,
             "suppressed_reason": suppressed_reason,
             "notes": list(notes),
@@ -1933,6 +2115,249 @@ def _build_mature_revenue_dcf(
         return None, notes
 
 
+#: Fallback note suffix for ``_build_midgrowth_revenue_dcf`` -- always ends
+#: the same way so the reader knows what happens when the method bails out
+#: (the filer falls back to the multiples-only headline it had before this
+#: method existed).
+_MIDGROWTH_FALLBACK_SUFFIX = "çarpan (multiples) bazlı değerlemeye düşülüyor."
+
+
+def _build_midgrowth_revenue_dcf(
+    assumptions: dict, normalized: dict, metrics: dict, ratios: list, price: Optional[float], shares: Optional[float]
+) -> "tuple[Optional[dict], List[str]]":
+    """Build the mid-growth, loss-making revenue-first DCF detail (Roadmap
+    Madde 2 / SPEC Sec.8d).
+
+    For ``growth_unprofitable`` filers that grow the top line at a real but
+    sub-hyper rate (realized CAGR in roughly 12-20%) and therefore are NOT
+    picked up by ``sector.detect_hyper_grower`` (which needs CAGR > 20%),
+    this gives a revenue-first fair-value band instead of leaving them to a
+    multiples-only headline. It reuses the same revenue-first engine as the
+    hyper-grower / mature paths (``revenue_dcf.revenue_first_dcf``,
+    ``_hyper_scenario_band``) with parameters that sit between them:
+
+    * **fade horizon** :data:`_MIDGROWTH_STEADY_STATE_YEAR` (8) -- between
+      mature's 7 and hyper's 10.
+    * **mature target margin** derived from the gross-margin proxy
+      (``_hyper_target_base``) and capped at :data:`_MIDGROWTH_TARGET_CAP`
+      (20%) -- the mature path's operating-margin/historical-FCF anchors
+      degenerate for a loss-maker with no positive-margin history, so this
+      borrows the hyper path's gross-margin construction instead.
+    * **discount rate / terminal growth** come from the already-clamped
+      per-scenario assumptions (``growth_unprofitable`` is clamped with
+      ``is_unprofitable=True``, so the discount rate is already floored at
+      10%), NOT the hard-coded hyper rates.
+    * **dilution & financing shares** follow the hyper path (a mid-growth
+      loss-maker still funds cash burn by issuing equity), unlike the mature
+      path which assumes none.
+
+    A **growth gate** (mirroring the mature path) refuses to build the method
+    for a realized start growth below :data:`_MIDGROWTH_MIN_GROWTH` or at/below
+    the base scenario's own terminal growth (nothing left to fade). A
+    **suppression guardrail** (mirroring the hyper path) flags a
+    non-credible negative base value (``per_share <= 0``) so the caller drops
+    the headline back to multiples rather than publishing a negative band.
+
+    Never raises: any missing/invalid input or ``revenue_first_dcf`` failure
+    degrades to ``(None, notes)`` with a Turkish note.
+
+    Args:
+        assumptions: The phase-1 (already clamped) bear/base/bull assumption
+            dict -- only ``discount_rate``/``terminal_growth`` per scenario
+            are consulted (the growth story comes from realized data).
+        normalized: Used for ``Revenue`` and (via helpers) ``OperatingCashFlow``/
+            ``CapEx``/``Depreciation``/``SBC`` series.
+        metrics: Used for ``revenue_cagr_5y``/``_3y``, ``shares_yoy`` and to
+            resolve the fiscal year via ``resolve_fundamental_fy``.
+        ratios: Per-FY ratio dicts (uses the latest FY's ``gross_margin``).
+        price: Current market price (used to convert cumulative cash burn into
+            financing shares); ``None`` degrades financing shares to 0.
+        shares: Base share count.
+
+    Returns:
+        A ``(detail, notes)`` tuple. ``detail`` is ``None`` when the method
+        can't be built (missing revenue/shares/growth, growth gate rejects
+        it, or every scenario failed), else a dict with ``scenarios``
+        (bear/base/bull ``{"per_share", "lo", "hi", "start_growth",
+        "target_fcf_margin", "terminal_growth", "discount_rate"}``),
+        ``start_growth``, ``target_margin_base``, ``current_margin``,
+        ``steady_state_year``, ``annual_dilution``, ``financing_shares``,
+        and ``suppressed`` (bool).
+    """
+    notes: List[str] = []
+    try:
+        fy = resolve_fundamental_fy(metrics)
+        revenue_series = to_annual_series(normalized, "Revenue")
+        revenue0 = revenue_series.get(fy) if fy is not None else None
+        if revenue0 is None or revenue0 <= 0 or not shares or shares <= 0:
+            notes.append(
+                "Orta-büyüme revenue-first DCF için gerekli veriler (son yılın geliri veya hisse sayısı) "
+                f"eksik; {_MIDGROWTH_FALLBACK_SUFFIX}"
+            )
+            return None, notes
+
+        start_growth = _mature_start_growth(metrics, normalized)
+        if start_growth is None:
+            notes.append(
+                "Orta-büyüme revenue-first DCF için gerçekleşen gelir büyümesi (CAGR) hesaplanamadı; "
+                f"{_MIDGROWTH_FALLBACK_SUFFIX}"
+            )
+            return None, notes
+
+        base_terminal_growth = (assumptions.get("base") or {}).get("terminal_growth")
+        if not _is_number(base_terminal_growth):
+            notes.append(
+                f"Orta-büyüme revenue-first DCF için baz terminal büyüme oranı eksik; {_MIDGROWTH_FALLBACK_SUFFIX}"
+            )
+            return None, notes
+
+        # --- Growth gate: this method models a fading GROWTH path, so it
+        # only makes sense with a real, still-fading growth rate above the
+        # 12% floor (and above terminal growth). Below that, fall back to
+        # multiples rather than fabricating a growth story.
+        if start_growth < _MIDGROWTH_MIN_GROWTH or start_growth <= base_terminal_growth:
+            notes.append(
+                f"Gerçekleşen gelir büyümesi (%{start_growth * 100:.1f}) orta-büyüme revenue-first DCF için "
+                f"yetersiz (< %{_MIDGROWTH_MIN_GROWTH * 100:.0f} veya terminal büyümenin altında); "
+                f"{_MIDGROWTH_FALLBACK_SUFFIX}"
+            )
+            return None, notes
+
+        # --- Target mature FCF margin: gross-margin proxy (hyper path),
+        # capped lower at _MIDGROWTH_TARGET_CAP. The mature path's
+        # operating-margin/historical-FCF anchors need a positive-margin
+        # history a loss-maker doesn't have.
+        ratio_by_fy = {r["fy"]: r for r in (ratios or []) if r.get("fy") is not None}
+        gross_margin = (ratio_by_fy.get(fy) or {}).get("gross_margin")
+        gm = gross_margin if (gross_margin is not None and gross_margin > 0) else None
+
+        # --- Current (starting) FCF margin: 3-year median (loss-makers are
+        # negative here). The Sec.3.6 maintenance/growth CapEx relief is
+        # deliberately NOT applied here -- it produces a one-directional
+        # over-valuation (see _maintenance_adjusted_margin's docstring), and
+        # the mid-growth path's whole point is a defensible (not aggressive)
+        # value; a capex-heavy mid-grower whose base value suppresses simply
+        # falls back to multiples.
+        current_margin = _mature_current_margin(normalized, metrics)
+
+        target_base = min(_hyper_target_base(gm, current_margin), _MIDGROWTH_TARGET_CAP)
+        if gm is None:
+            notes.append(
+                "Orta-büyüme revenue-first DCF hedef olgun FCF marjı için brüt marj verisi eksik; "
+                f"%{_MIDGROWTH_TARGET_CAP * 100:.0f} tavan kullanıldı."
+            )
+
+        steady_state_year = _MIDGROWTH_STEADY_STATE_YEAR
+
+        # --- Dilution (share-count growth only; SBC already in the margin)
+        # and financing shares (fund cumulative burn), mirroring the hyper
+        # path -- a mid-growth loss-maker still issues equity.
+        shares_yoy = metrics.get("shares_yoy")
+        annual_dilution = _clamp(
+            shares_yoy if (shares_yoy is not None and shares_yoy > 0) else 0.0, 0.0, _HYPER_DILUTION_CAP
+        )
+
+        base_assumptions = assumptions.get("base") or {}
+        base_dr = base_assumptions.get("discount_rate")
+        financing_shares = 0.0
+        if _is_number(base_dr) and _is_number(base_terminal_growth) and base_dr > base_terminal_growth:
+            try:
+                prelim_base = revenue_dcf.revenue_first_dcf(
+                    revenue0, start_growth, base_terminal_growth, base_dr, current_margin,
+                    target_base, steady_state_year, shares, annual_dilution, 0.0,
+                )
+                burn = sum(min(fcf_t, 0.0) for fcf_t in prelim_base["fcf_path"])
+                if price is not None and price > 0:
+                    financing_shares = abs(burn) / price
+                elif burn < 0:
+                    notes.append(
+                        "Fiyat eksik olduğu için orta-büyüme finansman (dilution) hisseleri hesaplanamadı; "
+                        "finansman hissesi 0 varsayıldı."
+                    )
+            except ValueError:
+                financing_shares = 0.0
+
+        scenarios: dict = {}
+        for key in _SCENARIO_KEYS:
+            scenario_assumptions = assumptions.get(key) or {}
+            discount_rate = scenario_assumptions.get("discount_rate")
+            terminal_growth = scenario_assumptions.get("terminal_growth")
+
+            if not _is_number(discount_rate) or not _is_number(terminal_growth):
+                notes.append(f"{key.capitalize()} senaryosu için orta-büyüme revenue-first DCF varsayımları eksik.")
+                continue
+            if discount_rate <= terminal_growth:
+                notes.append(
+                    f"{key.capitalize()} senaryosu için iskonto oranı terminal büyüme oranından büyük değil; "
+                    "senaryo atlandı."
+                )
+                continue
+
+            target_margin = target_base * _MATURE_TARGET_MARGIN_SCALE[key]
+
+            try:
+                result = revenue_dcf.revenue_first_dcf(
+                    revenue0, start_growth, terminal_growth, discount_rate, current_margin,
+                    target_margin, steady_state_year, shares, annual_dilution, financing_shares,
+                )
+            except ValueError as exc:
+                notes.append(f"{key.capitalize()} senaryosu için orta-büyüme revenue-first DCF hesaplanamadı: {exc}")
+                continue
+
+            per_share = round(result["per_share"], 2)
+            lo, hi, used_fallback = _hyper_scenario_band(
+                revenue0, start_growth, terminal_growth, discount_rate, current_margin,
+                target_margin, steady_state_year, shares, annual_dilution, financing_shares, per_share,
+            )
+            if used_fallback:
+                notes.append(
+                    f"{key.capitalize()} senaryosu için duyarlılık bandı hesaplanamadı; "
+                    "nokta tahminin +/-%10'u fallback olarak kullanıldı."
+                )
+
+            scenarios[key] = {
+                "per_share": per_share, "lo": lo, "hi": hi,
+                "start_growth": round(start_growth, 4),
+                "target_fcf_margin": round(target_margin, 4),
+                "terminal_growth": round(terminal_growth, 4),
+                "discount_rate": round(discount_rate, 4),
+            }
+
+        if not scenarios:
+            notes.append(
+                f"Orta-büyüme revenue-first DCF hiçbir senaryo için hesaplanamadı; {_MIDGROWTH_FALLBACK_SUFFIX}"
+            )
+            return None, notes
+
+        # --- Suppression guardrail (mirrors the hyper path): a non-credible
+        # negative base value means the caller should drop back to multiples.
+        base_ps = (scenarios.get("base") or {}).get("per_share")
+        suppressed = base_ps is not None and base_ps <= 0
+        if suppressed:
+            notes.append(
+                "Orta-büyüme revenue-first DCF baz senaryosu negatif özkaynak değeri (hisse başı ≤ $0) "
+                f"üretti; manşet için kullanılabilir değil, {_MIDGROWTH_FALLBACK_SUFFIX}"
+            )
+
+        detail = {
+            "scenarios": scenarios,
+            "start_growth": round(start_growth, 4),
+            "target_margin_base": round(target_base, 4),
+            "current_margin": round(current_margin, 4),
+            "steady_state_year": steady_state_year,
+            "annual_dilution": round(annual_dilution, 4),
+            "financing_shares": financing_shares,
+            "suppressed": suppressed,
+        }
+        return detail, notes
+    except Exception:  # noqa: BLE001 - never let a mid-growth-revenue-DCF bug break the standard valuation.
+        logger.warning("_build_midgrowth_revenue_dcf: unexpected error; degrading to standard valuation.", exc_info=True)
+        notes.append(
+            "Orta-büyüme revenue-first DCF beklenmeyen bir hatayla karşılaştı; standart değerleme kullanılıyor."
+        )
+        return None, notes
+
+
 #: Turkish labels for the current-multiple fallback notes, keyed by which
 #: multiple was derived.
 _MULTIPLE_LABELS = {"pe": "F/K", "ps": "F/S", "pfcf": "F/FCF"}
@@ -2210,6 +2635,43 @@ def _mature_scenario_meta(mature_revenue_detail: Optional[dict]) -> dict:
             "note": (
                 f"Olgun revenue-first DCF {scenario_label}: gerçekleşen büyüme %{start_growth * 100:.1f} "
                 f"({_MATURE_STEADY_STATE_YEAR} yılda {terminal_str} terminale fade), olgun FCF marjı "
+                f"%{target_fcf_margin * 100:.1f}, iskonto %{discount_rate * 100:.0f}."
+            ),
+        }
+    return meta
+
+
+def _midgrowth_scenario_meta(midgrowth_revenue_detail: Optional[dict]) -> dict:
+    """Build the ``fair_value_range`` ``scenario_meta`` override for the
+    mid-growth, loss-making revenue-first DCF headline (SPEC Sec.8d),
+    mirroring :func:`_mature_scenario_meta` -- same per-scenario
+    ``growth``/``discount_rate``/``note`` shape, but with this method's own
+    8-year fade horizon and "orta-büyüme" wording. Any scenario whose cell
+    is missing ``start_growth``/``target_fcf_margin``/``discount_rate`` is
+    omitted so :func:`_build_fair_value_range` falls back to the standard
+    assumptions-derived value for that field/scenario. Never raises.
+    """
+    scenarios = (midgrowth_revenue_detail or {}).get("scenarios") or {}
+    meta: dict = {}
+    for key in _SCENARIO_KEYS:
+        cell = scenarios.get(key) or {}
+        start_growth = cell.get("start_growth")
+        target_fcf_margin = cell.get("target_fcf_margin")
+        discount_rate = cell.get("discount_rate")
+        terminal_growth = cell.get("terminal_growth")
+        if not _is_number(start_growth) or not _is_number(target_fcf_margin) or not _is_number(discount_rate):
+            continue
+
+        scenario_label = _HYPER_SCENARIO_LABEL[key]
+        terminal_str = f"%{terminal_growth * 100:.1f}" if _is_number(terminal_growth) else "terminal"
+        meta[key] = {
+            "growth": (
+                f"gerçekleşen büyüme %{start_growth * 100:.1f}, olgun hedef marj %{target_fcf_margin * 100:.1f}"
+            ),
+            "discount_rate": _format_discount_rate_pct(discount_rate),
+            "note": (
+                f"Orta-büyüme revenue-first DCF {scenario_label}: gerçekleşen büyüme %{start_growth * 100:.1f} "
+                f"({_MIDGROWTH_STEADY_STATE_YEAR} yılda {terminal_str} terminale fade), olgun FCF marjı "
                 f"%{target_fcf_margin * 100:.1f}, iskonto %{discount_rate * 100:.0f}."
             ),
         }
@@ -2519,6 +2981,8 @@ def _run_valuation(
     epv_headline = False
     mature_revenue_headline = False
     mature_revenue_detail = None
+    midgrowth_revenue_headline = False
+    midgrowth_revenue_detail = None
     if hyper_growth_active:
         if hyper_growth_detail.get("suppressed"):
             # Revenue-first DCF produced a non-credible negative base value:
@@ -2610,12 +3074,51 @@ def _run_valuation(
                         "ince olduğunu gösterir. Revenue-first band 'mature_revenue_detail' altında ikincil "
                         "çapraz-kontrol olarak raporlanır."
                     )
+    elif sector_type == "growth_unprofitable" and not hyper_growth_active:
+        # Mid-growth loss-maker revenue-first DCF (Roadmap Madde 2 / SPEC
+        # Sec.8d): a growth_unprofitable filer growing the top line at a
+        # real but sub-hyper (12-20%) rate -- one that detect_hyper_grower
+        # (CAGR > 20%) doesn't pick up -- gets a revenue-first band instead
+        # of a multiples-only headline. If the method can't be built, its
+        # growth gate rejects it, or its base value is suppressed (<= $0),
+        # primary_dcf_scenarios is left unchanged so the filer keeps its
+        # existing raw-FCF-DCF / multiples fallback behavior.
+        midgrowth_revenue_detail, mg_notes = _build_midgrowth_revenue_dcf(
+            assumptions, normalized, metrics, ratios, price, shares
+        )
+        mg_base_ps = (
+            ((midgrowth_revenue_detail.get("scenarios") or {}).get("base") or {}).get("per_share")
+            if midgrowth_revenue_detail is not None else None
+        )
+        if (
+            midgrowth_revenue_detail is not None
+            and not midgrowth_revenue_detail.get("suppressed")
+            and _is_number(mg_base_ps)
+        ):
+            primary_dcf_scenarios = midgrowth_revenue_detail["scenarios"]
+            midgrowth_revenue_headline = True
+            notes.extend(mg_notes)
+            target_pct = midgrowth_revenue_detail.get("target_margin_base")
+            target_pct_str = f"%{target_pct * 100:.1f}" if _is_number(target_pct) else "—"
+            notes.append(
+                "Orta-büyüme zarar eden şirket: manşet, geliri fade eden ve FCF marjını olgun bir hedefe "
+                f"({target_pct_str}) yakınsayan bir revenue-first DCF'e dayandırıldı (gerçekleşen büyüme "
+                "%12-20 bandında, hiper-büyüme eşiğinin altında). Ham FCF-DCF ve çarpanlar ikincil olarak "
+                "raporlanır."
+            )
+        else:
+            # Method not built / gate rejected / suppressed: surface its
+            # explanatory notes so the reader knows why the headline stayed
+            # on multiples, and leave primary_dcf_scenarios untouched.
+            notes.extend(mg_notes)
 
     scenario_meta = None
     if hyper_growth_active and not hyper_growth_detail.get("suppressed"):
         scenario_meta = _hyper_scenario_meta(hyper_growth_detail)
     elif mature_revenue_headline:
         scenario_meta = _mature_scenario_meta(mature_revenue_detail)
+    elif midgrowth_revenue_headline:
+        scenario_meta = _midgrowth_scenario_meta(midgrowth_revenue_detail)
     elif epv_headline:
         scenario_meta = _epv_scenario_meta(earnings_power)
     fair_value_range = _build_fair_value_range(primary_dcf_scenarios, reit_or_financial_anchor, assumptions, scenario_meta)
@@ -2708,6 +3211,36 @@ def _run_valuation(
         # Mirrors the hyper-grower branch: no bracket-boundary status is
         # exposed by revenue_dcf.implied_start_growth, so this defaults to
         # "ok" (a missing implied growth already gets its own note above).
+        output_bracket_status = "ok"
+    elif midgrowth_revenue_headline:
+        # Mirrors the mature-revenue override: the mid-growth revenue-first
+        # DCF's own reverse-DCF solve is revenue-based, so the realized
+        # reference is revenue CAGR. Uses the SAME base-scenario inputs the
+        # headline band was built from (incl. dilution/financing shares) so
+        # the implied growth is apples-to-apples with the published scenarios.
+        revenue_cagr = metrics.get("revenue_cagr_5y")
+        revenue_cagr_label = "5y" if revenue_cagr is not None else None
+        if revenue_cagr is None:
+            revenue_cagr = metrics.get("revenue_cagr_3y")
+            revenue_cagr_label = "3y" if revenue_cagr is not None else None
+
+        mg_revenue0 = to_annual_series(normalized, "Revenue").get(latest_fy) if latest_fy is not None else None
+        mg_implied_growth = revenue_dcf.implied_start_growth(
+            price, mg_revenue0, base_terminal_growth, base_discount_rate,
+            midgrowth_revenue_detail.get("current_margin"), midgrowth_revenue_detail.get("target_margin_base"),
+            midgrowth_revenue_detail.get("steady_state_year"), shares,
+            midgrowth_revenue_detail.get("annual_dilution") or 0.0,
+            midgrowth_revenue_detail.get("financing_shares") or 0.0,
+        )
+        if mg_implied_growth is None:
+            notes.append(
+                "Orta-büyüme revenue-first DCF: fiyatın ima ettiği başlangıç büyüme oranı hesaplanamadı "
+                "(fiyat, makul büyüme aralığının dışında bir beklenti ima ediyor olabilir)."
+            )
+
+        output_implied = mg_implied_growth
+        output_realized_cagr = revenue_cagr
+        output_realized_label = f"gelir {revenue_cagr_label}" if revenue_cagr_label else None
         output_bracket_status = "ok"
 
     # --- Multiples ---------------------------------------------------------
@@ -2807,6 +3340,12 @@ def _run_valuation(
             "tabanını yansıtır; serbest nakit akışının neden düşük olduğunu gösteren kanıt olarak "
             "korunmuştur."
         )
+    elif midgrowth_revenue_headline:
+        notes.append(
+            "Duyarlılık tablosu, manşet orta-büyüme revenue-first DCF'i değil, ikincil FCF-DCF tabanını "
+            "yansıtır; büyüme-fade modeli için standart büyüme±2pp ızgarası uygulanamadığından FCF-DCF "
+            "ızgarası kanıt olarak korunmuştur."
+        )
 
     # --- Triangulation -------------------------------------------------------
     base_band = None
@@ -2828,7 +3367,8 @@ def _run_valuation(
         price, base_band, output_implied, output_realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
         hyper_growth=hyper_growth_active, bull_band=hyper_bull_band, reverse_dcf_status=output_bracket_status,
         raw_growth_pair_pct=ga_raw_pct, growth_adj_pct=ga_pct, earnings_power_headline=epv_headline,
-        mature_revenue_headline=mature_revenue_headline, pffo_pct=pffo_pct,
+        mature_revenue_headline=mature_revenue_headline, midgrowth_revenue_headline=midgrowth_revenue_headline,
+        pffo_pct=pffo_pct,
     )
 
     return {
@@ -2859,6 +3399,8 @@ def _run_valuation(
         "hyper_growth_detail": hyper_growth_detail if hyper_growth_active else None,
         "mature_revenue_headline": mature_revenue_headline,
         "mature_revenue_detail": mature_revenue_detail,
+        "midgrowth_revenue_headline": midgrowth_revenue_headline,
+        "midgrowth_revenue_detail": midgrowth_revenue_detail,
         "assumptions": assumptions,
         "notes": notes,
     }

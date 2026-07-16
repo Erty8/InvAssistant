@@ -47,6 +47,7 @@ from sec_analyzer.normalize.normalizer import format_table, normalize_facts
 from sec_analyzer.normalize.ratios import compute_ratios
 from sec_analyzer.normalize.red_flags import detect_red_flags
 from sec_analyzer.report.generator import generate_report
+from sec_analyzer.signals.events import detect_events, summarize_events
 from sec_analyzer.store.database import save_normalized, save_prices, save_verdict
 from sec_analyzer.technical.indicators import compute_indicators
 from sec_analyzer.technical.verdict import technical_verdict
@@ -215,6 +216,34 @@ def _fetch_catalyst(submissions: Optional[dict], ticker: str) -> Optional[dict]:
     except Exception:  # noqa: BLE001 - a catalyst estimate is a nice-to-have, never fatal
         logger.warning("Could not estimate next earnings date for %s", ticker, exc_info=True)
         return None
+
+
+#: Lookback window (days) for the recent-8-K event signal, and the minimum
+#: severity worth surfacing. Routine "info" filings (earnings releases, votes,
+#: Reg FD, exhibit-only 8-Ks) are dropped so the card/report only shows events
+#: a human should actually weigh against the numbers.
+_EVENTS_LOOKBACK_DAYS = 365
+_EVENTS_MIN_SEVERITY = "warning"
+_EVENTS_MAX = 8
+
+
+def _detect_filing_events(submissions: Optional[dict]) -> List[dict]:
+    """Best-effort recent 8-K event signal from already-fetched submissions.
+
+    Reuses the ``submissions`` document :func:`_fetch_submissions` fetched
+    once for this run (no extra network, no document download, no LLM). Only
+    warning/critical events within the last year are surfaced. ``detect_events``
+    is itself never-raises, so this simply returns an empty list when there's
+    nothing to show.
+    """
+    if not submissions:
+        return []
+    return detect_events(
+        submissions,
+        lookback_days=_EVENTS_LOOKBACK_DAYS,
+        min_severity=_EVENTS_MIN_SEVERITY,
+        max_events=_EVENTS_MAX,
+    )
 
 
 def _save_price_rows(cik: str, price_df) -> None:
@@ -645,6 +674,12 @@ def _print_verdict_card(
             :func:`sec_analyzer.normalize.red_flags.detect_red_flags`, used
             as a fallback "Red flags:" line when ``result`` has no
             ``red_flags_comment`` (e.g. an error result).
+
+    The "Olaylar:" line summarizes ``result["events"]`` (the recent 8-K event
+    list attached in ``cmd_analyze`` via
+    :func:`sec_analyzer.signals.events.detect_events`) using
+    :func:`sec_analyzer.signals.events.summarize_events`; it reads ``"yok"``
+    when there are no recent warning/critical events.
     """
     result = result or {}
     metrics = metrics or {}
@@ -722,6 +757,9 @@ def _print_verdict_card(
         red_flags_line = "yok"
     print(f"{'Red flags:'.ljust(_CARD_LABEL_WIDTH)}{red_flags_line}")
 
+    events_line = summarize_events(result.get("events") or [])
+    print(f"{'Olaylar:'.ljust(_CARD_LABEL_WIDTH)}{events_line}")
+
     print(f"{'Katalizör:'.ljust(_CARD_LABEL_WIDTH)}{result.get('catalyst') or _DASH}")
 
     summary = result.get("summary")
@@ -747,6 +785,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     flags = detect_red_flags(normalized, ratios, metrics, horizon)
     submissions = _fetch_submissions(cik, args.ticker, args.no_cache)
     catalyst = _fetch_catalyst(submissions, args.ticker)
+    events = _detect_filing_events(submissions)
 
     if price_df is not None:
         _save_price_rows(cik, price_df)
@@ -763,6 +802,14 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         submissions=submissions,
         price_df=price_df,
     )
+
+    # Recent 8-K events are deterministic filing-metadata facts, not model
+    # output, so they're attached to the result post-interpret (like the
+    # numbers the card renders directly) rather than routed through the LLM
+    # payload. This also persists them with the verdict and carries them into
+    # the HTML report, which reads result.events.
+    if isinstance(result, dict):
+        result["events"] = events
 
     if "error" in result:
         print(

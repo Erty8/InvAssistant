@@ -256,6 +256,31 @@ def test_generate_report_success_writes_file_with_expected_content(tmp_path):
     assert "</html>" in content
 
 
+def test_generate_report_embeds_events_from_result(tmp_path):
+    """Recent 8-K events attached as ``result["events"]`` (by cmd_analyze) are
+    embedded in the payload and rendered by the template's events card."""
+    result = _success_result()
+    result["events"] = [
+        {"date": "2026-06-15", "severity": "critical", "items": ["4.02"],
+         "categories": ["Önceki finansal tablolara güvenilemez (restatement)"]},
+        {"date": "2026-07-01", "severity": "warning", "items": ["5.02"],
+         "categories": ["Üst düzey yönetici/kurul değişikliği"]},
+    ]
+    path = generate_report(
+        "NVDA", "1y", result,
+        metrics=_metrics(), technical=_technical(), flags=_flags(),
+        out_dir=str(tmp_path),
+    )
+    content = open(path, "r", encoding="utf-8").read()
+
+    # Event data (inside result) survives into the embedded JSON payload.
+    assert "güvenilemez" in content
+    assert "4.02" in content
+    # The events renderer and its card title are present in the template.
+    assert "eventsCardHtml" in content
+    assert "Son Dosyalama Olayları" in content
+
+
 def test_generate_report_filename_includes_ticker_horizon_and_date(tmp_path):
     path = generate_report(
         "AAPL", "5y", _success_result(), out_dir=str(tmp_path)

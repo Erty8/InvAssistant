@@ -8,12 +8,13 @@
 - Peer comparison
 - Risk faktörü diff'i (ardışık 10-K/10-Q Risk Factors karşılaştırması)
 - Verdict backtest raporu (verdicts tablosu şimdiden bunun için kuruldu)
-- CapEx-yoğun hiper-grower'lar (ör. APLD gibi veri merkezi yatırımcıları) için revenue-first
-  DCF'te büyüme CapEx'ini bakım CapEx'inden ayırma — veya bu şirketleri asset-bazlı/kapasite
-  EV-çarpanı yöntemiyle değerleme. Mevcut bastırma (suppression) guardrail'i doğru ama
-  muhafazakâr bir önlemdir, bu şirketlerin gerçek bir değerlemesi değildir; büyüme yatırımı
-  yakımını gelire-ölçeklenmiş bir operasyon marjı gibi ele almak yerine kalıcı bir çözüm
-  gerekiyor.
+- [TAMAMLANDI] CapEx-yoğun hiper-grower'lar (ör. APLD gibi veri merkezi yatırımcıları) için
+  revenue-first DCF'te büyüme CapEx'ini bakım CapEx'inden ayırma. Motor artık amortismanı
+  (D&A) standart bakım-CapEx vekili olarak kullanıp başlangıç FCF marjını büyüme CapEx'i
+  için rölöve ediyor (CapEx/gelir > %30 VE CapEx > D&A olduğunda); olgun hedef marj brüt-marj
+  vekilinden ayrı türetildiği için steady-state'te bakım-CapEx yine fiyatlanıyor. Eski
+  bastırma (suppression) guardrail'i, düzeltilmiş marjla bile baz senaryo ≤ $0 çıkarsa
+  devreye giren bir backstop olarak kalıyor. Bkz. SPEC.md §3.6, VALUATION.md §4a.
 
 ## Değerleme motoru — Damodaran/Nareit denetimi takibi (2026-07)
 
@@ -34,6 +35,9 @@ kodlarına genişletme, REIT kartlarında P/E-tabanlı PEG yerine P/FFO. Kalanla
   (düşük öncelik)
 - Greenwald EPV yöntemini bağımsız bir kaynağa karşı doğrula (kod değil, doğrulama).
   Finansal P/B×ROE'nin justified-P/B tarafı P3a'da ele alındı.
-- Bilinçli olarak DEĞİŞTİRİLMEDİ: orta-büyümeli (%12-20) zarar eden şirketler için
-  revenue-first modeli (spekülatif bir değer üretmek yerine multiples'a düşmek tercih
-  edildi). Gerçek şirketlerin eksik değerlendiği kanıtlanırsa yeniden ele alınabilir.
+- [TAMAMLANDI] Orta-büyümeli (%12-20 gerçekleşen CAGR) zarar eden şirketler için
+  revenue-first DCF: `sector.detect_hyper_grower`'ın yakalamadığı (CAGR ≤ %20) ama gerçek
+  bir büyüme hikâyesi olan `growth_unprofitable` filer'lar artık, büyüme kapısını (CAGR ≥
+  %12) ve bastırma guardrail'ini geçtiğinde, salt multiples yerine §3c/§4a arası kalibre
+  edilmiş (8 yıllık fade, %20 hedef-marj tavanı) bir revenue-first band manşet oluyor. Bkz.
+  SPEC.md §8d, VALUATION.md §4b.

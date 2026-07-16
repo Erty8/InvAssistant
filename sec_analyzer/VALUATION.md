@@ -30,6 +30,7 @@ Motor SIC kodundan sektörü belirler; yöntem seçimi buna göre:
 | ...yukarıdakiyle AYNI ama gerçekleşen ciro CAGR'ı ≥ %10 (§3c) | Olgun revenue-first DCF (EPV tabanını geçerse), aksi halde EPV | EPV taban (her zaman ikincil çapraz-kontrol) | Bastırılmış FCF'i büyütmek |
 | Banka / sigorta / finansal | P/B + ROE ilişkisi, Dividend Discount | P/E | Standart DCF (FCF tanımı bozuk) |
 | Zarar eden / hiper-growth | Revenue-first DCF (§4a) + Reverse DCF (birincil) | P/S, brüt marj tavan kontrolü | P/E (anlamsız), FCF-growth ekstrapolasyonu |
+| ...yukarıdakiyle AYNI ama gerçekleşen ciro CAGR'ı %12-20 arası (hiper eşiğinin altında) (§4b) | Orta-büyüme revenue-first DCF (büyüme kapısını geçerse), aksi halde multiples | Reverse DCF (ikincil, gelir-temelli) | Standart FCF-DCF (bastırılmış FCF'i büyütmek) |
 | Cyclical (semi, emtia, enerji) | Normalize (mid-cycle) earnings üzerinden DCF/PE | P/B (dip dönemlerde) | Peak-earnings P/E |
 | REIT / yüksek temettü | FFO bazlı multiples, DDM | — | Net income bazlı P/E |
 | Pre-revenue / binary outcome | Senaryo ağacı (başarı olasılığı × sonuç değeri) | — | DCF (sahte hassasiyet üretir) |
@@ -205,7 +206,7 @@ bir FFO değeri üretmez. Tam mekanik: SPEC.md §8c.
 ## 4. Varsayım sınırları (sanity check — kod da ayrıca doğrular)
 
 - **Terminal growth ≤ uzun vadeli nominal GDP büyümesi (~%3-4).** Üstü otomatik geçersiz.
-- **Discount rate tabanı:** risk-free + sektör ERP (Damodaran verisi). %7'nin altı hiçbir hisse için kabul edilmez; spekülatif/zararda şirketlerde %11-15 bandı.
+- **Discount rate tabanı (CAPM):** iskonto oranı bir özkaynak maliyetidir (WACC değil) ve `cost_of_equity = risk_free + β_levered × ERP` ile hesaplanır (kod: `valuation/capm.py`). `risk_free` ve `ERP` Damodaran'ın US verisinden gelir (`data/damodaran/erp.csv`); `β` ise şirketin SIC'ine eşleşen sektörün **kaldıraçsız (asset) betasıdır** (`multiples.csv`'deki `unlevered_beta` sütunu), şirketin kendi piyasa borç/özkaynak oranı ve marjinal vergi ile **relever** edilir (Hamada: `β_L = β_U × (1 + (1−vergi)×D/E)`). Böylece iskonto oranı düz bir sabit değil, şirketin riskine göre gerekçelendirilmiş bir sayıdır. Damodaran verisi (beta/ERP/risk-free) yoksa eski düz sektör-bağımsız varsayılana (%10, zararda %12) güvenli şekilde geri döner. Her durumda: %7'nin (zararda %10) altı hiçbir hisse için kabul edilmez — bear/bull senaryoları CAPM tabanının ±deltasıdır ve `sanity.clamp_assumptions` her senaryo oranını taban + Gordon ERP-spread kuralıyla ayrıca denetler.
 - **Büyüme kısıtı ORAN değil VARIŞ NOKTASIDIR:** "%20+ growth en fazla N yıl" gibi keyfi bir tavanla kırpma YAPILMAZ. Kısıt, gerçekleşen oranın terminale doğru fade (kademeli, mean-reversion) etmesinden gelir — sonsuza dek sabit yüksek growth diye bir şey yok, ama fade zorunlu olduğu sürece keyfi bir yıl sınırı gerekmez. Varış noktasının (10 yıl sonraki gelir seviyesinin) makullüğü şöyle denetlenir: TAM (toplam adreslenebilir pazar) biliniyorsa, son yıl geliri/TAM oranı %40'ı aşıyorsa "agresif", %60-70'i aşıyorsa "geçersiz" sayılır. TAM bilinmiyorsa, gelir-katı (son yıl geliri / bugünkü gelir) 8×'in üstü "agresif", 15×'in üstü "aşırı agresif" sayılır. Detay: §4a.
 - **Büyüme bedavaya gelmez:** yüksek growth varsayımı, yüksek reinvestment (CapEx/R&D) varsayımı gerektirir. FCF margin'i büyürken CapEx'i sabit tutan model tutarsızdır.
 - **Dilution:** SBC/revenue > %5 ise per-share değer hesabında hisse sayısı artışını projeksiyona dahil et.
@@ -274,6 +275,82 @@ başı değeri ≤ $0.** Bu durumda motor sonucu BASTIRIR: manşet `fair_value_r
 manşet olarak yayınlanmazlar. Gerekçe: faal ve sermaye toplayabilen bir şirketi $0'ın altında
 değerlemek kullanılabilir bir sayı değildir; negatif bir bant basmak veya keyfi biçimde
 sıfıra kırpmak yerine sonucu bastırıp nedenini açıklamak daha dürüsttür.
+
+**Bakım/büyüme CapEx ayrımı (CapEx-yoğun hiper-grower'lar):** Yukarıdaki bastırma
+guardrail'i doğru ama muhafazakâr bir önlemdir — negatif bir bandı basmayı reddeder, ama
+veri merkezi yatırımcısı APLD gibi CapEx-ağır, fiilen finanse edilebilir bir büyüyücüyü
+hiçbir DCF manşeti olmadan bırakır. Motor artık semptomu korumakla birlikte kök nedeni de
+ele alıyor: `_build_hyper_growth`'ın başlangıç FCF marjı `(İşletme Nakit Akışı − TOPLAM
+CapEx − SBC) / Gelir` olarak hesaplanır. CapEx'i gelirin kat kat üzerinde olan bir
+şirkette bu marj derinden negatif çıkar — ama bu CapEx'in büyük kısmı **büyüme**
+CapEx'idir: revenue-first projeksiyonun büyüme yolu üzerinden ZATEN yakaladığı geleceğin
+gelirini inşa eden yatırımdır. Bunu başlangıç marjından düşmek aynı büyümeyi ÇİFT
+cezalandırır — bir kere bugünün nakit çıkışı olarak, bir kere de projeksiyonun kendisinin
+zaten fiyatladığı kaybedilmiş terminal nakit akışı olarak.
+
+Motor bu fazlalığı, amortisman (D&A) — Damodaran'ın standart bakım-CapEx vekili, ama
+gelirin en az %5'i tabanıyla — kullanarak ayırır: `bakım_capex = max(d&a, %5·gelir)`,
+`büyüme_capex = capex − bakım_capex`, ve düzeltilmiş "işletme" marjı = başlangıç marjı +
+`büyüme_capex / gelir`. (Taban gerekli: bir veri merkezi büyürken bugünkü D&A, olgun
+filonun bakım yükünü olduğundan az gösterir; taban, büyüme-CapEx'inin fazla iyimser
+hesaplanmasını engeller.) Bu ayrım yalnızca İKİ koşul birden sağlandığında yapılır:
+CapEx/gelir %30'u aşıyor VE CapEx bu tabanlı bakım seviyesini aşıyor.
+
+**Ama bu düzeltme MANŞET DEĞİLDİR.** Finansal bir inceleme şunu ortaya koydu: büyüme
+CapEx'ini başlangıç marjından silerken projeksiyonun geliri büyütmeye devam etmesi, ciro
+rampasını hanesine yazıp o rampayı finanse eden CapEx'i HİÇBİR yere yazmamak demektir —
+tek yönlü bir aşırı-değerleme (§3c'nin bilinçle reddettiği "owner-earnings geri-ekleme"
+çift-sayımının aynısı). "Doğru" düzeltme (büyümeye bağlı bir reinvestment gideri) ise bu
+isimler için güvenilir değildir; lumpy/ileriye dönük CapEx'te tek yıllık sales-to-capital
+oranı aşırı oynaktır. Bu yüzden:
+
+- Manşet senaryolar bugünkü GERÇEK (düzeltilmemiş) marjı kullanmaya devam eder; dolayısıyla
+  CapEx-ağır isimler yukarıdaki negatif-değer bastırma guardrail'ine takılıp manşetten
+  düşer — dürüst, muhafazakâr davranış.
+- Düzeltilmiş marj YALNIZCA ayrı, açıkça "AGRESİF ÜST-SENARYO (manşet değil)" olarak
+  etiketlenen bir baz-senaryo değeri üretmek için kullanılır; kullanıcı capex normalleşirse
+  ima edilen iyimser değeri görür ama bu asla verdict'in temeli olmaz.
+- Olgun hedef marj floor'u da her zaman GERÇEK (düzeltilmemiş) marjla hesaplanır, böylece
+  düzeltilmiş bir marj terminal marja sızamaz.
+
+Mid-growth yolu (§4b) bu düzeltmeyi bilinçli olarak KULLANMAZ — orası savunulabilir (agresif
+değil) bir değer hedefler; CapEx-ağır bir orta-büyüyücü bastırılırsa doğrudan çarpanlara
+düşer. Tam mekanik: SPEC.md §3.6.
+
+## 4b. Orta-büyüme (%12-20 gerçekleşen CAGR), zarar eden şirketlerde revenue-first DCF
+
+§2'deki "Zarar eden / hiper-growth" satırı, §4a'nın hiper-grower tetikleyicisini
+(gerçekleşen CAGR > %20 VE FCF/marj/Ar-Ge-SBC koşullarından biri) geçen şirketleri
+kapsar. Ama gerçekleşen ciro CAGR'ı %20 eşiğinin altında kalan (kabaca %12-20 aralığında),
+yine de zarar eden bir `growth_unprofitable` şirket için motor eskiden doğrudan
+multiples-only (yalnızca P/S) bir manşete düşüyordu — bilinçli bir tercihti, spekülatif bir
+DCF değeri üretmek yerine. Ama hiper eşiğini geçmeyen bu şirketler yine de gerçek, anlamlı
+bir büyüme hikâyesi taşıyor; standart FCF-DCF (bastırılmış FCF'i sabit oranla büyütmek)
+onlar için de yasaktır, ama salt çarpanlara dayanmak da hikâyenin büyüme kısmını hiç
+sayısallaştırmadan masada bırakır.
+
+Bu boşluk, §3c'nin olgun revenue-first DCF'i ile §4a'nın hiper-grower revenue-first
+DCF'i ARASINA oturan üçüncü bir revenue-first varyantla dolduruluyor: 8 yıllık bir fade
+ufku (olgun yoldan uzun, hiper yoldan kısa), %20 tavanlı brüt-marj-türevli bir olgun hedef
+marj (olgun yolun %15 tavanından yüksek, hiper yolun %30 tavanından düşük — bu şirketler
+olgun bir filer'dan daha genç ama en agresif hiper-grower'dan daha az spekülatif), hiper
+yoldaki gibi ZORUNLU seyreltme/finansman hisseleri (bir orta-büyüme zarar eden şirket yine
+nakit yakımını sermaye ihracıyla finanse eder — olgun yolun sıfır seyreltme
+varsayımından farklı olarak) ve kırpılmış (clamped) varsayımlar hattından gelen iskonto
+oranları (zarar eden şirket tabanı: en az %10). Başlangıç marjı, olgun yoldaki gibi son 3
+yılın SBC-düzeltilmiş FCF marjı medyanıdır; §4a'nın bakım/büyüme CapEx ayrımı burada
+BİLİNÇLİ OLARAK uygulanmaz (o düzeltme yukarı-yanlı bir üst-senaryodur, bu yol ise
+savunulabilir bir değer hedefler).
+
+Büyüme kapısı: gerçekleşen CAGR %12'nin altındaysa veya terminal büyümenin altındaysa
+(fade edecek gerçek bir büyüme yoksa) yöntem hiç denenmez, manşet multiples'ta kalır.
+Bastırma guardrail'i burada da geçerlidir — baz senaryo hisse başı ≤ $0 çıkarsa yöntem geri
+çekilir ve mevcut multiples-only davranış korunur. Duyarlılık
+tablosu ve ters-DCF, §3b/§3c ile aynı mantıkla ikincil (bastırılmış) FCF-DCF tabanını
+göstermeye devam eder; ters-DCF'in referans büyümesi gelir CAGR'ıdır (yöntem gelir-temelli
+olduğu için). Üçgenleme güveni burada da en fazla ORTA ile sınırlanır (DCF ve ters-DCF
+bacakları aynı revenue-first modelden türer, bağımsız kanıt sayılmaz). Tam mekanik:
+SPEC.md §8d.
 
 ## 5. Üçgenleme ve güven kuralı
 

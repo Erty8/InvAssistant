@@ -72,7 +72,7 @@ from typing import Dict, List, Optional, Tuple
 
 from sec_analyzer.config import Config
 from sec_analyzer.normalize.normalizer import to_annual_series
-from sec_analyzer.valuation.sanity import validate_assumptions
+from sec_analyzer.valuation.sanity import clamp_assumptions, validate_assumptions
 
 logger = logging.getLogger(__name__)
 
@@ -1039,16 +1039,43 @@ def _default_growth_anchor(metrics: Optional[dict]) -> Tuple[float, str]:
     return _clamp(raw, _DEFAULT_GROWTH_CLAMP_MIN, _DEFAULT_GROWTH_CLAMP_MAX), source
 
 
-def _default_story(scenario: str, growth: float, discount_rate: float, growth_source: str, sector_type: Optional[str]) -> str:
+def _default_story(
+    scenario: str,
+    growth: float,
+    discount_rate: float,
+    growth_source: str,
+    sector_type: Optional[str],
+    capm: Optional[dict] = None,
+) -> str:
     """Build the transparent ("cam kutu"), Turkish ``story`` sentence for one
-    :func:`default_assumptions` scenario, naming the inputs used."""
-    sector_label = _SECTOR_LABELS_TR.get(sector_type, "belirlenmemiş sektör")
+    :func:`default_assumptions` scenario, naming the inputs used.
+
+    When ``capm`` (the :func:`sec_analyzer.valuation.capm.compute_cost_of_equity`
+    result) is present, the discount-rate clause reports the CAPM derivation
+    (rf + βL × ERP) rather than the old flat sector-classification default: the
+    ``base`` scenario shows the full formula, ``bear``/``bull`` reference the
+    CAPM base ± their scenario margin.
+    """
     scenario_label = _SCENARIO_LABELS_TR[scenario]
+    capm_rate = capm.get("rate") if capm else None
+    if isinstance(capm_rate, (int, float)) and not isinstance(capm_rate, bool):
+        if scenario == "base" and capm.get("detail"):
+            rate_clause = f"iskonto oranı %{discount_rate * 100:.1f} ({capm['detail']})"
+        else:
+            rate_clause = (
+                f"iskonto oranı %{discount_rate * 100:.1f} "
+                f"(CAPM tabanı %{capm_rate * 100:.1f} ± senaryo marjı)"
+            )
+    else:
+        sector_label = _SECTOR_LABELS_TR.get(sector_type, "belirlenmemiş sektör")
+        rate_clause = (
+            f"iskonto oranı %{discount_rate * 100:.1f} "
+            f"({sector_label} sınıflandırmasına göre)"
+        )
     return (
         f"{scenario_label} senaryo: deterministik varsayılan -- büyüme kaynağı {growth_source}, "
-        f"bu senaryoda uygulanan büyüme %{growth * 100:.1f}, iskonto oranı %{discount_rate * 100:.1f} "
-        f"({sector_label} sınıflandırmasına göre); LLM kullanılamadığı veya önerisi doğrulama "
-        "sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."
+        f"bu senaryoda uygulanan büyüme %{growth * 100:.1f}, {rate_clause}; LLM kullanılamadığı "
+        "veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."
     )
 
 
@@ -1068,7 +1095,11 @@ def _minimal_safe_assumptions() -> dict:
     }
 
 
-def default_assumptions(metrics: Optional[dict], sector_type: Optional[str] = None) -> dict:
+def default_assumptions(
+    metrics: Optional[dict],
+    sector_type: Optional[str] = None,
+    capm: Optional[dict] = None,
+) -> dict:
     """Deterministic phase-1 fallback assumptions (SPEC.md Sec.12).
 
     Used by :func:`sec_analyzer.interpret.analyzer.propose_assumptions`
@@ -1090,6 +1121,13 @@ def default_assumptions(metrics: Optional[dict], sector_type: Optional[str] = No
             ``"growth_unprofitable"`` raises the base discount rate from 10%
             to 12% (and every scenario's floor with it); anything else
             (including ``None``) uses the standard 10% floor.
+        capm: The optional
+            :func:`sec_analyzer.valuation.capm.compute_cost_of_equity` result.
+            When present (and carrying a numeric ``rate``), its firm-specific
+            CAPM cost of equity REPLACES the flat sector-agnostic base
+            discount rate; the bear/bull scenarios keep their usual deltas
+            around that CAPM base. ``None`` (no Damodaran beta/ERP/risk-free)
+            preserves the historical flat 10%/12% default.
 
     Returns:
         ``{"bear": {...}, "base": {...}, "bull": {...}}`` (SPEC.md Sec.2
@@ -1098,19 +1136,28 @@ def default_assumptions(metrics: Optional[dict], sector_type: Optional[str] = No
         Never raises.
     """
     try:
-        return _default_assumptions(metrics or {}, sector_type)
+        return _default_assumptions(metrics or {}, sector_type, capm)
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("default_assumptions() failed unexpectedly; returning a minimal-safe fallback.")
         return _minimal_safe_assumptions()
 
 
-def _default_assumptions(metrics: dict, sector_type: Optional[str]) -> dict:
+def _default_assumptions(metrics: dict, sector_type: Optional[str], capm: Optional[dict] = None) -> dict:
     base_growth, growth_source = _default_growth_anchor(metrics)
     bear_growth = base_growth - _DEFAULT_SCENARIO_GROWTH_DELTA
     bull_growth = base_growth + _DEFAULT_SCENARIO_GROWTH_DELTA
 
     is_unprofitable = sector_type == "growth_unprofitable"
-    base_dr = _DEFAULT_DISCOUNT_RATE_BASE_UNPROFITABLE if is_unprofitable else _DEFAULT_DISCOUNT_RATE_BASE
+    # CAPM firm-specific cost of equity (rf + βL x ERP) takes precedence over
+    # the flat sector-agnostic default when the Damodaran reference data made
+    # it computable; otherwise fall back to the historical constant. Either
+    # way, sanity.clamp_assumptions (inside run_valuation) floors and ERP-
+    # spread-guards every per-scenario rate downstream.
+    capm_rate = capm.get("rate") if capm else None
+    if isinstance(capm_rate, (int, float)) and not isinstance(capm_rate, bool):
+        base_dr = capm_rate
+    else:
+        base_dr = _DEFAULT_DISCOUNT_RATE_BASE_UNPROFITABLE if is_unprofitable else _DEFAULT_DISCOUNT_RATE_BASE
     bear_dr = base_dr + _DEFAULT_DISCOUNT_RATE_BEAR_DELTA
     bull_dr = base_dr + _DEFAULT_DISCOUNT_RATE_BULL_DELTA
 
@@ -1121,10 +1168,18 @@ def _default_assumptions(metrics: dict, sector_type: Optional[str]) -> dict:
             "growth_5y": growth,
             "terminal_growth": _DEFAULT_TERMINAL_GROWTH,
             "discount_rate": dr,
-            "story": _default_story(name, growth, dr, growth_source, sector_type),
+            "story": _default_story(name, growth, dr, growth_source, sector_type, capm),
         }
         for name, (growth, dr) in scenario_inputs.items()
     }
+
+    # A firm-specific CAPM base can sit low enough (low-beta sectors) that the
+    # bull scenario's -1pp delta would dip below the discount-rate floor. Apply
+    # the same clamp the engine applies downstream so this deterministic set
+    # still passes validate_assumptions and CAPM survives, rather than bailing
+    # to the flat minimal-safe fallback. Idempotent (no-op with no CAPM, where
+    # the constant deltas are already in range).
+    assumptions, _ = clamp_assumptions(assumptions, is_unprofitable=is_unprofitable)
 
     violations = validate_assumptions(assumptions, is_unprofitable=is_unprofitable)
     if violations:

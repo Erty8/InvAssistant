@@ -401,7 +401,10 @@ this file.)
     Sec.8c for the full mechanics.
 - `growth_unprofitable`: DCF still attempted (fcf may be negative → note),
   multiples use P/S only (pe/pfcf percentiles likely None), triangulation
-  weights reverse-DCF + P/S.
+  weights reverse-DCF + P/S. Additionally, when the filer grows the top line
+  at a real but sub-hyper rate (realized CAGR ≥ 12%) and is not picked up by
+  `detect_hyper_grower`, a mid-growth revenue-first DCF becomes the headline
+  instead of a multiples-only one (Sec.8d).
 - `cyclical`: additionally compute a **normalized-earnings DCF variant**:
   `normalized_fcf0 = mean(top ceil(N/2) fcf_margin values over available FYs)
   * latest revenue`, where each year's margin is `(ocf - capex - sbc) /
@@ -1052,7 +1055,7 @@ own sensitivity. This `sensitivity` matrix (and `reverse_dcf.implied_growth`)
 keep reflecting the secondary, suppressed FCF-DCF base here too, with the
 Turkish note documented in Sec.8b.
 
-## 10. Triangulation — `triangulate.triangulate(price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type, hyper_growth=False, bull_band=None, reverse_dcf_status=None, raw_growth_pair_pct=None, growth_adj_pct=None, earnings_power_headline=False, mature_revenue_headline=False, pffo_pct=None) -> dict`
+## 10. Triangulation — `triangulate.triangulate(price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type, hyper_growth=False, bull_band=None, reverse_dcf_status=None, raw_growth_pair_pct=None, growth_adj_pct=None, earnings_power_headline=False, mature_revenue_headline=False, midgrowth_revenue_headline=False, pffo_pct=None) -> dict`
 
 Direction signal per method (`"ucuz" | "makul" | "pahali" | "veri_yok"`):
 - **DCF**: price < band.lo → ucuz; price > band.hi → pahali; else makul.
@@ -1110,6 +1113,15 @@ so three-way agreement is weaker evidence here too. Mutually exclusive with
 `earnings_power_headline` in practice — `engine.py` never sets both `True` —
 but if both were ever `True`, the `earnings_power_headline` cap message
 takes precedence (same cap either way, just one rationale string).
+
+**Mid-growth revenue-first DCF confidence ceiling (Sec.8d):**
+`midgrowth_revenue_headline` (default `False`) is the equivalent flag for the
+mid-growth, loss-making revenue-first DCF (Sec.8d — `growth_unprofitable`
+filers growing 12–20%). Same `YÜKSEK → ORTA` cap, same appended rationale
+clause, for the same reason as the two caps above: the DCF leg (the
+revenue-first model) and its reverse-DCF leg derive from one model, not two
+independent ones. Mutually exclusive in practice with the two headline flags
+above.
 
 ## 11. Engine — `engine.run_valuation(normalized, ratios, metrics, price, price_df, assumptions, sector_type, damodaran_dir=None, sic_description=None, hyper_growth_extras=None) -> dict`
 
@@ -1201,10 +1213,23 @@ consumed by interpret phase 2, CLI card, HTML report, and store):
                   "revenue_multiple": float|None, "steady_state_margin": float|None,
                   "tam_share": float|None},
      "target_margin_source": str,    # e.g. "brüt marj × 0.5 (tavan %30)"
+     "capex_normalization": None | { # Sec.3.6; None unless the maintenance/growth
+        "applied": True,             # CapEx split was applied (capex-heavy filer)
+        "capex_intensity": float,    # CapEx / revenue
+        "maintenance_capex": float,  # max(D&A, 5% of revenue) -- floored proxy
+        "growth_capex": float,       # capex - maintenance_capex
+        "raw_current_margin": float, # actual starting margin (drives the HEADLINE)
+        "ops_current_margin": float, # relieved margin (drives the UPSIDE only)
+        "upside_per_share": float|None,  # AGGRESSIVE upside base value, NOT headlined
+        "upside_lo": float|None,     # upside base band
+        "upside_hi": float|None,
+     },                              # relief NEVER changes the headline scenarios or
+                                      # the suppression decision (reviewer Findings 1-2)
      "suppressed": bool,             # True when the base scenario's per_share <= 0
-                                      # (non-credible negative equity value) -- see
-                                      # the "Non-credible negative valuation guard"
-                                      # note below
+                                      # (non-credible negative equity value) -- computed
+                                      # from the ACTUAL (unrelieved) margin, so capex-heavy
+                                      # names still suppress; see "Non-credible negative
+                                      # valuation guard" below.
      "suppressed_reason": str|None,  # Turkish explanation, set only when suppressed
      "notes": [str],
   },
@@ -1228,6 +1253,24 @@ consumed by interpret phase 2, CLI card, HTML report, and store):
                                      # be None if the growth gate rejected it or a
                                      # precondition was missing; may be non-None but NOT
                                      # the headline if the guardrail kept EPV instead).
+  "midgrowth_revenue_headline": bool,  # Sec.8d; True only when sector_type ==
+                                     # "growth_unprofitable", NOT hyper, the method
+                                     # built, cleared its 12% growth gate, and its
+                                     # base per-share was not suppressed (<= 0).
+  "midgrowth_revenue_detail": None | {
+     "scenarios": {"bear": {"per_share","lo","hi","start_growth",
+                              "target_fcf_margin","terminal_growth",
+                              "discount_rate"}, "base": {...}, "bull": {...}},
+     "start_growth": float,          # realized CAGR/YoY blend, same across all 3 scenarios
+     "target_margin_base": float,    # mature target FCF margin (<= _MIDGROWTH_TARGET_CAP 20%)
+     "current_margin": float,        # 3y-median SBC-adjusted FCF margin (fade start point)
+     "steady_state_year": int,       # 8 (_MIDGROWTH_STEADY_STATE_YEAR)
+     "annual_dilution": float,       # clamp(shares_yoy if > 0 else 0, 0, 0.05)
+     "financing_shares": float,      # cumulative-burn / price (hyper-style)
+     "suppressed": bool,             # True when base per_share <= 0 (falls back to multiples)
+  },                                 # Sec.8d; built (attempted) for growth_unprofitable
+                                     # non-hyper filers; None when the growth gate rejected
+                                     # it or a precondition was missing.
   "assumptions": <the validated AND CLAMPED assumptions dict (Sec.3's
                    clamp_assumptions, F5) -- what's shown here is exactly
                    what every DCF/reverse-DCF/sensitivity/hyper calculation
@@ -1350,6 +1393,159 @@ iskonto %12."` A scenario missing its hyper cell (a failed
 assumptions-derived string for that scenario, exactly as the non-hyper path
 always has.
 Round all per-share values to 2 decimals, percentiles to 1, growth rates to 4.
+
+### Sec.3.6 — Maintenance/growth CapEx split (`engine._maintenance_adjusted_margin`)
+
+The `suppressed` guard above is a correct-but-conservative backstop: it
+declines to publish a negative band, but it also leaves a genuinely
+financeable capex-heavy grower (a data-center builder like APLD) with no
+DCF headline at all. Roadmap Madde 1 addresses the root cause instead of
+only guarding the symptom. The problem: `_build_hyper_growth`'s starting FCF
+margin was `(OCF − total CapEx − SBC) / revenue`. For a filer whose CapEx is
+many multiples of revenue, that margin is deeply negative — but most of that
+CapEx is **growth** CapEx that builds the very future revenue the
+revenue-first projection already captures via its growth path. Subtracting it
+from the *starting* margin double-penalizes the same expansion (once as
+today's cash outflow, again as forgone terminal cash flow).
+
+`_maintenance_adjusted_margin(normalized, metrics, raw_current_margin) ->
+(ops_margin, capex_normalization | None)` computes the growth-CapEx-relieved
+margin, using depreciation & amortization (the `Depreciation` concept),
+**floored at `_MAINTENANCE_CAPEX_MIN_PCT_REVENUE` (= 0.05) of revenue**, as
+the maintenance-CapEx proxy. The revenue floor exists because current-year
+D&A understates the maintenance burden of a still-ramping asset base
+(reviewer Finding 2: a data-center builder's future depreciation reflects
+its grown-out fleet, not today's small one). All figures are read at
+`resolve_fundamental_fy(metrics)`. Gate — BOTH must hold, else the raw margin
+is returned unchanged and `capex_normalization` is `None`:
+
+- `capex / revenue > _CAPEX_HEAVY_INTENSITY_THRESHOLD` (new constant `= 0.30`)
+  — genuinely capex-heavy, not an asset-light software grower.
+- `capex > max(d&a, 0.05·revenue)` — there is growth CapEx above the floored
+  maintenance level to relieve.
+
+When applied: `maintenance_capex = max(d&a, 0.05·revenue)`, `growth_capex =
+capex − maintenance_capex`, `ops_margin = raw_current_margin + growth_capex /
+revenue` (an additive correction on the caller's raw margin).
+
+**The relief is deliberately NOT the headline (reviewer Findings 1–2).** A
+finance review showed that relieving growth CapEx from the *starting* margin
+while revenue still compounds up the growth path books the revenue ramp but
+charges the CapEx funding it *nowhere* — a one-directional over-valuation,
+the same owner-earnings add-back double-count SPEC Sec.8b explicitly rejects
+(and current-year D&A understates steady-state maintenance for a ramping
+fleet, compounding it). And the "correct" fix — a growth-tied reinvestment
+charge — is itself unreliable for these names (single-year sales-to-capital
+is wildly unstable given lumpy forward CapEx). So:
+
+- `_build_hyper_growth`'s **headline scenarios keep using the ACTUAL
+  (unrelieved) `current_margin`**. Capex-heavy names therefore still hit the
+  `suppressed` (base `per_share <= 0`) guard above and are dropped from the
+  headline — the honest, conservative behavior.
+- The relieved `ops_margin` is used ONLY to compute a separate base-scenario
+  value reported as an **explicitly-labeled AGGRESSIVE UPSIDE, never the
+  headline**: `_build_hyper_growth` adds `capex_normalization` to
+  `hyper_growth_detail` = `{"applied": True, "capex_intensity",
+  "maintenance_capex", "growth_capex", "raw_current_margin",
+  "ops_current_margin", "upside_per_share", "upside_lo", "upside_hi"}` (or
+  `None` when not applied), and appends a Turkish note stating the headline
+  DCF is suppressed and this upside is what a "growth CapEx normalizes" view
+  implies (flagged upward-biased). The `upside_*` band uses the same base
+  start-growth/target/discount-rate/dilution/financing-shares as the headline
+  base scenario — only the starting margin differs.
+- **Finding 3 fix:** the mature-target floor (`_hyper_target_base`) is passed
+  the ACTUAL current margin, never the relieved one, so a relieved (possibly
+  positive) margin can never leak into the terminal margin.
+
+This helper is used only by the hyper-grower path. The mid-growth path
+(Sec.8d) deliberately does NOT apply it — its whole point is a defensible,
+not aggressive, value, so a capex-heavy mid-grower whose base suppresses
+simply falls back to multiples.
+
+## 8d. Mid-growth loss-making revenue-first DCF — `engine._build_midgrowth_revenue_dcf`
+
+A revenue-first alternative to a **multiples-only** headline for
+`sector_type == "growth_unprofitable"` filers that grow the top line at a
+real but sub-hyper rate (realized CAGR roughly 12–20%) and are therefore NOT
+picked up by `sector.detect_hyper_grower` (which needs CAGR > 20%). Roadmap
+Madde 2 — previously deferred deliberately (a multiples fallback was
+preferred over a speculative DCF value); now built. Sits between the mature
+(Sec.8b) and hyper-grower (Sec.3) revenue-first paths.
+
+Attempted in `run_valuation` only when `sector_type == "growth_unprofitable"`
+AND hyper-grower mode is NOT active — a new trailing branch after the mature
+`elif`. Reuses `revenue_dcf.revenue_first_dcf` + `_hyper_scenario_band`.
+
+New constants (`engine.py`): `_MIDGROWTH_MIN_GROWTH = 0.12`,
+`_MIDGROWTH_TARGET_CAP = 0.20`, `_MIDGROWTH_STEADY_STATE_YEAR = 8`.
+
+- `revenue0` at `resolve_fundamental_fy`; `shares`; missing/non-positive →
+  `(None, note)` (falls back to multiples).
+- `start_growth = _mature_start_growth(...)` (reused: blended realized CAGR).
+- **Growth gate:** `start_growth < _MIDGROWTH_MIN_GROWTH` (12%) OR
+  `start_growth <= base.terminal_growth` → `(None, note)`.
+- **Target mature FCF margin:** `min(_hyper_target_base(gm, current_margin),
+  _MIDGROWTH_TARGET_CAP)` where `gm` = latest-FY positive gross margin. The
+  gross-margin construction (hyper path) is used rather than the mature
+  path's operating-margin/historical-FCF anchors, which degenerate for a
+  loss-maker with no positive-margin history. Capped at 20% (between mature's
+  15% and hyper's 30%).
+- **Current (starting) margin:** `_mature_current_margin(...)` (3-year median,
+  negative for loss-makers). The Sec.3.6 CapEx relief is deliberately NOT
+  applied here — this path aims for a defensible value, so a capex-heavy
+  mid-grower whose base value suppresses falls back to multiples instead.
+- **Fade horizon:** `_MIDGROWTH_STEADY_STATE_YEAR` (8).
+- **Dilution & financing shares:** hyper-style — `annual_dilution =
+  clamp(shares_yoy if > 0 else 0, 0, 0.05)` and `financing_shares` derived
+  from the base scenario's cumulative burn / price (a mid-growth loss-maker
+  still funds burn by issuing equity), unlike the mature path's 0.
+- **Per scenario:** `discount_rate`/`terminal_growth` from the **clamped
+  assumptions** (`growth_unprofitable` is clamped `is_unprofitable=True`, so
+  the discount rate is already floored at 10%), NOT hard-coded hyper rates;
+  `target_margin = target_base * _MATURE_TARGET_MARGIN_SCALE[scenario]`;
+  `start_growth` identical across scenarios (as in the mature path).
+- **Suppression guardrail** (hyper-style): base `per_share <= 0` →
+  `suppressed = True`; the caller leaves `primary_dcf_scenarios` untouched
+  (multiples fallback) rather than publishing a negative band.
+- Returns `{"scenarios": {...bear/base/bull {"per_share","lo","hi",
+  "start_growth","target_fcf_margin","terminal_growth","discount_rate"}},
+  "start_growth", "target_margin_base", "current_margin",
+  "steady_state_year", "annual_dilution", "financing_shares",
+  "suppressed"}`, or `(None, notes)`.
+
+### `run_valuation` integration
+
+Priority chain: `hyper-grower > cyclical normalized_variant > (mature-gate
+fired: mature-revenue / EPV) > (growth_unprofitable, not hyper: mid-growth
+revenue-first) > raw FCF-DCF`. When the mid-growth band is built, not
+suppressed, and its base `per_share` is a number, `primary_dcf_scenarios`
+becomes its scenarios and `midgrowth_revenue_headline = True`; otherwise the
+filer keeps its existing raw-FCF-DCF/multiples fallback (the method's notes
+are still surfaced so the reader knows why).
+
+- `scenario_meta`: `_midgrowth_scenario_meta` (mirrors `_mature_scenario_meta`
+  with the 8-year fade and "orta-büyüme" wording).
+- **Reverse-DCF override (§5 same-base invariant):** revenue-based, mirroring
+  the mature override — `revenue_dcf.implied_start_growth(price, revenue0,
+  base_terminal_growth, base_discount_rate, current_margin, target_margin_base,
+  steady_state_year, shares, annual_dilution, financing_shares)` (uses the
+  detail's own `annual_dilution`/`financing_shares` so the implied growth is
+  apples-to-apples with the published band); realized reference = revenue
+  CAGR; `realized_label` = `"gelir 5y"`/`"gelir 3y"`; `bracket_status = "ok"`.
+- **§9 sensitivity exception:** same documented break as EPV/mature — the
+  `sensitivity` grid keeps reflecting the secondary FCF-DCF base, with a
+  Turkish note.
+- **Confidence ceiling (Sec.10):** `midgrowth_revenue_headline` → same
+  `YÜKSEK → ORTA` cap as `mature_revenue_headline` (DCF and reverse-DCF legs
+  derive from one model).
+
+### Scope
+
+Purely additive: new output keys `midgrowth_revenue_headline` (bool) and
+`midgrowth_revenue_detail` (dict|None); does not change any existing key's
+meaning, and applies only to `growth_unprofitable` non-hyper filers. A
+`growth_unprofitable` filer whose growth gate rejects the attempt, or whose
+base value is suppressed, is unaffected (multiples-only headline as before).
 
 ## 12. Two-phase interpret (`interpret/analyzer.py` refactor)
 

@@ -55,7 +55,7 @@ def _to_float(row: dict, key: str) -> Optional[float]:
 
 def _parse_multiples_rows(rows: List[dict]) -> List[dict]:
     """Convert raw ``multiples.csv`` rows into
-    ``{"industry","pe","ps","pfcf","growth","peg"}``.
+    ``{"industry","pe","ps","pfcf","growth","peg","beta"}``.
 
     Rows without a usable ``industry`` value are skipped; missing/malformed
     ``pe``/``ps``/``pfcf`` columns become ``None`` on that row rather than
@@ -63,7 +63,11 @@ def _parse_multiples_rows(rows: List[dict]) -> List[dict]:
     fraction e.g. ``0.15`` for 15%) and ``peg`` are OPTIONAL columns used
     only for the sector-median PEG comparison (VALUATION.md Sec.7); both
     default to ``None`` when absent, so older two-/four-column CSVs keep
-    working unchanged.
+    working unchanged. ``unlevered_beta`` (Damodaran's sector unlevered/asset
+    beta, a plain number e.g. ``1.5``) is likewise OPTIONAL and feeds the CAPM
+    cost-of-equity discount rate (:mod:`sec_analyzer.valuation.capm`); it
+    parses into the ``"beta"`` key and defaults to ``None`` when the column is
+    absent.
     """
     parsed = []
     for row in rows:
@@ -78,18 +82,37 @@ def _parse_multiples_rows(rows: List[dict]) -> List[dict]:
                 "pfcf": _to_float(row, "pfcf"),
                 "growth": _to_float(row, "growth"),
                 "peg": _to_float(row, "peg"),
+                "beta": _to_float(row, "unlevered_beta"),
             }
         )
     return parsed
 
 
-def _parse_erp(rows: List[dict]) -> Optional[float]:
-    """Find the ``region == "US"`` row in raw ``erp.csv`` rows and return its ``erp``."""
+def _find_us_row(rows: List[dict]) -> Optional[dict]:
+    """Return the ``region == "US"`` row from raw ``erp.csv`` rows, or ``None``."""
     for row in rows:
         region = (row.get("region") or "").strip().upper()
         if region == _ERP_REGION:
-            return _to_float(row, "erp")
+            return row
     return None
+
+
+def _parse_erp(rows: List[dict]) -> Optional[float]:
+    """Find the ``region == "US"`` row in raw ``erp.csv`` rows and return its ``erp``."""
+    us_row = _find_us_row(rows)
+    return _to_float(us_row, "erp") if us_row is not None else None
+
+
+def _parse_risk_free(rows: List[dict]) -> Optional[float]:
+    """Return the US ``risk_free`` value from raw ``erp.csv`` rows, or ``None``.
+
+    Optional column (older ``region,erp`` files lack it): the risk-free rate,
+    stored as a percentage number consistent with ``erp`` (e.g. ``4.20`` for
+    4.2%). Consumed by :mod:`sec_analyzer.valuation.capm` as the CAPM
+    intercept.
+    """
+    us_row = _find_us_row(rows)
+    return _to_float(us_row, "risk_free") if us_row is not None else None
 
 
 def load_sector_data(dir_path: Optional[str]) -> Optional[dict]:
@@ -100,10 +123,11 @@ def load_sector_data(dir_path: Optional[str]) -> Optional[dict]:
             ``erp.csv`` (typically ``Config.DAMODARAN_DIR``).
 
     Returns:
-        ``{"multiples": [{"industry","pe","ps","pfcf"}, ...] or None,
-        "erp": float or None}``, or ``None`` if ``dir_path`` doesn't exist
-        or neither file yielded anything usable. Never raises; every
-        missing piece is logged.
+        ``{"multiples": [{"industry","pe","ps","pfcf","growth","peg","beta"},
+        ...] or None, "erp": float or None, "risk_free": float or None}``, or
+        ``None`` if ``dir_path`` doesn't exist or neither file yielded
+        anything usable. ``erp``/``risk_free`` are percentage numbers (e.g.
+        ``4.23`` for 4.23%). Never raises; every missing piece is logged.
     """
     if not dir_path or not os.path.isdir(dir_path):
         logger.info("damodaran: directory %r not found; sector medians unavailable.", dir_path)
@@ -119,11 +143,16 @@ def load_sector_data(dir_path: Optional[str]) -> Optional[dict]:
 
     parsed_multiples = _parse_multiples_rows(multiples_rows) if multiples_rows is not None else None
     erp_value = _parse_erp(erp_rows) if erp_rows is not None else None
+    risk_free_value = _parse_risk_free(erp_rows) if erp_rows is not None else None
 
-    if not parsed_multiples and erp_value is None:
+    if not parsed_multiples and erp_value is None and risk_free_value is None:
         return None
 
-    return {"multiples": parsed_multiples or None, "erp": erp_value}
+    return {
+        "multiples": parsed_multiples or None,
+        "erp": erp_value,
+        "risk_free": risk_free_value,
+    }
 
 
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
@@ -235,6 +264,9 @@ def _row_to_result(row: dict) -> dict:
 
     ``growth``/``peg`` are included but are ``None`` unless the reference CSV
     carried those optional columns (VALUATION.md Sec.7 sector-PEG comparison).
+    ``beta`` (the sector unlevered beta) is likewise ``None`` unless the CSV
+    carried an ``unlevered_beta`` column (CAPM cost of equity, see
+    :mod:`sec_analyzer.valuation.capm`).
     """
     return {
         "industry": row.get("industry"),
@@ -243,6 +275,7 @@ def _row_to_result(row: dict) -> dict:
         "pfcf": row.get("pfcf"),
         "growth": row.get("growth"),
         "peg": row.get("peg"),
+        "beta": row.get("beta"),
     }
 
 
@@ -279,7 +312,8 @@ def sector_medians(sector_data: Optional[dict], sic_description: Optional[str]) 
 
     Returns:
         ``{"industry": str, "pe": float|None, "ps": float|None,
-        "pfcf": float|None}`` for the best-matching row, or ``None`` if
+        "pfcf": float|None, "growth": float|None, "peg": float|None,
+        "beta": float|None}`` for the best-matching row, or ``None`` if
         there's no sector data, no description, or no row scores a match.
         Never raises.
     """

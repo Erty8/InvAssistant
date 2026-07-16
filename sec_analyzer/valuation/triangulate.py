@@ -371,6 +371,7 @@ def triangulate(
     growth_adj_pct: Optional[float] = None,
     earnings_power_headline: bool = False,
     mature_revenue_headline: bool = False,
+    midgrowth_revenue_headline: bool = False,
     pffo_pct: Optional[float] = None,
 ) -> dict:
     """Combine the three method signals into one confidence + direction view.
@@ -444,6 +445,16 @@ def triangulate(
             ``earnings_power_headline`` in practice (``engine.py`` never
             sets both), but if both were ever true, the
             ``earnings_power_headline`` cap message takes precedence.
+        midgrowth_revenue_headline: Whether the headline fair-value range came
+            from the mid-growth, loss-making revenue-first DCF (SPEC.md
+            Sec.8d -- ``growth_unprofitable`` filers growing 12-20% that
+            ``detect_hyper_grower`` doesn't pick up; see
+            ``engine._build_midgrowth_revenue_dcf``). Same
+            :data:`CONFIDENCE_MEDIUM` cap as ``mature_revenue_headline`` for
+            the same reason: the DCF leg and its reverse-DCF leg both derive
+            from one revenue-first model, so they aren't independent
+            evidence. ``False`` (the default) preserves existing behavior.
+            Mutually exclusive in practice with the two headline flags above.
         pffo_pct: The current P/FFO's historical percentile (see
             ``multiples.percentile_position`` over ``multiples_history``'s
             ``pffo`` column). Primary multiples-signal candidate for
@@ -471,7 +482,7 @@ def triangulate(
         return _triangulate(
             price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
             hyper_growth, bull_band, reverse_dcf_status, raw_growth_pair_pct, growth_adj_pct,
-            earnings_power_headline, mature_revenue_headline, pffo_pct,
+            earnings_power_headline, mature_revenue_headline, midgrowth_revenue_headline, pffo_pct,
         )
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("triangulate() failed unexpectedly; returning a no-data result.")
@@ -491,7 +502,7 @@ def triangulate(
 def _triangulate(
     price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
     hyper_growth=False, bull_band=None, reverse_dcf_status=None, raw_growth_pair_pct=None, growth_adj_pct=None,
-    earnings_power_headline=False, mature_revenue_headline=False, pffo_pct=None,
+    earnings_power_headline=False, mature_revenue_headline=False, midgrowth_revenue_headline=False, pffo_pct=None,
 ) -> dict:
     signals = {
         "dcf": _dcf_signal(price, dcf_base_band, hyper_growth, bull_band),
@@ -550,6 +561,12 @@ def _triangulate(
         confidence = CONFIDENCE_MEDIUM
         rationale["confidence"] += (
             " (Manşet, olgun revenue-first DCF'e dayanıyor; bu yöntemin ters-DCF'i de aynı modelden "
+            "türediği için bağımsız bir kanıt değil, güven en fazla ORTA ile sınırlandı.)"
+        )
+    elif midgrowth_revenue_headline and confidence == CONFIDENCE_HIGH:
+        confidence = CONFIDENCE_MEDIUM
+        rationale["confidence"] += (
+            " (Manşet, orta-büyüme revenue-first DCF'e dayanıyor; bu yöntemin ters-DCF'i de aynı modelden "
             "türediği için bağımsız bir kanıt değil, güven en fazla ORTA ile sınırlandı.)"
         )
 

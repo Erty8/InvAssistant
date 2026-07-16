@@ -348,3 +348,45 @@ def test_print_verdict_card_sensitivity_line_without_flag(capsys):
 
     assert "Duyarlılık:  base $87–$131 (g±2pp, r±1pp)" in out
     assert "yüksek belirsizlik" not in out
+
+
+# ---------------------------------------------------------------------------
+# "Olaylar:" line -- recent 8-K event signal attached as result["events"].
+# ---------------------------------------------------------------------------
+
+
+def test_print_verdict_card_events_line_summarizes_events(capsys):
+    result = _result_without_valuation()
+    result["events"] = [
+        {"date": "2026-06-15", "severity": "critical", "items": ["4.02"],
+         "categories": ["Önceki finansal tablolara güvenilemez (restatement)"]},
+        {"date": "2026-07-01", "severity": "warning", "items": ["5.02"],
+         "categories": ["Üst düzey yönetici/kurul değişikliği"]},
+    ]
+    _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
+    out = capsys.readouterr().out
+
+    assert "Olaylar:" in out
+    assert "1 kritik, 1 uyarı" in out
+    # Most-severe-first: the restatement leads the listed events.
+    assert "güvenilemez" in out
+
+
+def test_print_verdict_card_events_line_reads_yok_when_empty(capsys):
+    result = _result_without_valuation()
+    result["events"] = []
+    _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
+    out = capsys.readouterr().out
+
+    # The line is always present; empty events render "yok".
+    assert "Olaylar:" in out
+    events_line = [ln for ln in out.splitlines() if ln.startswith("Olaylar:")][0]
+    assert events_line.strip().endswith("yok")
+
+
+def test_print_verdict_card_events_line_absent_key_is_safe(capsys):
+    # A legacy/stored result with no "events" key must still render "yok",
+    # not crash.
+    _print_verdict_card("AAPL", "1y", _result_without_valuation(), metrics={"price": 100.0})
+    out = capsys.readouterr().out
+    assert "Olaylar:" in out
