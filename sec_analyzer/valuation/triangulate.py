@@ -373,6 +373,7 @@ def triangulate(
     mature_revenue_headline: bool = False,
     midgrowth_revenue_headline: bool = False,
     pffo_pct: Optional[float] = None,
+    cyclical_fcfe_headline: bool = False,
 ) -> dict:
     """Combine the three method signals into one confidence + direction view.
 
@@ -455,6 +456,19 @@ def triangulate(
             from one revenue-first model, so they aren't independent
             evidence. ``False`` (the default) preserves existing behavior.
             Mutually exclusive in practice with the two headline flags above.
+        cyclical_fcfe_headline: Whether the headline fair-value range came
+            from the cyclical sustainable-growth FCFE anchor (SPEC.md
+            Sec.8e -- capital-intensive cyclical filers, e.g. Micron, whose
+            FCF-DCF is suppressed by heavy growth CapEx; see
+            ``engine._build_cyclical_fcfe``) rather than the raw FCF-DCF,
+            the cycle-mid normalized FCF-DCF, or the EPV anchor. Same
+            :data:`CONFIDENCE_MEDIUM` cap as the other headline overrides
+            for the same reason: the DCF leg here derives from the same
+            normalized-earnings anchor the reverse-DCF/multiples legs are
+            ultimately compared against, so three-way agreement is weaker
+            evidence than it is for an independent FCF-based estimate.
+            ``False`` (the default) preserves existing behavior. Mutually
+            exclusive in practice with the other headline flags above.
         pffo_pct: The current P/FFO's historical percentile (see
             ``multiples.percentile_position`` over ``multiples_history``'s
             ``pffo`` column). Primary multiples-signal candidate for
@@ -483,6 +497,7 @@ def triangulate(
             price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
             hyper_growth, bull_band, reverse_dcf_status, raw_growth_pair_pct, growth_adj_pct,
             earnings_power_headline, mature_revenue_headline, midgrowth_revenue_headline, pffo_pct,
+            cyclical_fcfe_headline,
         )
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("triangulate() failed unexpectedly; returning a no-data result.")
@@ -503,6 +518,7 @@ def _triangulate(
     price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
     hyper_growth=False, bull_band=None, reverse_dcf_status=None, raw_growth_pair_pct=None, growth_adj_pct=None,
     earnings_power_headline=False, mature_revenue_headline=False, midgrowth_revenue_headline=False, pffo_pct=None,
+    cyclical_fcfe_headline=False,
 ) -> dict:
     signals = {
         "dcf": _dcf_signal(price, dcf_base_band, hyper_growth, bull_band),
@@ -568,6 +584,12 @@ def _triangulate(
         rationale["confidence"] += (
             " (Manşet, orta-büyüme revenue-first DCF'e dayanıyor; bu yöntemin ters-DCF'i de aynı modelden "
             "türediği için bağımsız bir kanıt değil, güven en fazla ORTA ile sınırlandı.)"
+        )
+    elif cyclical_fcfe_headline and confidence == CONFIDENCE_HIGH:
+        confidence = CONFIDENCE_MEDIUM
+        rationale["confidence"] += (
+            " (Manşet, kazanç-tabanlı FCFE çapasından geldiği için — DCF ve çarpanlar bastırılmış FCF'i "
+            "yansıtır — güven ORTA'ya sınırlandı.)"
         )
 
     return {"signals": signals, "confidence": confidence, "direction": direction, "rationale": rationale}

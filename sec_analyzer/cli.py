@@ -35,6 +35,13 @@ from typing import List, Optional, Tuple
 
 import requests
 
+from sec_analyzer.calibrate import (
+    DEFAULT_TICKERS,
+    print_calibration_table,
+    run_calibration,
+    save_calibration_snapshot,
+    summarize_ratios,
+)
 from sec_analyzer.config import Config, ConfigError
 from sec_analyzer.fetch.companyfacts import get_company_facts, get_submissions
 from sec_analyzer.fetch.filings import estimate_next_earnings
@@ -326,11 +333,27 @@ def _scenario_line(label: str, scenario: Optional[dict]) -> str:
 def _valuation_method_label(valuation: dict) -> str:
     """Return the fair-value method label for the card's "Fair Value" line.
 
-    Three possible labels, depending on which anchor produced the fair-value
-    band for this filer's sector (SPEC.md Sec.8/11):
+    Checked in order, depending on which anchor actually produced the
+    headline fair-value band for this filer (SPEC.md Sec.8/8e/11):
 
+    - ``"Revenue-DCF (hiper-büyüme)"``: the hyper-grower revenue-first DCF is
+      the headline (``valuation["hyper_growth"]`` truthy and its
+      ``hyper_growth_detail`` present and not suppressed -- SPEC.md Sec.3.5,
+      which takes precedence over every anchor below).
+    - ``"FCFE (kazanç+büyüme)"``: the cyclical sustainable-growth FCFE
+      anchor is the headline (``valuation["cyclical_fcfe_headline"]`` --
+      SPEC.md Sec.8e, e.g. Micron-shaped capital-intensive cyclicals whose
+      FCF-DCF is suppressed by growth CapEx).
+    - ``"EPV"``: the zero-growth earnings-power-value anchor is the headline
+      (``valuation["earnings_power_headline"]`` -- SPEC.md Sec.8a, e.g.
+      Amazon-shaped mature filers, or a cyclical whose FCFE anchor couldn't
+      clear the EPV floor).
+    - ``"Revenue-DCF"``: a revenue-first DCF is the headline
+      (``valuation["mature_revenue_headline"]`` or
+      ``["midgrowth_revenue_headline"]``).
     - ``"DCF"``: the FCF-based DCF is enabled (``valuation["dcf"]["enabled"]``
-      is truthy) -- the common case for non-financial, non-REIT sectors.
+      is truthy) -- the common case for non-financial, non-REIT sectors when
+      none of the anchors above headlined.
     - ``"FFO"``: the DCF is disabled and ``valuation["ffo"]`` is a populated
       FFO-based Gordon growth block (has a ``"scenarios"`` key) -- REIT/GYO
       filers valued via FFO multiples instead of a cash-flow DCF.
@@ -340,6 +363,20 @@ def _valuation_method_label(valuation: dict) -> str:
       block.
     """
     valuation = valuation or {}
+    # Hyper-grower revenue-first DCF takes precedence over every other anchor
+    # (SPEC.md Sec.3.5). It's the headline whenever it was detected and its
+    # detail wasn't suppressed; the standard FCF-DCF is still computed as a
+    # secondary (so ``dcf.enabled`` stays truthy) -- without this check a
+    # hyper-headlined filer (e.g. Reddit) would mislabel as "DCF".
+    hyper_detail = valuation.get("hyper_growth_detail") or {}
+    if valuation.get("hyper_growth") and hyper_detail and not hyper_detail.get("suppressed"):
+        return "Revenue-DCF (hiper-büyüme)"
+    if valuation.get("cyclical_fcfe_headline"):
+        return "FCFE (kazanç+büyüme)"
+    if valuation.get("earnings_power_headline"):
+        return "EPV"
+    if valuation.get("mature_revenue_headline") or valuation.get("midgrowth_revenue_headline"):
+        return "Revenue-DCF"
     dcf = valuation.get("dcf") or {}
     if dcf.get("enabled", True):
         return "DCF"
@@ -851,6 +888,37 @@ def cmd_analyze(args: argparse.Namespace) -> None:
             print(f"\nWARNING: failed to generate HTML report: {exc}", file=sys.stderr)
 
 
+def cmd_calibrate(args: argparse.Namespace) -> None:
+    """Handle the ``calibrate`` subcommand: run the headless script-provider
+    pipeline over a ticker basket and report the fair-value/price ratio
+    distribution (normalization Work Package 0 -- see
+    :mod:`sec_analyzer.calibrate`).
+
+    Prints the per-ticker table, a readable summary of the ratio
+    distribution, and the path of the saved JSON snapshot.
+    """
+    tickers = (
+        [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
+        if getattr(args, "tickers", None)
+        else DEFAULT_TICKERS
+    )
+
+    rows = run_calibration(tickers, years=args.years, no_cache=args.no_cache)
+    print()
+    print_calibration_table(rows)
+
+    summary = summarize_ratios(rows)
+    print("\nSummary:")
+    for key, value in summary.items():
+        print(f"  {key}: {value}")
+
+    path = save_calibration_snapshot(args.label, rows, summary)
+    if path:
+        print(f"\nSaved calibration snapshot to: {path}")
+    else:
+        print("\nWARNING: failed to save calibration snapshot.", file=sys.stderr)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the top-level ``argparse`` parser with its subcommands."""
     parser = argparse.ArgumentParser(
@@ -923,6 +991,42 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     analyze_parser.set_defaults(func=cmd_analyze)
+
+    calibrate_parser = subparsers.add_parser(
+        "calibrate",
+        help=(
+            "Run the headless script-provider pipeline over a ticker basket "
+            "and report the fair-value/price ratio distribution (normalization "
+            "measurement tool; see sec_analyzer.calibrate)."
+        ),
+    )
+    calibrate_parser.add_argument(
+        "--tickers",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated ticker list, e.g. 'AAPL,MSFT'. "
+            "Default: sec_analyzer.calibrate.DEFAULT_TICKERS (~28-ticker basket)."
+        ),
+    )
+    calibrate_parser.add_argument(
+        "--label",
+        type=str,
+        default="run",
+        help="Short label used in the saved snapshot's filename (default: 'run').",
+    )
+    calibrate_parser.add_argument(
+        "--years",
+        type=int,
+        default=5,
+        help="Number of most-recent fiscal years to retain (default: 5).",
+    )
+    calibrate_parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Bypass the on-disk raw JSON/price caches and re-fetch.",
+    )
+    calibrate_parser.set_defaults(func=cmd_calibrate)
 
     return parser
 

@@ -154,10 +154,12 @@ def test_full_scenario_build_hand_verified():
     # _mature_start_growth mechanics as test_valuation_mature_revenue.py).
     #
     # Target margin: gross_margin=0.60 -> _hyper_target_base(0.60,
-    # current_margin): ceiling=min(0.60*0.5, 0.30)=0.30; current_margin
-    # (below) is -0.15, not >0, so base=ceiling=0.30; gm known -> min(0.30,
-    # 0.60)=0.30. Then capped at _MIDGROWTH_TARGET_CAP (0.20):
-    # target_margin_base = min(0.30, 0.20) = 0.20 (the mid-growth cap binds).
+    # current_margin): ceiling=0.60*0.5=0.30; current_margin (below) is
+    # -0.15, not >0, so base=ceiling=0.30; gm known -> min(0.30, 0.60)=0.30.
+    # WP4: no longer additionally capped at _MIDGROWTH_TARGET_CAP (0.20) --
+    # that's now only a flag/reference threshold, so
+    # target_margin_base = 0.30 (uncapped; exceeds the old 0.20 cap, so the
+    # "above_reference" flag/note fires).
     #
     # Current (starting) margin: single FY2023, OCF=-100, CapEx=50, no SBC,
     # no Depreciation reported (so _maintenance_adjusted_margin's gate fails
@@ -172,12 +174,14 @@ def test_full_scenario_build_hand_verified():
     # degenerate case -- only target_margin differs per scenario, via the
     # 0.7/1.0/1.2 _MATURE_TARGET_MARGIN_SCALE).
     #
-    # Revenue-first DCF (independently reimplemented from
-    # revenue_dcf.py's documented formulas in a from-scratch scratch script,
-    # NOT calling revenue_first_dcf; cross-checked before finalizing):
-    #   bear (target=0.20*0.7=0.14): per_share=7.9083  -> 7.91; lo=6.16, hi=10.15
-    #   base (target=0.20):          per_share=13.4053 -> 13.41; lo=10.77, hi=16.74
-    #   bull (target=0.20*1.2=0.24): per_share=17.0700 -> 17.07; lo=13.85, hi=21.14
+    # Revenue-first DCF (re-derived by calling revenue_dcf.revenue_first_dcf
+    # directly with the new uncapped target_base=0.30, and cross-checked
+    # against the real _build_midgrowth_revenue_dcf output before
+    # finalizing -- same growth-path/margin-path/PV/terminal-value formulas
+    # this test originally hand-verified for the capped 0.20 case):
+    #   bear (target=0.30*0.7=0.21): per_share=14.321482 -> 14.32; lo=11.54, hi=17.84
+    #   base (target=0.30):          per_share=22.566976 -> 22.57; lo=18.46, hi=27.74
+    #   bull (target=0.30*1.2=0.36): per_share=28.063971 -> 28.06; lo=23.08, hi=34.34
     normalized = _normalized({
         "Revenue": {2023: 1000.0},
         "OperatingCashFlow": {2023: -100.0},
@@ -196,7 +200,9 @@ def test_full_scenario_build_hand_verified():
 
     assert detail is not None
     assert detail["start_growth"] == pytest.approx(0.15)
-    assert detail["target_margin_base"] == pytest.approx(0.20)
+    assert detail["target_margin_base"] == pytest.approx(0.30)
+    assert detail["target_margin_flag"] == "above_reference"
+    assert any("referans eşiğinin üzerinde" in n for n in notes)
     assert detail["current_margin"] == pytest.approx(-0.15)
     assert detail["steady_state_year"] == 8
     assert detail["annual_dilution"] == pytest.approx(0.0)
@@ -207,24 +213,56 @@ def test_full_scenario_build_hand_verified():
 
     bear = detail["scenarios"]["bear"]
     assert bear["start_growth"] == pytest.approx(0.15)
-    assert bear["target_fcf_margin"] == pytest.approx(0.14)
+    assert bear["target_fcf_margin"] == pytest.approx(0.21)
     assert bear["terminal_growth"] == pytest.approx(0.03)
     assert bear["discount_rate"] == pytest.approx(0.15)
-    assert bear["per_share"] == pytest.approx(7.91, abs=0.01)
-    assert bear["lo"] == pytest.approx(6.16, abs=0.02)
-    assert bear["hi"] == pytest.approx(10.15, abs=0.02)
+    assert bear["per_share"] == pytest.approx(14.32, abs=0.01)
+    assert bear["lo"] == pytest.approx(11.54, abs=0.02)
+    assert bear["hi"] == pytest.approx(17.84, abs=0.02)
 
     base = detail["scenarios"]["base"]
-    assert base["target_fcf_margin"] == pytest.approx(0.20)
-    assert base["per_share"] == pytest.approx(13.41, abs=0.01)
-    assert base["lo"] == pytest.approx(10.77, abs=0.02)
-    assert base["hi"] == pytest.approx(16.74, abs=0.02)
+    assert base["target_fcf_margin"] == pytest.approx(0.30)
+    assert base["per_share"] == pytest.approx(22.57, abs=0.01)
+    assert base["lo"] == pytest.approx(18.46, abs=0.02)
+    assert base["hi"] == pytest.approx(27.74, abs=0.02)
 
     bull = detail["scenarios"]["bull"]
-    assert bull["target_fcf_margin"] == pytest.approx(0.24)
-    assert bull["per_share"] == pytest.approx(17.07, abs=0.01)
-    assert bull["lo"] == pytest.approx(13.85, abs=0.02)
-    assert bull["hi"] == pytest.approx(21.14, abs=0.02)
+    assert bull["target_fcf_margin"] == pytest.approx(0.36)
+    assert bull["per_share"] == pytest.approx(28.06, abs=0.01)
+    assert bull["lo"] == pytest.approx(23.08, abs=0.02)
+    assert bull["hi"] == pytest.approx(34.34, abs=0.02)
+
+
+def test_full_scenario_build_nets_sbc_out_of_dilution_via_non_sbc_dilution():
+    # WP1: same fixture as test_full_scenario_build_hand_verified above, but
+    # with shares_yoy=0.03 and market_cap=1000.0 supplied, plus a SBC=20.0
+    # tag for FY2023 -- engine._non_sbc_dilution (hand-verified directly in
+    # test_valuation_engine.py) nets the SBC-implied issuance rate
+    # (20/1000=0.02) out of the raw shares_yoy (0.03) before this path's
+    # revenue-first DCF ever sees it: annual_dilution = clamp(0.03-0.02, 0,
+    # 0.05) = 0.01 -- strictly LESS than the raw 0.03, proving the netting
+    # actually ran (rather than the pre-WP1 raw-shares_yoy-clamp behavior
+    # test_full_scenario_build_hand_verified exercises with shares_yoy=None).
+    normalized = _normalized({
+        "Revenue": {2023: 1000.0},
+        "OperatingCashFlow": {2023: -100.0},
+        "CapEx": {2023: 50.0},
+        "SBC": {2023: 20.0},
+    })
+    ratios = [{"fy": 2023, "gross_margin": 0.60}]
+    metrics = {
+        "revenue_cagr_5y": 0.15, "revenue_cagr_3y": None, "latest_fy": 2023,
+        "shares": 100.0, "shares_yoy": 0.03, "market_cap": 1000.0,
+    }
+    assumptions = _midgrowth_assumptions(discount_rate=0.15, terminal_growth=0.03)
+
+    detail, notes = _build_midgrowth_revenue_dcf(
+        assumptions, normalized, metrics, ratios, price=None, shares=100.0
+    )
+
+    assert detail is not None
+    assert detail["annual_dilution"] == pytest.approx(0.01)
+    assert any("çift sayım önlendi" in n for n in notes)
 
 
 # ---------------------------------------------------------------------------
@@ -236,9 +274,11 @@ def test_run_valuation_midgrowth_becomes_headline_hand_verified():
     # Same fixture as test_full_scenario_build_hand_verified above, run
     # through the full run_valuation wiring: sector_type="growth_unprofitable",
     # revenue_cagr_5y=0.15 is in the 12-20% band (does NOT trip
-    # detect_hyper_grower, which needs > 20%), base per_share=13.41 > 0 (not
+    # detect_hyper_grower, which needs > 20%), base per_share=22.57 > 0 (not
     # suppressed) -> midgrowth_revenue_headline=True, and fair_value_range
-    # must reflect the mid-growth band (base lo=10.77, hi=16.74).
+    # must reflect the mid-growth band (base lo=18.46, hi=27.74; WP4:
+    # target_margin_base=0.30, uncapped -- see test_full_scenario_build_
+    # hand_verified above for the arithmetic).
     normalized = _normalized({
         "Revenue": {2023: 1000.0},
         "OperatingCashFlow": {2023: -100.0},
@@ -264,17 +304,20 @@ def test_run_valuation_midgrowth_becomes_headline_hand_verified():
     detail = result["midgrowth_revenue_detail"]
     assert detail is not None
     assert detail["steady_state_year"] == 8
-    assert detail["target_margin_base"] <= 0.20
-    assert detail["target_margin_base"] == pytest.approx(0.20)
+    # WP4: target_margin_base is no longer clamped to _MIDGROWTH_TARGET_CAP
+    # (0.20) -- the gross-margin-derived value here is genuinely 0.30, above
+    # the old cap, and is flagged rather than truncated.
+    assert detail["target_margin_base"] == pytest.approx(0.30)
+    assert detail["target_margin_flag"] == "above_reference"
 
     base = detail["scenarios"]["base"]
-    assert base["per_share"] == pytest.approx(13.41, abs=0.02)
+    assert base["per_share"] == pytest.approx(22.57, abs=0.02)
 
     # Headline fair_value_range comes from the mid-growth band, not raw
     # FCF-DCF/multiples -- bands are present and finite.
     base_fvr = result["fair_value_range"]["base"]
-    assert base_fvr["lo"] == pytest.approx(10.77, abs=0.02)
-    assert base_fvr["hi"] == pytest.approx(16.74, abs=0.02)
+    assert base_fvr["lo"] == pytest.approx(18.46, abs=0.02)
+    assert base_fvr["hi"] == pytest.approx(27.74, abs=0.02)
     assert base_fvr["lo"] is not None and base_fvr["hi"] is not None
     for key in ("bear", "base", "bull"):
         assert result["fair_value_range"][key]["lo"] is not None
@@ -325,9 +368,11 @@ def test_run_valuation_suppressed_base_falls_back_to_multiples():
     # Deeply negative current margin (current_margin=-1.0, from OCF=-900,
     # CapEx=100, revenue=1000 -> (-900-100-0)/1000=-1.0) with the SAME
     # growth/target-margin setup as the hand-verified build above (start_
-    # growth=0.15, target_margin_base=0.20, ss=8, dr=0.15, tg=0.03,
-    # shares=100) drives the base scenario deeply negative (independently
-    # scratch-computed: per_share = -14.4634 -> -14.46, well below 0) ->
+    # growth=0.15, target_margin_base=0.30 -- WP4: uncapped, see
+    # test_full_scenario_build_hand_verified -- ss=8, dr=0.15, tg=0.03,
+    # shares=100) drives the base scenario deeply negative (re-derived by
+    # calling revenue_dcf.revenue_first_dcf directly with the new uncapped
+    # target_base=0.30: per_share = -5.301701 -> -5.30, well below 0) ->
     # the suppression guardrail fires: suppressed=True,
     # midgrowth_revenue_headline stays False (detail is still returned, for
     # transparency, but never headlined), and the headline stays on
@@ -360,7 +405,7 @@ def test_run_valuation_suppressed_base_falls_back_to_multiples():
     base_ps = detail["scenarios"]["base"]["per_share"]
     assert base_ps is not None
     assert base_ps <= 0
-    assert base_ps == pytest.approx(-14.46, abs=0.02)
+    assert base_ps == pytest.approx(-5.30, abs=0.02)
 
     assert any(
         "negatif özkaynak değeri" in n and "çarpan (multiples)" in n for n in result["notes"]

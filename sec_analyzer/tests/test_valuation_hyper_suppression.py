@@ -90,11 +90,12 @@ def _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10):
 # Why the base scenario's per_share must come out <= 0 (order-of-magnitude,
 # not an exact re-derivation -- the exact arithmetic lives in
 # revenue_dcf.revenue_first_dcf, hand-verified elsewhere):
-# start_growth for base = min(realized_cagr=1.5, cap 0.40) = 0.40, and the
-# FCF margin path linearly interpolates from current_margin=-6.3681 up to a
-# small positive target (<=0.30) over steady_state_year=10 years. Year 1
-# revenue = 144*1.40 = 201.6, margin ~= -6.3681 + (target-(-6.3681))/10 ~=
-# -5.72 -> FCF_1 ~= 201.6 * -5.72 ~= -1153. Every one of the first several
+# start_growth for base = min(realized_cagr=1.5, cap 0.60) = 0.60 (WP5:
+# _HYPER_START_GROWTH_CAP raised 0.40 -> 0.60), and the FCF margin path
+# linearly interpolates from current_margin=-6.3681 up to a small positive
+# target (<=0.30) over steady_state_year=10 years. Year 1 revenue =
+# 144*1.60 = 230.4, margin ~= -6.3681 + (target-(-6.3681))/10 ~= -5.72 ->
+# FCF_1 ~= 230.4 * -5.72 ~= -1318. Every one of the first several
 # years is comparably deeply negative (revenue keeps compounding at ~25-40%
 # while margin is still deeply negative), so the UNDISCOUNTED cumulative
 # burn alone is already many billions of dollars -- several orders of
@@ -166,11 +167,15 @@ def test_hyper_grower_capex_heavy_negative_base_is_suppressed():
 # test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline (Sec.12):
 # revenue0=1000, fcf=-50 (fcf_margin=-5%, mild), gross_margin=0.60,
 # revenue_cagr_5y=0.50, shares=100, price=50.0 -> base scenario
-# start_growth=0.40, target_fcf_margin=0.30, discount_rate=0.12 (fixed hyper
-# base rate), per_share~=99.97 (positive), and the base band (min/max over
-# the +/-2pp start_growth x +/-1pp discount grid) is lo=79.91, hi=126.53.
-# This is a regression guard that the new suppression logic does NOT fire on
-# a normal (profitable-enough-at-target) hyper-grower.
+# start_growth=min(0.50,0.60)=0.50 (WP5: _HYPER_START_GROWTH_CAP raised
+# 0.40 -> 0.60, so this is no longer capped at all), target_fcf_margin=0.30,
+# discount_rate=0.12 (fixed hyper base rate, the WP3 fade's year-1/cohort
+# rate), per_share~=185.39 (positive, WP3 fade-adjusted: mature_discount_rate
+# =max(base_discount=0.10, terminal 0.025+sanity._MIN_ERP_SPREAD 0.045)=
+# 0.10), and the base band (min/max over the +/-2pp start_growth x +/-1pp
+# discount grid, each row still fading to the same shared 0.10) is
+# lo=164.97, hi=208.25. This is a regression guard that the new suppression
+# logic does NOT fire on a normal (profitable-enough-at-target) hyper-grower.
 _HEALTHY_CONCEPTS_OVERRIDES = {"Revenue": [_rec(2023, 1000.0)]}
 _HEALTHY_RATIOS = [
     {"fy": 2023, "gross_margin": 0.60, "fcf": -50.0},
@@ -183,13 +188,24 @@ _HEALTHY_METRICS = {
 }
 
 
-def test_hyper_grower_healthy_positive_base_is_not_suppressed():
+def test_hyper_grower_healthy_positive_base_is_not_suppressed(tmp_path):
+    # This is a regression guard for the suppression-detection MECHANICS
+    # (not WP2's risk-free-linked terminal growth), so it pins
+    # terminal_growth to the old fixed 0.025 -- matching the hand-verified
+    # per_share/band numbers above, reused verbatim from
+    # test_valuation_engine.py -- by pointing damodaran_dir at a directory
+    # that doesn't exist (load_sector_data returns None -> the anchor falls
+    # back to engine._HYPER_TERMINAL_GROWTH=0.025). Without this,
+    # run_valuation's default damodaran_dir picks up the repo's real
+    # data/damodaran/erp.csv (risk_free=4.20) and the anchor becomes 0.04,
+    # invalidating these numbers.
     normalized = _normalized(_HEALTHY_CONCEPTS_OVERRIDES)
     assumptions = _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)
 
     result = run_valuation(
         normalized, _HEALTHY_RATIOS, _HEALTHY_METRICS, price=50.0, price_df=None,
         assumptions=assumptions, sector_type="growth_unprofitable",
+        damodaran_dir=str(tmp_path / "no_damodaran"),
     )
 
     assert result["hyper_growth"] is True
@@ -202,15 +218,15 @@ def test_hyper_grower_healthy_positive_base_is_not_suppressed():
     base_per_share = detail["scenarios"]["base"]["per_share"]
     assert base_per_share is not None
     assert base_per_share > 0
-    assert base_per_share == pytest.approx(99.97, abs=0.05)
+    assert base_per_share == pytest.approx(185.39, abs=0.05)
 
     # Headline fair_value_range.base is populated from the hyper band (not
     # emptied) -- same numbers as test_valuation_engine.py's hand-verified
     # grid derivation (lo=min, hi=max over the 3x3 start_growth x discount
-    # grid): lo=79.91, hi=126.53.
+    # grid, WP3 fade-adjusted): lo=164.97, hi=208.25.
     base_fvr = result["fair_value_range"]["base"]
-    assert base_fvr["lo"] == pytest.approx(79.91)
-    assert base_fvr["hi"] == pytest.approx(126.53)
+    assert base_fvr["lo"] == pytest.approx(164.97)
+    assert base_fvr["hi"] == pytest.approx(208.25)
     assert isinstance(base_fvr["lo"], (int, float))
     assert isinstance(base_fvr["hi"], (int, float))
 

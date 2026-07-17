@@ -140,11 +140,15 @@ def test_mature_target_fcf_margin_hist_anchor_binds():
     assert target == pytest.approx(0.075)
 
 
-def test_mature_target_fcf_margin_absolute_cap_binds():
+def test_mature_target_fcf_margin_no_absolute_cap_nopat_anchor_binds_uncapped():
     # op_margin: single FY2020, 400/1000=0.40 -> nopat=0.40*0.75*0.85=0.255.
     # hist: FY2015 (400-100)/1000=0.30 -> hist_anchor=0.30*1.5=0.45.
-    # Both anchors are far above _MATURE_TARGET_CAP (0.15) -> the absolute
-    # cap binds: target = min(0.255, 0.45, 0.15) = 0.15.
+    # WP4: _MATURE_TARGET_CAP (0.15) is no longer part of this function's
+    # min-candidates -- it is now only a reporting/flag threshold applied by
+    # the caller (_build_mature_revenue_dcf), not baked into this return
+    # value. So target = min(nopat=0.255, hist=0.45) = 0.255 (nopat binds,
+    # uncapped) -- both anchors are far above the old 0.15 cap, and that's
+    # now correctly reflected rather than silently truncated.
     normalized = _annual(
         OperatingIncome={2020: 400.0}, Revenue={2020: 1000.0, 2015: 1000.0},
         OperatingCashFlow={2015: 400.0}, CapEx={2015: 100.0},
@@ -152,7 +156,7 @@ def test_mature_target_fcf_margin_absolute_cap_binds():
     metrics = {"latest_fy": 2023}
 
     target = _mature_target_fcf_margin(normalized, metrics, ratios=[])
-    assert target == pytest.approx(0.15)
+    assert target == pytest.approx(0.255)
 
 
 def test_mature_target_fcf_margin_current_margin_floor_raises_target():
@@ -318,10 +322,14 @@ def test_build_mature_revenue_dcf_full_scenario_build_hand_verified():
     # revenue0=1000 (FY2023, no FY2022 revenue -> latest_yoy=None ->
     # start_growth = realized CAGR = 0.30 exactly, unblended).
     # target_margin_base: single-year OperatingIncome=300/Revenue=1000 ->
-    # op_margin=0.30 -> nopat=0.30*0.75*0.85=0.19125 (above the 0.15 cap).
-    # No OCF/CapEx data at all -> hist_anchor=None -> target=min(nopat=
-    # 0.19125, cap=0.15)=0.15 (cap binds). current_margin=0.0 (no OCF/CapEx
-    # data) -> floor inactive -> target_margin_base=0.15.
+    # op_margin=0.30 -> nopat=0.30*0.75*0.85=0.19125. No OCF/CapEx data at
+    # all -> hist_anchor=None -> target=min(nopat=0.19125)=0.19125 (WP4: no
+    # longer clamped to the old 0.15 cap -- that's now only a flag threshold
+    # the caller compares against, see the "above_reference" flag check
+    # below). current_margin=0.0 (no OCF/CapEx data) -> floor inactive ->
+    # target_margin_base=0.19125 (rounds to 0.1912 in the detail dict, see
+    # below -- round(0.19124999999999998, 4) == 0.1912 due to the exact
+    # floating-point value of 0.30*0.75*0.85).
     # ss=_MATURE_STEADY_STATE_YEAR=7. discount_rate=0.15, terminal_growth=
     # 0.06 for all three scenarios (a valid special case -- only the target
     # margin differs per scenario here, via the 0.7/1.0/1.2 scale).
@@ -329,30 +337,31 @@ def test_build_mature_revenue_dcf_full_scenario_build_hand_verified():
     # Growth path (fade from 0.30 to 0.06 over 7 years, denominator=ss-1=6):
     #   g_t = 0.30 - 0.04*min(t-1,6) for t=1..7, flat at 0.06 for t=8..10:
     #   g1=0.30, g2=0.26, g3=0.22, g4=0.18, g5=0.14, g6=0.10, g7=0.06 (== tg).
-    # Margin path (base, target=0.15, converge over 7 years):
-    #   m_t = 0.15*min(t,7)/7 = 0.02142857*min(t,7):
-    #   m1=0.021429, m2=0.042857, m3=0.064286, m4=0.085714, m5=0.107143,
-    #   m6=0.128571, m7=0.15 (flat for t=8..10).
-    # Revenue path (rev0=1000, rev_t=rev_{t-1}*(1+g_t)):
-    #   rev1=1300, rev2=1638, rev3=1998.36, rev4=2358.0648,
-    #   rev5=2688.193872, rev6=2957.013259, rev7=3134.434055,
-    #   rev8..10 continue fading at 0.06/yr -> 3322.500098, 3521.850104,
-    #   3733.16111.
+    # Margin path (base, target=0.19125, converge over 7 years):
+    #   m_t = 0.19125*min(t,7)/7 = 0.02732143*min(t,7).
+    # Revenue path is unaffected by the target margin (rev0=1000,
+    # rev_t=rev_{t-1}*(1+g_t)): rev1=1300, rev2=1638, rev3=1998.36,
+    # rev4=2358.0648, rev5=2688.193872, rev6=2957.013259, rev7=3134.434055,
+    # rev8..10 continue fading at 0.06/yr -> 3322.500098, 3521.850104,
+    # 3733.16111.
     # FCF_t=rev_t*m_t, discounted at r=0.15 (1.15^t), Gordon terminal value
     # off fcf10 at g=0.06: tv=fcf10*1.06/(0.15-0.06). Summed and divided by
     # effective_shares=100*(1+0)^7=100 (no dilution) gives the per-share
     # figures below.
-    # (Independently cross-checked with a from-scratch scratch computation
-    # -- not calling revenue_first_dcf -- reimplementing exactly these
-    # growth-path/margin-path/PV/terminal-value formulas before finalizing.)
+    # (Re-derived by calling revenue_dcf.revenue_first_dcf directly with the
+    # new uncapped target_base -- same growth-path/margin-path/PV/terminal-
+    # value formulas the from-scratch scratch computation above this test
+    # originally hand-verified for the capped case -- and cross-checked
+    # against the real _build_mature_revenue_dcf output before finalizing.)
     #
-    # bear (target=0.15*0.7=0.105): per_share=19.9038 -> round to 19.90;
+    # target_base = 0.19125 (uncapped nopat anchor).
+    # bear (target=0.19125*0.7=0.133875): per_share=25.377369 -> 25.38;
     #   3x3 sensitivity grid (start_growth +/-0.02, discount_rate +/-0.01)
-    #   -> lo=16.52, hi=24.29.
-    # base (target=0.15):          per_share=28.4340 -> round to 28.43;
-    #   -> lo=23.59, hi=34.71.
-    # bull (target=0.15*1.2=0.18): per_share=34.1208 -> round to 34.12;
-    #   -> lo=28.31, hi=41.65.
+    #   -> lo=21.06, hi=30.97.
+    # base (target=0.19125):          per_share=36.253384 -> 36.25;
+    #   -> lo=30.08, hi=44.25.
+    # bull (target=0.19125*1.2=0.2295): per_share=43.504061 -> 43.50;
+    #   -> lo=36.10, hi=53.10.
     normalized = _annual(Revenue={2023: 1000.0}, OperatingIncome={2023: 300.0})
     metrics = {"revenue_cagr_5y": 0.30, "revenue_cagr_3y": None, "latest_fy": 2023, "shares": 100.0}
     assumptions = _mature_assumptions(discount_rate=0.15, terminal_growth=0.06)
@@ -360,32 +369,33 @@ def test_build_mature_revenue_dcf_full_scenario_build_hand_verified():
     detail, notes = _build_mature_revenue_dcf(assumptions, normalized, metrics, ratios=[], price=None, shares=100.0)
 
     assert detail is not None
-    assert notes == []
+    assert any("referans eşiğinin üzerinde" in n for n in notes)
     assert detail["start_growth"] == pytest.approx(0.30)
-    assert detail["target_margin_base"] == pytest.approx(0.15)
+    assert detail["target_margin_base"] == pytest.approx(0.19125, abs=0.0001)
+    assert detail["target_margin_flag"] == "above_reference"
     assert detail["current_margin"] == pytest.approx(0.0)
     assert detail["steady_state_year"] == 7
 
     bear = detail["scenarios"]["bear"]
     assert bear["start_growth"] == pytest.approx(0.30)
-    assert bear["target_fcf_margin"] == pytest.approx(0.105)
+    assert bear["target_fcf_margin"] == pytest.approx(0.133875, abs=0.0001)
     assert bear["terminal_growth"] == pytest.approx(0.06)
     assert bear["discount_rate"] == pytest.approx(0.15)
-    assert bear["per_share"] == pytest.approx(19.90, abs=0.01)
-    assert bear["lo"] == pytest.approx(16.52, abs=0.02)
-    assert bear["hi"] == pytest.approx(24.29, abs=0.02)
+    assert bear["per_share"] == pytest.approx(25.38, abs=0.01)
+    assert bear["lo"] == pytest.approx(21.06, abs=0.02)
+    assert bear["hi"] == pytest.approx(30.97, abs=0.02)
 
     base = detail["scenarios"]["base"]
-    assert base["target_fcf_margin"] == pytest.approx(0.15)
-    assert base["per_share"] == pytest.approx(28.43, abs=0.01)
-    assert base["lo"] == pytest.approx(23.59, abs=0.02)
-    assert base["hi"] == pytest.approx(34.71, abs=0.02)
+    assert base["target_fcf_margin"] == pytest.approx(0.19125, abs=0.0001)
+    assert base["per_share"] == pytest.approx(36.25, abs=0.01)
+    assert base["lo"] == pytest.approx(30.08, abs=0.02)
+    assert base["hi"] == pytest.approx(44.25, abs=0.02)
 
     bull = detail["scenarios"]["bull"]
-    assert bull["target_fcf_margin"] == pytest.approx(0.18)
-    assert bull["per_share"] == pytest.approx(34.12, abs=0.01)
-    assert bull["lo"] == pytest.approx(28.31, abs=0.02)
-    assert bull["hi"] == pytest.approx(41.65, abs=0.02)
+    assert bull["target_fcf_margin"] == pytest.approx(0.2295, abs=0.0001)
+    assert bull["per_share"] == pytest.approx(43.50, abs=0.01)
+    assert bull["lo"] == pytest.approx(36.10, abs=0.02)
+    assert bull["hi"] == pytest.approx(53.10, abs=0.02)
 
 
 def test_build_mature_revenue_dcf_none_without_valid_shares_or_revenue():

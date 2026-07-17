@@ -72,6 +72,7 @@ from typing import Dict, List, Optional, Tuple
 
 from sec_analyzer.config import Config
 from sec_analyzer.normalize.normalizer import to_annual_series
+from sec_analyzer.valuation import sanity
 from sec_analyzer.valuation.sanity import clamp_assumptions, validate_assumptions
 
 logger = logging.getLogger(__name__)
@@ -994,7 +995,9 @@ _DEFAULT_GROWTH_CLAMP_MAX = 0.25
 #: many percentage points.
 _DEFAULT_SCENARIO_GROWTH_DELTA = 0.05
 
-#: Phase-1 fallback: terminal growth, identical across all three scenarios.
+#: Phase-1 fallback: terminal growth used ONLY when no risk-free rate is
+#: available (see :func:`_terminal_growth_anchor`), identical across all
+#: three scenarios.
 _DEFAULT_TERMINAL_GROWTH = 0.025
 
 #: Phase-1 fallback: base discount rate, raised for a currently-unprofitable
@@ -1039,6 +1042,64 @@ def _default_growth_anchor(metrics: Optional[dict]) -> Tuple[float, str]:
     return _clamp(raw, _DEFAULT_GROWTH_CLAMP_MIN, _DEFAULT_GROWTH_CLAMP_MAX), source
 
 
+def _terminal_growth_anchor(
+    capm: Optional[dict], risk_free_pct: Optional[float] = None
+) -> Tuple[float, bool]:
+    """Resolve the single shared terminal-growth rule: ``min(risk_free, 4%)``.
+
+    Damodaran's practical rule of thumb is that a stable perpetuity growth
+    rate should never exceed the risk-free rate (roughly nominal long-run
+    GDP growth) -- see :data:`sec_analyzer.valuation.sanity._TERMINAL_GROWTH_MAX`
+    for the 4% ceiling that still applies on top of it. This replaces the old
+    flat 2.5% constant used for every scenario regardless of macro
+    conditions, and deliberately does NOT differentiate by cohort: a
+    hyper-grower that actually reaches its steady state is, by definition, a
+    mature company at that point, so its terminal growth must not be set
+    LOWER than a mature firm's just because it started out risky. That risk
+    is already priced into the discount rate and the scenario probabilities
+    -- cutting the terminal growth a third time on top of those would be a
+    layered penalty for the same risk. (See
+    :func:`sec_analyzer.valuation.engine._build_hyper_growth` for the other
+    half of this rule, applied to the hyper-grower revenue-first DCF, which
+    doesn't go through this function since it has no ``assumptions`` dict.)
+
+    Resolution order (first numeric hit wins):
+
+    1. ``capm["risk_free"]``, when ``capm`` is present and carries a numeric
+       (non-bool) value.
+    2. ``risk_free_pct`` -- the GLOBAL risk-free rate (e.g. straight off
+       Damodaran's ``erp.csv``, independent of any SIC/industry matching),
+       used when ``capm`` is absent or lacks a numeric ``risk_free``. This
+       covers filers whose SIC doesn't match any Damodaran industry (so
+       :func:`sec_analyzer.valuation.capm.compute_cost_of_equity` bails to
+       ``None``) without also flattening their terminal growth to the old
+       constant on top of the flat discount rate.
+    3. :data:`_DEFAULT_TERMINAL_GROWTH`, when neither of the above yields a
+       usable number.
+
+    Args:
+        capm: The optional :func:`sec_analyzer.valuation.capm.compute_cost_of_equity`
+            result (carries ``risk_free`` as a PERCENTAGE number, e.g.
+            ``4.20`` for 4.2%), or ``None``.
+        risk_free_pct: The global risk-free rate as a PERCENTAGE number
+            (e.g. ``4.20`` for 4.2%), used only as the step-2 fallback above.
+            ``None`` if unavailable.
+
+    Returns:
+        ``(terminal_growth, from_risk_free)``: the resolved decimal
+        fraction, and whether it was derived from a risk-free rate (``capm``'s
+        own or the ``risk_free_pct`` fallback -- both count as ``True``) or
+        fell back to :data:`_DEFAULT_TERMINAL_GROWTH` (``False``, when
+        neither source carries a numeric value). Never raises.
+    """
+    risk_free_source = capm.get("risk_free") if capm else None
+    if not (isinstance(risk_free_source, (int, float)) and not isinstance(risk_free_source, bool)):
+        risk_free_source = risk_free_pct
+    if isinstance(risk_free_source, (int, float)) and not isinstance(risk_free_source, bool):
+        return min(risk_free_source / 100.0, sanity._TERMINAL_GROWTH_MAX), True
+    return _DEFAULT_TERMINAL_GROWTH, False
+
+
 def _default_story(
     scenario: str,
     growth: float,
@@ -1046,6 +1107,8 @@ def _default_story(
     growth_source: str,
     sector_type: Optional[str],
     capm: Optional[dict] = None,
+    terminal_growth: float = _DEFAULT_TERMINAL_GROWTH,
+    terminal_from_risk_free: bool = False,
 ) -> str:
     """Build the transparent ("cam kutu"), Turkish ``story`` sentence for one
     :func:`default_assumptions` scenario, naming the inputs used.
@@ -1055,6 +1118,12 @@ def _default_story(
     (rf + βL × ERP) rather than the old flat sector-classification default: the
     ``base`` scenario shows the full formula, ``bear``/``bull`` reference the
     CAPM base ± their scenario margin.
+
+    ``terminal_growth``/``terminal_from_risk_free`` (see
+    :func:`_terminal_growth_anchor`) add a clause naming whether the terminal
+    growth used is tied to the risk-free rate (capped at 4%) or fell back to
+    the flat :data:`_DEFAULT_TERMINAL_GROWTH` because no risk-free data was
+    available.
     """
     scenario_label = _SCENARIO_LABELS_TR[scenario]
     capm_rate = capm.get("rate") if capm else None
@@ -1072,10 +1141,19 @@ def _default_story(
             f"iskonto oranı %{discount_rate * 100:.1f} "
             f"({sector_label} sınıflandırmasına göre)"
         )
+    if terminal_from_risk_free:
+        terminal_clause = (
+            f"terminal büyüme %{terminal_growth * 100:.1f} (risksiz getiri oranına bağlı, üst sınır %4)"
+        )
+    else:
+        terminal_clause = (
+            f"terminal büyüme %{terminal_growth * 100:.1f} (risksiz getiri verisi yok, sabit varsayılan)"
+        )
     return (
         f"{scenario_label} senaryo: deterministik varsayılan -- büyüme kaynağı {growth_source}, "
-        f"bu senaryoda uygulanan büyüme %{growth * 100:.1f}, {rate_clause}; LLM kullanılamadığı "
-        "veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."
+        f"bu senaryoda uygulanan büyüme %{growth * 100:.1f}, {rate_clause}, {terminal_clause}; "
+        "LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik "
+        "varsayılan devreye girdi."
     )
 
 
@@ -1099,6 +1177,7 @@ def default_assumptions(
     metrics: Optional[dict],
     sector_type: Optional[str] = None,
     capm: Optional[dict] = None,
+    risk_free_pct: Optional[float] = None,
 ) -> dict:
     """Deterministic phase-1 fallback assumptions (SPEC.md Sec.12).
 
@@ -1106,10 +1185,11 @@ def default_assumptions(
     whenever the LLM proposal can't be trusted: the ``"script"`` provider,
     an unavailable/unparseable LLM, or an LLM proposal that still violates
     ``valuation.sanity.validate_assumptions`` after one revision round.
-    Deterministic given the same ``metrics``/``sector_type`` -- always
-    passes ``validate_assumptions`` by construction (base growth is clamped,
-    every discount rate stays comfortably above both its sector-specific
-    floor and the fixed 2.5% terminal growth rate, and ``growth_5y`` never
+    Deterministic given the same ``metrics``/``sector_type``/``capm`` --
+    always passes ``validate_assumptions`` by construction (base growth is
+    clamped, every discount rate stays comfortably above both its
+    sector-specific floor and the terminal growth rate via
+    ``clamp_assumptions``'s ERP-spread guard, and ``growth_5y`` never
     approaches the 40% hard ceiling).
 
     Args:
@@ -1127,7 +1207,18 @@ def default_assumptions(
             CAPM cost of equity REPLACES the flat sector-agnostic base
             discount rate; the bear/bull scenarios keep their usual deltas
             around that CAPM base. ``None`` (no Damodaran beta/ERP/risk-free)
-            preserves the historical flat 10%/12% default.
+            preserves the historical flat 10%/12% default. Its ``risk_free``
+            field (see :func:`_terminal_growth_anchor`) also now drives
+            ``terminal_growth`` for all three scenarios: ``min(risk_free,
+            4%)``, falling back to the flat 2.5% constant when absent.
+        risk_free_pct: The global risk-free rate (a PERCENTAGE number, e.g.
+            ``4.20`` for 4.2%), used by :func:`_terminal_growth_anchor` as
+            the ``terminal_growth`` fallback ONLY when ``capm`` is absent or
+            lacks a numeric ``risk_free`` of its own -- e.g. a filer whose
+            SIC doesn't match any Damodaran industry, so ``capm`` is
+            ``None`` even though the global rate (independent of SIC
+            matching) is still available. ``None`` preserves the flat 2.5%
+            constant, matching historical behavior.
 
     Returns:
         ``{"bear": {...}, "base": {...}, "bull": {...}}`` (SPEC.md Sec.2
@@ -1136,16 +1227,27 @@ def default_assumptions(
         Never raises.
     """
     try:
-        return _default_assumptions(metrics or {}, sector_type, capm)
+        return _default_assumptions(metrics or {}, sector_type, capm, risk_free_pct)
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("default_assumptions() failed unexpectedly; returning a minimal-safe fallback.")
         return _minimal_safe_assumptions()
 
 
-def _default_assumptions(metrics: dict, sector_type: Optional[str], capm: Optional[dict] = None) -> dict:
+def _default_assumptions(
+    metrics: dict,
+    sector_type: Optional[str],
+    capm: Optional[dict] = None,
+    risk_free_pct: Optional[float] = None,
+) -> dict:
     base_growth, growth_source = _default_growth_anchor(metrics)
     bear_growth = base_growth - _DEFAULT_SCENARIO_GROWTH_DELTA
     bull_growth = base_growth + _DEFAULT_SCENARIO_GROWTH_DELTA
+
+    # WP2: one shared terminal-growth rule for every scenario -- see
+    # _terminal_growth_anchor's docstring for the rationale (no cohort
+    # differentiation; risk is priced in discount_rate/probabilities, not
+    # the terminal growth rate).
+    terminal_growth, terminal_from_risk_free = _terminal_growth_anchor(capm, risk_free_pct)
 
     is_unprofitable = sector_type == "growth_unprofitable"
     # CAPM firm-specific cost of equity (rf + βL x ERP) takes precedence over
@@ -1166,9 +1268,12 @@ def _default_assumptions(metrics: dict, sector_type: Optional[str], capm: Option
     assumptions = {
         name: {
             "growth_5y": growth,
-            "terminal_growth": _DEFAULT_TERMINAL_GROWTH,
+            "terminal_growth": terminal_growth,
             "discount_rate": dr,
-            "story": _default_story(name, growth, dr, growth_source, sector_type, capm),
+            "story": _default_story(
+                name, growth, dr, growth_source, sector_type, capm,
+                terminal_growth=terminal_growth, terminal_from_risk_free=terminal_from_risk_free,
+            ),
         }
         for name, (growth, dr) in scenario_inputs.items()
     }

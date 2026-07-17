@@ -144,6 +144,113 @@ def test_revenue_first_dcf_raises_on_programmer_errors():
         revenue_first_dcf(**{**base_kwargs, "discount_rate": 0.02, "terminal_growth": 0.025})
     with pytest.raises(ValueError):
         revenue_first_dcf(**{**base_kwargs, "steady_state_year": 0})
+    # WP3: mature_discount_rate, when provided, must also clear the same
+    # Gordon-defined bar as the flat discount_rate does.
+    with pytest.raises(ValueError):
+        revenue_first_dcf(**{**base_kwargs, "mature_discount_rate": 0.025})
+
+
+# ---------------------------------------------------------------------------
+# 1b. revenue_first_dcf -- mature_discount_rate fade (WP3, SPEC.md's
+# "Damodaran fade": discount rate itself fades from a cohort rate toward a
+# mature steady-state rate, cumulative-product discount factors instead of
+# (1+r)**t, and the terminal value anchored at the MATURE rate). Both cases
+# below hold growth (start_growth == terminal_growth == 0) and margin
+# (current_margin == target_fcf_margin) FLAT on purpose, so revenue_path/
+# fcf_path collapse to a trivial constant series and every number in the
+# derivation below is purely about the discount-rate fade machinery, not
+# entangled with the growth/margin fades already hand-verified above.
+# ---------------------------------------------------------------------------
+
+
+def test_revenue_first_dcf_mature_discount_rate_fade_hand_verified():
+    # revenue0=1000, start_growth=terminal_growth=0.0 -> growth_path=[0,0,0]
+    # -> revenue_path=[1000,1000,1000] (revenue_t=revenue_{t-1}*(1+0)).
+    # current_margin=target_fcf_margin=0.10 -> margin_path=[0.10]*3 ->
+    # fcf_path=[100,100,100]. steady_state_year=3, horizon=3 (short horizon
+    # chosen purely so the discount-rate fade's 3 cells are easy to hand-
+    # compute) shares0=100, annual_dilution=0.0, financing_shares=0.0.
+    #
+    # Cohort (year-1) discount_rate=0.20, mature_discount_rate=0.10.
+    # _discount_path fades linearly, reaching mature_discount_rate exactly at
+    # steady_state_year=3 (fraction denominator = steady_state_year-1 = 2):
+    #   r_1 = 0.20 + (0.10-0.20)*min(0,2)/2 = 0.20
+    #   r_2 = 0.20 + (0.10-0.20)*min(1,2)/2 = 0.20 - 0.05 = 0.15
+    #   r_3 = 0.20 + (0.10-0.20)*min(2,2)/2 = 0.10  (== mature_discount_rate)
+    #
+    # Discounting is the CUMULATIVE product of (1+r_t), not (1+r)**t:
+    #   cum_1 = 1.20
+    #   cum_2 = 1.20*1.15 = 1.38
+    #   cum_3 = 1.38*1.10 = 1.518
+    #   pv1 = 100/1.20   = 83.333333
+    #   pv2 = 100/1.38   = 72.463768
+    #   pv3 = 100/1.518  = 65.876153
+    #   pv_sum = 83.333333+72.463768+65.876153 = 221.673254
+    #
+    # Terminal value is a mature-firm perpetuity anchored at
+    # mature_discount_rate (NOT the elevated cohort rate):
+    #   tv = fcf_terminal*(1+terminal_growth)/(mature_discount_rate-terminal_growth)
+    #      = 100*(1+0)/(0.10-0) = 1000
+    #   pv(tv) = tv / cum_3 = 1000/1.518 = 658.761528
+    #
+    # ev = equity = 221.673254 + 658.761528 = 880.434783
+    # effective_shares = 100*(1+0)**3 + 0 = 100
+    # per_share = 880.434783/100 = 8.804348
+    result = revenue_first_dcf(
+        revenue0=1000.0, start_growth=0.0, terminal_growth=0.0, discount_rate=0.20,
+        current_margin=0.10, target_fcf_margin=0.10, steady_state_year=3,
+        shares0=100.0, annual_dilution=0.0, financing_shares=0.0, horizon=3,
+        mature_discount_rate=0.10,
+    )
+
+    assert result["growth_path"] == pytest.approx([0.0, 0.0, 0.0])
+    assert result["revenue_path"] == pytest.approx([1000.0, 1000.0, 1000.0])
+    assert result["fcf_path"] == pytest.approx([100.0, 100.0, 100.0])
+
+    # The additive discount_path key only appears when mature_discount_rate
+    # is not None (per the docstring), and carries the fading rate series.
+    assert "discount_path" in result
+    assert result["discount_path"] == pytest.approx([0.20, 0.15, 0.10])
+
+    assert result["tv"] == pytest.approx(1000.0)
+    assert result["ev"] == pytest.approx(880.434783, rel=1e-5)
+    assert result["equity"] == pytest.approx(880.434783, rel=1e-5)
+    assert result["effective_shares"] == pytest.approx(100.0)
+    assert result["per_share"] == pytest.approx(8.804348, rel=1e-5)
+
+
+def test_revenue_first_dcf_mature_discount_rate_none_is_byte_for_byte_unchanged():
+    # Identical inputs to the fade test above, EXCEPT mature_discount_rate is
+    # omitted (None, the default) -> every year discounts at the flat
+    # cohort discount_rate=0.20 with (1+r)**t (not the cumulative-product
+    # fade path), and the terminal value also uses 0.20 (not a separate
+    # mature rate) -- "byte-for-byte unchanged from before this parameter
+    # existed", per the docstring.
+    #   pv1 = 100/1.20    = 83.333333
+    #   pv2 = 100/1.20**2 = 100/1.44   = 69.444444
+    #   pv3 = 100/1.20**3 = 100/1.728  = 57.870370
+    #   pv_sum = 83.333333+69.444444+57.870370 = 210.648148
+    #   tv = 100*(1+0)/(0.20-0) = 500
+    #   pv(tv) = 500/1.728 = 289.351852
+    #   ev = 210.648148+289.351852 = 500.0 (exact)
+    #   per_share = 500.0/100 = 5.0 (exact)
+    #
+    # 8.804348 (the fade case) > 5.0 (this flat case) is also the expected
+    # DIRECTION: fading down to a lower mature rate values the (unchanged)
+    # cash flows higher than discounting them at the permanently-elevated
+    # cohort rate throughout -- confirms the fade isn't a no-op dressed up
+    # as a new parameter.
+    result = revenue_first_dcf(
+        revenue0=1000.0, start_growth=0.0, terminal_growth=0.0, discount_rate=0.20,
+        current_margin=0.10, target_fcf_margin=0.10, steady_state_year=3,
+        shares0=100.0, annual_dilution=0.0, financing_shares=0.0, horizon=3,
+        mature_discount_rate=None,
+    )
+
+    assert "discount_path" not in result
+    assert result["tv"] == pytest.approx(500.0)
+    assert result["ev"] == pytest.approx(500.0)
+    assert result["per_share"] == pytest.approx(5.0)
 
 
 # ---------------------------------------------------------------------------

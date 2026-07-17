@@ -136,6 +136,52 @@ def test_sector_medians_fuzzy_fallback_returns_none_for_nonsense_string():
 
 
 # ---------------------------------------------------------------------------
+# Consumer-staples alias block (beverages/tobacco/household products): KO's
+# SIC 2086 ("BOTTLED & CANNED SOFT DRINKS & CARBONATED WATERS") matched
+# NOTHING before this block was added, so it fell back to no CAPM beta at
+# all. This fixture carries real ``unlevered_beta`` values straight off
+# ``data/damodaran/multiples.csv`` (Beverage (Soft)=0.70, Beverage
+# (Alcoholic)=0.65, Tobacco=0.65, Household Products=0.70) so the beta
+# assertions below are checked against the actual reference data, not an
+# assumed placeholder.
+# ---------------------------------------------------------------------------
+
+_STAPLES_INDUSTRIES = [
+    ("Beverage (Alcoholic)", 16.57, 1.75, 0.65),
+    ("Beverage (Soft)", 26.25, 3.57, 0.70),
+    ("Food Processing", 16.50, 1.05, 0.60),
+    ("Household Products", 19.66, 2.67, 0.70),
+    ("Tobacco", 19.81, 5.30, 0.65),
+]
+
+
+def _staples_sector_data():
+    data = _sector_data()
+    data["multiples"] = data["multiples"] + [
+        {"industry": name, "pe": pe, "ps": ps, "pfcf": None, "beta": beta}
+        for name, pe, ps, beta in _STAPLES_INDUSTRIES
+    ]
+    return data
+
+
+_STAPLES_ACCEPTANCE_CASES = [
+    ("BOTTLED & CANNED SOFT DRINKS & CARBONATED WATERS", "Beverage (Soft)", 0.70),
+    ("MALT BEVERAGES", "Beverage (Alcoholic)", 0.65),
+    ("CIGARETTES", "Tobacco", 0.65),
+    ("SOAP, DETERGENT, CLEANING PREPARATIONS, PERFUME, COSMETICS", "Household Products", 0.70),
+]
+
+
+@pytest.mark.parametrize("sic_description, expected_industry, expected_beta", _STAPLES_ACCEPTANCE_CASES)
+def test_sector_medians_resolves_consumer_staples_aliases(sic_description, expected_industry, expected_beta):
+    result = sector_medians(_staples_sector_data(), sic_description)
+    assert result is not None
+    assert result["industry"] == expected_industry
+    assert result["pe"] is not None
+    assert result["beta"] == pytest.approx(expected_beta)
+
+
+# ---------------------------------------------------------------------------
 # Negative / edge cases.
 # ---------------------------------------------------------------------------
 

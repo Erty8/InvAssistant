@@ -42,11 +42,29 @@ _DISCOUNT_RATE_MIN_UNPROFITABLE = 0.10
 #: perpetuity; 4.5% is a conservative floor on that spread.
 _MIN_ERP_SPREAD = 0.045
 
-#: Hard upper bound on growth_5y (40%) -- above this is implausible even
+#: Float-comparison tolerance for the ERP-spread rule (WP2b). ``clamp_assumptions``
+#: raises a too-thin discount rate to exactly ``terminal_growth + _MIN_ERP_SPREAD``,
+#: but ``terminal_growth + _MIN_ERP_SPREAD`` then re-subtracted can round to
+#: 0.0449999... < 0.045 in IEEE-754, so a strict ``< _MIN_ERP_SPREAD`` check would
+#: flag a value the clamper just declared valid. Callers like
+#: ``rule_based._default_assumptions`` run clamp THEN validate and DISCARD the whole
+#: (CAPM-based) set on any violation -- so this boundary inconsistency silently
+#: disabled CAPM discount rates for a large class of low-beta filers. Both the
+#: validator and the clamp condition subtract this epsilon so clamp and validate
+#: agree at the boundary.
+_ERP_SPREAD_EPS = 1e-9
+
+#: Hard upper bound on growth_5y (60%) -- above this is implausible even
 #: granting that the model always fades growth after year 5. Values above
 #: 20% but at/below this are allowed by design (see the module docstring in
-#: SPEC.md Sec.3).
-_GROWTH_5Y_HARD_MAX = 0.40
+#: SPEC.md Sec.3). Raised from the original 40% because the TAM-share
+#: (40/60%) and implied-revenue-multiple (8x/15x) arrival-point flags
+#: elsewhere in the engine are the real honesty mechanism for hyper-growth;
+#: a 40% growth ceiling was a second, blunter constraint that clipped
+#: genuine hyper-growth (e.g. NVDA grew >100% at points) before those flags
+#: could even evaluate it. 60% keeps a sane outer bound while letting the
+#: fade + arrival flags do the actual work.
+_GROWTH_5Y_HARD_MAX = 0.60
 
 _REQUIRED_FIELDS = ("growth_5y", "terminal_growth", "discount_rate")
 _SCENARIO_LABELS = {"bear": "Bear", "base": "Base", "bull": "Bull"}
@@ -83,7 +101,7 @@ def validate_assumptions(assumptions: Dict[str, dict], is_unprofitable: bool = F
           _MIN_ERP_SPREAD`` (Gordon defined, but the implied equity risk
           premium is thinner than 4.5%) -> violation. Mutually exclusive
           with the previous rule (only one of the two fires per scenario).
-        * ``growth_5y > 0.40`` -> violation (``> 0.20`` is allowed by
+        * ``growth_5y > 0.60`` -> violation (``> 0.20`` is allowed by
           design).
         * A missing or non-numeric required field -> violation naming the
           field (and no further numeric comparisons for that scenario,
@@ -137,7 +155,7 @@ def _validate_assumptions(assumptions: Dict[str, dict], is_unprofitable: bool) -
                 f"{label}: iskonto oranı (%{discount_rate * 100:.1f}) uçtaki büyümeye "
                 f"(%{terminal_growth * 100:.1f}) eşit veya ondan düşük -- Gordon büyüme formülü tanımsız."
             )
-        elif discount_rate - terminal_growth < _MIN_ERP_SPREAD:
+        elif discount_rate - terminal_growth < _MIN_ERP_SPREAD - _ERP_SPREAD_EPS:
             violations.append(
                 f"{label}: iskonto oranı (%{discount_rate*100:.1f}) ile uçtaki büyüme "
                 f"(%{terminal_growth*100:.1f}) arasındaki fark %{(discount_rate-terminal_growth)*100:.1f}, "
@@ -167,7 +185,7 @@ def clamp_assumptions(
     module's own violation thresholds:
 
     * ``terminal_growth`` is capped at :data:`_TERMINAL_GROWTH_MAX` (4%).
-    * ``growth_5y`` is capped at :data:`_GROWTH_5Y_HARD_MAX` (40%).
+    * ``growth_5y`` is capped at :data:`_GROWTH_5Y_HARD_MAX` (60%).
     * ``discount_rate`` is floored at :data:`_DISCOUNT_RATE_MIN` (7%), or
       :data:`_DISCOUNT_RATE_MIN_UNPROFITABLE` (10%) if ``is_unprofitable``.
     * After the above, if ``terminal_growth < discount_rate <
@@ -260,7 +278,7 @@ def _clamp_assumptions(
         # the tg >= dr (undefined-Gordon) case stays deliberately unclamped.
         tg = scenario.get("terminal_growth")
         dr = scenario.get("discount_rate")
-        if _is_number(tg) and _is_number(dr) and tg < dr < tg + _MIN_ERP_SPREAD:
+        if _is_number(tg) and _is_number(dr) and tg < dr < tg + _MIN_ERP_SPREAD - _ERP_SPREAD_EPS:
             new_dr = tg + _MIN_ERP_SPREAD
             scenario["discount_rate"] = new_dr
             notes.append(

@@ -43,6 +43,17 @@ Retail (General),18.6,1.1,17.2
   Yoksa CAPM devre dışı kalır ve iskonto oranı eski düz sektör-bağımsız
   varsayılana döner (hata vermez). Örnek başlık:
   `industry,pe,ps,pfcf,unlevered_beta`.
+- `capex_sales` — **isteğe bağlı** kolon; sektörün bakım (maintenance)
+  yatırım harcamasının satışlara oranı, **ondalık oran** olarak (örn.
+  `0.045` = satışların %4.5'i; `%` işareti veya yüzde formatı değil).
+  Kavramsal olarak Damodaran'ın **"Capital Expenditures by Sector (US)"**
+  (Cap Ex/Sales) tablosuna dayanır. Değerleme motoru (`valuation/engine.py`)
+  bakım capex'i hesaplarken bu oranı, motorun düz `%5` bakım-capex tabanı
+  yerine kullanır (`_MAINTENANCE_CAPEX_MIN_PCT_REVENUE = 0.05`); kolon
+  boş/yoksa bu düz `%5` tabanına geri döner (hata vermez). Banka/sigorta/
+  finansal hizmetler gibi sektörlerde capex/satış anlamlı bir metrik
+  olmadığından bu satırlarda kolon **bilerek boş** bırakılabilir. Örnek
+  başlık: `industry,pe,ps,pfcf,unlevered_beta,capex_sales`.
 
 ### `erp.csv`
 
@@ -99,6 +110,15 @@ indirilip dönüştürüldü:
   risksiz getiri satırından, `pe`/`ps` ile aynı yıllık güncellemede
   yenilenmelidir. Yenilenene kadar CAPM çıktısı yön olarak doğru ama
   kalibrasyonu yaklaşıktır.
+- `capex_sales` kolonu da, `unlevered_beta` gibi, **yaklaşık "tohum" (seed)
+  veridir** — Damodaran'ın "Capital Expenditures by Sector (US)" tablosundan
+  birebir, satır satır alınmamıştır; temsili sektör aralıklarına göre elle
+  yaklaşık atanmıştır. Gerçek değerler için Damodaran'ın ilgili Cap Ex/Sales
+  tablosundan, `pe`/`ps` ile aynı yıllık güncellemede yenilenmelidir. Banka,
+  sigorta ve finansal hizmetler gibi sektör satırlarında bu kolon **bilerek
+  boş** bırakılmıştır, çünkü capex/satış oranı finansal şirketler için
+  anlamlı bir metrik değildir; bu satırlarda motor düz `%5` bakım-capex
+  tabanına geri döner.
 - Damodaran dosyalarının veri tarihi: `pedata.xls`/`psdata.xls`'te
   belirtilen **"Date updated": 2026-01-05**; `histimpl.xls`'teki en son
   yıllık satır 2025 sonuna ait.

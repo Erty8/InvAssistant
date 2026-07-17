@@ -192,25 +192,35 @@ def test_unresolvable_fiscal_year_not_applied():
 # growth_capex=4000-100=3900, ops_margin=-3.95+3900/1000=-3.95+3.90=-0.05.
 #
 # Base scenario uses the FIXED hyper rates (SPEC Sec.3): start_growth=
-# min(1.0, 0.40)=0.40 (no latest-YoY data supplied -> unblended),
-# terminal_growth=0.025, discount_rate=0.12 (base), steady_state_year=10.
-# target_base (mature target margin) = _hyper_target_base(gm=0.60,
-# current_margin): ceiling=min(0.60*0.5, 0.30)=0.30; current_margin is <=0
-# in BOTH fixtures (not >0) -> base=ceiling=0.30; gm known -> min(0.30,0.60)
-# =0.30 -- i.e. target_base=0.30 in BOTH cases (the relief only changes the
-# STARTING margin, never the independently-derived mature target, exactly as
-# documented -- "Only the starting margin is relieved").
+# min(1.0, 0.60)=0.60 (WP5: _HYPER_START_GROWTH_CAP raised 0.40 -> 0.60, so
+# this is now capped instead of the old min(1.0,0.40)=0.40; no latest-YoY
+# data supplied -> unblended), terminal_growth=0.025, discount_rate=0.12
+# (base), steady_state_year=10. target_base (mature target margin) =
+# _hyper_target_base(gm=0.60, current_margin): ceiling=min(0.60*0.5, 0.30)=
+# 0.30; current_margin is <=0 in BOTH fixtures (not >0) -> base=ceiling=0.30;
+# gm known -> min(0.30,0.60)=0.30 -- i.e. target_base=0.30 in BOTH cases (the
+# relief only changes the STARTING margin, never the independently-derived
+# mature target, exactly as documented -- "Only the starting margin is
+# relieved").
 #
 # Revenue-first DCF (independently reimplemented from the module's own
 # documented formulas -- growth-path/margin-path/PV/terminal-value -- in a
 # from-scratch scratch script, NOT calling revenue_dcf.revenue_first_dcf;
 # cross-checked before finalizing):
-#   base(revenue0=1000, start_growth=0.40, terminal=0.025, r=0.12,
-#        current_margin=-3.95, target=0.30, ss=10, shares=100,
-#        dilution=0, financing=0) -> per_share = -223.93  (<=0 -> suppressed)
-#   base(same inputs but current_margin=-0.05) -> per_share = +100.39
-#     (band: lo=80.25, hi=127.06 over the +/-2pp start_growth x +/-1pp
-#     discount_rate 3x3 grid)
+#
+# WP3 discount-rate fade: `_assumptions()`'s base discount_rate is 0.10 ->
+# mature_discount_rate = max(0.10, terminal(0.025) + sanity._MIN_ERP_SPREAD
+# (0.045) = 0.07) = 0.10. The base scenario's revenue-first DCF now fades
+# from its cohort rate (0.12) down to 0.10 by steady_state_year=10 instead of
+# discounting flat at 0.12, and the terminal value discounts at 0.10.
+# Re-derived (same from-scratch reimplementation, extended with the fade)
+# and cross-checked against the real run_valuation() output:
+#   base(revenue0=1000, start_growth=0.60, terminal=0.025, r=0.12 (fading to
+#        mature=0.10), current_margin=-3.95, target=0.30, ss=10, shares=100,
+#        dilution=0, financing=0) -> per_share = -262.38  (<=0 -> suppressed)
+#   base(same inputs but current_margin=-0.05) -> per_share = +265.35
+#     (band: lo=236.90, hi=297.14 over the +/-2pp start_growth x +/-1pp
+#     discount_rate 3x3 grid, each row fading to the same shared 0.10)
 # ---------------------------------------------------------------------------
 
 _CAPEX_CONCEPTS = [
@@ -253,16 +263,27 @@ _CAPEX_METRICS = {
 }
 
 
-def test_run_valuation_without_depreciation_stays_suppressed():
+def test_run_valuation_without_depreciation_stays_suppressed(tmp_path):
     # No Depreciation reported at all -> gate fails (dep is None) ->
     # current_margin stays the deeply negative raw figure -> base per_share
     # <= 0 -> the existing (Sec.3's) suppression guard fires, same as
     # test_valuation_hyper_suppression.py's APLD-shaped fixture.
+    #
+    # This test is about the maintenance-CapEx-relief MECHANICS, not WP2's
+    # risk-free-linked terminal growth, so it pins terminal_growth to the
+    # old fixed 0.025 (matching the hand-verified -262.38 below, WP3
+    # fade-adjusted) by pointing damodaran_dir at a nonexistent directory --
+    # load_sector_data then returns None and the anchor falls back to
+    # engine._HYPER_TERMINAL_GROWTH=0.025. Without this, run_valuation's
+    # default damodaran_dir picks up the repo's real data/damodaran/erp.csv
+    # (risk_free=4.20) and the anchor becomes 0.04, invalidating the
+    # hand-verified per_share below.
     normalized = _normalized({"Revenue": [_rec(2023, 1000.0)], "CapEx": [_rec(2023, 4000.0)]})
 
     result = run_valuation(
         normalized, _CAPEX_RATIOS, _CAPEX_METRICS, price=None, price_df=None,
         assumptions=_assumptions(), sector_type="growth_unprofitable",
+        damodaran_dir=str(tmp_path / "no_damodaran"),
     )
 
     detail = result["hyper_growth_detail"]
@@ -273,14 +294,14 @@ def test_run_valuation_without_depreciation_stays_suppressed():
     base_ps = detail["scenarios"]["base"]["per_share"]
     assert base_ps is not None
     assert base_ps <= 0
-    assert base_ps == pytest.approx(-223.93, abs=0.05)
+    assert base_ps == pytest.approx(-262.38, abs=0.05)
 
     for key in ("bear", "base", "bull"):
         assert result["fair_value_range"][key]["lo"] is None
         assert result["fair_value_range"][key]["hi"] is None
 
 
-def test_run_valuation_with_depreciation_reports_upside_but_headline_stays_suppressed():
+def test_run_valuation_with_depreciation_reports_upside_but_headline_stays_suppressed(tmp_path):
     # SAME fixture, with Depreciation=100 added -- the ONLY difference from
     # the test above. capex_intensity=4000/1000=4.0>0.30, capex(4000)>
     # maintenance(max(100, 0.05*1000=50)=100) -> relief applies: growth_capex
@@ -289,6 +310,11 @@ def test_run_valuation_with_depreciation_reports_upside_but_headline_stays_suppr
     # margin, so the base scenario stays suppressed exactly as in the
     # no-depreciation test; the relieved value is reported ONLY as an
     # explicitly-labeled aggressive UPSIDE inside capex_normalization.
+    #
+    # Same nonexistent-damodaran_dir trick as the sibling test above pins
+    # terminal_growth to the hand-verified 0.025 (both the suppressed
+    # -262.38 headline and the +265.35 upside below were derived under it,
+    # WP3 fade-adjusted).
     normalized = _normalized({
         "Revenue": [_rec(2023, 1000.0)], "CapEx": [_rec(2023, 4000.0)],
         "Depreciation": [_rec(2023, 100.0)],
@@ -297,6 +323,7 @@ def test_run_valuation_with_depreciation_reports_upside_but_headline_stays_suppr
     result = run_valuation(
         normalized, _CAPEX_RATIOS, _CAPEX_METRICS, price=None, price_df=None,
         assumptions=_assumptions(), sector_type="growth_unprofitable",
+        damodaran_dir=str(tmp_path / "no_damodaran"),
     )
 
     detail = result["hyper_growth_detail"]
@@ -312,9 +339,9 @@ def test_run_valuation_with_depreciation_reports_upside_but_headline_stays_suppr
     assert capex_normalization["ops_current_margin"] == pytest.approx(-0.05)
 
     # The relieved value is an aggressive UPSIDE, not the headline.
-    assert capex_normalization["upside_per_share"] == pytest.approx(100.39, abs=0.05)
-    assert capex_normalization["upside_lo"] == pytest.approx(80.25, abs=0.05)
-    assert capex_normalization["upside_hi"] == pytest.approx(127.06, abs=0.05)
+    assert capex_normalization["upside_per_share"] == pytest.approx(265.35, abs=0.05)
+    assert capex_normalization["upside_lo"] == pytest.approx(236.90, abs=0.05)
+    assert capex_normalization["upside_hi"] == pytest.approx(297.14, abs=0.05)
 
     # Headline stays suppressed: the base scenario uses the ACTUAL (raw)
     # margin, so it is the same suppressed value as the no-depreciation test.
@@ -322,7 +349,7 @@ def test_run_valuation_with_depreciation_reports_upside_but_headline_stays_suppr
     base_ps = detail["scenarios"]["base"]["per_share"]
     assert base_ps is not None
     assert base_ps <= 0
-    assert base_ps == pytest.approx(-223.93, abs=0.05)
+    assert base_ps == pytest.approx(-262.38, abs=0.05)
 
     # fair_value_range stays empty (suppressed) -- the upside is never headlined.
     for key in ("bear", "base", "bull"):

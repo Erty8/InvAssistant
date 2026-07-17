@@ -55,7 +55,7 @@ def _to_float(row: dict, key: str) -> Optional[float]:
 
 def _parse_multiples_rows(rows: List[dict]) -> List[dict]:
     """Convert raw ``multiples.csv`` rows into
-    ``{"industry","pe","ps","pfcf","growth","peg","beta"}``.
+    ``{"industry","pe","ps","pfcf","growth","peg","beta"[,"capex_sales"]}``.
 
     Rows without a usable ``industry`` value are skipped; missing/malformed
     ``pe``/``ps``/``pfcf`` columns become ``None`` on that row rather than
@@ -67,24 +67,35 @@ def _parse_multiples_rows(rows: List[dict]) -> List[dict]:
     beta, a plain number e.g. ``1.5``) is likewise OPTIONAL and feeds the CAPM
     cost-of-equity discount rate (:mod:`sec_analyzer.valuation.capm`); it
     parses into the ``"beta"`` key and defaults to ``None`` when the column is
-    absent.
+    absent. ``capex_sales`` (Damodaran's sector Cap Ex/Sales, a plain decimal
+    fraction e.g. ``0.045`` for 4.5% of revenue) is likewise OPTIONAL and
+    feeds the sector-derived maintenance-CapEx floor
+    (:func:`sec_analyzer.valuation.engine._maintenance_adjusted_margin`).
+    Unlike the other optional columns, the ``"capex_sales"`` KEY ITSELF is
+    only added to the row when the column parses to a usable value -- it's
+    simply absent (rather than present-with-``None``) on rows/CSVs that
+    lack it, so ``row.get("capex_sales")`` still degrades to ``None`` for any
+    caller, while callers/tests that compare the parsed row against an exact
+    dict literal predating this column are unaffected.
     """
     parsed = []
     for row in rows:
         industry = (row.get("industry") or "").strip()
         if not industry:
             continue
-        parsed.append(
-            {
-                "industry": industry,
-                "pe": _to_float(row, "pe"),
-                "ps": _to_float(row, "ps"),
-                "pfcf": _to_float(row, "pfcf"),
-                "growth": _to_float(row, "growth"),
-                "peg": _to_float(row, "peg"),
-                "beta": _to_float(row, "unlevered_beta"),
-            }
-        )
+        parsed_row = {
+            "industry": industry,
+            "pe": _to_float(row, "pe"),
+            "ps": _to_float(row, "ps"),
+            "pfcf": _to_float(row, "pfcf"),
+            "growth": _to_float(row, "growth"),
+            "peg": _to_float(row, "peg"),
+            "beta": _to_float(row, "unlevered_beta"),
+        }
+        capex_sales = _to_float(row, "capex_sales")
+        if capex_sales is not None:
+            parsed_row["capex_sales"] = capex_sales
+        parsed.append(parsed_row)
     return parsed
 
 
@@ -123,11 +134,14 @@ def load_sector_data(dir_path: Optional[str]) -> Optional[dict]:
             ``erp.csv`` (typically ``Config.DAMODARAN_DIR``).
 
     Returns:
-        ``{"multiples": [{"industry","pe","ps","pfcf","growth","peg","beta"},
-        ...] or None, "erp": float or None, "risk_free": float or None}``, or
-        ``None`` if ``dir_path`` doesn't exist or neither file yielded
-        anything usable. ``erp``/``risk_free`` are percentage numbers (e.g.
-        ``4.23`` for 4.23%). Never raises; every missing piece is logged.
+        ``{"multiples": [{"industry","pe","ps","pfcf","growth","peg","beta"
+        [,"capex_sales"]}, ...] or None, "erp": float or None, "risk_free":
+        float or None}``, or ``None`` if ``dir_path`` doesn't exist or
+        neither file yielded anything usable. ``erp``/``risk_free`` are
+        percentage numbers (e.g. ``4.23`` for 4.23%). ``capex_sales`` is
+        present per-row only when that row's CSV data carried a usable Cap
+        Ex/Sales value (see :func:`_parse_multiples_rows`). Never raises;
+        every missing piece is logged.
     """
     if not dir_path or not os.path.isdir(dir_path):
         logger.info("damodaran: directory %r not found; sector medians unavailable.", dir_path)
@@ -210,6 +224,20 @@ _ALIASES: List[Tuple[str, str]] = [
     ("telephone communications", "Telecom. Services"),
     ("real estate investment trust", "R.E.I.T."),
     ("advertising", "Advertising"),
+    # Consumer-staples block (beverages/tobacco), most-specific-first: KO-style
+    # "BOTTLED & CANNED SOFT DRINKS & CARBONATED WATERS" (SIC 2086) must
+    # resolve to the soft-drink row before the generic "beverages" catch-all
+    # below, and alcoholic-beverage keywords must not be swept into it either.
+    ("bottled & canned soft drinks", "Beverage (Soft)"),
+    ("malt beverages", "Beverage (Alcoholic)"),
+    ("wines", "Beverage (Alcoholic)"),
+    ("distilled", "Beverage (Alcoholic)"),
+    ("brewer", "Beverage (Alcoholic)"),  # substring covers "brewery"/"breweries"/"brewers".
+    ("soft drinks", "Beverage (Soft)"),
+    ("beverages", "Beverage (Soft)"),  # generic catch-all: default ambiguous "beverages" to soft-drink.
+    ("cigarettes", "Tobacco"),
+    ("tobacco", "Tobacco"),
+    ("soap", "Household Products"),  # SIC 2840 "SOAP, DETERGENT, CLEANING PREPARATIONS, PERFUME, COSMETICS".
 ]
 
 
@@ -266,9 +294,16 @@ def _row_to_result(row: dict) -> dict:
     carried those optional columns (VALUATION.md Sec.7 sector-PEG comparison).
     ``beta`` (the sector unlevered beta) is likewise ``None`` unless the CSV
     carried an ``unlevered_beta`` column (CAPM cost of equity, see
-    :mod:`sec_analyzer.valuation.capm`).
+    :mod:`sec_analyzer.valuation.capm`). ``capex_sales`` (the sector Cap
+    Ex/Sales ratio, sector-derived maintenance-CapEx floor, see
+    :func:`sec_analyzer.valuation.engine._maintenance_adjusted_margin`) is
+    always retrievable via ``.get("capex_sales")`` (``None`` when the CSV
+    lacked the column), but -- unlike ``growth``/``peg``/``beta`` -- the key
+    itself is only present in the returned dict when the row actually
+    carried a usable value, so exact-dict comparisons against a result
+    predating this column stay unaffected.
     """
-    return {
+    result = {
         "industry": row.get("industry"),
         "pe": row.get("pe"),
         "ps": row.get("ps"),
@@ -277,6 +312,9 @@ def _row_to_result(row: dict) -> dict:
         "peg": row.get("peg"),
         "beta": row.get("beta"),
     }
+    if row.get("capex_sales") is not None:
+        result["capex_sales"] = row.get("capex_sales")
+    return result
 
 
 def sector_medians(sector_data: Optional[dict], sic_description: Optional[str]) -> Optional[dict]:
@@ -313,7 +351,10 @@ def sector_medians(sector_data: Optional[dict], sic_description: Optional[str]) 
     Returns:
         ``{"industry": str, "pe": float|None, "ps": float|None,
         "pfcf": float|None, "growth": float|None, "peg": float|None,
-        "beta": float|None}`` for the best-matching row, or ``None`` if
+        "beta": float|None}`` for the best-matching row, plus a
+        ``"capex_sales": float`` key when that row's CSV data carried a
+        usable Cap Ex/Sales value (absent, not ``None``, otherwise -- use
+        ``.get("capex_sales")`` to read it uniformly), or ``None`` if
         there's no sector data, no description, or no row scores a match.
         Never raises.
     """

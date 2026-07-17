@@ -15,9 +15,9 @@ from sec_analyzer.valuation.dcf import dcf_per_share
 
 logger = logging.getLogger(__name__)
 
-#: Bisection bracket for growth_5y (decimal fractions): -20% .. +40%.
+#: Bisection bracket for growth_5y (decimal fractions): -20% .. +60%.
 _BRACKET_LO = -0.20
-_BRACKET_HI = 0.40
+_BRACKET_HI = 0.60
 
 #: Stop once the bracket half-width is below this, or after _MAX_ITERATIONS.
 _TOLERANCE = 1e-4
@@ -67,7 +67,7 @@ def implied_growth_with_status(
     ``None`` happened.
 
     Same bisection as :func:`implied_growth` (base scenario's fixed
-    ``discount_rate``/``terminal_growth``, bracket ``[-0.20, 0.40]``,
+    ``discount_rate``/``terminal_growth``, bracket ``[-0.20, 0.60]``,
     tolerance ``1e-4``/80 iterations), but additionally classifies the
     "no root in the bracket" case: since the DCF per-share value is
     monotonically increasing in ``growth_5y``, a lack of sign change across
@@ -91,7 +91,7 @@ def implied_growth_with_status(
         * :data:`STATUS_ABOVE_BRACKET` -- no sign change, and the model
           per-share value stays *below* the market price at both bracket
           ends (``diff_hi < 0``): the price implies growth above the
-          bracket's +40% ceiling. ``growth`` is ``None``.
+          bracket's +60% ceiling. ``growth`` is ``None``.
         * :data:`STATUS_BELOW_BRACKET` -- no sign change, and the model
           per-share value stays *above* the market price at both ends
           (``diff_lo > 0``): the price implies growth below the bracket's
@@ -118,7 +118,7 @@ def implied_growth_with_status(
         return round(_BRACKET_HI, 4), STATUS_OK
     if (diff_lo > 0) == (diff_hi > 0):
         # No sign change across the bracket -- the target price isn't
-        # reachable by any growth rate in [-20%, 40%] at this r/g_t.
+        # reachable by any growth rate in [-20%, 60%] at this r/g_t.
         return (None, STATUS_ABOVE_BRACKET) if diff_hi < 0 else (None, STATUS_BELOW_BRACKET)
 
     lo, hi = _BRACKET_LO, _BRACKET_HI

@@ -180,13 +180,13 @@ def test_implied_growth_round_trips_a_negative_known_growth_rate():
 def test_implied_growth_returns_none_when_price_unreachable_in_bracket():
     # per_share is monotonically increasing in growth_5y (higher growth ->
     # higher cash flows -> higher per-share value), so the maximum
-    # per_share reachable within the bisection bracket [-0.20, 0.40] is the
-    # value at growth_5y=0.40. A price far above that has no root in the
+    # per_share reachable within the bisection bracket [-0.20, 0.60] is the
+    # value at growth_5y=0.60. A price far above that has no root in the
     # bracket -> None.
     fcf0, terminal_growth, discount_rate = 100.0, 0.025, 0.10
     shares, dilution_rate = 20.0, 0.0
 
-    max_reachable_price = dcf_per_share(fcf0, 0.40, terminal_growth, discount_rate, shares, dilution_rate)["per_share"]
+    max_reachable_price = dcf_per_share(fcf0, 0.60, terminal_growth, discount_rate, shares, dilution_rate)["per_share"]
     unreachable_price = max_reachable_price * 10
 
     implied = implied_growth(unreachable_price, fcf0, terminal_growth, discount_rate, shares, dilution_rate)
@@ -228,13 +228,13 @@ def test_implied_growth_with_status_ok_case_matches_hand_verified_dcf():
 
 def test_implied_growth_with_status_above_bracket_when_price_unreachably_high():
     # Mirrors test_implied_growth_returns_none_when_price_unreachable_in_bracket:
-    # a price far above what growth_5y=0.40 (the bracket's own ceiling) can
+    # a price far above what growth_5y=0.60 (the bracket's own ceiling) can
     # produce means the model's per-share value stays BELOW the market price
-    # at both bracket ends -> "above_bracket" (price implies growth > +40%).
+    # at both bracket ends -> "above_bracket" (price implies growth > +60%).
     fcf0, terminal_growth, discount_rate = 100.0, 0.025, 0.10
     shares, dilution_rate = 20.0, 0.0
 
-    max_reachable_price = dcf_per_share(fcf0, 0.40, terminal_growth, discount_rate, shares, dilution_rate)["per_share"]
+    max_reachable_price = dcf_per_share(fcf0, 0.60, terminal_growth, discount_rate, shares, dilution_rate)["per_share"]
     unreachable_price = max_reachable_price * 10
 
     growth, status = implied_growth_with_status(
@@ -332,12 +332,12 @@ def test_validate_assumptions_rule_discount_rate_below_minimum_unprofitable_thre
 
 
 def test_validate_assumptions_rule_growth_5y_hard_max_fires_alone():
-    # growth_5y=0.45 > 0.40 hard max; everything else stays within bounds.
-    assumptions = _three_scenarios({"growth_5y": 0.45})
+    # growth_5y=0.65 > 0.60 hard max; everything else stays within bounds.
+    assumptions = _three_scenarios({"growth_5y": 0.65})
     violations = validate_assumptions(assumptions, is_unprofitable=False)
 
     assert len(violations) == 1
-    assert "%40" in violations[0] and "Base" in violations[0]
+    assert "%60" in violations[0] and "Base" in violations[0]
 
 
 def test_validate_assumptions_growth_5y_between_20_and_40_percent_is_allowed():
@@ -422,20 +422,20 @@ def test_clamp_assumptions_caps_terminal_growth():
 
 
 def test_clamp_assumptions_caps_growth_5y():
-    # bull growth_5y=0.45 > 0.40 hard max -> capped to 0.40. bear=0.05,
+    # bull growth_5y=0.65 > 0.60 hard max -> capped to 0.60. bear=0.05,
     # base=0.10 chosen so bear<=base<=bull holds BOTH before (0.05<=0.10<=
-    # 0.45) and after (0.05<=0.10<=0.40) clamping -- isolating the growth_5y
+    # 0.65) and after (0.05<=0.10<=0.60) clamping -- isolating the growth_5y
     # cap from the cross-scenario ordering check.
     assumptions = _three_scenarios()
     assumptions["bear"]["growth_5y"] = 0.05
     assumptions["base"]["growth_5y"] = 0.10
-    assumptions["bull"]["growth_5y"] = 0.45
+    assumptions["bull"]["growth_5y"] = 0.65
 
     clamped, notes = clamp_assumptions(assumptions, is_unprofitable=False)
 
-    assert clamped["bull"]["growth_5y"] == pytest.approx(0.40)
+    assert clamped["bull"]["growth_5y"] == pytest.approx(0.60)
     assert len(notes) == 1
-    assert "%40" in notes[0] and "Bull" in notes[0]
+    assert "%60" in notes[0] and "Bull" in notes[0]
     assert clamped["bear"]["growth_5y"] == pytest.approx(0.05)
     assert clamped["base"]["growth_5y"] == pytest.approx(0.10)
 

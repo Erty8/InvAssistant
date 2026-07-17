@@ -88,7 +88,13 @@ scenario:
   undefined-Gordon case is never double-reported.
 - `growth_5y > 0.20` is allowed only because the model structure always fades
   after year 5 (total high-growth span ≤ 7y is satisfied by design); still add
-  violation if `growth_5y > 0.40` (implausible).
+  violation if `growth_5y > 0.60` (`sanity._GROWTH_5Y_HARD_MAX`, implausible).
+  Raised from an earlier 0.40 ceiling (normalization Work Package 5): the
+  TAM-share/implied-revenue-multiple "arrival point" flags (§4/§4a) are the
+  real honesty mechanism for a hyper-growth assumption, and the old flat 40%
+  ceiling clipped genuine hyper-growth (e.g. a filer like NVDA growing
+  &gt;100% at points) before those flags could even evaluate it; 60% keeps a
+  sane outer bound while letting the fade + arrival flags do the actual work.
 - Missing/non-numeric field → violation naming the field.
 
 ### Clamping — `sanity.clamp_assumptions(assumptions, is_unprofitable: bool = False) -> tuple[dict, list[str]]` (F5)
@@ -96,7 +102,9 @@ scenario:
 Unlike `validate_assumptions` above (report-only), this actually rewrites
 out-of-range values so every downstream calculation uses the same numbers
 shown to the user. Per scenario: `terminal_growth` capped at 0.04; `growth_5y`
-capped at 0.40; `discount_rate` floored at 0.07 (0.10 if `is_unprofitable`) —
+capped at 0.60 (`sanity._GROWTH_5Y_HARD_MAX`, raised from 0.40 by
+normalization Work Package 5 — see `validate_assumptions` above for the
+rationale); `discount_rate` floored at 0.07 (0.10 if `is_unprofitable`) —
 each clamp appends a Turkish note. Then, on the already-clamped
 `terminal_growth`/`discount_rate`, a minimum implied equity-risk-premium (ERP)
 spread guard fires whenever `terminal_growth < discount_rate < terminal_growth
@@ -113,6 +121,23 @@ checks `bear.growth_5y <= base.growth_5y <= bull.growth_5y` across scenarios
 reordering). Engine calls this right after `validate_assumptions` and uses
 the clamped set for everything downstream; the output's `"assumptions"` key
 (Sec.11) is this clamped set, not the raw phase-1 input.
+
+**Float-boundary consistency fix (`sanity._ERP_SPREAD_EPS = 1e-9`,
+normalization Work Package 2b):** `clamp_assumptions` raises a too-thin
+`discount_rate` to exactly `terminal_growth + _MIN_ERP_SPREAD`, but that same
+sum re-subtracted can round to `0.0449999... < 0.045` in IEEE-754 —
+so a naive strict `< _MIN_ERP_SPREAD` check in `validate_assumptions` could
+flag a value `clamp_assumptions` had *just* declared valid. Both the
+validator's comparison (`discount_rate - terminal_growth < _MIN_ERP_SPREAD -
+_ERP_SPREAD_EPS`) and the clamp's trigger condition (`tg < dr < tg +
+_MIN_ERP_SPREAD - _ERP_SPREAD_EPS`) subtract this epsilon, so the two agree
+at the boundary. This is not a cosmetic fix: callers that run clamp then
+validate and discard the whole assumption set on any violation (e.g.
+`rule_based._default_assumptions`) were silently discarding an already-valid,
+just-clamped CAPM-based discount rate for a whole class of low-beta filers
+before this fix — measured to be the single largest driver of the
+calibration-basket undervaluation this normalization effort measured (see
+VALUATION.md's calibration-methodology section).
 
 ## 4. DCF — `dcf.dcf_per_share(fcf0, growth_5y, terminal_growth, discount_rate, shares, dilution_rate=0.0) -> dict`
 
@@ -182,6 +207,10 @@ Standard DCF always passes `dilution_rate = 0.0`. SBC is now expensed directly
 in `fcf0` above, so separately diluting for `shares_yoy`/SBC-driven issuance
 would double-count the same drag. (`dcf_per_share`'s `dilution_rate` parameter
 stays in the API for callers, e.g. hyper-grower mode, that still need it.)
+The hyper-grower and mid-growth revenue-first paths (Sec.3/Sec.8d), which DO
+project a non-zero per-share dilution from `shares_yoy`, apply the same
+SBC-double-count logic to THEIR dilution input instead — see "SBC-driven
+dilution net-out" under Sec.3 (normalization Work Package 1).
 
 ### Scenario band (sensitivity-grid-derived, with a fallback)
 Each scenario's `lo`/`hi` comes from a local 3×3 sensitivity grid around that
@@ -203,6 +232,30 @@ grid-based approach for hyper-grower scenarios (`start_growth ± 2pp` ×
 ```
 (`growth`/`discount_rate` are pre-formatted Turkish strings derived from the
 numeric assumptions — keep numbers visible: "cam kutu".)
+
+### Standard-DCF high-growth reporting flag (LEVER 4, engine wiring)
+
+`engine._build_dcf_scenarios` (the function that runs this section's 3
+scenarios for the standard/cyclical FCF-DCF) returns an additive third
+element, `high_growth_flag: bool` -- `True` iff at least one scenario has a
+valid, numeric `growth_5y` strictly greater than
+`engine._STANDARD_DCF_HIGH_GROWTH_FLAG` (`= 0.40`). This standard two-stage
+DCF has no arrival-point/implied-revenue-multiple safety net the way the
+hyper-grower (§3/§4a) and mid-growth (§8d) revenue-first paths do, so a
+`growth_5y` this high flowing through it is not cross-checked against any
+TAM-share/revenue-multiple sanity gate. The flag is reporting-only -- it
+appends one Turkish note naming the triggering scenario(s) and never
+changes any computed per-share value or which scenario band is used. Surfaced
+at `valuation["dcf"]["high_growth_flag"]` (Sec.11). **Known latent-risk
+caveat** (surfaced by finance review, not yet acted on): for the `script`
+provider this flag is currently inert in practice, because
+`rule_based._default_growth_anchor` already clamps its own proposed
+`growth_5y` to `_DEFAULT_GROWTH_CLAMP_MAX = 0.25` before it ever reaches
+this check; the flag only has teeth for an LLM-proposed (`ollama`/
+`anthropic`) assumption set that isn't similarly pre-clamped, so a young,
+high-growth filer routed to the standard DCF (rather than hyper-grower/
+mid-growth) by an LLM's own sector-type call could still be overvalued
+without a safety net there. See ROADMAP.md's normalization-effort entry.
 
 ### Senaryo getirileri (`scenario_returns`) — companion structure
 
@@ -231,7 +284,9 @@ when every value degrades to `None`.
 
 ## 5. Reverse DCF — `reverse_dcf.implied_growth(price, fcf0, terminal_growth, discount_rate, shares, dilution_rate=0.0) -> Optional[float]`
 
-Bisection on `growth_5y` over [-0.20, 0.40] so that
+Bisection on `growth_5y` over `[-0.20, 0.60]` (`reverse_dcf._BRACKET_LO`/
+`_BRACKET_HI`; the upper bound was raised from 0.40 in lockstep with
+`sanity._GROWTH_5Y_HARD_MAX`, normalization Work Package 5) so that
 `dcf_per_share(...)["per_share"] == price`, tolerance `1e-4` on growth or 80
 iterations. Uses base-scenario `r` and `g_t` (fixed). If no sign change over
 the bracket or inputs unusable → `None`. **No `net_debt` parameter** (see
@@ -264,9 +319,13 @@ reverse-DCF pair shown is instead revenue-based: `implied_growth` =
 `implied_growth_with_status` in standard mode; hyper-grower mode doesn't have
 an equivalent status-returning revenue bisection, so it defaults to `"ok"`
 there. An above/below-bracket status also appends a Turkish note ("Fiyat,
-ters-DCF aralığının (%-20..%40) üzerinde/altında bir büyüme ima ediyor.") and
-is threaded into `triangulate.triangulate(..., reverse_dcf_status=...)` so the
-reverse-DCF signal can be "pahalı"/"ucuz" even when `implied_growth` is `None`.
+ters-DCF aralığının (%-20..%60) üzerinde/altında bir büyüme ima ediyor." —
+the bounds are formatted straight from `reverse_dcf._BRACKET_LO`/
+`_BRACKET_HI`, raised from `%-20..%40` to `%-20..%60` in lockstep with
+`sanity._GROWTH_5Y_HARD_MAX`, normalization Work Package 5 — no hard-coded
+text to fall out of sync) and is threaded into
+`triangulate.triangulate(..., reverse_dcf_status=...)` so the reverse-DCF
+signal can be "pahalı"/"ucuz" even when `implied_growth` is `None`.
 
 ## 6. Multiples — `multiples.multiples_history(normalized, price_df) -> list[dict]`
 
@@ -377,7 +436,7 @@ this file.)
   the cross-reference below).
   - `financial`: compute a P/B×ROE anchor using the justified (growth-aware)
     price-to-book multiple:
-    `fair_pb = clamp((roe - g) / (discount_rate_base - g), 0.5, 4.0)`, where
+    `fair_pb = (roe - g) / (discount_rate_base - g)`, where
     `g` is the base scenario's `terminal_growth` (degrading to the no-growth
     `roe / discount_rate_base` form when `g` is missing, negative, or would
     make the denominator non-positive), `per_share = fair_pb * (equity_latest
@@ -385,6 +444,21 @@ this file.)
     with `g` held fixed across the band (±10% fallback, Sec.4); bear/base/bull
     scale `fair_pb` by (0.8 / 1.0 / 1.2). Output under key `"pb_roe"`
     mirroring the dcf scenario shape.
+
+    **No longer clamped to `[0.5, 4.0]` (normalization Work Package 5).**
+    `fair_pb` used to be hard-clamped to that reference band
+    (`_PB_CLAMP_LO`/`_PB_CLAMP_HI`); a high-ROE compounder can legitimately
+    warrant a justified P/B above 4 (or a structurally low-ROE financial
+    below 0.5), and clamping silently discarded that signal. `_build_pb_roe`
+    now returns the RAW `fair_pb` and, when it falls outside `[0.5, 4.0]`,
+    sets `justified_pb_flag` to `"above_reference"`/`"below_reference"` (else
+    `None`) plus a Turkish note naming the value, the ROE, and the discount
+    rate -- flagging the contradiction/information for the report layer
+    instead of hiding it. `_PB_CLAMP_HI` (4.0) is still used, unchanged, as a
+    SEPARATE advisory threshold elsewhere (`_build_earnings_power`'s
+    over-capitalization advisory, Sec.8a) -- that use is untouched by this
+    change. `pb_roe`'s output dict gains two additive keys: `"fair_pb"` (the
+    raw, unclamped base justified P/B) and `"justified_pb_flag"`.
   - `reit`: compute an FFO-based Gordon-growth anchor instead (Sec.8c) --
     P/B×ROE systematically understates a REIT, since GAAP real-estate
     depreciation is a large non-cash charge that depresses both net income
@@ -414,12 +488,28 @@ this file.)
   degenerated to the trough year for deep cyclicals; a non-positive
   normalized margin yields `None` plus a Turkish note instead of a variant.
   Run the same 3 scenarios; report under `dcf.normalized_variant` with the
-  same scenario shape. Both variants are reported side by side. When
-  `normalized_variant` was successfully computed, the headline
-  `fair_value_range`, the triangulation DCF band, AND the reported
-  `sensitivity` matrix (Sec.9) are all taken from it instead of the raw
-  FCF-DCF band/fcf0; otherwise all three fall back to the raw FCF-DCF
-  band/fcf0 as usual.
+  same scenario shape. Both variants are reported side by side. The reported
+  `sensitivity` matrix (Sec.9) is taken from `normalized_variant`'s base
+  whenever it was successfully computed, UNCONDITIONALLY of which headline
+  below actually wins (the engine's `headline_fcf0` selector only checks
+  `sector_type == "cyclical" and normalized_variant is not None`, not the
+  gate described next) — otherwise it falls back to the raw `fcf0`.
+
+  The headline `fair_value_range` and the triangulation DCF band, however,
+  are **not unconditionally `normalized_variant`'s**: when the SAME FCF-DCF
+  reliability gate the mature path uses (`_fcf_dcf_unreliable`, Sec.8a) ALSO
+  fires for this cyclical — i.e. the raw FCF-DCF isn't merely near-trough but
+  structurally capex-suppressed every year, cash-backed, and
+  investment-driven (the canonical capital-intensive-cyclical case, e.g.
+  Micron/MU) — the headline instead comes from **Sec.8e**'s sustainable-growth
+  FCFE anchor, or, when that anchor can't clear the zero-growth EPV floor,
+  the EPV floor itself (Sec.8a); `normalized_variant` is then demoted to a
+  secondary cross-check reported alongside the raw FCF-DCF, not the headline.
+  When the gate does NOT fire (the ordinary near-trough cyclical, not
+  growth-CapEx suppressed), this section's original behavior is unchanged:
+  the headline and triangulation DCF band both come from `normalized_variant`
+  whenever it was computed, else from the raw FCF-DCF band/fcf0. See Sec.8e
+  for the full gate/guardrail mechanics.
 
 Cross-reference (Sec.11/Sec.3): independently of `sector_type`, when
 `sector.detect_hyper_grower` triggers (and the engine can build the
@@ -572,18 +662,22 @@ New constants (`engine.py`): `_EPV_SANITY_DEVIATION = 0.5`,
 ### Engine integration (`run_valuation`)
 
 Built right after `hyper_growth_active` is resolved, before the primary-DCF
-priority chain:
+priority chain. **Updated by Sec.8e:** `earnings_power` is now built for
+`cyclical` filers too, not just `mature` — for `cyclical` it doubles as both
+the zero-growth floor and the earnings base Sec.8e's sustainable-growth FCFE
+anchor grows:
 
 ```python
 earnings_power = None
-if sector_type == "mature" and not hyper_growth_active:
+if sector_type in ("mature", "cyclical") and not hyper_growth_active:
     earnings_power, ep_notes = _build_earnings_power(assumptions, normalized, metrics, ratios)
 ```
 
 The priority chain (Sec.3/Sec.8's existing hyper-grower branch, then the
 cyclical `normalized_variant` branch) gains a new trailing `elif` branch, so
 both hyper-grower mode and the cyclical normalized-earnings variant still
-take precedence over EPV:
+take precedence over EPV **for `mature` filers** (the `cyclical` branch has
+its own, separate priority chain — see Sec.8e):
 
 ```python
 epv_headline = False
@@ -740,9 +834,14 @@ anchors, further floored at today's margin:
 - **hist-anchor:** `_MATURE_HIST_UPLIFT ×` the single best historical raw
   FCF margin (`(OCF - CapEx) / Revenue`, positive years only). `None` if no
   fiscal year has a positive raw FCF margin.
-- `target = min(nopat, hist_anchor, _MATURE_TARGET_CAP)` over whichever of
-  `nopat`/`hist_anchor` are available; `None` only when **both** are
-  unavailable (the method can't be built without at least one anchor).
+- `target = min(nopat, hist_anchor)` over whichever of `nopat`/`hist_anchor`
+  are available; `None` only when **both** are unavailable (the method can't
+  be built without at least one anchor). **No longer additionally clamped to
+  `_MATURE_TARGET_CAP` here (normalization Work Package 4)** -- that
+  constant (0.15) is now a reporting-only flag threshold the caller
+  (`_build_mature_revenue_dcf`) compares this function's return value
+  against, rather than the value itself being silently truncated to it (see
+  "Main function" below).
 - Finally floored at `_mature_current_margin(...)` whenever that figure is
   positive — a filer already earning more than the computed mature ceiling
   today must never be modeled as if its margin falls.
@@ -772,6 +871,9 @@ Never raises (try/except wraps the whole body, mirroring
    real, still-fading growth story; a slow/stagnant "mature" filer falls
    through to EPV instead.
 4. `target_base = _mature_target_fcf_margin(...)`; `None` → `(None, note)`.
+   **WP4:** if `target_base > _MATURE_TARGET_CAP` (0.15), append a Turkish
+   note naming the value and set `target_margin_flag = "above_reference"`
+   (else `None`) -- reporting only, `target_base` itself is used unclamped.
 5. `current_margin = _mature_current_margin(...)`; `steady_state_year =
    _MATURE_STEADY_STATE_YEAR` (7, shorter than hyper-grower's 10 — a mature
    filer's growth story is closer to already playing out).
@@ -788,7 +890,11 @@ Never raises (try/except wraps the whole body, mirroring
    when fewer than 2 sensitivity-grid cells are usable).
 7. No scenario built → `(None, note)`. Otherwise returns
    `({"scenarios": {...}, "start_growth", "target_margin_base",
-   "current_margin", "steady_state_year"}, notes)`.
+   "target_margin_flag", "current_margin", "steady_state_year"}, notes)`.
+   The caller (`_run_valuation`) additionally mutates this dict with a
+   `growth_vs_floor` key (`"adds"`/`"destroys"`/`None`) after this function
+   returns -- see "EPV-floor guardrail" below and normalization Work
+   Package 7.
 
 ### `run_valuation` integration (priority chain)
 
@@ -814,7 +920,16 @@ floor. When the revenue-first base per-share is below the EPV base
 per-share, EPV stays the headline and the revenue-first band is demoted to a
 secondary cross-check under `mature_revenue_detail` (still returned, just
 not headlined) — a Turkish note names both figures and explains why EPV was
-kept. Why the guardrail compares against EPV specifically: EPV is a
+kept. **Normalization Work Package 7** made this dual-figure disclosure a
+report, not merely a gate: `mature_revenue_detail["growth_vs_floor"]` is set
+(via `engine._growth_vs_floor(epv_base_ps, mr_base_ps)`, a caller-side
+classification applied after `_build_mature_revenue_dcf` returns) to
+`"destroys"` when the revenue-first base is below the EPV floor (the growth
+case is destroying value relative to the no-growth anchor) or `"adds"` when
+it meets/clears the floor, whenever both figures are numeric (`None`
+otherwise) — regardless of which one ends up headlined, so a caller/report
+layer can always show both numbers and the relationship between them, not
+just whichever one won. Why the guardrail compares against EPV specifically: EPV is a
 net-income-based, zero-growth floor; the revenue-first model uses a
 strictly thinner FCF margin (net of the tax/reinvestment haircut) — if
 growth alone can't lift the growth-inclusive value above the no-growth
@@ -1055,7 +1170,7 @@ own sensitivity. This `sensitivity` matrix (and `reverse_dcf.implied_growth`)
 keep reflecting the secondary, suppressed FCF-DCF base here too, with the
 Turkish note documented in Sec.8b.
 
-## 10. Triangulation — `triangulate.triangulate(price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type, hyper_growth=False, bull_band=None, reverse_dcf_status=None, raw_growth_pair_pct=None, growth_adj_pct=None, earnings_power_headline=False, mature_revenue_headline=False, midgrowth_revenue_headline=False, pffo_pct=None) -> dict`
+## 10. Triangulation — `triangulate.triangulate(price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type, hyper_growth=False, bull_band=None, reverse_dcf_status=None, raw_growth_pair_pct=None, growth_adj_pct=None, earnings_power_headline=False, mature_revenue_headline=False, midgrowth_revenue_headline=False, pffo_pct=None, cyclical_fcfe_headline=False) -> dict`
 
 Direction signal per method (`"ucuz" | "makul" | "pahali" | "veri_yok"`):
 - **DCF**: price < band.lo → ucuz; price > band.hi → pahali; else makul.
@@ -1123,6 +1238,16 @@ revenue-first model) and its reverse-DCF leg derive from one model, not two
 independent ones. Mutually exclusive in practice with the two headline flags
 above.
 
+**Cyclical sustainable-growth FCFE confidence ceiling (Sec.8e):**
+`cyclical_fcfe_headline` (default `False`) is the equivalent flag for the
+capital-intensive-cyclical sustainable-growth FCFE anchor (Sec.8e —
+`cyclical` filers, e.g. Micron/MU, whose FCF-DCF is gated as unreliable by
+the SAME `_fcf_dcf_unreliable` test the mature/EPV path uses). Same `YÜKSEK
+→ ORTA` cap, same appended rationale clause, for the same reason as the
+other caps: the DCF leg IS the earnings-based FCFE anchor here, so three-way
+"agreement" with multiples is not independent confirmation. Mutually
+exclusive in practice with the other headline flags above.
+
 ## 11. Engine — `engine.run_valuation(normalized, ratios, metrics, price, price_df, assumptions, sector_type, damodaran_dir=None, sic_description=None, hyper_growth_extras=None) -> dict`
 
 Orchestrates everything above. Never raises for missing data (only for
@@ -1140,10 +1265,21 @@ consumed by interpret phase 2, CLI card, HTML report, and store):
      "enabled": bool, "disabled_reason": str|None,
      "scenarios": {"bear": {"per_share", "lo", "hi"}, "base": {...}, "bull": {...}}|None,
      "normalized_variant": same shape|None,
+     "high_growth_flag": bool,  # LEVER 4; True iff at least one scenario's
+                                # growth_5y > 0.40 (_STANDARD_DCF_HIGH_GROWTH_FLAG)
+                                # -- reporting-only signal (a Turkish note names the
+                                # triggering scenario(s)), since this standard
+                                # two-stage path has no arrival-point safety net
+                                # (unlike hyper-grower/mid-growth revenue-first).
+                                # Never changes any computed value.
   },
-  "pb_roe": {"scenarios": {...}}|None,  # financial's anchor; also reit's
+  "pb_roe": {"scenarios": {...}, "fair_pb": float,
+             "justified_pb_flag": "above_reference"|"below_reference"|None,
+            }|None,  # financial's anchor; also reit's
                                          # FALLBACK anchor when ffo (below)
-                                         # couldn't be built -- Sec.8c.
+                                         # couldn't be built -- Sec.8c. fair_pb/
+                                         # justified_pb_flag: WP5, raw (unclamped)
+                                         # justified P/B + reference-band flag.
   "ffo": {"scenarios": {"bear"/"base"/"bull": {"per_share","lo","hi"}},
            "ffo_per_share": float,
            "implied_pffo": {"bear"/"base"/"bull": float}}|None,
@@ -1162,9 +1298,18 @@ consumed by interpret phase 2, CLI card, HTML report, and store):
   "fair_value_range": <shape from §4, built from dcf.scenarios or pb_roe (or,
                         for reit, ffo -- §8c);
                         for cyclical sector_type, from dcf.normalized_variant
-                        instead when available -- see §8; overridden by the
-                        hyper-grower revenue-first DCF base band, ahead of
-                        both, whenever hyper_growth is true -- see §3 below;
+                        instead when available -- see §8 -- UNLESS the
+                        cyclical FCF-DCF reliability gate additionally fires
+                        (§8e; same _fcf_dcf_unreliable test §8a uses), in
+                        which case the headline instead comes from the
+                        cyclical sustainable-growth FCFE anchor
+                        (cyclical_fcfe_headline true) or, when that anchor
+                        can't clear the EPV floor, the EPV floor itself
+                        (epv_headline true) -- normalized_variant is then a
+                        secondary cross-check, not the headline; overridden by
+                        the hyper-grower revenue-first DCF base band, ahead of
+                        all of the above, whenever hyper_growth is true --
+                        see §3 below;
                         for mature sector_type, overridden by the
                         earnings-power-value (EPV) anchor instead, ahead of
                         the raw dcf.scenarios band, whenever
@@ -1213,16 +1358,33 @@ consumed by interpret phase 2, CLI card, HTML report, and store):
                   "revenue_multiple": float|None, "steady_state_margin": float|None,
                   "tam_share": float|None},
      "target_margin_source": str,    # e.g. "brüt marj × 0.5 (tavan %30)"
+     "target_margin_flag": "above_reference"|None,  # WP4; set when the
+                                      # (uncapped) target_base exceeds
+                                      # _HYPER_TARGET_BASE_CAP (0.30) -- a
+                                      # reporting flag, not an applied clamp.
+     "target_margin_pct": float,     # WP4; the (uncapped) target_base itself
+     "annual_dilution": float,       # WP1; net-of-SBC dilution rate actually
+                                      # used, clamp(shares_yoy - sbc_dilution, 0, 0.05)
+     "sbc_dilution_excluded": float, # WP1; the raw SBC-implied issuance rate
+                                      # subtracted (0.0 when not applicable)
+     "mature_discount_rate": float|None,  # WP3; the shared fade target (see
+                                      # "Hyper-grower discount-rate fade" above),
+                                      # None when the base discount rate was
+                                      # unusable (fade skipped, flat rate used)
      "capex_normalization": None | { # Sec.3.6; None unless the maintenance/growth
         "applied": True,             # CapEx split was applied (capex-heavy filer)
         "capex_intensity": float,    # CapEx / revenue
-        "maintenance_capex": float,  # max(D&A, 5% of revenue) -- floored proxy
+        "maintenance_capex": float,  # max(D&A, sector Cap Ex/Sales or 5% of
+                                      # revenue, WP6) -- floored proxy
         "growth_capex": float,       # capex - maintenance_capex
         "raw_current_margin": float, # actual starting margin (drives the HEADLINE)
         "ops_current_margin": float, # relieved margin (drives the UPSIDE only)
         "upside_per_share": float|None,  # AGGRESSIVE upside base value, NOT headlined
         "upside_lo": float|None,     # upside base band
         "upside_hi": float|None,
+        "maintenance_capex_floor_note": str,  # WP6; present only when the
+                                      # sector Cap Ex/Sales floor was used AND
+                                      # exceeded D&A
      },                              # relief NEVER changes the headline scenarios or
                                       # the suppression decision (reviewer Findings 1-2)
      "suppressed": bool,             # True when the base scenario's per_share <= 0
@@ -1245,8 +1407,16 @@ consumed by interpret phase 2, CLI card, HTML report, and store):
                               "discount_rate"}, "base": {...}, "bull": {...}},
      "start_growth": float,          # realized CAGR/YoY blend, same across all 3 scenarios
      "target_margin_base": float,    # mature target FCF margin before per-scenario scaling
+     "target_margin_flag": "above_reference"|None,  # WP4; set when target_margin_base
+                                      # exceeds _MATURE_TARGET_CAP (0.15) -- a reporting
+                                      # flag, not an applied clamp.
      "current_margin": float,        # 3y-median SBC-adjusted FCF margin (fade start point)
      "steady_state_year": int,       # 7 (_MATURE_STEADY_STATE_YEAR)
+     "growth_vs_floor": "adds"|"destroys"|None,  # WP7; caller-side classification
+                                      # of this base per-share vs the EPV base per-share
+                                      # (set after this dict is returned -- see
+                                      # "EPV-floor guardrail" above); None when either
+                                      # figure is missing/non-numeric.
   },                                 # Sec.8b; built (attempted) whenever sector_type ==
                                      # "mature" and the FCF-DCF reliability gate fired,
                                      # REGARDLESS of whether it became the headline (may
@@ -1262,15 +1432,47 @@ consumed by interpret phase 2, CLI card, HTML report, and store):
                               "target_fcf_margin","terminal_growth",
                               "discount_rate"}, "base": {...}, "bull": {...}},
      "start_growth": float,          # realized CAGR/YoY blend, same across all 3 scenarios
-     "target_margin_base": float,    # mature target FCF margin (<= _MIDGROWTH_TARGET_CAP 20%)
+     "target_margin_base": float,    # mature target FCF margin (reference threshold
+                                      # _MIDGROWTH_TARGET_CAP 20%, WP4: flag not clamp)
+     "target_margin_flag": "above_reference"|None,  # WP4; set when target_margin_base
+                                      # exceeds _MIDGROWTH_TARGET_CAP (0.20)
      "current_margin": float,        # 3y-median SBC-adjusted FCF margin (fade start point)
      "steady_state_year": int,       # 8 (_MIDGROWTH_STEADY_STATE_YEAR)
-     "annual_dilution": float,       # clamp(shares_yoy if > 0 else 0, 0, 0.05)
+     "annual_dilution": float,       # WP1; clamp(shares_yoy - sbc_dilution, 0, 0.05)
+                                      # (net of SBC-driven issuance -- see
+                                      # "SBC-driven dilution net-out" under §3)
+     "sbc_dilution_excluded": float, # WP1; the raw SBC-implied issuance rate subtracted
+                                      # (0.0 when not applicable)
      "financing_shares": float,      # cumulative-burn / price (hyper-style)
      "suppressed": bool,             # True when base per_share <= 0 (falls back to multiples)
   },                                 # Sec.8d; built (attempted) for growth_unprofitable
                                      # non-hyper filers; None when the growth gate rejected
                                      # it or a precondition was missing.
+  "cyclical_fcfe_headline": bool,   # Sec.8e; True only when sector_type ==
+                                     # "cyclical", the FCF-DCF reliability gate
+                                     # (_fcf_dcf_unreliable, shared with §8a)
+                                     # fired, AND the FCFE anchor's base
+                                     # per-share beat the EPV base floor.
+  "cyclical_fcfe_detail": None | {
+     "scenarios": {"bear": {"per_share","lo","hi"}, "base": {...}, "bull": {...}},
+     "per_share": float,             # base scenario's point estimate
+     "normalized_net_income": float, # == earnings_power["normalized_net_income"]
+     "roe": float,                   # normalized_net_income / spot latest-FY equity
+     "equity": float,                # the spot latest-FY StockholdersEquity used
+     "cost_of_equity": float,        # == earnings_power["cost_of_equity"]
+     "reinvestment_base": float,     # base scenario's implied g/ROE, display only
+     "growth_vs_floor": "adds"|"destroys"|None,  # WP7; caller-side classification
+                                      # of this base per-share vs the EPV base per-share
+                                      # (set after this dict is returned); None when
+                                      # either figure is missing/non-numeric.
+  },                                 # Sec.8e; built (attempted) for cyclical
+                                     # non-hyper filers whenever the FCF-DCF
+                                     # reliability gate fired; None when the
+                                     # gate never fired, or a precondition
+                                     # (earnings_power/shares/equity/ROE) was
+                                     # missing; may be non-None but NOT the
+                                     # headline if the guardrail kept EPV
+                                     # instead (epv_headline true).
   "assumptions": <the validated AND CLAMPED assumptions dict (Sec.3's
                    clamp_assumptions, F5) -- what's shown here is exactly
                    what every DCF/reverse-DCF/sensitivity/hyper calculation
@@ -1279,7 +1481,9 @@ consumed by interpret phase 2, CLI card, HTML report, and store):
                           # assumption-clamp notes, reverse-DCF bracket notes,
                           # EPV headline switch/margin-normalization/quality
                           # notes (Sec.8a), mature revenue-first DCF headline
-                          # switch/growth-gate/guardrail notes (Sec.8b)
+                          # switch/growth-gate/guardrail notes (Sec.8b),
+                          # cyclical sustainable-growth FCFE headline switch/
+                          # trough-excluded-assumption notes (Sec.8e)
 }
 ```
 
@@ -1295,10 +1499,13 @@ which use P/B×ROE (`financial`) or the FFO Gordon-growth anchor (`reit`,
 Sec.8c) instead). When it triggers, `engine._build_hyper_growth`
 runs the deterministic bear/base/bull `revenue_dcf.revenue_first_dcf`
 scenarios (Sec.3.1's per-scenario start-growth/target-margin/discount-rate
-table, Sec.3.2's dilution/financing rule -- F2: dilution is share-count
-growth only, `clamp(shares_yoy if > 0 else 0, 0, 0.05)`; SBC is expensed
-directly into `current_margin`/target margins instead of also inflating
-dilution), computes a prob-weighted
+table, Sec.3.2's dilution/financing rule -- F2/normalization Work Package 1:
+dilution is share-count growth net of SBC-driven issuance, via
+`engine._non_sbc_dilution` -- see "SBC-driven dilution net-out" below --
+`clamp(shares_yoy - sbc_dilution, 0, 0.05)` where `sbc_dilution =
+sbc_latest / market_cap`; SBC is ALSO expensed directly into
+`current_margin`/target margins, so netting it back out of the dilution
+projection avoids charging the same SBC cost twice), computes a prob-weighted
 `expected_value`, an "arrival point" flag from the base scenario's 10-year
 revenue multiple (or from `tam_usd`'s share of that revenue when known --
 this overrides the multiple-based flag), and the price's implied
@@ -1308,8 +1515,12 @@ scenario's `target_fcf_margin`/`steady_state_year`/`probability` and supply
 `tam_usd`; anything not overridden stays deterministic.
 
 Start-growth anchor (F4): the base scenario's start-growth is
-`min(growth_anchor, 0.40)` (bear/bull scale this by 0.6x/1.2x before the same
-cap), where `growth_anchor` blends the realized multi-year CAGR with the
+`min(growth_anchor, 0.60)` (`engine._HYPER_START_GROWTH_CAP`, raised from
+0.40 by normalization Work Package 5 in lockstep with
+`sanity._GROWTH_5Y_HARD_MAX` -- same rationale: the arrival-point flags
+below, not this cap, are the real honesty mechanism) (bear/bull scale this
+by 0.6x/1.2x before the same cap), where `growth_anchor` blends the realized
+multi-year CAGR with the
 latest single fiscal year's YoY growth -- `0.5 * realized_cagr + 0.5 *
 latest_yoy` -- whenever `latest_yoy` is computable (both the fundamental
 fiscal year, `resolve_fundamental_fy(metrics)`, and the year before it have
@@ -1320,23 +1531,40 @@ the blend is actually used.
 
 Sec.3.1's `target_base` (the mature-state FCF-margin ceiling that the
 base-scenario `target_fcf_margin` equals, with bear/bull scaling it by
-0.7/1.2) is `min(gross_margin * 0.5, 0.30)` when the latest-FY gross
-margin is a known positive number, or a flat `0.20` ceiling when gross
-margin is unavailable (replacing the previous 15%-gross-margin-fallback
-rule, which produced an unrealistically low 7.5% ceiling for filers with
-no gross-margin data at all). Either way, `target_base` is then floored
-at today's FCF margin (`fcf / latest_revenue`) whenever that margin is
-positive -- a filer that is already FCF-profitable today must never be
-modeled as if its mature margin collapses below what it already earns --
-and, when gross margin is known, capped back down at that gross margin
-(so the floor can raise `target_base` but never push it past the
-gross-margin ceiling). `target_margin_source` reports which of these
-paths fired, e.g. `"brüt marj × 0.5 (tavan %30)"` when the gross-margin
-ceiling applied unchanged, `"brüt marj %60 × 0.5 (tavan %30), bugünkü FCF
-marjına tabanlanmış"` when a known gross margin was overridden by the
-current-margin floor, or `"brüt marj yok: %20 varsayılan tavan, bugünkü
-FCF marjına (%30) tabanlanmış"` when gross margin was missing and the
-20% default ceiling was overridden by the current-margin floor.
+0.7/1.2), via `engine._hyper_target_base`, is `gross_margin * 0.5` when the
+latest-FY gross margin is a known positive number, or a flat `0.20` ceiling
+when gross margin is unavailable (replacing the previous
+15%-gross-margin-fallback rule, which produced an unrealistically low 7.5%
+ceiling for filers with no gross-margin data at all). Either way,
+`target_base` is then floored at today's FCF margin (`fcf / latest_revenue`)
+whenever that margin is positive -- a filer that is already FCF-profitable
+today must never be modeled as if its mature margin collapses below what it
+already earns -- and, when gross margin is known, capped back down at that
+gross margin (so the floor can raise `target_base` but never push it past
+the gross-margin ceiling).
+
+**No longer clamped to an absolute 30% ceiling (normalization Work Package
+4).** `_hyper_target_base`'s result used to also be hard-capped at
+`_HYPER_TARGET_BASE_CAP = 0.30`; that constant is now a reporting-only flag
+threshold, not an applied ceiling -- a genuinely high-gross-margin business
+(e.g. gross margin above 60%) can legitimately warrant a mature FCF margin
+above 30%, and silently truncating it there was a second, blunt penalty on
+top of the discount rate/probabilities that already price the underlying
+risk. When the (uncapped) `target_base` exceeds `_HYPER_TARGET_BASE_CAP`,
+`_build_hyper_growth` appends a Turkish note naming the value and the
+reference threshold, and sets `hyper_growth_detail["target_margin_flag"] =
+"above_reference"` (else `None`) -- the report layer surfaces the flag
+instead of the value being silently clipped.
+
+`target_margin_source` reports which construction path fired, e.g. `"brüt
+marj × 0.5 (tavan %30)"` when the gross-margin path applied unchanged,
+`"brüt marj %60 × 0.5 (tavan %30), bugünkü FCF marjına tabanlanmış"` when a
+known gross margin was overridden by the current-margin floor, or `"brüt
+marj yok: %20 varsayılan tavan, bugünkü FCF marjına (%30) tabanlanmış"` when
+gross margin was missing and the 20% default ceiling was overridden by the
+current-margin floor -- the `"(tavan %30)"` wording in these strings is
+historical/descriptive (it still names the reference threshold used to
+derive the source label) and does not imply an applied clamp.
 
 If any sub-step can't be computed (missing revenue/shares/realized growth,
 or every scenario's `revenue_first_dcf` call fails), the whole block
@@ -1352,6 +1580,170 @@ computed and returned as a secondary figure, exactly as the cyclical
 `normalized_variant` is. `triangulate()`'s signature/behavior is unchanged
 in this milestone -- the hyper band simply flows into the existing DCF
 signal via `primary_dcf_scenarios`.
+
+### SBC-driven dilution net-out (`engine._non_sbc_dilution`, normalization Work Package 1)
+
+Shared by the hyper-grower path (above) and the mid-growth revenue-first DCF
+(Sec.8d) -- both project per-share dilution from `metrics["shares_yoy"]`
+(raw share-count growth), which already includes shares issued via
+stock-based compensation (SBC). Both paths ALSO expense SBC directly in
+`current_margin`/target margins (SBC is subtracted from cash flow the same
+way `_select_fcf0` treats it for the standard DCF, Sec.4). Projecting the
+raw `shares_yoy` as the dilution rate on top of that would charge the same
+SBC cost twice -- once as a margin drag, once again as per-share dilution.
+
+`_non_sbc_dilution(metrics, normalized, fy) -> (rate, note, sbc_dilution_
+excluded)`: when `metrics["market_cap"]` is a usable positive number,
+`sbc_dilution = sbc_latest / market_cap` (`sbc_latest` from the `SBC`
+concept at `fy`, `0.0` when missing), `non_sbc = max(0.0, shares_yoy -
+sbc_dilution)`, and `rate = clamp(non_sbc, 0.0, _HYPER_DILUTION_CAP)` (the
+existing 0.05 cap, unchanged). When `market_cap` is unusable, the function
+falls back to the pre-WP1 behavior byte-for-byte: `rate =
+clamp(shares_yoy, 0.0, _HYPER_DILUTION_CAP)`, no netting. Whenever the net
+actually changed something (`sbc_dilution > 0` and `shares_yoy > 0`), a
+Turkish note is appended ("SBC ihraçları marjda gider olarak zaten
+fiyatlandığı için dilüsyon projeksiyonundan çıkarıldı (çift sayım
+önlendi)...") and `sbc_dilution_excluded` carries the raw SBC-implied
+issuance rate that was subtracted (`0.0` otherwise). `hyper_growth_detail`
+and `midgrowth_revenue_detail` (Sec.8d) both gain two additive fields from
+this: `annual_dilution` (the net, already-clamped rate actually used) and
+`sbc_dilution_excluded` (the subtracted amount, for transparency). Never
+raises. Financing shares (extra shares issued to fund cash-burn years) are
+unaffected -- that mechanism is SBC-independent and unchanged.
+
+### Terminal-growth anchor: `min(risk_free, 4%)` (normalization Work Package 2 / LEVER 1)
+
+Every path in this engine that needs a terminal/perpetuity growth rate --
+the hyper-grower revenue-first DCF, the standard/mature/mid-growth paths via
+`assumptions["*"]["terminal_growth"]` -- now derives it from the SAME rule,
+Damodaran's practical guideline that a stable perpetuity growth rate should
+not exceed the (nominal) risk-free rate:
+
+```
+terminal_growth = min(risk_free_rate, sanity._TERMINAL_GROWTH_MAX)   # 4% cap
+```
+
+There is deliberately no cohort differentiation any more (an earlier
+version of the hyper-grower path used a fixed 2.5% terminal growth
+regardless of the risk-free rate) -- a hyper-grower that has reached
+`steady_state_year` is, by definition, a now-mature company; the extra risk
+it carried while still growing is already priced into the elevated
+bear/base/bull discount rates and scenario probabilities, so discounting
+its terminal growth a second time on top of that would be a third, layered
+penalty for the same risk.
+
+**Two independent call sites, two resolution orders (LEVER 1 fix -- see
+"Known gaps/roadmap" below for the bug this replaced):**
+
+- **Hyper-grower path (`engine._run_valuation`):** `sector_data =
+  damodaran.load_sector_data(...)` is loaded once, early (moved ahead of the
+  hyper-grower build specifically so this anchor is available to it --
+  purely a load-order change, same deterministic local CSV read either
+  way). `risk_free_pct = sector_data.get("risk_free")` (the GLOBAL US
+  risk-free rate off `erp.csv`, independent of any SIC/industry matching).
+  When numeric: `terminal_growth_anchor = min(risk_free_pct / 100.0,
+  sanity._TERMINAL_GROWTH_MAX)`. Else: falls back to the historical flat
+  constant `engine._HYPER_TERMINAL_GROWTH = 0.025`. This same
+  `terminal_growth_anchor` is threaded into `_build_hyper_growth` as its
+  `terminal_growth` parameter (superseding the old always-0.025 default).
+- **Standard/mature/mid-growth paths (`rule_based._terminal_growth_anchor`,
+  used by `rule_based._default_assumptions` for EVERY scenario, script
+  provider and LLM-fallback alike):** resolution order is (1)
+  `capm["risk_free"]` (the SIC-matched sector's CAPM `risk_free`, when
+  `capm` is present and numeric), (2) `risk_free_pct` -- the SAME global
+  `erp.csv` risk-free rate the hyper path reads, passed down from
+  `interpret/analyzer.py`'s `run_valuation` orchestration specifically as a
+  fallback for filers whose SIC doesn't match any Damodaran industry (so
+  `capm.compute_cost_of_equity` returns `None`) -- without this fallback
+  those filers' terminal growth would ALSO flatten to the old constant on
+  top of their already-flat (non-CAPM) discount rate, a double penalty; (3)
+  `rule_based._DEFAULT_TERMINAL_GROWTH = 0.025`, only when neither of the
+  above is numeric. Returns `(terminal_growth, from_risk_free)` -- the
+  second element feeds the per-scenario `story` sentence's terminal-growth
+  clause (naming whether the number is risk-free-derived or the flat
+  fallback).
+
+Both call sites therefore converge on the identical `min(risk_free, 4%)`
+rule; they differ only in WHERE their risk-free number can come from (a
+SIC-matched CAPM figure first, for the assumptions-driven paths) -- not in
+the rule itself. `sanity._TERMINAL_GROWTH_MAX` (4%) remains the ultimate
+ceiling in both places, and `sanity.validate_assumptions`/`clamp_assumptions`
+(Sec.3) still independently enforce it on whatever `terminal_growth` ends up
+in `assumptions`.
+
+### Hyper-grower discount-rate fade to a mature rate (normalization Work Package 3)
+
+The hyper-grower revenue-first DCF fades revenue growth and FCF margin
+toward a mature steady state (Sec.3.1/above) but, before this Work Package,
+discounted every projected year at a FIXED cohort rate (14%/12%/10% for
+bear/base/bull) all the way through the terminal value -- internally
+inconsistent with a model whose whole point is that the business becomes
+mature by `steady_state_year`: since most of a hyper-grower's value sits in
+the far years and the terminal value, a permanently-elevated flat rate
+systematically crushes exactly the cash flows the fade is supposed to have
+already de-risked. Damodaran's standard fix, now implemented, is to fade the
+discount rate alongside the cash flows.
+
+**`mature_discount_rate` (`engine._run_valuation`):** computed once, shared
+across all three scenarios' fades:
+
+```
+base_discount_rate_for_fade = assumptions["base"]["discount_rate"]
+mature_discount_rate = max(base_discount_rate_for_fade,
+                            terminal_growth_anchor + sanity._MIN_ERP_SPREAD)
+```
+
+`assumptions["base"]["discount_rate"]` is already CAPM-aware (Damodaran
+sector beta relevered with the firm's own D/E, plus ERP and the risk-free
+rate, Sec.4's VALUATION.md cross-reference) and already run through
+`sanity.clamp_assumptions` (Sec.3) by this point -- no separate CAPM
+computation happens in this module. The `max(...)` floor guards against the
+fade ever landing inside the ERP-spread guard's forbidden zone (a rate only
+barely above `terminal_growth`). When `base_discount_rate_for_fade` is
+missing/non-numeric, `mature_discount_rate = None` and every downstream call
+degrades to the pre-WP3 flat-rate behavior exactly (see below) -- this
+parameter is purely additive.
+
+**Threaded through to `_build_hyper_growth` and `revenue_dcf.
+revenue_first_dcf`:** each of the three scenarios still STARTS its fade from
+its own fixed cohort rate (14%/12%/10%, unchanged) -- only the fade's
+MATURE TARGET is now this one shared `mature_discount_rate`, so bear/base/
+bull each fade from a different starting point to the same ending point.
+`revenue_first_dcf` gained an optional `mature_discount_rate=None` parameter
+(default `None` preserves byte-for-byte the old flat-rate behavior for every
+existing direct caller/test):
+
+- **Rate path (`revenue_dcf._discount_path`):** mirrors the growth/margin
+  fade's exact shape -- linear from `discount_rate` (year 1, the cohort
+  rate) to `mature_discount_rate`, reaching it exactly at
+  `steady_state_year` and holding there for any remaining years: `r_t =
+  discount_rate + (mature_discount_rate - discount_rate) * min(t-1,
+  steady_state_year-1) / (steady_state_year-1)` (collapses to a flat
+  `mature_discount_rate` for every year when `steady_state_year <= 1`,
+  avoiding a division by zero).
+- **Discounting:** each year's present value uses the CUMULATIVE product of
+  `(1 + r_t)` across years 1..t (`Π(1+r_i)`), not `(1+r)**t` -- a proper
+  path-dependent discount factor for a rate that changes year to year.
+- **Terminal value:** `tv = fcf_terminal * (1 + terminal_growth) /
+  (mature_discount_rate - terminal_growth)` (Gordon growth AT THE MATURE
+  RATE -- a steady-state perpetuity should be discounted at the steady-state
+  cost of equity, not the elevated cohort rate), discounted by the
+  cumulative product over the full horizon (`pv_tv = tv / df_horizon`).
+  Must have `mature_discount_rate > terminal_growth` (raises `ValueError`
+  otherwise, mirroring the existing `discount_rate > terminal_growth` guard).
+- The returned dict gains an additive `discount_path` key (`horizon` floats)
+  whenever `mature_discount_rate` was provided.
+- `revenue_dcf.implied_start_growth`/`implied_target_margin` both accept and
+  forward the same optional `mature_discount_rate` parameter, so the
+  reverse-DCF/implied-metric bisections used by the hyper-grower path solve
+  over the SAME faded-rate model the headline scenarios use.
+
+`hyper_growth_detail`'s per-scenario dict gains an additive
+`mature_discount_rate` field (Sec.11) mirroring this. Mid-growth (Sec.8d)
+and mature (Sec.8b) revenue-first DCF do NOT receive this fade -- their own
+`discount_rate` already comes from the CAPM-aware, clamped `assumptions`
+pipeline per scenario (not a fixed hyper-style cohort rate), so there is no
+elevated-then-mature gap to fade across.
 
 ### Non-credible negative valuation guard (`suppressed`)
 
@@ -1392,6 +1784,23 @@ iskonto %12."` A scenario missing its hyper cell (a failed
 `revenue_first_dcf` call for that scenario) falls back to the
 assumptions-derived string for that scenario, exactly as the non-hyper path
 always has.
+
+**Known display inconsistency (documented, not yet fixed):** `"%2.5"` in the
+`growth`/`note` strings above is a LITERAL, hard-coded substring in
+`_hyper_scenario_meta` -- it does NOT read the actual `terminal_growth_anchor`
+(above) the engine passes into `_build_hyper_growth`/`revenue_first_dcf` for
+this run. Since the terminal-growth-anchor rule (normalization Work Package
+2/LEVER 1) can now resolve to any value up to `sanity._TERMINAL_GROWTH_MAX`
+(4%) depending on the risk-free rate, the displayed fade target can be wrong
+whenever the resolved anchor isn't exactly 2.5% -- unlike the sibling
+`_mature_scenario_meta`/`_midgrowth_scenario_meta` helpers (Sec.8b/Sec.8d),
+which already interpolate the actual resolved terminal growth into their
+own equivalent strings via a `terminal_str` variable. This affects only the
+DISPLAYED text (`fair_value_range`'s `growth`/`note` fields for hyper-grower
+mode); the underlying `revenue_first_dcf` computation itself correctly uses
+the resolved `terminal_growth_anchor`, so the computed per-share values are
+unaffected. Flagged here as a known gap rather than silently documented as
+if it were dynamic.
 Round all per-share values to 2 decimals, percentiles to 1, growth rates to 4.
 
 ### Sec.3.6 — Maintenance/growth CapEx split (`engine._maintenance_adjusted_margin`)
@@ -1408,25 +1817,44 @@ revenue-first projection already captures via its growth path. Subtracting it
 from the *starting* margin double-penalizes the same expansion (once as
 today's cash outflow, again as forgone terminal cash flow).
 
-`_maintenance_adjusted_margin(normalized, metrics, raw_current_margin) ->
-(ops_margin, capex_normalization | None)` computes the growth-CapEx-relieved
-margin, using depreciation & amortization (the `Depreciation` concept),
-**floored at `_MAINTENANCE_CAPEX_MIN_PCT_REVENUE` (= 0.05) of revenue**, as
-the maintenance-CapEx proxy. The revenue floor exists because current-year
-D&A understates the maintenance burden of a still-ramping asset base
-(reviewer Finding 2: a data-center builder's future depreciation reflects
-its grown-out fleet, not today's small one). All figures are read at
-`resolve_fundamental_fy(metrics)`. Gate — BOTH must hold, else the raw margin
-is returned unchanged and `capex_normalization` is `None`:
+`_maintenance_adjusted_margin(normalized, metrics, raw_current_margin,
+sector_capex_sales=None) -> (ops_margin, capex_normalization | None)`
+computes the growth-CapEx-relieved margin, using depreciation & amortization
+(the `Depreciation` concept), **floored at a maintenance-CapEx-as-%-of-
+revenue rate**, as the maintenance-CapEx proxy. That floor rate is
+`sector_capex_sales` (normalization Work Package 6) when it is a usable
+positive number, else the flat `_MAINTENANCE_CAPEX_MIN_PCT_REVENUE` (`=
+0.05`) default. `sector_capex_sales` comes from the matched Damodaran
+sector's Cap Ex/Sales ratio -- `damodaran.sector_medians(...)["capex_sales"]`
+(new optional `capex_sales` column in `multiples.csv`, see
+`data/damodaran/README.md`), computed once by `_run_valuation` (alongside
+the existing sector-median match used for the multiples comparison, no
+second lookup) and threaded through `_build_hyper_growth` into this
+function. The revenue-floor mechanism exists (independent of which rate
+feeds it) because current-year D&A understates the maintenance burden of a
+still-ramping asset base (reviewer Finding 2: a data-center builder's future
+depreciation reflects its grown-out fleet, not today's small one); a
+sector's own Cap Ex/Sales ratio sizes that floor more accurately than one
+flat 5% for sectors (e.g. data-center/telecom/utility) with a genuinely
+higher maintenance-capex intensity than the generic default. All figures are
+read at `resolve_fundamental_fy(metrics)`. Gate — BOTH must hold, else the
+raw margin is returned unchanged and `capex_normalization` is `None`:
 
 - `capex / revenue > _CAPEX_HEAVY_INTENSITY_THRESHOLD` (new constant `= 0.30`)
   — genuinely capex-heavy, not an asset-light software grower.
-- `capex > max(d&a, 0.05·revenue)` — there is growth CapEx above the floored
-  maintenance level to relieve.
+- `capex > max(d&a, maintenance_floor_pct · revenue)` — there is growth
+  CapEx above the floored maintenance level to relieve.
 
-When applied: `maintenance_capex = max(d&a, 0.05·revenue)`, `growth_capex =
-capex − maintenance_capex`, `ops_margin = raw_current_margin + growth_capex /
-revenue` (an additive correction on the caller's raw margin).
+When applied: `maintenance_capex = max(d&a, maintenance_floor_pct ·
+revenue)`, `growth_capex = capex − maintenance_capex`, `ops_margin =
+raw_current_margin + growth_capex / revenue` (an additive correction on the
+caller's raw margin). When the sector floor was actually used AND it
+exceeds D&A (i.e. it actually moved the maintenance-CapEx figure),
+`capex_normalization` gains an additive
+`maintenance_capex_floor_note` Turkish string naming the sector percentage
+used in place of the flat 5% default. `sector_capex_sales` absent/non-
+positive keeps this whole computation byte-for-byte identical to the
+pre-WP6 flat-5%-only behavior.
 
 **The relief is deliberately NOT the headline (reviewer Findings 1–2).** A
 finance review showed that relieving growth CapEx from the *starting* margin
@@ -1484,19 +1912,25 @@ New constants (`engine.py`): `_MIDGROWTH_MIN_GROWTH = 0.12`,
 - `start_growth = _mature_start_growth(...)` (reused: blended realized CAGR).
 - **Growth gate:** `start_growth < _MIDGROWTH_MIN_GROWTH` (12%) OR
   `start_growth <= base.terminal_growth` → `(None, note)`.
-- **Target mature FCF margin:** `min(_hyper_target_base(gm, current_margin),
-  _MIDGROWTH_TARGET_CAP)` where `gm` = latest-FY positive gross margin. The
-  gross-margin construction (hyper path) is used rather than the mature
-  path's operating-margin/historical-FCF anchors, which degenerate for a
-  loss-maker with no positive-margin history. Capped at 20% (between mature's
+- **Target mature FCF margin:** `_hyper_target_base(gm, current_margin)` where
+  `gm` = latest-FY positive gross margin. The gross-margin construction
+  (hyper path) is used rather than the mature path's operating-margin/
+  historical-FCF anchors, which degenerate for a loss-maker with no
+  positive-margin history. **No longer clamped to `_MIDGROWTH_TARGET_CAP`
+  (normalization Work Package 4)** -- that 20% is now a reporting-only flag
+  threshold: when the (uncapped) result exceeds it, a Turkish note is
+  appended and `target_margin_flag = "above_reference"` is set (else
+  `None`). Reference threshold 20% (between mature's
   15% and hyper's 30%).
 - **Current (starting) margin:** `_mature_current_margin(...)` (3-year median,
   negative for loss-makers). The Sec.3.6 CapEx relief is deliberately NOT
   applied here — this path aims for a defensible value, so a capex-heavy
   mid-grower whose base value suppresses falls back to multiples instead.
 - **Fade horizon:** `_MIDGROWTH_STEADY_STATE_YEAR` (8).
-- **Dilution & financing shares:** hyper-style — `annual_dilution =
-  clamp(shares_yoy if > 0 else 0, 0, 0.05)` and `financing_shares` derived
+- **Dilution & financing shares:** hyper-style — `annual_dilution` from
+  `engine._non_sbc_dilution` (normalization Work Package 1: net of
+  SBC-driven issuance, since SBC is already expensed in the margin fade --
+  see "SBC-driven dilution net-out" under §3) and `financing_shares` derived
   from the base scenario's cumulative burn / price (a mid-growth loss-maker
   still funds burn by issuing equity), unlike the mature path's 0.
 - **Per scenario:** `discount_rate`/`terminal_growth` from the **clamped
@@ -1509,9 +1943,9 @@ New constants (`engine.py`): `_MIDGROWTH_MIN_GROWTH = 0.12`,
   (multiples fallback) rather than publishing a negative band.
 - Returns `{"scenarios": {...bear/base/bull {"per_share","lo","hi",
   "start_growth","target_fcf_margin","terminal_growth","discount_rate"}},
-  "start_growth", "target_margin_base", "current_margin",
-  "steady_state_year", "annual_dilution", "financing_shares",
-  "suppressed"}`, or `(None, notes)`.
+  "start_growth", "target_margin_base", "target_margin_flag", "current_margin",
+  "steady_state_year", "annual_dilution", "sbc_dilution_excluded",
+  "financing_shares", "suppressed"}`, or `(None, notes)`.
 
 ### `run_valuation` integration
 
@@ -1546,6 +1980,311 @@ Purely additive: new output keys `midgrowth_revenue_headline` (bool) and
 meaning, and applies only to `growth_unprofitable` non-hyper filers. A
 `growth_unprofitable` filer whose growth gate rejects the attempt, or whose
 base value is suppressed, is unaffected (multiples-only headline as before).
+
+## 8e. Cyclical sustainable-growth FCFE anchor — `dcf.fcfe_sustainable_growth_per_share` / `engine._build_cyclical_fcfe`
+
+Addresses capital-intensive `cyclical` filers in a capacity-expansion phase
+(canonical case: Micron/MU) whose FCF-DCF headline isn't merely near-trough
+(Sec.8's `normalized_variant` already handles that ordinary case) but
+structurally suppressed EVERY year by heavy growth CapEx (fab expansion):
+even the cycle-mid normalized FCF margin badly understates fair value,
+because the FCF-DCF charges the entire growth CapEx as a permanent cash
+drain while only booking the modest revenue growth that CapEx is funding.
+The theoretically-correct growth-inclusive value instead grows NORMALIZED
+EARNINGS with reinvestment-funded ("sustainable") growth: to grow earnings
+at rate `g` while holding ROE constant, a firm must retain `b = g / roe` of
+net income; the rest is distributable FCFE. Growth genuinely adds value
+over the zero-growth EPV floor (Sec.8a) only when `roe > cost of equity` —
+this anchor is literally "EPV's normalized earnings, grown along that
+identity", so it collapses toward EPV as `roe` approaches the discount rate
+and undershoots it when `roe < discount rate` (the guardrail below then
+falls back to EPV).
+
+### `dcf.fcfe_sustainable_growth_per_share(ni0, roe, growth_5y, terminal_growth, discount_rate, shares, dilution_rate=0.0, terminal_roe=None) -> dict`
+
+- Raises `ValueError` — never silently "fixes" an invalid input — when
+  `ni0 is None`, `shares` is falsy/`<= 0`, `roe <= 0`, or `discount_rate <=
+  terminal_growth` (the Gordon-growth terminal value is undefined), mirroring
+  `dcf_per_share`'s raise-don't-fix discipline (Sec.4).
+- Projects normalized earnings along the SAME 10-year, two-stage path
+  `project_fcf` uses for FCF (years 1-5 at `growth_5y`, years 6-10 fading
+  linearly to `terminal_growth` via `_year_growth_rate`, Sec.4). For each
+  year: `g_eff = min(g_year, roe)`; `ni_year = previous_ni * (1 + g_eff)`;
+  reinvestment rate `b = g_eff / roe`; `fcfe_year = ni_year * (1 - b)`,
+  discounted at `(1 + discount_rate) ** year`.
+  - **Growth capped at ROE, not a flat reinvestment ceiling.** When
+    `g >= roe`, the firm cannot fund that growth purely out of its own
+    earnings without external equity. Rather than clamp `b` at an arbitrary
+    ceiling (booking growth the earnings base can't actually sustain) or let
+    `b` exceed 1.0 (inventing cash via a negative payout), the model caps the
+    BOOKED growth itself at `roe`: `b` rides up to (but never past) 1.0 and
+    distributable FCFE rides down to (but never below) 0 as `g_eff`
+    approaches `roe`.
+- **Terminal ROE fades to the cost of equity.** The terminal (perpetuity)
+  year's OWN reinvestment rate uses `terminal_roe` (default `None`, which
+  falls back to the current-period `roe` — backward compatible); years 1-10
+  always use the current-period `roe` regardless of `terminal_roe`.
+  `terminal_roe_resolved = terminal_roe if terminal_roe is not None else roe`;
+  `g_t_eff = min(terminal_growth, terminal_roe_resolved)`;
+  `ni_terminal = ni_10 * (1 + g_t_eff)`;
+  `b_t = g_t_eff / terminal_roe_resolved`;
+  `fcfe_terminal = ni_terminal * (1 - b_t)`. The Gordon-growth denominator
+  (`tv = fcfe_terminal / (discount_rate - terminal_growth)`) deliberately
+  keeps the ORIGINAL, uncapped `terminal_growth` — only the terminal
+  earnings/reinvestment computation is capped, so the already-validated
+  `discount_rate > terminal_growth` guard above stays the only gate on
+  Gordon-growth validity. Callers pass the scenario's own cost of equity as
+  `terminal_roe` (the Damodaran stable-growth-phase convention: a firm's
+  excess return over its cost of equity cannot persist indefinitely once
+  competitive advantages erode, even when its near-term ROE is higher).
+- **FCFE-direct, cost-of-equity discounting, no net-debt bridge** — like
+  `dcf_per_share` (Sec.4): normalized net income is already a post-interest,
+  post-tax (levered/equity) figure, so `discount_rate` must be a levered cost
+  of equity, and `ev == equity` (both keys kept for caller convenience).
+  `effective_shares = shares * (1 + dilution_rate) ** 5` — the same
+  year-5 dilution-horizon convention `dcf_per_share` uses.
+- `equity = sum(discounted fcfe_1..10) + pv(tv)`; `per_share = equity /
+  effective_shares`.
+- Returns `{"per_share", "ev", "equity", "ni_path" (10 floats), "fcfe_path"
+  (10 floats), "tv", "effective_shares"}`. Nothing rounded here — rounding
+  is the caller's (`engine.py`'s) responsibility.
+
+### `engine._build_cyclical_fcfe(assumptions, earnings_power, normalized, metrics, shares, dilution_rate) -> tuple[Optional[dict], list[str]]`
+
+- Requires `earnings_power` (Sec.8a's detail dict, now also built for
+  `cyclical` filers — see the Sec.8a engine-integration update) with both
+  `normalized_net_income` and `cost_of_equity` present, and `shares > 0`;
+  missing either → `(None, [])`.
+- `ni_norm = earnings_power["normalized_net_income"]` — the SAME
+  margin-median-sanitized normalized net income EPV itself uses (Sec.8a);
+  this anchor does not introduce a second earnings-normalization rule.
+- **ROE = `ni_norm` / SPOT latest-FY `StockholdersEquity`** —
+  `to_annual_series(normalized, "StockholdersEquity").get(resolve_fundamental_fy(metrics))`,
+  a balance-sheet snapshot at the fundamental fiscal year, **not** an average
+  across years (an average-equity denominator was proposed during finance
+  review to match the normalized/cycle-adjusted numerator, but that change
+  was NOT shipped — see "Design notes" below; this section documents the
+  code as it actually behaves). `equity` missing/`<= 0` → `(None,
+  ["Döngüsel FCFE çapası hesaplanamadı: özkaynak verisi eksik/negatif."])`;
+  `roe <= 0` → `(None, ["Döngüsel FCFE çapası hesaplanamadı: normalize
+  edilmiş ROE pozitif değil."])`.
+- Per scenario (bear/base/bull): reads that scenario's own
+  `growth_5y`/`terminal_growth`/`discount_rate` from `assumptions`; any
+  non-numeric value or `discount_rate <= terminal_growth` → that scenario's
+  cell is `{"per_share": None, "lo": None, "hi": None}` plus a Turkish note
+  (mirrors `_build_dcf_scenarios`, Sec.4). Otherwise calls
+  `fcfe_sustainable_growth_per_share(ni_norm, roe, growth_5y, terminal_growth,
+  discount_rate, shares, dilution_rate, terminal_roe=discount_rate)` — the
+  scenario's OWN discount rate doubles as its `terminal_roe`, so each
+  scenario's terminal phase fades to ITS OWN cost of equity, not one shared
+  rate across scenarios.
+- **Band**, per scenario, from `_cyclical_fcfe_scenario_band`: recompute at
+  `discount_rate +/- sensitivity._DISCOUNT_RATE_STEP` (re-passing that SAME
+  nearby rate as `terminal_roe` each time, so the fade convention travels
+  with the sensitivity band too), `growth_5y`/`terminal_growth` held fixed;
+  a rate that doesn't clear `> terminal_growth`, or a failed call, is
+  excluded (not clamped); falls back to the flat `_band(per_share)` (+/-10%)
+  when fewer than `_MIN_GRID_CELLS_FOR_BAND` points are usable, with the
+  standard fallback Turkish note.
+- `reinvestment_base = round(min(base_growth_5y, roe) / roe, 4)` — the base
+  scenario's own implied reinvestment rate, for display only.
+- Returns `(None, notes)` if no scenario computed a `per_share`; else
+  `({"scenarios": {...}, "per_share": scenarios["base"]["per_share"],
+  "normalized_net_income": ni_norm, "roe": round(roe, 4), "equity": equity,
+  "cost_of_equity": earnings_power["cost_of_equity"], "reinvestment_base":
+  ...}, notes)`. Never raises.
+
+### Engine integration (`run_valuation`) — headline hierarchy for `cyclical`
+
+`earnings_power` (Sec.8a) is built whenever `sector_type in ("mature",
+"cyclical")` and hyper-grower mode is off — for `cyclical` it doubles as
+both the zero-growth floor AND the earnings base this anchor grows.
+Hyper-grower mode (Sec.3/Sec.11) still takes precedence over everything
+below, on the same `if hyper_growth_active: ... elif sector_type ==
+"cyclical": ...` chain Sec.8 already uses:
+
+```python
+elif sector_type == "cyclical":
+    unreliable, quality_note = (False, None)
+    if earnings_power is not None:
+        unreliable, quality_note = _fcf_dcf_unreliable(
+            dcf_scenarios, earnings_power, normalized, metrics
+        )
+        if quality_note:
+            notes.append(quality_note)
+    if unreliable and earnings_power is not None:
+        cyclical_fcfe_detail, cf_notes = _build_cyclical_fcfe(
+            assumptions, earnings_power, normalized, metrics, shares, dilution_rate
+        )
+        cf_beats_floor = (  # cf_base_ps / epv_base_ps read from each detail's "base"
+            cyclical_fcfe_detail is not None and _is_number(cf_base_ps)
+            and (not _is_number(epv_base_ps) or cf_base_ps >= epv_base_ps)
+        )
+        if cf_beats_floor:
+            primary_dcf_scenarios = cyclical_fcfe_detail["scenarios"]
+            cyclical_fcfe_headline = True
+        else:
+            primary_dcf_scenarios = earnings_power["scenarios"]
+            epv_headline = True
+    elif normalized_variant is not None:
+        primary_dcf_scenarios = normalized_variant   # unchanged existing behavior
+    # else: falls back to the raw dcf.scenarios band, exactly as before
+```
+
+The gate, `_fcf_dcf_unreliable` (Sec.8a), is REUSED byte-for-byte from the
+mature path — the same three conditions (FCF suppressed vs. the EPV base,
+cash-backed, investment-driven) decide whether a cyclical's raw FCF-DCF is
+unreliable enough to switch off. This is deliberate: a cyclical's low FCF
+can ALSO be a genuine earnings-quality problem rather than growth-CapEx
+suppression, and the gate's cash-conversion guard protects against masking
+that behind a reassuring earnings-based number here, exactly as it does for
+Amazon-shaped mature filers.
+
+**Priority within `cyclical`, most to least specific:**
+
+1. `unreliable` fires (growth-CapEx-suppressed FCF, cash-backed,
+   investment-driven) AND the FCFE anchor's base beats the EPV floor (the
+   **`cf_base_ps >= epv_base_ps` guardrail**, mirroring Sec.8b/8d's own
+   EPV-floor guardrails) → **`cyclical_fcfe_headline = True`**, headline =
+   the sustainable-growth FCFE band. Turkish note: `"Döngüsel + sermaye-
+   yoğun: serbest nakit akışı büyüme yatırımıyla (yüksek CapEx) bastırıldığı
+   için manşet, döngü-ortası normalize kazanca sürdürülebilir-büyüme
+   (reinvestment=g/ROE) uygulayan bir FCFE çapasına dayandırıldı. Sıfır-
+   büyüme EPV tabanı, döngü-ortası FCF-DCF ve ham FCF-DCF ikincil olarak
+   raporlanır."`
+2. `unreliable` fires but the FCFE anchor couldn't be built, or its base
+   falls below the EPV floor → **`epv_headline = True`**, headline = the
+   zero-growth EPV floor (Sec.8a) — still strictly better than publishing
+   the capex-suppressed raw FCF-DCF. Turkish note: `"Döngüsel + sermaye-
+   yoğun: serbest nakit akışı büyüme yatırımı nedeniyle kazanç gücünü
+   yansıtmıyor; manşet sıfır-büyüme kazanç-gücü (EPV) çapasına
+   dayandırıldı. Döngü-ortası ve ham FCF-DCF ikincil olarak raporlanır."`
+3. `unreliable` never fires (the ordinary near-trough cyclical, not
+   growth-CapEx suppressed) AND `normalized_variant` was computed → the
+   EXISTING cycle-mid normalized FCF-DCF headline, byte-for-byte unchanged
+   from before this section existed.
+4. Neither → falls back to the raw FCF-DCF band, exactly as before.
+
+`scenario_meta` (Sec.11's `fair_value_range`): when `cyclical_fcfe_headline`,
+per-scenario `growth`/`discount_rate`/`note` come from
+`_cyclical_fcfe_scenario_meta(cyclical_fcfe_detail, assumptions)` (mirrors
+`_epv_scenario_meta`, Sec.8a) — `growth` reads e.g. `"%6.7 büyüme (kazanç +
+sürdürülebilir büyüme)"`, and `note` names the scenario's implied
+reinvestment rate and ROE, e.g. `"Sürdürülebilir-büyüme FCFE çapası (base):
+normalize net kâr büyütülür, büyümeyi fonlamak için kârın ~%43'ü (g/ROE, ROE
+%16) reinvest edilir, kalanı iskonto edilir."`
+
+### Exception to Sec.9's "same cash-flow base" invariant + corrected disclosure
+
+Same documented, intentional exception as Sec.8a/8b: whenever
+`cyclical_fcfe_headline` is `True`, the `sensitivity` grid and
+`reverse_dcf.implied_growth` do NOT describe the FCFE headline. Specifically
+for `cyclical`:
+
+- The `sensitivity` grid reflects `normalized_fcf0` (Sec.8's cycle-mid
+  normalized FCF-DCF base) whenever that variant was computable — the
+  engine's `headline_fcf0` selector is unconditional on `sector_type ==
+  "cyclical" and normalized_variant is not None`, regardless of which
+  headline above actually won.
+- `reverse_dcf.implied_growth` always solves over the raw, suppressed
+  `fcf0` — it never switches to `normalized_fcf0`.
+- Both differ from the FCFE headline itself, and from EACH OTHER. The
+  Turkish note makes this precise (correcting an earlier draft that wrongly
+  described both legs as reflecting the "same suppressed base"):
+
+```
+"Duyarlılık tablosu döngü-ortası normalize FCF-DCF tabanını, ters-DCF ise ham
+(baskılanmış) FCF tabanını yansıtır; ikisi de manşet FCFE çapasından
+farklıdır ve serbest nakit akışının neden düşük olduğunu gösteren kanıt
+olarak korunur."
+```
+
+The same corrected wording is used for the cyclical `epv_headline` case
+(priority case 2 above); the mature-sector EPV note (Sec.8a, which has no
+`normalized_variant` concept) is unaffected and stays as written there.
+
+### Structural re-rating / trough-excluded assumption (explicit, transparency note)
+
+This anchor's earnings base is EPV's `normalized_net_income` — recent,
+representative (profitable) years, with the margin-median sanity guard
+(Sec.8a) as its only outlier control. It does **not** average in a severe
+cyclical trough (e.g. a memory-glut loss year) as a recurring feature of the
+cycle; it treats such a trough as a non-recurring exception to a
+structurally re-rated, now-more-profitable business. This is a deliberate
+modeling choice, not an oversight, and whenever `cyclical_fcfe_headline` (or
+the cyclical `epv_headline`) fires, the engine appends a note stating the
+assumption plus the conservative alternative it did NOT compute a full
+second valuation for:
+
+```
+"NOT: Bu çapa, kazanç tabanını son temsili (kârlı) yıllardan alır ve şiddetli
+döngü diplerini (ör. bir bellek-glut zarar yılı) tekrar etmeyecek istisna
+olarak DIŞLAR (yapısal re-rating varsayımı). Dipleri döngünün kalıcı parçası
+sayan tam-döngü ortalaması, değeri belirgin biçimde düşürür."
+```
+
+### Confidence ceiling (`triangulate.triangulate`, Sec.10)
+
+`run_valuation` passes `cyclical_fcfe_headline=cyclical_fcfe_headline` into
+`triangulate.triangulate(...)`. Same `CONFIDENCE_HIGH → CONFIDENCE_MEDIUM`
+cap as the other headline-override flags (Sec.8a/8b/8d), same underlying
+reason (the DCF leg IS the earnings-based anchor here, so three-way
+"agreement" with multiples isn't independent confirmation). Mutually
+exclusive with the other headline flags in practice.
+
+### Output shape additions (Sec.11)
+
+```python
+"cyclical_fcfe_headline": bool,   # True only when sector_type == "cyclical",
+                                   # the FCF-DCF reliability gate fired, AND
+                                   # the FCFE anchor's base beat the EPV
+                                   # floor (priority case 1 above).
+"cyclical_fcfe_detail": None | {
+   "scenarios": {"bear"/"base"/"bull": {"per_share", "lo", "hi"}},
+   "per_share": float,             # base scenario's point estimate
+   "normalized_net_income": float, # == earnings_power["normalized_net_income"]
+   "roe": float,                   # normalized_net_income / spot latest-FY equity
+   "equity": float,                # the spot latest-FY StockholdersEquity used
+   "cost_of_equity": float,        # == earnings_power["cost_of_equity"]
+   "reinvestment_base": float,     # base scenario's implied g/ROE, display only
+   "growth_vs_floor": "adds"|"destroys"|None,  # WP7; vs the EPV base per-share
+},                                  # built (attempted) whenever sector_type ==
+                                   # "cyclical", not hyper, and the FCF-DCF
+                                   # reliability gate fired -- REGARDLESS of
+                                   # whether it beat the EPV floor (may be
+                                   # non-None but NOT the headline, priority
+                                   # case 2 above).
+```
+
+`cli._fair_value_method_label` (Sec.13) checks `cyclical_fcfe_headline`
+FIRST (ahead of `earnings_power_headline`) and returns `"FCFE
+(kazanç+büyüme)"`.
+
+### Design notes
+
+- The reinvestment rate is `b = min(g, roe) / roe` for BOTH the 1-10 year
+  path (against the current `roe`) and the terminal year (against
+  `terminal_roe`, defaulting to `roe`) — there is no separate flat
+  reinvestment ceiling (e.g. a fixed 90%); an earlier draft of this anchor
+  used one and it was removed in favor of the growth-capped-at-ROE
+  construction above, which is both simpler and structurally never produces
+  a negative payout.
+- The ROE denominator is the SPOT latest-FY `StockholdersEquity`, not a
+  through-cycle average. An average-equity alternative was proposed during
+  finance review specifically to match the normalized (cycle-adjusted)
+  numerator, but was **not adopted** in the shipped code — do not assume
+  that proposal landed; this section documents the code's actual (spot-
+  equity) behavior.
+
+### Scope
+
+Purely additive: does not change `dcf.scenarios`, `dcf.normalized_variant`,
+`earnings_power`, `pb_roe`, `sensitivity`, or any other existing output
+key's meaning; applies only to `cyclical` filers whose `_fcf_dcf_unreliable`
+gate fires, and never to `financial`/`reit`/`growth_unprofitable`/`mature`
+or to any filer already in hyper-grower mode. A cyclical filer whose FCF
+suppression is the ordinary near-trough case (gate does not fire) keeps its
+EXISTING Sec.8 `normalized_variant` headline behavior unchanged.
 
 ## 12. Two-phase interpret (`interpret/analyzer.py` refactor)
 
@@ -1757,3 +2496,50 @@ returns"]`, `result["entry_plan"]`, `result["stop_adding"]`, `result["thesis_
 metric"]`), `metrics`, `technical`, `flags`. Missing pieces (e.g. no
 valuation, or an empty `entry_plan`/`stop_adding`) degrade gracefully to the
 old simpler card, never a crash.
+
+## 17. Calibration harness (`sec_analyzer/calibrate.py`, `cli.py calibrate` subcommand)
+
+Normalization Work Package 0 -- a measurement tool for the layered-penalty
+undervaluation effort documented throughout §3/§8/§8a-§8e above, not a new
+valuation code path. Adds no assumption/DCF logic of its own; it only
+orchestrates the existing `cli.py` fetch/normalize/price/submissions/
+catalyst helpers plus `interpret.analyzer.interpret(provider="script")` over
+a fixed ticker basket, so the same production code path (including SIC-based
+sector classification and the CAPM cost of equity) is what gets measured.
+
+- `DEFAULT_TICKERS`: a ~28-ticker basket (`AAPL MSFT GOOGL AMZN META NVDA JPM
+  BAC O PLD XOM CVX JNJ PFE PG KO CAT DE MU CRM ADBE RDDT PLTR UBER SHOP WMT
+  COST VZ`) spanning mega-cap tech, financials, REITs, energy, healthcare,
+  consumer staples, industrials/cyclicals, and high-growth/unprofitable
+  names, broad enough that a shift in the basket's median fair-value/price
+  ratio is signal rather than single-sector noise.
+- `run_calibration(tickers, years=5, no_cache=False) -> List[dict]`: per
+  ticker, resolves/fetches/normalizes/stores, fetches price + technical,
+  computes `metrics`/`red_flags`/SEC submissions/catalyst, then calls
+  `interpret(..., provider="script")`. Never raises -- any per-ticker
+  failure is caught and recorded as a `"skipped"`/`"error"` row so one bad
+  ticker never aborts the basket. An `"ok"` row carries `"price"`,
+  `"fv_base_mid"` (`(fair_value_range.base.lo + .hi) / 2`), `"ratio"`
+  (`fv_base_mid / price`), and `"method"` (`_method_slug`, one of `"hyper"`,
+  `"cyclical-fcfe"`, `"epv"`, `"mature-rev"`, `"midgrowth-rev"`, `"dcf"`,
+  `"ffo"`, `"pb-roe"` -- mirrors `cli._valuation_method_label`'s exact
+  headline-precedence order, hyper-growth checked first).
+- `summarize_ratios(rows) -> dict`: a pure function over `"ok"` rows'
+  `"ratio"` values -- `count`, `median`/`mean`/`p25`/`p75` (deterministic
+  sorted-list linear-interpolation percentiles, `None` if `count == 0`), and
+  three bucket counts (`bucket_under_0.8`/`bucket_0.8_1.2`/`bucket_over_1.2`)
+  partitioning cheap/fair/expensive relative to price. A healthy calibration
+  target is a median near 0.9-1.1 with wide dispersion (a tight cluster
+  around 1.0 would itself be suspicious -- it would mean the engine is
+  anchoring toward price rather than computing it independently).
+- `save_calibration_snapshot(label, rows, summary) -> Optional[str]`: writes
+  `Config.REPORTS_DIR/calibration_<label>_<YYYYMMDD-HHMM>.json`; never
+  raises (logs a warning and returns `None` on failure).
+- CLI: `python -m sec_analyzer.cli calibrate [--tickers AAPL,MSFT,...]
+  [--label run] [--years 5] [--no-cache]` -- `cmd_calibrate` runs the basket,
+  prints the per-ticker table (`print_calibration_table`) and the summary,
+  and saves the JSON snapshot. `--tickers` defaults to `DEFAULT_TICKERS`;
+  `--label` defaults to `"run"` and only affects the snapshot filename.
+
+See VALUATION.md's calibration-methodology section for the measured
+before/after trajectory of this normalization effort and what remains open.

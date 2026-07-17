@@ -84,6 +84,40 @@ def _margin_path(current_margin: float, target_fcf_margin: float, steady_state_y
     return path
 
 
+def _discount_path(
+    discount_rate: float, mature_discount_rate: float, steady_state_year: int, horizon: int
+) -> List[float]:
+    """Return the year-1..``horizon`` discount-rate path (linear fade).
+
+    Mirrors :func:`_growth_path`'s exact fade shape: fades linearly from
+    ``discount_rate`` (year 1) to ``mature_discount_rate``, reaching
+    ``mature_discount_rate`` exactly at ``steady_state_year`` and staying
+    there for any remaining years: ``r_t = discount_rate +
+    (mature_discount_rate - discount_rate) * min(t-1, steady_state_year-1)
+    / (steady_state_year-1)``. When ``steady_state_year == 1`` every year
+    uses ``mature_discount_rate`` (the fade collapses to a single point,
+    avoiding a division by zero) -- same collapse rule as
+    :func:`_growth_path`.
+
+    This models Damodaran's standard fix for a hyper-grower DCF that fades
+    its cash flows toward a mature steady state while discounting every
+    year at a fixed, permanently-elevated cohort rate: since most of a
+    hyper-grower's value sits in the far years and the terminal value, a
+    flat high rate systematically crushes it even after the cash flows
+    themselves have already matured. Fading the discount rate alongside
+    the cash flows keeps the risk price consistent with the risk being
+    priced.
+    """
+    path: List[float] = []
+    for t in range(1, horizon + 1):
+        if steady_state_year <= 1:
+            path.append(mature_discount_rate)
+            continue
+        fraction = min(t - 1, steady_state_year - 1) / (steady_state_year - 1)
+        path.append(discount_rate + (mature_discount_rate - discount_rate) * fraction)
+    return path
+
+
 def revenue_first_dcf(
     revenue0: float,
     start_growth: float,
@@ -96,6 +130,7 @@ def revenue_first_dcf(
     annual_dilution: float,
     financing_shares: float = 0.0,
     horizon: int = HORIZON_YEARS,
+    mature_discount_rate: Optional[float] = None,
 ) -> dict:
     """Project revenue (not FCF) forward on a fading growth path and value it.
 
@@ -146,6 +181,23 @@ def revenue_first_dcf(
             Defaults to ``0.0``.
         horizon: Projection horizon in years. Defaults to
             :data:`HORIZON_YEARS` (10).
+        mature_discount_rate: Optional mature (steady-state) discount rate
+            (decimal fraction) to fade toward (Damodaran fade, WP3). When
+            ``None`` (the default), behavior is byte-for-byte unchanged from
+            before this parameter existed: every year is discounted at the
+            flat ``discount_rate``, and the terminal value also uses
+            ``discount_rate``. When a number, ``discount_rate`` is treated
+            as the YEAR-1 (cohort) rate and :func:`_discount_path` builds a
+            year-1..``horizon`` rate path that fades linearly from
+            ``discount_rate`` to ``mature_discount_rate`` by
+            ``steady_state_year`` (mirroring the growth/margin fades above)
+            and stays at ``mature_discount_rate`` afterward; each year's
+            discount factor is then the CUMULATIVE product of
+            ``(1 + r_t)`` (not ``(1 + r) ** t``), and the Gordon-growth
+            terminal value -- itself a mature-firm perpetuity -- is
+            discounted at ``mature_discount_rate`` rather than the
+            elevated cohort rate. Must be strictly greater than
+            ``terminal_growth`` when provided.
 
     Returns:
         A dict with keys ``per_share``, ``ev``, ``equity``,
@@ -154,13 +206,16 @@ def revenue_first_dcf(
         (``horizon`` floats), ``tv`` (undiscounted terminal value),
         ``effective_shares``, ``final_year_revenue`` (``revenue_path``'s
         last entry), and ``revenue_multiple`` (``final_year_revenue /
-        revenue0``). Nothing is rounded here -- rounding is the caller's
-        responsibility.
+        revenue0``). When ``mature_discount_rate`` is not ``None``, an
+        additional ``discount_path`` key (``horizon`` floats, see above)
+        is also present. Nothing is rounded here -- rounding is the
+        caller's responsibility.
 
     Raises:
         ValueError: If ``revenue0 <= 0``, ``shares0 <= 0``,
-            ``discount_rate <= terminal_growth``, or
-            ``steady_state_year < 1``.
+            ``discount_rate <= terminal_growth``, ``steady_state_year < 1``,
+            or (when ``mature_discount_rate`` is not ``None``)
+            ``mature_discount_rate <= terminal_growth``.
     """
     if revenue0 <= 0:
         raise ValueError(f"revenue_first_dcf: revenue0 must be positive, got {revenue0!r}.")
@@ -170,6 +225,11 @@ def revenue_first_dcf(
         raise ValueError(
             f"revenue_first_dcf: discount_rate ({discount_rate}) must be strictly greater than "
             f"terminal_growth ({terminal_growth}) for the Gordon-growth terminal value to be defined."
+        )
+    if mature_discount_rate is not None and mature_discount_rate <= terminal_growth:
+        raise ValueError(
+            f"revenue_first_dcf: mature_discount_rate ({mature_discount_rate}) must be strictly greater "
+            f"than terminal_growth ({terminal_growth}) for the Gordon-growth terminal value to be defined."
         )
     if steady_state_year < 1:
         raise ValueError(f"revenue_first_dcf: steady_state_year must be >= 1, got {steady_state_year!r}.")
@@ -186,13 +246,26 @@ def revenue_first_dcf(
 
     fcf_path = [revenue_year * margin_year for revenue_year, margin_year in zip(revenue_path, margin_path)]
 
-    pv_sum = 0.0
-    for year, fcf_year in enumerate(fcf_path, start=1):
-        pv_sum += fcf_year / (1 + discount_rate) ** year
-
     fcf_terminal = fcf_path[-1]
-    tv = fcf_terminal * (1 + terminal_growth) / (discount_rate - terminal_growth)
-    pv_tv = tv / (1 + discount_rate) ** horizon
+
+    if mature_discount_rate is None:
+        pv_sum = 0.0
+        for year, fcf_year in enumerate(fcf_path, start=1):
+            pv_sum += fcf_year / (1 + discount_rate) ** year
+        tv = fcf_terminal * (1 + terminal_growth) / (discount_rate - terminal_growth)
+        pv_tv = tv / (1 + discount_rate) ** horizon
+        discount_path = None
+    else:
+        discount_path = _discount_path(discount_rate, mature_discount_rate, steady_state_year, horizon)
+        pv_sum = 0.0
+        cumulative_df = 1.0
+        for fcf_year, rate_year in zip(fcf_path, discount_path):
+            cumulative_df *= 1 + rate_year
+            pv_sum += fcf_year / cumulative_df
+        # cumulative_df now equals df_horizon (the product over all `horizon`
+        # years) -- reused below for the terminal value's discount factor.
+        tv = fcf_terminal * (1 + terminal_growth) / (mature_discount_rate - terminal_growth)
+        pv_tv = tv / cumulative_df
 
     ev = pv_sum + pv_tv
     equity = ev  # FCFE-direct: no net-debt subtraction, see the docstring above.
@@ -200,7 +273,7 @@ def revenue_first_dcf(
     effective_shares = shares0 * (1 + annual_dilution) ** steady_state_year + financing_shares
     per_share = equity / effective_shares
 
-    return {
+    result = {
         "per_share": per_share,
         "ev": ev,
         "equity": equity,
@@ -213,6 +286,9 @@ def revenue_first_dcf(
         "final_year_revenue": revenue_path[-1],
         "revenue_multiple": revenue_path[-1] / revenue0,
     }
+    if discount_path is not None:
+        result["discount_path"] = discount_path
+    return result
 
 
 def _per_share_diff_for_growth(
@@ -227,6 +303,7 @@ def _per_share_diff_for_growth(
     shares0: float,
     annual_dilution: float,
     financing_shares: float,
+    mature_discount_rate: Optional[float] = None,
 ) -> Optional[float]:
     """Return ``revenue_first_dcf(...) - price`` at a candidate ``start_growth``.
 
@@ -234,11 +311,14 @@ def _per_share_diff_for_growth(
     point (it only raises for fixed inputs, none of which vary during this
     bisection, but the guard keeps a single unusable input degrading to "no
     result" rather than propagating an exception out of the solver).
+    ``mature_discount_rate`` (WP3 discount-rate fade), when not ``None``,
+    is passed straight through to :func:`revenue_first_dcf`.
     """
     try:
         result = revenue_first_dcf(
             revenue0, start_growth, terminal_growth, discount_rate, current_margin,
             target_fcf_margin, steady_state_year, shares0, annual_dilution, financing_shares,
+            mature_discount_rate=mature_discount_rate,
         )
     except ValueError:
         return None
@@ -256,6 +336,7 @@ def implied_start_growth(
     shares0: Optional[float],
     annual_dilution: float,
     financing_shares: float = 0.0,
+    mature_discount_rate: Optional[float] = None,
 ) -> Optional[float]:
     """Bisect for the ``start_growth`` that makes the revenue-first DCF price match ``price``.
 
@@ -276,6 +357,10 @@ def implied_start_growth(
         shares0: Base share count.
         annual_dilution: Annual dilution rate (see :func:`revenue_first_dcf`).
         financing_shares: Extra financing-driven shares. Defaults to ``0.0``.
+        mature_discount_rate: Optional mature discount rate to fade toward
+            (WP3), passed straight through to :func:`revenue_first_dcf`.
+            Defaults to ``None`` (flat ``discount_rate``, unchanged
+            behavior) so existing callers/tests are unaffected.
 
     Returns:
         The implied ``start_growth`` (decimal fraction, rounded to 4
@@ -291,6 +376,7 @@ def implied_start_growth(
     args = (
         price, revenue0, terminal_growth, discount_rate, current_margin,
         target_fcf_margin, steady_state_year, shares0, annual_dilution, financing_shares,
+        mature_discount_rate,
     )
     diff_lo = _per_share_diff_for_growth(_START_GROWTH_BRACKET_LO, *args)
     diff_hi = _per_share_diff_for_growth(_START_GROWTH_BRACKET_HI, *args)
@@ -333,16 +419,20 @@ def _per_share_diff_for_margin(
     shares0: float,
     annual_dilution: float,
     financing_shares: float,
+    mature_discount_rate: Optional[float] = None,
 ) -> Optional[float]:
     """Return ``revenue_first_dcf(...) - price`` at a candidate ``target_fcf_margin``.
 
     Returns ``None`` if ``revenue_first_dcf`` can't be evaluated at this
-    point, mirroring :func:`_per_share_diff_for_growth`.
+    point, mirroring :func:`_per_share_diff_for_growth`. ``mature_discount_
+    rate`` (WP3 discount-rate fade), when not ``None``, is passed straight
+    through to :func:`revenue_first_dcf`.
     """
     try:
         result = revenue_first_dcf(
             revenue0, start_growth, terminal_growth, discount_rate, current_margin,
             target_fcf_margin, steady_state_year, shares0, annual_dilution, financing_shares,
+            mature_discount_rate=mature_discount_rate,
         )
     except ValueError:
         return None
@@ -360,6 +450,7 @@ def implied_target_margin(
     shares0: Optional[float],
     annual_dilution: float,
     financing_shares: float = 0.0,
+    mature_discount_rate: Optional[float] = None,
 ) -> Optional[float]:
     """Bisect for the ``target_fcf_margin`` that makes the revenue-first DCF price match ``price``.
 
@@ -379,6 +470,10 @@ def implied_target_margin(
         shares0: Base share count.
         annual_dilution: Annual dilution rate (see :func:`revenue_first_dcf`).
         financing_shares: Extra financing-driven shares. Defaults to ``0.0``.
+        mature_discount_rate: Optional mature discount rate to fade toward
+            (WP3), passed straight through to :func:`revenue_first_dcf`.
+            Defaults to ``None`` (flat ``discount_rate``, unchanged
+            behavior) so existing callers/tests are unaffected.
 
     Returns:
         The implied mature ``target_fcf_margin`` (decimal fraction,
@@ -393,7 +488,7 @@ def implied_target_margin(
 
     args = (
         price, revenue0, start_growth, terminal_growth, discount_rate, current_margin,
-        steady_state_year, shares0, annual_dilution, financing_shares,
+        steady_state_year, shares0, annual_dilution, financing_shares, mature_discount_rate,
     )
     diff_lo = _per_share_diff_for_margin(_TARGET_MARGIN_BRACKET_LO, *args)
     diff_hi = _per_share_diff_for_margin(_TARGET_MARGIN_BRACKET_HI, *args)

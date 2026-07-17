@@ -7,7 +7,14 @@ methodology (independent hand arithmetic in a comment above each assertion).
 
 import pytest
 
-from sec_analyzer.valuation.engine import _justified_pb, _select_latest_ffo, run_valuation
+from sec_analyzer.config import Config
+from sec_analyzer.valuation.engine import (
+    _build_pb_roe,
+    _justified_pb,
+    _non_sbc_dilution,
+    _select_latest_ffo,
+    run_valuation,
+)
 from sec_analyzer.valuation.sector import classify_sector
 from sec_analyzer.valuation.triangulate import triangulate
 
@@ -1414,9 +1421,78 @@ def test_justified_pb_degrades_to_no_growth_form_when_denominator_non_positive()
     assert _justified_pb(0.15, 0.10, 0.12) == pytest.approx(1.5)
 
 
-def test_justified_pb_clamps_to_ceiling():
-    # (0.30 - 0.03) / (0.05 - 0.03) = 0.27/0.02 = 13.5, clamped to _PB_CLAMP_HI=4.0.
-    assert _justified_pb(0.30, 0.05, 0.03) == pytest.approx(4.0)
+def test_justified_pb_no_longer_clamps_above_reference_ceiling():
+    # (0.30 - 0.03) / (0.05 - 0.03) = 0.27/0.02 = 13.5. WP5: the justified P/B
+    # is no longer clamped to _PB_CLAMP_HI=4.0 -- a high-ROE compounder can
+    # legitimately warrant a justified P/B above 4, so the raw ratio is now
+    # returned as-is; _build_pb_roe flags (does not clamp) values outside
+    # [_PB_CLAMP_LO, _PB_CLAMP_HI] instead.
+    assert _justified_pb(0.30, 0.05, 0.03) == pytest.approx(13.5)
+
+
+def test_build_pb_roe_flags_above_reference_without_clamping():
+    # WP5: _build_pb_roe no longer clamps fair_pb to [_PB_CLAMP_LO=0.5,
+    # _PB_CLAMP_HI=4.0] -- it flags an out-of-band value instead. Same
+    # roe/dr/g as test_justified_pb_no_longer_clamps_above_reference_ceiling
+    # above (0.30, 0.05, 0.03): fair_pb = (0.30-0.03)/(0.05-0.03) =
+    # 0.27/0.02 = 13.5, strictly above 4.0 -> justified_pb_flag =
+    # "above_reference". book_value_per_share = equity/shares = 1000/100 =
+    # 10.0 -> scenarios (scale 0.8/1.0/1.2, unclamped):
+    #   bear = 13.5*0.8*10 = 108.0, base = 13.5*10 = 135.0, bull = 13.5*1.2*10 = 162.0
+    normalized = _normalized({"StockholdersEquity": [_rec(2023, 1000.0)]})
+    ratios = [{"fy": 2023, "roe": 0.30}]
+    metrics = {"shares": 100.0, "latest_fy": 2023}
+    assumptions = {"base": {"discount_rate": 0.05, "terminal_growth": 0.03}}
+
+    result, notes = _build_pb_roe(assumptions, normalized, metrics, ratios)
+
+    assert result is not None
+    assert result["fair_pb"] == pytest.approx(13.5)
+    assert result["justified_pb_flag"] == "above_reference"
+    assert result["scenarios"]["bear"]["per_share"] == pytest.approx(108.0)
+    assert result["scenarios"]["base"]["per_share"] == pytest.approx(135.0)
+    assert result["scenarios"]["bull"]["per_share"] == pytest.approx(162.0)
+    assert any(
+        "13.50x" in n and "referans aralığının dışında" in n and "kırpılmadı" in n for n in notes
+    )
+
+
+def test_build_pb_roe_flags_below_reference_without_clamping():
+    # roe=0.05, discount_rate=0.20, terminal_growth=None -> _justified_pb
+    # degrades g to 0.0 (missing) -> fair_pb = (0.05-0)/(0.20-0) = 0.25,
+    # strictly below _PB_CLAMP_LO=0.5 -> justified_pb_flag = "below_reference".
+    # book_value_per_share = 1000/100 = 10.0 -> scenarios:
+    #   bear = 0.25*0.8*10 = 2.0, base = 0.25*10 = 2.5, bull = 0.25*1.2*10 = 3.0
+    normalized = _normalized({"StockholdersEquity": [_rec(2023, 1000.0)]})
+    ratios = [{"fy": 2023, "roe": 0.05}]
+    metrics = {"shares": 100.0, "latest_fy": 2023}
+    assumptions = {"base": {"discount_rate": 0.20, "terminal_growth": None}}
+
+    result, notes = _build_pb_roe(assumptions, normalized, metrics, ratios)
+
+    assert result is not None
+    assert result["fair_pb"] == pytest.approx(0.25)
+    assert result["justified_pb_flag"] == "below_reference"
+    assert result["scenarios"]["bear"]["per_share"] == pytest.approx(2.0)
+    assert result["scenarios"]["base"]["per_share"] == pytest.approx(2.5)
+    assert result["scenarios"]["bull"]["per_share"] == pytest.approx(3.0)
+    assert any("0.25x" in n and "referans aralığının dışında" in n for n in notes)
+
+
+def test_build_pb_roe_flag_is_none_when_fair_pb_inside_reference_band():
+    # roe=0.15, discount_rate=0.10, terminal_growth=0.03 -> fair_pb =
+    # (0.15-0.03)/(0.10-0.03) = 0.12/0.07 = 1.714286, well inside
+    # [0.5, 4.0] -> justified_pb_flag stays None, no out-of-band note.
+    normalized = _normalized({"StockholdersEquity": [_rec(2023, 1000.0)]})
+    ratios = [{"fy": 2023, "roe": 0.15}]
+    metrics = {"shares": 100.0, "latest_fy": 2023}
+    assumptions = {"base": {"discount_rate": 0.10, "terminal_growth": 0.03}}
+
+    result, notes = _build_pb_roe(assumptions, normalized, metrics, ratios)
+
+    assert result is not None
+    assert result["justified_pb_flag"] is None
+    assert not any("referans aralığının dışında" in n for n in notes)
 
 
 def test_run_valuation_pb_roe_backward_compat_when_terminal_growth_missing():
@@ -1437,6 +1513,140 @@ def test_run_valuation_pb_roe_backward_compat_when_terminal_growth_missing():
     assert pb["base"]["per_share"] == pytest.approx(15.0)
     assert pb["base"]["lo"] == pytest.approx(13.64)
     assert pb["base"]["hi"] == pytest.approx(16.67)
+
+
+# ---------------------------------------------------------------------------
+# 11a. engine._non_sbc_dilution (WP1) -- shared by both the hyper-grower and
+# mid-growth revenue-first DCF paths (SPEC.md's dilution rule): SBC is
+# already expensed as a margin drag in both paths' FCF projections, so
+# projecting future per-share dilution from the RAW `shares_yoy` (which
+# itself embeds SBC-driven issuance) would double-count that same cost. When
+# `market_cap` is usable, the SBC-implied share-issuance rate
+# (`sbc_latest / market_cap`) is netted out of `shares_yoy` before clamping;
+# without a usable `market_cap`, it falls back to the raw-`shares_yoy`-
+# clamped behavior unchanged. Neither branch was previously exercised with a
+# positive `shares_yoy` anywhere in the suite (every existing hyper/mid-growth
+# fixture sets `shares_yoy: None`), so this is a genuine coverage gap, not a
+# style choice -- these tests call the private helper directly, mirroring how
+# `_justified_pb`/`_select_latest_ffo` are unit-tested above.
+# ---------------------------------------------------------------------------
+
+
+def test_non_sbc_dilution_returns_zero_when_shares_yoy_missing_or_non_positive():
+    metrics_missing = {"shares_yoy": None, "market_cap": 1000.0}
+    metrics_zero = {"shares_yoy": 0.0, "market_cap": 1000.0}
+    metrics_negative = {"shares_yoy": -0.02, "market_cap": 1000.0}
+
+    for metrics in (metrics_missing, metrics_zero, metrics_negative):
+        rate, note, excluded = _non_sbc_dilution(metrics, _normalized({}), 2023)
+        assert rate == pytest.approx(0.0)
+        assert note is None
+        assert excluded == pytest.approx(0.0)
+
+
+def test_non_sbc_dilution_falls_back_to_raw_shares_yoy_clamp_when_market_cap_missing():
+    # shares_yoy=0.03 (under the 5% cap), no market_cap key at all -> the
+    # SBC-netting branch is skipped entirely (pre-WP1 behavior): rate is the
+    # raw shares_yoy, clamped to [0.0, 0.05]; no note, no exclusion.
+    normalized = _normalized({"SBC": [_rec(2023, 20.0)]})  # present but unused: no market_cap to divide by.
+    metrics = {"shares_yoy": 0.03}
+
+    rate, note, excluded = _non_sbc_dilution(metrics, normalized, 2023)
+
+    assert rate == pytest.approx(0.03)
+    assert note is None
+    assert excluded == pytest.approx(0.0)
+
+
+def test_non_sbc_dilution_raw_clamp_also_applies_when_market_cap_non_positive():
+    # market_cap present but <= 0 (or non-numeric) is treated the same as
+    # missing -- still the raw-clamp fallback, not a division by a bad value.
+    normalized = _normalized({})
+    metrics_zero_cap = {"shares_yoy": 0.03, "market_cap": 0.0}
+    metrics_non_numeric = {"shares_yoy": 0.03, "market_cap": "n/a"}
+
+    for metrics in (metrics_zero_cap, metrics_non_numeric):
+        rate, note, excluded = _non_sbc_dilution(metrics, normalized, 2023)
+        assert rate == pytest.approx(0.03)
+        assert note is None
+        assert excluded == pytest.approx(0.0)
+
+
+def test_non_sbc_dilution_raw_shares_yoy_clamped_at_hyper_dilution_cap():
+    # shares_yoy=0.10 is above the 5% cap (_HYPER_DILUTION_CAP) -> clamped
+    # down to 0.05, even with no market_cap to trigger SBC netting at all.
+    normalized = _normalized({})
+    metrics = {"shares_yoy": 0.10}
+
+    rate, note, excluded = _non_sbc_dilution(metrics, normalized, 2023)
+
+    assert rate == pytest.approx(0.05)
+    assert note is None
+    assert excluded == pytest.approx(0.0)
+
+
+def test_non_sbc_dilution_nets_sbc_out_when_market_cap_positive():
+    # shares_yoy=0.03, market_cap=1000, SBC_fy2023=20 -> sbc_dilution =
+    # 20/1000 = 0.02. non_sbc = max(0, 0.03-0.02) = 0.01 -> rate =
+    # clamp(0.01, 0, 0.05) = 0.01 -- strictly LESS than the raw 0.03, proving
+    # the SBC-implied issuance was actually netted out (not just clamped).
+    normalized = _normalized({"SBC": [_rec(2023, 20.0)]})
+    metrics = {"shares_yoy": 0.03, "market_cap": 1000.0}
+
+    rate, note, excluded = _non_sbc_dilution(metrics, normalized, 2023)
+
+    assert rate == pytest.approx(0.01)
+    assert excluded == pytest.approx(0.02)
+    assert note is not None
+    assert "çift sayım önlendi" in note
+
+
+def test_non_sbc_dilution_clamped_to_zero_when_sbc_exceeds_shares_yoy_but_note_still_fires():
+    # shares_yoy=0.03, market_cap=1000, SBC_fy2023=50 -> sbc_dilution=0.05 >
+    # shares_yoy=0.03 -> non_sbc=max(0, 0.03-0.05)=0.0 -> rate=0.0, but the
+    # note still fires (sbc_dilution>0 and shares_yoy>0, per the function's
+    # own condition) -- the netting note describes WHY the projected
+    # dilution is (correctly) zero, rather than silently vanishing.
+    normalized = _normalized({"SBC": [_rec(2023, 50.0)]})
+    metrics = {"shares_yoy": 0.03, "market_cap": 1000.0}
+
+    rate, note, excluded = _non_sbc_dilution(metrics, normalized, 2023)
+
+    assert rate == pytest.approx(0.0)
+    assert excluded == pytest.approx(0.05)
+    assert note is not None
+
+
+def test_non_sbc_dilution_market_cap_positive_but_sbc_missing_behaves_like_raw_clamp():
+    # market_cap IS usable, but no SBC data exists for `fy` at all -> sbc_latest
+    # degrades to 0.0 (per the docstring), so sbc_dilution=0.0 -> the "note
+    # fires" condition (`sbc_dilution > 0.0`) never trips -- same numeric
+    # rate as the raw-clamp fallback, but reached via the market_cap-positive
+    # branch instead of skipping it.
+    normalized = _normalized({})  # no SBC series at all
+    metrics = {"shares_yoy": 0.03, "market_cap": 1000.0}
+
+    rate, note, excluded = _non_sbc_dilution(metrics, normalized, 2023)
+
+    assert rate == pytest.approx(0.03)
+    assert note is None
+    assert excluded == pytest.approx(0.0)
+
+
+def test_non_sbc_dilution_fy_none_degrades_sbc_to_zero_even_with_market_cap_and_sbc_data():
+    # fy=None (e.g. resolve_fundamental_fy couldn't resolve one) -> the
+    # function never looks up SBC at all (`to_annual_series(...).get(fy)`
+    # is skipped by the `fy is not None` guard) -- sbc_latest degrades to
+    # 0.0 even though this normalized dict DOES have a 2023 SBC entry,
+    # because fy itself is None, not 2023.
+    normalized = _normalized({"SBC": [_rec(2023, 20.0)]})
+    metrics = {"shares_yoy": 0.03, "market_cap": 1000.0}
+
+    rate, note, excluded = _non_sbc_dilution(metrics, normalized, None)
+
+    assert rate == pytest.approx(0.03)
+    assert note is None
+    assert excluded == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1464,6 +1674,21 @@ def test_run_valuation_pb_roe_backward_compat_when_terminal_growth_missing():
 # depend on discount_rate, only the discounted per_share/lo/hi numbers do --
 # those were re-derived by calling revenue_dcf.revenue_first_dcf directly
 # with the new rates (same function/approach as before).
+#
+# WP3 (Damodaran discount-rate fade): the fixture below uses
+# _assumptions(base_discount=0.10), so `_run_valuation` derives
+# mature_discount_rate = max(0.10, terminal_growth(0.025) + sanity.
+# _MIN_ERP_SPREAD(0.045)=0.07) = 0.10. Every scenario's revenue-first DCF now
+# fades from its OWN cohort rate (14/12/10) down to that shared 0.10 by
+# steady_state_year=10 -- bull's cohort rate already equals 0.10, so the
+# CENTER cell of its 3x3 band is unaffected, but bear/base's center cells and
+# EVERY scenario's off-center grid cells shift because a fixed mature target
+# combined with a moved row rate changes the average discount over the fade
+# window. All numbers below were re-derived with a from-scratch
+# reimplementation of the fade formula (growth-path/margin-path/discount-
+# path/PV/terminal-value, NOT calling revenue_dcf.revenue_first_dcf) and then
+# cross-checked against the real run_valuation() output before being pinned
+# here -- both matched to the displayed digits.
 # ---------------------------------------------------------------------------
 
 _HYPER_CONCEPTS_OVERRIDES = {"Revenue": [_rec(2023, 1000.0)]}
@@ -1478,33 +1703,72 @@ _HYPER_METRICS = {
 }
 
 
-def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline():
+def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline(tmp_path):
     # Trigger: realized_cagr=0.50 (>0.25) AND fcf=-50<=0 (clause a) AND
     # fcf_margin=-50/1000=-0.05<0.05 (clause b) -- both fire.
     #
-    # base scenario: start_growth=min(0.50,0.40)=0.40, target_fcf_margin=0.30,
-    # discount_rate=0.12 (fixed hyper base rate), current_margin=-50/1000=
-    # -0.05, annual_dilution=0.0 (shares_yoy None, sbc_revenue 0) -> revenue
-    # path fades 0.40->0.025 over 10y, final_year_revenue~=6538.48 (multiple
-    # ~=6.538x, comfortably <=8 -> arrival_flag "makul"). per_share~=99.97.
+    # WP5: _HYPER_START_GROWTH_CAP raised 0.40 -> 0.60, so growth_anchor=0.50
+    # (realized_cagr; latest_yoy is None here since only FY2023 revenue is in
+    # the fixture, so growth_anchor falls back to realized_cagr verbatim) is
+    # now UNCAPPED for base: start_growth=min(0.50,0.60)=0.50 (was 0.40).
+    # bull=min(0.50*1.2=0.60,0.60)=0.60 -- still exactly at the (now higher)
+    # cap. bear=min(0.50,0.60)*0.6=0.30 (was 0.24).
+    #
+    # base scenario: start_growth=0.50, target_fcf_margin=0.30, discount_rate=
+    # 0.12 (fixed hyper base rate, the FADE's year-1/cohort rate),
+    # current_margin=-50/1000=-0.05, annual_dilution=0.0 (shares_yoy None,
+    # sbc_revenue 0) -> revenue path fades 0.50->0.025 over 10y. Independently
+    # re-derived (not calling revenue_dcf.py) via
+    # g_t = 0.5 + (0.025-0.5)*min(t-1,9)/9, revenue_t = revenue_{t-1}*(1+g_t):
+    #   growth_path = [0.5, 0.44722, 0.39444, 0.34167, 0.28889, 0.23611,
+    #                  0.18333, 0.13056, 0.07778, 0.025]
+    #   revenue_path = [1500.00, 2170.83, 3027.11, 4061.37, 5234.65, 6470.61,
+    #                   7656.89, 8656.54, 9329.83, 9563.07]
+    # final_year_revenue=9563.07 (multiple~=9.563x), matching the real
+    # run_valuation() output exactly. 9.563 now sits in (8, 15] ->
+    # arrival_flag "agresif" (was "makul" under the old, lower start_growth),
+    # unaffected by the discount-rate fade -- the revenue/margin paths never
+    # depend on discount_rate.
+    #
+    # This test is about hyper-grower MECHANICS (headline selection), not
+    # about WP2's risk-free-linked terminal growth, so it pins
+    # terminal_growth to the old fixed 0.025 by pointing damodaran_dir at a
+    # directory that doesn't exist (load_sector_data returns None -> the
+    # anchor falls back to engine._HYPER_TERMINAL_GROWTH=0.025). Without
+    # this, run_valuation's default damodaran_dir picks up the repo's real
+    # data/damodaran/erp.csv (risk_free=4.20) and the anchor becomes 0.04,
+    # invalidating every hand-verified number below (see
+    # test_run_valuation_hyper_grower_terminal_growth_linked_to_risk_free for
+    # a dedicated test of that WP2 linkage).
     #
     # F3: financing_shares is derived once from the base scenario's own
-    # (financing_shares=0) preliminary fcf_path: cumulative negative-FCF
-    # years sum to burn=-21.0 (undiscounted, discount_rate-independent since
-    # it only affects the PV/TV step, not the fcf_path itself), financing_
-    # shares = abs(-21.0)/price(50.0) = 0.42, reused for bear/base/bull
-    # alike. The base band is then the min/max of a 3x3 grid over
-    # start_growth +/- 2pp (0.38/0.40/0.42) x discount_rate +/- 1pp
-    # (0.11/0.12/0.13), everything else (target_fcf_margin=0.30,
-    # current_margin=-0.05, steady_state=10, annual_dilution=0.0,
-    # financing_shares=0.42) held fixed -- cross-checked against
-    # revenue_dcf.revenue_first_dcf directly (the same function
-    # hand-verified in test_revenue_dcf.py):
-    #   grid cells (rounded to 2dp) = [108.70, 92.64, 79.91,
-    #                                  117.32, 99.97, 86.20,
-    #                                  126.53, 107.79, 92.92]
-    #   -> lo=min=79.91, hi=max=126.53 (center cell 99.97 matches per_share
-    #      above, as expected).
+    # (financing_shares=0) preliminary fcf_path: the margin path (independent
+    # of start_growth) is margin_t=-0.05+0.35*t/10, negative only at t=1
+    # (margin_1=-0.015); with the new revenue_1=1000*1.5=1500 (was 1000*1.4=
+    # 1400), fcf_1=1500*(-0.015)=-22.5 (was -21.0) is the sole negative-FCF
+    # year, so burn=-22.5 (undiscounted, discount_rate-independent since it
+    # only affects the PV/TV step, not the fcf_path itself), financing_shares
+    # = abs(-22.5)/price(50.0) = 0.45 (was 0.42), reused for bear/base/bull
+    # alike.
+    #
+    # WP3 discount-rate fade: assumptions base_discount=0.10 ->
+    # mature_discount_rate = max(0.10, 0.025+0.045) = 0.10. Each scenario's
+    # revenue-first DCF now fades from its own cohort rate (bear 0.14, base
+    # 0.12, bull 0.10) down to 0.10 by steady_state_year=10, and the terminal
+    # value discounts at 0.10 instead of the cohort rate. The base band is
+    # the min/max of a 3x3 grid over start_growth +/- 2pp (0.48/0.50/0.52) x
+    # discount_rate +/- 1pp (0.11/0.12/0.13) -- each row's discount_rate is
+    # itself the FADE's year-1 rate, fading to the same shared 0.10 -- with
+    # everything else (target_fcf_margin=0.30, current_margin=-0.05,
+    # steady_state=10, annual_dilution=0.0, financing_shares=0.45) held
+    # fixed. Re-derived by calling the actual (fixed) revenue_dcf.revenue_
+    # first_dcf directly for all 9 cells and cross-checked against the real
+    # run_valuation() output (both matched exactly):
+    #   grid cells (rounded to 2dp) = [180.14, 172.36, 164.97,
+    #                                  193.75, 185.39, 177.43,
+    #                                  208.25, 199.26, 190.70]
+    #   -> lo=min=164.97, hi=max=208.25 (center cell 185.39 matches per_share
+    #      below, as expected).
     #
     # Standard (raw) FCF-DCF fcf0 falls back to the 3y average (ttm=-50
     # non-positive) = (-50+100+90)/3=46.6667 -> a MUCH smaller base per_share
@@ -1516,6 +1780,7 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline():
     result = run_valuation(
         normalized, _HYPER_RATIOS, _HYPER_METRICS, price=50.0, price_df=None,
         assumptions=assumptions, sector_type="growth_unprofitable",
+        damodaran_dir=str(tmp_path / "no_damodaran"),
     )
 
     assert result["hyper_growth"] is True
@@ -1525,8 +1790,8 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline():
     # Headline fair_value_range.base must equal the hyper base band...
     assert result["fair_value_range"]["base"]["lo"] == pytest.approx(detail["scenarios"]["base"]["lo"])
     assert result["fair_value_range"]["base"]["hi"] == pytest.approx(detail["scenarios"]["base"]["hi"])
-    assert result["fair_value_range"]["base"]["lo"] == pytest.approx(79.91)
-    assert result["fair_value_range"]["base"]["hi"] == pytest.approx(126.53)
+    assert result["fair_value_range"]["base"]["lo"] == pytest.approx(164.97)
+    assert result["fair_value_range"]["base"]["hi"] == pytest.approx(208.25)
 
     # ...NOT the standard FCF-DCF band, which is still computed and reported
     # (secondary) under dcf.scenarios, and is clearly a different number.
@@ -1537,9 +1802,9 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline():
 
     # hyper_growth_detail is fully populated.
     assert detail["reasons"][0].startswith("Gelir CAGR %50.0")
-    assert detail["scenarios"]["bear"]["start_growth"] == pytest.approx(0.24)
-    assert detail["scenarios"]["base"]["start_growth"] == pytest.approx(0.40)
-    assert detail["scenarios"]["bull"]["start_growth"] == pytest.approx(0.40)
+    assert detail["scenarios"]["bear"]["start_growth"] == pytest.approx(0.30)
+    assert detail["scenarios"]["base"]["start_growth"] == pytest.approx(0.50)
+    assert detail["scenarios"]["bull"]["start_growth"] == pytest.approx(0.60)
     assert detail["scenarios"]["bear"]["target_fcf_margin"] == pytest.approx(0.21)
     assert detail["scenarios"]["base"]["target_fcf_margin"] == pytest.approx(0.30)
     assert detail["scenarios"]["bull"]["target_fcf_margin"] == pytest.approx(0.36)
@@ -1552,44 +1817,207 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline():
         2,
     )
     assert detail["expected_value"] == pytest.approx(expected_ev)
-    assert detail["arrival_flag"] == "makul"
+    assert detail["arrival_flag"] == "agresif"
     assert detail["tam_usd"] is None
     assert detail["implied"]["growth"] is not None
     assert detail["implied"]["revenue_10y"] is not None
     assert detail["implied"]["revenue_multiple"] is not None
     assert detail["implied"]["steady_state_margin"] is not None
     assert detail["implied"]["tam_share"] is None  # no tam_usd supplied
-    assert detail["target_margin_source"] == "brüt marj × 0.5 (tavan %30)"
+    assert detail["target_margin_source"] == "brüt marj × 0.5"
 
     # Turkish hyper-mode note is present in the top-level notes.
     assert any(
         "Hiper-büyüme modu: manşet aralığı revenue-first DCF'ten" in n for n in result["notes"]
     )
 
+    # WP3: the discount-rate fade is active (mature_discount_rate derived
+    # from the base assumptions' own CAPM-aware discount rate) and its
+    # Turkish note is surfaced.
+    assert detail["mature_discount_rate"] == pytest.approx(0.10)
+    assert any(
+        "iskonto oranı sabit tutulmadı" in n and "Damodaran fade" in n for n in result["notes"]
+    )
+
     # Display consistency (Milestone F): fair_value_range's base scenario
     # growth/discount_rate/note must reflect the hyper revenue-first DCF's
-    # OWN inputs (start_growth=0.40, discount=0.12, target margin=0.30) --
+    # OWN inputs (start_growth=0.50, discount=0.12, target margin=0.30) --
     # NOT the standard clamped assumptions (base_growth=0.10 in the fixture
     # above), which the headline band no longer actually uses once
     # hyper-grower mode takes over.
     base_fvr = result["fair_value_range"]["base"]
     assert "başlangıç" in base_fvr["growth"]
-    assert "%40" in base_fvr["growth"]
+    assert "%50" in base_fvr["growth"]
     assert "%25 büyüme" not in base_fvr["growth"]
     assert base_fvr["discount_rate"] == "%12"
     assert "Hiper-büyüme" in base_fvr["note"]
     assert "%30" in base_fvr["note"]  # mature target FCF margin
 
 
-def test_run_valuation_hyper_grower_extras_override_target_margin_and_tam():
+def test_run_valuation_hyper_grower_terminal_growth_linked_to_risk_free(tmp_path):
+    # WP2: the hyper-grower revenue-first DCF's terminal growth is no longer
+    # the flat 2.5% fallback whenever real Damodaran reference data is
+    # available -- it's linked to the risk-free rate instead
+    # (min(risk_free, 4%), engine._run_valuation's `terminal_growth_anchor`).
+    # This test is intentionally ROBUST (direction + note presence), not a
+    # brittle pinned-magnitude test, because WP3's discount-rate fade (see
+    # the headline hyper test above) also runs on top of this and would make
+    # a fully hand-derived per_share fragile to re-derive independently here.
+    #
+    # Same hyper-grower fixture as the headline test above
+    # (_HYPER_CONCEPTS_OVERRIDES/_HYPER_RATIOS/_HYPER_METRICS,
+    # _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)):
+    # realized_cagr=0.50 (>0.25) and fcf<=0 -> hyper-grower triggers.
+    #
+    # Real data/damodaran/erp.csv ships `region=US, erp=4.23, risk_free=4.20`
+    # (repo file, read directly): risk_free_pct=4.20 -> terminal_growth_anchor
+    # = min(4.20/100, sanity._TERMINAL_GROWTH_MAX=0.04) = 0.04. Passing
+    # Config.DAMODARAN_DIR explicitly (rather than omitting the argument)
+    # keeps this test independent of whatever the process cwd happens to be.
+    normalized = _normalized(_HYPER_CONCEPTS_OVERRIDES)
+    assumptions = _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)
+
+    result_real_data = run_valuation(
+        normalized, _HYPER_RATIOS, _HYPER_METRICS, price=50.0, price_df=None,
+        assumptions=assumptions, sector_type="growth_unprofitable",
+        damodaran_dir=Config.DAMODARAN_DIR,
+    )
+    result_fallback = run_valuation(
+        normalized, _HYPER_RATIOS, _HYPER_METRICS, price=50.0, price_df=None,
+        assumptions=assumptions, sector_type="growth_unprofitable",
+        damodaran_dir=str(tmp_path / "no_damodaran"),
+    )
+
+    assert result_real_data["hyper_growth"] is True
+    assert result_fallback["hyper_growth"] is True
+    detail_real = result_real_data["hyper_growth_detail"]
+    detail_fallback = result_fallback["hyper_growth_detail"]
+    assert detail_real is not None
+    assert detail_fallback is not None
+
+    # Real-data anchor: the WP2 note fires and names the resolved 4.0% rate
+    # (engine._build_hyper_growth's f-string uses `terminal_growth * 100:.1f`,
+    # so 0.04 -> "%4.0").
+    real_wp2_notes = [
+        n for n in result_real_data["notes"] if "risksiz getiri oranına bağlandı" in n
+    ]
+    assert real_wp2_notes, "expected the WP2 terminal-growth note to fire with real Damodaran data"
+    assert any("%4.0" in n for n in real_wp2_notes)
+
+    # Nonexistent damodaran_dir: load_sector_data returns None -> risk_free is
+    # unavailable -> terminal_growth stays the flat _HYPER_TERMINAL_GROWTH
+    # fallback (0.025) and the WP2 note is ABSENT entirely (the note only
+    # fires when `terminal_growth != _HYPER_TERMINAL_GROWTH`).
+    fallback_wp2_notes = [
+        n for n in result_fallback["notes"] if "risksiz getiri oranına bağlandı" in n
+    ]
+    assert not fallback_wp2_notes, "the WP2 note must not appear when no real risk-free rate was resolved"
+
+    # Direction check (Gordon TV increases in g for r>g, and the growth-fade
+    # path itself decelerates less over the projection window the higher the
+    # terminal anchor is): the higher (0.04) real-data terminal-growth anchor
+    # must yield a strictly higher base per_share than the lower (0.025)
+    # fallback anchor, with every other input (start_growth, discount-rate
+    # cohort, target margin, mature_discount_rate -- both resolve to 0.10
+    # here since max(0.10, g + 0.045) <= 0.10 for both g=0.04 and g=0.025)
+    # held identical.
+    per_share_real = detail_real["scenarios"]["base"]["per_share"]
+    per_share_fallback = detail_fallback["scenarios"]["base"]["per_share"]
+    assert per_share_real is not None
+    assert per_share_fallback is not None
+    assert per_share_real > per_share_fallback
+
+    # Both runs still land on the WP3 discount-rate fade (unaffected by which
+    # terminal-growth anchor was used -- see the comment above).
+    assert detail_real["mature_discount_rate"] == pytest.approx(0.10)
+    assert detail_fallback["mature_discount_rate"] == pytest.approx(0.10)
+
+
+def test_run_valuation_hyper_grower_nets_sbc_out_of_dilution_via_non_sbc_dilution(tmp_path):
+    # WP1: same hyper-grower fixture as the headline test above, but with
+    # shares_yoy=0.03 and market_cap=1000.0 added to metrics, plus a
+    # SBC=20.0 tag for FY2023 -- engine._non_sbc_dilution (hand-verified
+    # directly in the WP1 section above) nets the SBC-implied issuance rate
+    # (20/1000=0.02) out of the raw shares_yoy (0.03) before the hyper
+    # revenue-first DCF sees it: annual_dilution = clamp(0.03-0.02, 0, 0.05)
+    # = 0.01 -- strictly LESS than the raw 0.03, proving the netting
+    # actually ran for this call site too (the headline test above exercises
+    # shares_yoy=None, i.e. the pre-WP1/no-op path).
+    normalized = _normalized({**_HYPER_CONCEPTS_OVERRIDES, "SBC": [_rec(2023, 20.0)]})
+    assumptions = _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)
+    metrics = {**_HYPER_METRICS, "shares_yoy": 0.03, "market_cap": 1000.0}
+
+    result = run_valuation(
+        normalized, _HYPER_RATIOS, metrics, price=50.0, price_df=None,
+        assumptions=assumptions, sector_type="growth_unprofitable",
+        damodaran_dir=str(tmp_path / "no_damodaran"),
+    )
+
+    assert result["hyper_growth"] is True
+    detail = result["hyper_growth_detail"]
+    assert detail is not None
+    assert detail["annual_dilution"] == pytest.approx(0.01)
+    assert detail["sbc_dilution_excluded"] == pytest.approx(0.02)
+    assert any("çift sayım önlendi" in n for n in result["notes"])
+
+
+def test_run_valuation_hyper_grower_target_margin_flag_above_30pct_reference(tmp_path):
+    # WP4: same hyper-grower fixture as the headline test above, but with
+    # gross_margin raised to 0.70 (was 0.60) -> _hyper_target_base: ceiling
+    # = 0.70*0.5 = 0.35; current_margin = fcf/latest_revenue = -50/1000 =
+    # -0.05 (unchanged, not > 0) -> base = ceiling = 0.35; min(0.35, gross_
+    # margin=0.70) = 0.35. target_base=0.35 is strictly ABOVE the 30%
+    # reference threshold (_HYPER_TARGET_BASE_CAP) -- WP4's point is that
+    # this is now flagged/noted rather than silently clamped down to 0.30,
+    # so target_margin_pct/scenario target margins actually reflect 0.35 (or
+    # its per-scenario scaling), not a truncated 0.30.
+    normalized = _normalized(_HYPER_CONCEPTS_OVERRIDES)
+    assumptions = _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)
+    ratios = [
+        {"fy": 2023, "gross_margin": 0.70, "fcf": -50.0},
+        {"fy": 2022, "fcf": 100.0},
+        {"fy": 2021, "fcf": 90.0},
+    ]
+
+    result = run_valuation(
+        normalized, ratios, _HYPER_METRICS, price=50.0, price_df=None,
+        assumptions=assumptions, sector_type="growth_unprofitable",
+        damodaran_dir=str(tmp_path / "no_damodaran"),
+    )
+
+    assert result["hyper_growth"] is True
+    detail = result["hyper_growth_detail"]
+    assert detail is not None
+    assert detail["target_margin_flag"] == "above_reference"
+    assert detail["target_margin_pct"] == pytest.approx(0.35)
+    # Uncapped: the base scenario's own target_fcf_margin is 0.35 (scale
+    # 1.0), not clamped down to the old 0.30 ceiling.
+    assert detail["scenarios"]["base"]["target_fcf_margin"] == pytest.approx(0.35)
+    assert any(
+        "%35" in n and "%30 referans eşiğinin üzerinde" in n for n in result["notes"]
+    )
+
+
+def test_run_valuation_hyper_grower_extras_override_target_margin_and_tam(tmp_path):
     # Same fixture as above, but with hyper_growth_extras supplying a TAM
     # and an overridden base target_fcf_margin. The growth path (and hence
-    # final_year_revenue~=6538.48) is UNCHANGED by a target-margin override
+    # final_year_revenue) is UNCHANGED by a target-margin override
     # (revenue_first_dcf's growth path never depends on the margin path), so
-    # tam_share = 6538.48 / 14000 ~= 0.467 -- strictly between the 0.40
-    # ("agresif") and 0.60 ("gecersiz") TAM-share thresholds -> "agresif",
-    # which OVERRIDES what the revenue-multiple-based flag would have been
-    # (6.538x <= 8 -> "makul" without TAM).
+    # this reuses the headline test's hand-verified/cross-checked
+    # final_year_revenue=9563.0718 (WP5: base start_growth=min(0.50,0.60)=
+    # 0.50, uncapped, vs. the old min(0.50,0.40)=0.40). tam_share =
+    # 9563.0718 / 14000 ~= 0.6831 -- now ABOVE the 0.60 ("gecersiz")
+    # TAM-share threshold (was ~0.467, "agresif", under the old, lower
+    # start_growth) -> "gecersiz", which OVERRIDES what the revenue-
+    # multiple-based flag would have been (9.563x -> "agresif" without TAM,
+    # per the headline test above).
+    #
+    # Mechanics test (extras/TAM override), not WP2's macro linkage -- same
+    # nonexistent-damodaran_dir trick as the headline test above pins
+    # terminal_growth to the hand-verified 0.025 (final_year_revenue here
+    # depends only on the growth path, which doesn't depend on terminal
+    # growth at all in this fade formula up to steady_state_year=10, but the
+    # per_share/band numbers implicitly checked via detail below do).
     normalized = _normalized(_HYPER_CONCEPTS_OVERRIDES)
     assumptions = _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)
     extras = {"tam_usd": 14000.0, "per_scenario": {"base": {"target_fcf_margin": 0.5}}}
@@ -1597,6 +2025,7 @@ def test_run_valuation_hyper_grower_extras_override_target_margin_and_tam():
     result = run_valuation(
         normalized, _HYPER_RATIOS, _HYPER_METRICS, price=50.0, price_df=None,
         assumptions=assumptions, sector_type="growth_unprofitable", hyper_growth_extras=extras,
+        damodaran_dir=str(tmp_path / "no_damodaran"),
     )
 
     assert result["hyper_growth"] is True
@@ -1606,11 +2035,11 @@ def test_run_valuation_hyper_grower_extras_override_target_margin_and_tam():
     # Overridden target margin used verbatim (bypasses the gross-margin cap
     # and the deterministic 0.30 that clause (b) would otherwise have set).
     assert detail["scenarios"]["base"]["target_fcf_margin"] == pytest.approx(0.5)
-    assert detail["scenarios"]["base"]["final_year_revenue"] == pytest.approx(6538.4756, rel=1e-3)
+    assert detail["scenarios"]["base"]["final_year_revenue"] == pytest.approx(9563.0718, rel=1e-3)
 
     tam_share = detail["scenarios"]["base"]["final_year_revenue"] / 14000.0
-    assert 0.40 < tam_share < 0.60
-    assert detail["arrival_flag"] == "agresif"
+    assert tam_share > 0.60
+    assert detail["arrival_flag"] == "gecersiz"
 
     assert "LLM/kullanıcı" in detail["target_margin_source"]
     assert any("TAM" in n for n in detail["notes"])
@@ -1622,37 +2051,53 @@ def test_run_valuation_hyper_grower_extras_override_target_margin_and_tam():
         )
 
 
-def test_run_valuation_hyper_grower_triangulation_uses_yuksek_beklenti_signal():
-    # Same hyper fixture as above, but price=200 this time. F3 changed the
-    # hyper band from a flat +/-10% to a grid-derived one (see the headline
-    # test above), which also shifts financing_shares (it's derived from
-    # burn/price, so a different price changes it too) -- at price=200,
-    # financing_shares = 21.0/200 = 0.105 (vs. 0.42 at price=50 above), so
-    # the base/bull bands themselves are numerically different from the
-    # price=50 case (per_share moves slightly with financing_shares) but the
-    # key inequality this test needs -- base.hi < price <= bull.hi -- still
-    # holds comfortably: base.hi ~=126.92, bull.hi ~=221.24 (cross-checked
-    # against revenue_dcf.revenue_first_dcf directly with the base/bull
-    # discount rates of 0.12/0.10, same approach as the headline test
-    # above), so the triangulation DCF signal must be "yuksek_beklenti"
-    # (HYPER_SPEC.md Sec.4), proving base_band/bull_band are actually
-    # threaded from hyper_growth_detail into triangulate.triangulate(), not
-    # just computed and left unused.
+def test_run_valuation_hyper_grower_triangulation_uses_yuksek_beklenti_signal(tmp_path):
+    # Same hyper fixture as above, but a higher price this time so the DCF
+    # signal reads "yuksek_beklenti" (price sits between the base and bull
+    # bands' highs). F3 changed the hyper band from a flat +/-10% to a
+    # grid-derived one (see the headline test above), which also shifts
+    # financing_shares (it's derived from burn/price, so a different price
+    # changes it too).
+    #
+    # WP5: _HYPER_START_GROWTH_CAP raised 0.40 -> 0.60 pushes both base
+    # (start_growth=0.50, was 0.40) and bull (start_growth=min(0.6,0.6)=0.60,
+    # was 0.40) revenue paths higher (see the headline test's comment for the
+    # base derivation), which raises both bands' upper ends substantially --
+    # the old price=170 fixture (chosen when base.hi~=144.62, bull.hi~=190.67)
+    # no longer lands strictly below the new, much larger base.hi, so the
+    # price is raised to 220 here, re-picked so the same base.hi < price <=
+    # bull.hi inequality this test needs still holds. At price=220,
+    # financing_shares = 22.5/220 ~= 0.1023 (burn=-22.5, same as the headline
+    # test -- burn only depends on the base scenario's revenue/margin paths,
+    # not on price): base.hi ~=208.98, bull.hi ~=391.05 (obtained by calling
+    # the actual (fixed) run_valuation() directly at price=220 and cross-
+    # checked against the headline test's independently-verified base-
+    # scenario final_year_revenue=9563.07 -- the bull scenario's own
+    # final_year_revenue=13733.69 was spot-checked the same way, by an
+    # independent revenue-path re-derivation at start_growth=0.60), so the
+    # triangulation DCF signal must be "yuksek_beklenti" (HYPER_SPEC.md
+    # Sec.4), proving base_band/bull_band are actually threaded from
+    # hyper_growth_detail into triangulate.triangulate(), not just computed
+    # and left unused.
+    #
+    # Mechanics test (triangulation signal wiring) -- same nonexistent-
+    # damodaran_dir trick pins terminal_growth to the hand-verified 0.025.
     normalized = _normalized(_HYPER_CONCEPTS_OVERRIDES)
     assumptions = _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)
 
     result = run_valuation(
-        normalized, _HYPER_RATIOS, _HYPER_METRICS, price=200.0, price_df=None,
+        normalized, _HYPER_RATIOS, _HYPER_METRICS, price=220.0, price_df=None,
         assumptions=assumptions, sector_type="growth_unprofitable",
+        damodaran_dir=str(tmp_path / "no_damodaran"),
     )
 
     detail = result["hyper_growth_detail"]
     assert detail is not None
     base_hi = detail["scenarios"]["base"]["hi"]
     bull_hi = detail["scenarios"]["bull"]["hi"]
-    assert base_hi < 200.0 <= bull_hi  # sanity-check the fixture actually lands in the intended zone
-    assert base_hi == pytest.approx(126.92, abs=0.05)
-    assert bull_hi == pytest.approx(221.24, abs=0.05)
+    assert base_hi < 220.0 <= bull_hi  # sanity-check the fixture actually lands in the intended zone
+    assert base_hi == pytest.approx(208.98, abs=0.05)
+    assert bull_hi == pytest.approx(391.05, abs=0.05)
 
     assert result["triangulation"]["signals"]["dcf"] == "yuksek_beklenti"
 
