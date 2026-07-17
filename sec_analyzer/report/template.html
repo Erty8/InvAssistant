@@ -1681,20 +1681,22 @@
       else if (lvl.is_52w_low) parts.push("52-week low");
       else if ((lvl.touches || 0) >= 1) parts.push(lvl.touches + "× tested");
       if (lvl.fib) parts.push("Fib " + lvl.fib);
+      if (lvl.ma) parts.push("at " + lvl.ma);
       var base = parts.length ? parts.join(" + ") : "level";
       if (lvl.last_touch) base += " · last " + lvl.last_touch;
       return base;
     }
-    // Strength: a 52-week extreme, a repeatedly-tested swing, or a
-    // swing+Fibonacci confluence is Strong; a lone fib / single touch is
-    // Medium. (The selector already keeps only the strongest near & far.)
+    // Strength: a 52-week extreme, a repeatedly-tested swing, or a swing that
+    // coincides with a Fibonacci level or a major moving average is Strong; a
+    // lone fib / lone MA / single touch is Medium. (The selector already keeps
+    // only the strongest near & far.)
     function srStrength(lvl) {
       var touches = lvl.touches || 0;
       var is52wNearEnough = (lvl.is_52w_high || lvl.is_52w_low) && Math.abs(lvl.dist_pct) <= 60;
-      if (is52wNearEnough || touches >= 2 || (touches >= 1 && lvl.fib)) {
+      if (is52wNearEnough || touches >= 2 || (touches >= 1 && (lvl.fib || lvl.ma))) {
         return { label: "Strong", cls: "sr-str-strong" };
       }
-      if (touches === 1 || lvl.fib) return { label: "Medium", cls: "sr-str-medium" };
+      if (touches === 1 || lvl.fib || lvl.ma) return { label: "Medium", cls: "sr-str-medium" };
       return { label: "Weak", cls: "sr-str-weak" };
     }
     // A level is a price RANGE (low–high); collapse to one number if the band
