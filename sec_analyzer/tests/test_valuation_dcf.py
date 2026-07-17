@@ -180,13 +180,13 @@ def test_implied_growth_round_trips_a_negative_known_growth_rate():
 def test_implied_growth_returns_none_when_price_unreachable_in_bracket():
     # per_share is monotonically increasing in growth_5y (higher growth ->
     # higher cash flows -> higher per-share value), so the maximum
-    # per_share reachable within the bisection bracket [-0.20, 0.40] is the
-    # value at growth_5y=0.40. A price far above that has no root in the
+    # per_share reachable within the bisection bracket [-0.20, 0.60] is the
+    # value at growth_5y=0.60. A price far above that has no root in the
     # bracket -> None.
     fcf0, terminal_growth, discount_rate = 100.0, 0.025, 0.10
     shares, dilution_rate = 20.0, 0.0
 
-    max_reachable_price = dcf_per_share(fcf0, 0.40, terminal_growth, discount_rate, shares, dilution_rate)["per_share"]
+    max_reachable_price = dcf_per_share(fcf0, 0.60, terminal_growth, discount_rate, shares, dilution_rate)["per_share"]
     unreachable_price = max_reachable_price * 10
 
     implied = implied_growth(unreachable_price, fcf0, terminal_growth, discount_rate, shares, dilution_rate)
@@ -228,13 +228,13 @@ def test_implied_growth_with_status_ok_case_matches_hand_verified_dcf():
 
 def test_implied_growth_with_status_above_bracket_when_price_unreachably_high():
     # Mirrors test_implied_growth_returns_none_when_price_unreachable_in_bracket:
-    # a price far above what growth_5y=0.40 (the bracket's own ceiling) can
+    # a price far above what growth_5y=0.60 (the bracket's own ceiling) can
     # produce means the model's per-share value stays BELOW the market price
-    # at both bracket ends -> "above_bracket" (price implies growth > +40%).
+    # at both bracket ends -> "above_bracket" (price implies growth > +60%).
     fcf0, terminal_growth, discount_rate = 100.0, 0.025, 0.10
     shares, dilution_rate = 20.0, 0.0
 
-    max_reachable_price = dcf_per_share(fcf0, 0.40, terminal_growth, discount_rate, shares, dilution_rate)["per_share"]
+    max_reachable_price = dcf_per_share(fcf0, 0.60, terminal_growth, discount_rate, shares, dilution_rate)["per_share"]
     unreachable_price = max_reachable_price * 10
 
     growth, status = implied_growth_with_status(
@@ -307,10 +307,11 @@ def test_validate_assumptions_rule_terminal_growth_too_high_fires_alone():
 
 
 def test_validate_assumptions_rule_discount_rate_below_minimum_fires_alone():
-    # discount_rate=0.05 < 0.07 min; terminal_growth=0.02 keeps
-    # discount_rate (0.05) > terminal_growth (0.02), and terminal_growth
-    # stays <= 0.04, so no other rule fires.
-    assumptions = _three_scenarios({"discount_rate": 0.05, "terminal_growth": 0.02})
+    # discount_rate=0.05 < 0.07 min; terminal_growth=0.0 keeps
+    # discount_rate (0.05) > terminal_growth (0.0) with a 5pp spread (>=
+    # the 4.5pp minimum ERP spread, so the new ERP-spread rule does NOT
+    # also fire), and terminal_growth stays <= 0.04, so no other rule fires.
+    assumptions = _three_scenarios({"discount_rate": 0.05, "terminal_growth": 0.0})
     violations = validate_assumptions(assumptions, is_unprofitable=False)
 
     assert len(violations) == 1
@@ -331,12 +332,12 @@ def test_validate_assumptions_rule_discount_rate_below_minimum_unprofitable_thre
 
 
 def test_validate_assumptions_rule_growth_5y_hard_max_fires_alone():
-    # growth_5y=0.45 > 0.40 hard max; everything else stays within bounds.
-    assumptions = _three_scenarios({"growth_5y": 0.45})
+    # growth_5y=0.65 > 0.60 hard max; everything else stays within bounds.
+    assumptions = _three_scenarios({"growth_5y": 0.65})
     violations = validate_assumptions(assumptions, is_unprofitable=False)
 
     assert len(violations) == 1
-    assert "%40" in violations[0] and "Base" in violations[0]
+    assert "%60" in violations[0] and "Base" in violations[0]
 
 
 def test_validate_assumptions_growth_5y_between_20_and_40_percent_is_allowed():
@@ -421,20 +422,20 @@ def test_clamp_assumptions_caps_terminal_growth():
 
 
 def test_clamp_assumptions_caps_growth_5y():
-    # bull growth_5y=0.45 > 0.40 hard max -> capped to 0.40. bear=0.05,
+    # bull growth_5y=0.65 > 0.60 hard max -> capped to 0.60. bear=0.05,
     # base=0.10 chosen so bear<=base<=bull holds BOTH before (0.05<=0.10<=
-    # 0.45) and after (0.05<=0.10<=0.40) clamping -- isolating the growth_5y
+    # 0.65) and after (0.05<=0.10<=0.60) clamping -- isolating the growth_5y
     # cap from the cross-scenario ordering check.
     assumptions = _three_scenarios()
     assumptions["bear"]["growth_5y"] = 0.05
     assumptions["base"]["growth_5y"] = 0.10
-    assumptions["bull"]["growth_5y"] = 0.45
+    assumptions["bull"]["growth_5y"] = 0.65
 
     clamped, notes = clamp_assumptions(assumptions, is_unprofitable=False)
 
-    assert clamped["bull"]["growth_5y"] == pytest.approx(0.40)
+    assert clamped["bull"]["growth_5y"] == pytest.approx(0.60)
     assert len(notes) == 1
-    assert "%40" in notes[0] and "Bull" in notes[0]
+    assert "%60" in notes[0] and "Bull" in notes[0]
     assert clamped["bear"]["growth_5y"] == pytest.approx(0.05)
     assert clamped["base"]["growth_5y"] == pytest.approx(0.10)
 
@@ -472,20 +473,32 @@ def test_clamp_assumptions_does_not_clamp_r_less_equal_g_t_case():
     # discount_rate=0.07 (already at/above the 0.07 floor -> the floor clamp
     # does NOT touch it) and terminal_growth=0.08 (above the 0.04 cap -> that
     # INDEPENDENT clamp fires and caps it to 0.04). Pre-clamp, r(0.07) <=
-    # g_t(0.08) is a Gordon violation; clamp_assumptions has no special-case
-    # logic for this relationship (per its docstring) -- the only reason the
-    # relationship stops being violated after clamping is the ORDINARY
-    # terminal_growth cap firing on its own, not a Gordon-specific fix. Proof:
-    # discount_rate itself is completely untouched (no note mentions it, and
-    # its clamped value is bit-for-bit the original 0.07).
+    # g_t(0.08) is a Gordon violation on the RAW input -- validate_assumptions
+    # still reports that (checked below). But clamp_assumptions works on the
+    # ALREADY-CLAMPED terminal_growth (0.04), and 0.04 < 0.07 < 0.04 + 0.045
+    # (0.085) -- Gordon is defined post-clamp, but the implied ERP spread
+    # (0.03) is thinner than the 4.5pp minimum, so the NEW ERP-spread clamp
+    # fires and raises discount_rate to 0.04 + 0.045 = 0.085. This is a
+    # behavior change from the pre-ERP-guard version of this test (which
+    # asserted discount_rate stayed bit-for-bit at 0.07): the
+    # `discount_rate <= terminal_growth` (undefined-Gordon) case itself is
+    # still deliberately never clamped -- this is a distinct, always-defined
+    # case reached only after the terminal_growth cap already fired.
     assumptions = _three_scenarios({"discount_rate": 0.07, "terminal_growth": 0.08})
     clamped, notes = clamp_assumptions(assumptions, is_unprofitable=False)
 
     assert clamped["base"]["terminal_growth"] == pytest.approx(0.04)
-    assert clamped["base"]["discount_rate"] == 0.07  # untouched, bit-for-bit
-    assert len(notes) == 1  # only the terminal_growth cap note -- nothing r/g_t-specific
-    assert "%4" in notes[0]
-    assert "Gordon" not in notes[0]
+    assert clamped["base"]["discount_rate"] == pytest.approx(0.085)
+    assert len(notes) == 2  # the terminal_growth cap note + the new ERP-spread note
+    assert any("%4" in n for n in notes)
+    assert any("asgari risk primi" in n for n in notes)
+    assert not any("Gordon" in n for n in notes)
+
+    # The raw (pre-clamp) discount_rate <= terminal_growth relationship is
+    # still reported by validate_assumptions on the UNCLAMPED input -- the
+    # new ERP-spread rule never touches that (mutually exclusive) case.
+    raw_violations = validate_assumptions(assumptions, is_unprofitable=False)
+    assert any("Gordon" in v for v in raw_violations)
 
 
 def test_clamp_assumptions_growth_ordering_violation_is_note_only_no_value_change():
@@ -535,4 +548,70 @@ def test_clamp_assumptions_leaves_non_numeric_field_untouched():
     clamped, notes = clamp_assumptions(assumptions, is_unprofitable=False)
 
     assert clamped["base"]["growth_5y"] == "yuksek"
+    assert notes == []
+
+
+# ---------------------------------------------------------------------------
+# 6. Minimum implied ERP spread guard (SPEC Sec.3, new) --
+#    discount_rate is a levered cost of equity; a spread over terminal_growth
+#    thinner than 4.5pp is rejected/clamped even when Gordon is defined.
+# ---------------------------------------------------------------------------
+
+
+def test_validate_assumptions_erp_spread_guard_fires_when_gordon_defined_but_thin():
+    # discount_rate=0.07, terminal_growth=0.04: Gordon is defined (0.07 >
+    # 0.04), and both individually clear their own floor/cap (0.07 >= 0.07
+    # min; 0.04 <= 0.04 max), so neither of those two rules fires. But the
+    # spread (0.03) is below the 0.045 minimum ERP spread -> the new rule
+    # fires alone.
+    assumptions = _three_scenarios({"discount_rate": 0.07, "terminal_growth": 0.04})
+    violations = validate_assumptions(assumptions, is_unprofitable=False)
+
+    assert len(violations) == 1
+    assert "asgari risk primi" in violations[0] and "Base" in violations[0]
+
+
+def test_validate_assumptions_erp_spread_guard_does_not_double_report_undefined_gordon():
+    # discount_rate=0.04 <= terminal_growth=0.04: the undefined-Gordon rule
+    # fires (and, unavoidably per the structural-impossibility note above,
+    # so does the discount-rate floor rule since 0.04 < 0.07) -- but the new
+    # elif-gated ERP rule must NOT ALSO fire on top of the Gordon violation
+    # (that would be a double-report of the same underlying pair).
+    assumptions = _three_scenarios({"discount_rate": 0.04, "terminal_growth": 0.04})
+    violations = validate_assumptions(assumptions, is_unprofitable=False)
+
+    assert len(violations) == 2
+    assert any("Gordon" in v for v in violations)
+    assert any("alt sınır" in v for v in violations)
+    assert not any("asgari risk primi" in v for v in violations)
+
+
+def test_validate_assumptions_coherent_erp_spread_passes():
+    # discount_rate=0.10, terminal_growth=0.025: spread = 0.075 >= 0.045 ->
+    # no violation from the new rule (or any other).
+    assumptions = _three_scenarios({"discount_rate": 0.10, "terminal_growth": 0.025})
+    assert validate_assumptions(assumptions, is_unprofitable=False) == []
+
+
+def test_clamp_assumptions_erp_spread_guard_raises_discount_rate_with_note():
+    # discount_rate=0.07, terminal_growth=0.04: neither the floor (0.07 is
+    # already >= 0.07) nor the terminal_growth cap (0.04 is already <= 0.04)
+    # fires, so this isolates the new ERP-spread clamp: raised to
+    # 0.04 + 0.045 = 0.085.
+    assumptions = _three_scenarios({"discount_rate": 0.07, "terminal_growth": 0.04})
+    clamped, notes = clamp_assumptions(assumptions, is_unprofitable=False)
+
+    assert clamped["base"]["discount_rate"] == pytest.approx(0.085)
+    assert clamped["base"]["terminal_growth"] == pytest.approx(0.04)  # untouched
+    assert len(notes) == 1
+    assert "asgari risk primi" in notes[0] and "Base" in notes[0]
+
+
+def test_clamp_assumptions_coherent_pair_passes_through_untouched():
+    # discount_rate=0.10, terminal_growth=0.025: spread = 0.075 >= 0.045 ->
+    # no clamp fires at all.
+    assumptions = _three_scenarios({"discount_rate": 0.10, "terminal_growth": 0.025})
+    clamped, notes = clamp_assumptions(assumptions, is_unprofitable=False)
+
+    assert clamped == assumptions
     assert notes == []

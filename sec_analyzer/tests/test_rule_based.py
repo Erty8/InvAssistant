@@ -470,6 +470,38 @@ def test_default_assumptions_is_deterministic():
 
 
 # ---------------------------------------------------------------------------
+# risk_free_pct global fallback for terminal_growth (see
+# rule_based._terminal_growth_anchor's 3-step resolution order): covers
+# filers whose SIC doesn't match any Damodaran industry, so `capm` is None
+# even though the GLOBAL risk-free rate (independent of SIC matching) is
+# still available -- this must not also flatten terminal_growth to the old
+# 2.5% constant.
+# ---------------------------------------------------------------------------
+
+def test_default_assumptions_uses_global_risk_free_pct_when_capm_is_none():
+    metrics = {"revenue_cagr_5y": 0.06}
+    assumptions = rule_based.default_assumptions(metrics, "mature", capm=None, risk_free_pct=4.20)
+    for scenario in assumptions.values():
+        assert scenario["terminal_growth"] == pytest.approx(0.04)
+
+
+def test_default_assumptions_keeps_flat_default_when_no_risk_free_source_at_all():
+    metrics = {"revenue_cagr_5y": 0.06}
+    assumptions = rule_based.default_assumptions(metrics, "mature", capm=None, risk_free_pct=None)
+    for scenario in assumptions.values():
+        assert scenario["terminal_growth"] == pytest.approx(0.025)
+
+
+def test_default_assumptions_capm_risk_free_takes_precedence_over_global_fallback():
+    metrics = {"revenue_cagr_5y": 0.06}
+    assumptions = rule_based.default_assumptions(
+        metrics, "mature", capm={"risk_free": 3.0}, risk_free_pct=4.20
+    )
+    for scenario in assumptions.values():
+        assert scenario["terminal_growth"] == pytest.approx(0.03)
+
+
+# ---------------------------------------------------------------------------
 # commentary() -- the two-phase flow's phase-2 deterministic ("script"
 # provider) commentary over an already-computed `valuation` dict.
 # ---------------------------------------------------------------------------

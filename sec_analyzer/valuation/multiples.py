@@ -91,6 +91,14 @@ def multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Lis
       equal to market cap) when none of those three concepts is present for
       that fiscal year. This is the sales multiple the hyper-grower
       growth-adjusted EV/Sales layer ranks against (VALUATION.md Sec.7).
+    * ``pffo = fy_price * shares_fy / ffo_fy`` (``None`` unless
+      ``ffo_fy > 0`` and ``shares_fy`` is present -- ``ffo_fy =
+      net_income_fy + depreciation_fy - gain_on_sale_re_fy +
+      re_impairment_fy`` (gain/impairment default to 0.0 when untagged),
+      the same funds-from-operations proxy the reit valuation anchor uses,
+      see ``engine._select_latest_ffo``). This is the multiple the reit
+      sector's multiples signal ranks primarily instead of P/E (SPEC.md
+      Sec.8/FFO).
 
     Args:
         normalized: The dict returned by
@@ -100,9 +108,9 @@ def multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Lis
             ``Close`` column), or ``None``.
 
     Returns:
-        A list of ``{"fy", "end", "price", "pe", "ps", "pfcf", "ev_sales"}``
-        dicts sorted by ``fy`` ascending. Empty list if no fiscal year has
-        both a period-end date and price coverage. Never raises.
+        A list of ``{"fy", "end", "price", "pe", "ps", "pfcf", "ev_sales",
+        "pffo"}`` dicts sorted by ``fy`` ascending. Empty list if no fiscal
+        year has both a period-end date and price coverage. Never raises.
     """
     try:
         return _multiples_history(normalized or {}, price_df)
@@ -120,6 +128,10 @@ def _multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Li
     ltd_series = to_annual_series(normalized, "LongTermDebt")
     ltdc_series = to_annual_series(normalized, "LongTermDebtCurrent")
     cash_series = to_annual_series(normalized, "Cash")
+    net_income_series = to_annual_series(normalized, "NetIncome")
+    depreciation_series = to_annual_series(normalized, "Depreciation")
+    gain_re_series = to_annual_series(normalized, "GainOnSaleRealEstate")
+    impair_re_series = to_annual_series(normalized, "RealEstateImpairment")
     end_by_fy = _period_end_by_fy(normalized)
 
     history: List[dict] = []
@@ -162,8 +174,31 @@ def _multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Li
                 net_debt = (ltd or 0.0) + (ltdc or 0.0) - (cash or 0.0)
             ev_sales = (fy_price * shares + net_debt) / revenue
 
+        # P/FFO (Sec.8/FFO): funds from operations = net income + D&A add-
+        # back - RE-sale gains + RE impairments, the same REIT proxy the
+        # valuation engine's FFO anchor uses (engine._select_latest_ffo).
+        # Gain/impairment default to 0.0 when untagged for this fiscal year
+        # (backward compatible with fixtures/filers that never report them).
+        net_income = net_income_series.get(fy)
+        depreciation = depreciation_series.get(fy)
+        gain_re = gain_re_series.get(fy) or 0.0
+        impair_re = impair_re_series.get(fy) or 0.0
+        ffo = (
+            None
+            if net_income is None or depreciation is None
+            else net_income + depreciation - gain_re + impair_re
+        )
+        pffo = (
+            fy_price * shares / ffo
+            if ffo is not None and ffo > 0 and shares
+            else None
+        )
+
         history.append(
-            {"fy": fy, "end": period_end, "price": fy_price, "pe": pe, "ps": ps, "pfcf": pfcf, "ev_sales": ev_sales}
+            {
+                "fy": fy, "end": period_end, "price": fy_price, "pe": pe, "ps": ps, "pfcf": pfcf,
+                "ev_sales": ev_sales, "pffo": pffo,
+            }
         )
 
     return history

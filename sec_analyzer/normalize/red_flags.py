@@ -18,6 +18,7 @@ yielding an empty flag list rather than propagating.
 import logging
 from typing import Dict, List, Optional
 
+from sec_analyzer.normalize.metrics import resolve_fundamental_fy
 from sec_analyzer.normalize.normalizer import to_annual_series
 
 logger = logging.getLogger(__name__)
@@ -106,7 +107,7 @@ def _check_ocf_negative(normalized: dict, metrics: dict) -> Optional[dict]:
     """OCF_NEGATIVE: latest FY reports a net profit on paper, but operating
     cash flow for the same year is negative -- a classic earnings-quality
     warning sign (profit isn't converting into cash)."""
-    latest_fy = metrics.get("latest_fy")
+    latest_fy = resolve_fundamental_fy(metrics)
     if latest_fy is None:
         return None
 
@@ -175,7 +176,7 @@ def _check_cyclical_trap(ratios: List[dict], metrics: dict, horizon: str) -> Opt
     if len(margin_by_fy) < _CYCLICAL_MIN_MARGIN_YEARS:
         return None
 
-    latest_fy = metrics.get("latest_fy")
+    latest_fy = resolve_fundamental_fy(metrics)
     latest_margin = margin_by_fy.get(latest_fy)
     pe = metrics.get("pe")
     if latest_margin is None or pe is None:

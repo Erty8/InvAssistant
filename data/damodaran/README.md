@@ -35,22 +35,47 @@ Retail (General),18.6,1.1,17.2
   `peg` kolonu verilirse o kullanılır. Her ikisi de yoksa (mevcut dört-kolonlu
   format) sektör PEG'i boş (`None`) geçilir, başka hiçbir şey etkilenmez. Örnek
   başlık: `industry,pe,ps,pfcf,growth`.
+- `unlevered_beta` — **isteğe bağlı** kolon; sektörün **kaldıraçsız (asset)
+  betası**, düz bir sayı olarak (örn. `1.5`, `%` veya oran değil). CAPM
+  özkaynak maliyeti iskonto oranını besler (`valuation/capm.py`,
+  VALUATION.md §4): motor bunu şirketin kendi piyasa D/E'si ve marjinal
+  vergiyle relever edip `cost_of_equity = risk_free + β_L × ERP`'i türetir.
+  Yoksa CAPM devre dışı kalır ve iskonto oranı eski düz sektör-bağımsız
+  varsayılana döner (hata vermez). Örnek başlık:
+  `industry,pe,ps,pfcf,unlevered_beta`.
+- `capex_sales` — **isteğe bağlı** kolon; sektörün bakım (maintenance)
+  yatırım harcamasının satışlara oranı, **ondalık oran** olarak (örn.
+  `0.045` = satışların %4.5'i; `%` işareti veya yüzde formatı değil).
+  Kavramsal olarak Damodaran'ın **"Capital Expenditures by Sector (US)"**
+  (Cap Ex/Sales) tablosuna dayanır. Değerleme motoru (`valuation/engine.py`)
+  bakım capex'i hesaplarken bu oranı, motorun düz `%5` bakım-capex tabanı
+  yerine kullanır (`_MAINTENANCE_CAPEX_MIN_PCT_REVENUE = 0.05`); kolon
+  boş/yoksa bu düz `%5` tabanına geri döner (hata vermez). Banka/sigorta/
+  finansal hizmetler gibi sektörlerde capex/satış anlamlı bir metrik
+  olmadığından bu satırlarda kolon **bilerek boş** bırakılabilir. Örnek
+  başlık: `industry,pe,ps,pfcf,unlevered_beta,capex_sales`.
 
 ### `erp.csv`
 
 Bölge bazında özkaynak risk primini (Equity Risk Premium) içerir. Kolonlar:
 
 ```
-region,erp
-US,4.6
-Europe,5.1
-Emerging Markets,6.8
+region,erp,risk_free
+US,4.23,4.20
+Europe,5.1,
+Emerging Markets,6.8,
 ```
 
 Motor **sadece `region == "US"` satırını** kullanır; diğer bölge satırları
 şimdilik yalnızca referans/gelecekteki kullanım içindir, göz ardı edilir.
 `erp` ondalık bir yüzde sayısıdır (örn. `4.6` = %4.6), oran (`0.046`)
 değil.
+
+- `risk_free` — **isteğe bağlı** kolon; risksiz getiri oranı, `erp` ile aynı
+  yüzde formatında (örn. `4.20` = %4.2, oran değil). CAPM özkaynak maliyetinin
+  sabit terimidir (`valuation/capm.py`). Yalnızca US satırı okunur. Yoksa (eski
+  `region,erp` formatı) CAPM devre dışı kalır ve iskonto oranı düz varsayılana
+  döner.
 
 ## Şu an bu klasörde bulunan verinin kökeni
 
@@ -75,6 +100,25 @@ indirilip dönüştürüldü:
   uydurmak yerine kolon boş bırakıldı ve yükleyici (`valuation/damodaran.py`)
   bunu `None` olarak ele alıyor — tek etkisi P/FCF sektör karşılaştırmasının
   o şirket için mevcut olmaması, başka hiçbir şeyi etkilemiyor.
+- `unlevered_beta` kolonu ve `erp.csv`'deki `risk_free` değeri, CAPM iskonto
+  oranı için eklendi. **ÖNEMLİ — bu iki alan yaklaşık "tohum" (seed)
+  değerlerdir**, `pe`/`ps` gibi belirli bir Damodaran anlık görüntüsünden
+  birebir alınmış değildir: sektör betaları temsili sektör aralıklarına göre
+  elle atandı, `risk_free` yaklaşık güncel US 10-yıllık tahvil getirisine göre
+  konuldu. Gerçek değerler için Damodaran'ın **"Betas by Sector (US)"**
+  (`betas.xls`, kaldıraçsız/unlevered beta kolonu) ve ERP sayfasındaki
+  risksiz getiri satırından, `pe`/`ps` ile aynı yıllık güncellemede
+  yenilenmelidir. Yenilenene kadar CAPM çıktısı yön olarak doğru ama
+  kalibrasyonu yaklaşıktır.
+- `capex_sales` kolonu da, `unlevered_beta` gibi, **yaklaşık "tohum" (seed)
+  veridir** — Damodaran'ın "Capital Expenditures by Sector (US)" tablosundan
+  birebir, satır satır alınmamıştır; temsili sektör aralıklarına göre elle
+  yaklaşık atanmıştır. Gerçek değerler için Damodaran'ın ilgili Cap Ex/Sales
+  tablosundan, `pe`/`ps` ile aynı yıllık güncellemede yenilenmelidir. Banka,
+  sigorta ve finansal hizmetler gibi sektör satırlarında bu kolon **bilerek
+  boş** bırakılmıştır, çünkü capex/satış oranı finansal şirketler için
+  anlamlı bir metrik değildir; bu satırlarda motor düz `%5` bakım-capex
+  tabanına geri döner.
 - Damodaran dosyalarının veri tarihi: `pedata.xls`/`psdata.xls`'te
   belirtilen **"Date updated": 2026-01-05**; `histimpl.xls`'teki en son
   yıllık satır 2025 sonuna ait.
@@ -99,8 +143,11 @@ Kaynak: [Aswath Damodaran'ın NYU Stern sayfası](https://pages.stern.nyu.edu/~a
 - `multiples.csv` için: **"Price and Value to Book Ratios"** / **"PE
   Ratios"** / **"Price/Sales Ratios"** vb. sektör bazlı Excel tablolarından
   (industry medyanları) `pe`, `ps`, `pfcf` medyan kolonlarını derleyin.
+  `unlevered_beta` için **"Betas by Sector (US)"** (`betas.xls`)
+  dosyasındaki kaldıraçsız/unlevered beta kolonunu kullanın.
 - `erp.csv` için: **"Equity Risk Premiums"** sayfasındaki güncel ülke/bölge
-  risk primi tablosu.
+  risk primi tablosu (`erp`) ve aynı sayfadaki risksiz getiri oranı
+  (`risk_free`).
 
 Bu veriler Damodaran tarafından **yılda bir** (genelde yıl başında)
 güncellenir; bu klasördeki CSV'leri de yılda bir güncellemeniz yeterlidir

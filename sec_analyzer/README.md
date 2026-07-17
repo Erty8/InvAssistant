@@ -224,8 +224,10 @@ sağlayıcı (LLM'ler dahil) bu alanları kendisi hesaplamaz. METODOLOJI.md
 
 ### Damodaran sektör verisi kurulumu
 
-Sektör bazlı çoklu karşılaştırması (P/E, P/S, P/FCF medyanları) ve sektör
-ERP tabanı, isteğe bağlı olarak `data/damodaran/multiples.csv` ve
+Sektör bazlı çoklu karşılaştırması (P/E, P/S, P/FCF medyanları), CAPM
+iskonto oranı (sektör kaldıraçsız betası + ERP + risksiz getiri, bkz.
+VALUATION.md §4) ve sektör ERP tabanı, isteğe bağlı olarak
+`data/damodaran/multiples.csv` ve
 `data/damodaran/erp.csv` dosyalarından okunur (yol: `Config.DAMODARAN_DIR`,
 varsayılan `<çalışma dizini>/data/damodaran`, `DAMODARAN_DIR` ortam
 değişkeniyle override edilebilir). Dosya formatı, kaynak (Damodaran'ın NYU

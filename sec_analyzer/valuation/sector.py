@@ -18,6 +18,7 @@ returns ``"mature"`` as its own safe default.
 import logging
 from typing import List, Optional, Tuple, Union
 
+from sec_analyzer.normalize.metrics import resolve_fundamental_fy
 from sec_analyzer.normalize.normalizer import to_annual_series
 
 logger = logging.getLogger(__name__)
@@ -31,8 +32,16 @@ SECTOR_MATURE = "mature"
 #: REIT SIC code -- classified separately from the broader financial range.
 _REIT_SIC = 6798
 
+#: Real-estate operator/lessor SIC codes that get the same FFO treatment as
+#: REITs (property owners carry the same GAAP real-estate-depreciation
+#: distortion). Excludes real-estate agents/managers (6531) and land
+#: subdividers/developers (6552), which are asset-light/inventory businesses,
+#: not depreciable-property owners. Non-REIT filers here self-correct: the
+#: FFO valuation falls back to P/B×ROE when no depreciation series exists.
+_REIT_LIKE_SIC_RANGES = ((6500, 6500), (6510, 6519))
+
 #: SIC range classified as "financial" (banks, insurance, brokers, ...),
-#: excluding the REIT code above.
+#: excluding the REIT code and REIT-like real-estate ranges above.
 _FINANCIAL_SIC_RANGE = (6000, 6999)
 
 #: Inclusive SIC ranges classified as "cyclical" (commodity-linked or
@@ -114,6 +123,10 @@ def _is_cyclical_sic(sic: int) -> bool:
     return any(lo <= sic <= hi for lo, hi in _CYCLICAL_SIC_RANGES)
 
 
+def _is_reit_like_sic(sic: int) -> bool:
+    return any(lo <= sic <= hi for lo, hi in _REIT_LIKE_SIC_RANGES)
+
+
 def classify_sector(sic: Optional[Union[int, str]], normalized: dict, metrics: dict) -> str:
     """Classify a filer into a valuation-method sector bucket.
 
@@ -130,21 +143,29 @@ def classify_sector(sic: Optional[Union[int, str]], normalized: dict, metrics: d
     Returns:
         One of ``"reit"``, ``"financial"``, ``"cyclical"``,
         ``"growth_unprofitable"``, ``"mature"``. Deterministic, never
-        raises: SIC 6798 -> reit; SIC 6000-6999 (excl. 6798) -> financial;
+        raises: SIC 6798 -> reit; SIC 6500 or 6510-6519 (real-estate
+        operators/lessors, same GAAP-depreciation distortion as REITs) ->
+        reit; SIC 6000-6999 (excl. the reit codes above, so including 6531
+        real-estate agents/managers and 6552 land subdividers/developers,
+        which stay asset-light/inventory businesses) -> financial;
         SIC 3674 (semiconductors) -> cyclical when the realized revenue
         CAGR (5y, falling back to 3y) is unknown or <= 15%, otherwise falls
         through to the profitability check below like any other SIC; SIC
         in the (remaining) cyclical set -> cyclical; else, if the latest
-        fiscal year's ``NetIncome`` is negative -> growth_unprofitable;
-        else -> mature. An unparseable/missing ``sic`` returns ``"mature"``
-        (see the module docstring for the SIC-missing engine-wiring
-        fallback).
+        fiscal year's ``NetIncome`` is negative -> growth_unprofitable,
+        UNLESS the firm is normally profitable (>=2 prior fiscal years of
+        ``NetIncome`` data, a profitable majority among them, AND the
+        immediately prior year profitable), in which case the loss is
+        treated as a one-off (writedown/litigation/tax charge) and the
+        firm still classifies as mature; else -> mature. An unparseable/
+        missing ``sic`` returns ``"mature"`` (see the module docstring for
+        the SIC-missing engine-wiring fallback).
     """
     sic_int = _to_int_sic(sic)
     if sic_int is None:
         return SECTOR_MATURE
 
-    if sic_int == _REIT_SIC:
+    if sic_int == _REIT_SIC or _is_reit_like_sic(sic_int):
         return SECTOR_REIT
     if _FINANCIAL_SIC_RANGE[0] <= sic_int <= _FINANCIAL_SIC_RANGE[1]:
         return SECTOR_FINANCIAL
@@ -163,13 +184,29 @@ def classify_sector(sic: Optional[Union[int, str]], normalized: dict, metrics: d
     elif _is_cyclical_sic(sic_int):
         return SECTOR_CYCLICAL
 
-    latest_fy = (metrics or {}).get("latest_fy")
-    latest_net_income = None
-    if latest_fy is not None:
-        latest_net_income = to_annual_series(normalized or {}, "NetIncome").get(latest_fy)
+    latest_fy = resolve_fundamental_fy(metrics)
+    ni_series = to_annual_series(normalized or {}, "NetIncome")
+    latest_net_income = ni_series.get(latest_fy) if latest_fy is not None else None
 
     if latest_net_income is not None and latest_net_income < 0:
-        return SECTOR_GROWTH_UNPROFITABLE
+        # A single loss year in an otherwise consistently profitable firm is a
+        # one-off (writedown/litigation/tax charge), not structural
+        # unprofitability -- keep it "mature" so it isn't penalized with the
+        # higher unprofitable discount floor and isn't excluded from the EPV
+        # path. Requires a real profitable history to override: >=2 prior
+        # years, a profitable majority, AND the immediately prior year
+        # profitable.
+        prior = [(fy, v) for fy, v in ni_series.items()
+                 if latest_fy is not None and fy < latest_fy and v is not None]
+        prior_values = [v for _, v in prior]
+        prior_year_ni = ni_series.get(max((fy for fy, _ in prior), default=None)) if prior else None
+        usually_profitable = (
+            len(prior_values) >= 2
+            and sum(1 for v in prior_values if v > 0) > sum(1 for v in prior_values if v < 0)
+            and prior_year_ni is not None and prior_year_ni > 0
+        )
+        if not usually_profitable:
+            return SECTOR_GROWTH_UNPROFITABLE
 
     return SECTOR_MATURE
 
@@ -239,7 +276,7 @@ def detect_hyper_grower(metrics: dict, ratios: List[dict], normalized: dict) -> 
         if realized_cagr is None:
             return False, []
 
-        latest_fy = metrics.get("latest_fy")
+        latest_fy = resolve_fundamental_fy(metrics)
         latest_revenue = None
         if latest_fy is not None:
             latest_revenue = to_annual_series(normalized or {}, "Revenue").get(latest_fy)
@@ -277,7 +314,7 @@ def detect_hyper_grower(metrics: dict, ratios: List[dict], normalized: dict) -> 
                 return False, []
             reasons = [
                 f"Gelir CAGR %{realized_cagr * 100:.1f} (gri bölge %20-25) ve yüksek P/S "
-                f"(%{ps:.1f}x) — piyasa güçlü büyüme fiyatlıyor"
+                f"({ps:.1f}x) — piyasa güçlü büyüme fiyatlıyor"
             ] + clause_reasons
             return True, reasons
 

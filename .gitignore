@@ -179,3 +179,5 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+# Calibration snapshots (dev artifacts from `python -m sec_analyzer.cli calibrate`)
+reports/calibration_*.json

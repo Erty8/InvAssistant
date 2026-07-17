@@ -60,14 +60,28 @@ _SR_CLUSTER_TOL = 0.015
 #: true Fibonacci ratio but is conventionally included).
 _FIB_RATIOS = (0.236, 0.382, 0.5, 0.618, 0.786)
 
-#: Zone-strength scoring weights. A 52-week extreme dominates everything else
-#: (it is more important than a Fibonacci level), touches accumulate, and a
-#: Fibonacci confluence adds a smaller boost -- so ranking prefers
-#: 52w > heavily-tested swing > fib, and combining sources ("farklı değerler")
-#: strengthens a zone.
+#: Zone-strength scoring weights. A 52-week extreme outranks everything else
+#: when it's still near price (it is more important than a Fibonacci level),
+#: touches accumulate, and a Fibonacci confluence adds a smaller boost -- so
+#: ranking prefers 52w > heavily-tested swing > fib, and combining sources
+#: ("farklı değerler") strengthens a zone. The 52w bonus is not unconditional,
+#: though -- see :data:`_SR_52W_FAR_THRESHOLD_PCT`.
 _SR_SCORE_52W = 100
 _SR_SCORE_PER_TOUCH = 10
 _SR_SCORE_FIB = 5
+
+#: A major moving average (SMA50/SMA200) is dynamic support/resistance and a
+#: heavily-watched level in its own right, so a zone that coincides with one
+#: gets a solid score bonus -- roughly on par with a well-tested (~5-touch)
+#: swing shelf: stronger than a lone Fibonacci confluence, weaker than a live
+#: 52-week extreme. This is what surfaces "price is sitting on the 200-day"
+#: as support on a stock that ran vertically past every horizontal shelf.
+_SR_SCORE_MA = 50
+
+#: Beyond this distance from price (as a percent), a 52-week extreme's score
+#: bonus starts decaying -- a 52w level 300%+ away shouldn't auto-outrank a
+#: closer, well-tested zone just because it's the all-time extreme.
+_SR_52W_FAR_THRESHOLD_PCT = 60.0
 
 #: Corroboration window: when finalizing a chosen level, all evidence within
 #: this fraction of its price is merged into it (summed touches, unioned fib
@@ -381,7 +395,12 @@ def _cluster_levels(levels: "list[float]", tol_frac: float) -> "list[dict]":
     return [{"price": c["price"], "strength": c["touches"]} for c in clusters]
 
 
-def _support_resistance(df: pd.DataFrame, price: "float | None") -> "tuple[list, list, float | None, float | None, dict | None]":
+def _support_resistance(
+    df: pd.DataFrame,
+    price: "float | None",
+    sma50: "float | None" = None,
+    sma200: "float | None" = None,
+) -> "tuple[list, list, float | None, float | None, dict | None]":
     """Derive support/resistance zones from swing pivots in the price history.
 
     Detects swing highs and swing lows (bars whose High/Low is the extreme
@@ -409,10 +428,17 @@ def _support_resistance(df: pd.DataFrame, price: "float | None") -> "tuple[list,
     Direction (which extreme came first) decides whether ratios are measured
     down from the high or up from the low.
 
-    Selection (per side): every zone is scored -- a 52-week extreme dominates
-    (more important than a Fibonacci level), swing touches accumulate, a
-    Fibonacci confluence adds a smaller boost -- then exactly **one near and
-    one far** level are chosen, each the *strongest* in its distance half (so
+    Major moving averages (``sma50``/``sma200``, when supplied) are folded in
+    the same way: a MA that coincides with a swing cluster tags it as a
+    confluence zone, and a MA with no nearby shelf becomes a standalone
+    candidate (``touches == 0``) -- so a stock resting on its 200-day after a
+    vertical run still reports that MA as support/resistance instead of falling
+    back to a stale pre-breakout shelf or the 52-week extreme.
+
+    Selection (per side): every zone is scored -- a 52-week extreme dominates,
+    a moving-average confluence is a strong boost (~a well-tested shelf), swing
+    touches accumulate, a Fibonacci confluence adds a smaller boost -- then
+    exactly **one near and one far** level are chosen, each the *strongest* in its distance half (so
     both are well-corroborated, not the weakest nearby). Each chosen level is
     then **strengthened by merging every nearby evidence source** within
     :data:`_SR_CORROBORATE_PCT` (summed touches, unioned fib ratios, 52w
@@ -425,7 +451,7 @@ def _support_resistance(df: pd.DataFrame, price: "float | None") -> "tuple[list,
         ``(supports, resistances, nearest_support, nearest_resistance,
         fibonacci)`` where ``supports``/``resistances`` hold up to two levels
         (near + far) as ``{"low", "high", "price", "dist_pct", "strength",
-        "touches", "last_touch", "fib", "is_52w_high", "is_52w_low"}``
+        "touches", "last_touch", "fib", "ma", "is_52w_high", "is_52w_low"}``
         (``price`` is the range midpoint), the two scalars are the near
         level's midpoint on each side (or ``None``), and ``fibonacci`` is
         ``{"high", "low", "direction", "levels": [{"ratio", "price",
@@ -502,14 +528,44 @@ def _support_resistance(df: pd.DataFrame, price: "float | None") -> "tuple[list,
             ],
         }
 
+    # --- Major moving averages (SMA50/SMA200) as dynamic support/resistance.
+    # Handled exactly like Fibonacci: a MA that lands on a swing cluster tags it
+    # as a confluence zone (a shelf reinforced by the 200-day is a strong,
+    # widely-watched level); a MA with no nearby shelf becomes a standalone
+    # candidate (touches == 0) -- this is what catches a stock that ran
+    # vertically past every horizontal pivot and is now resting on its MA.
+    for ma_value, ma_label in ((sma50, "SMA50"), (sma200, "SMA200")):
+        if ma_value is None or ma_value <= 0:
+            continue
+        best, best_diff = None, None
+        for cluster in clusters:
+            diff = abs(cluster["price"] - ma_value)
+            if diff <= ma_value * gap and (best_diff is None or diff < best_diff):
+                best, best_diff = cluster, diff
+        if best is not None:
+            existing = best.get("ma")
+            best["ma"] = f"{existing}/{ma_label}" if existing else ma_label
+        else:
+            clusters.append({"price": float(ma_value), "touches": 0,
+                             "last_touch": None, "ma": ma_label})
+
     # Flag 52-week extremes and score every zone (52w > tested swing > fib).
     for zone in clusters:
         zone["is_52w_high"] = hi_val is not None and abs(zone["price"] - hi_val) <= hi_val * gap
         zone["is_52w_low"] = lo_val is not None and abs(zone["price"] - lo_val) <= lo_val * gap
+        is_52w = zone["is_52w_high"] or zone["is_52w_low"]
+        score_52w = 0
+        if is_52w:
+            dist_pct = abs(zone["price"] / price - 1) * 100
+            if dist_pct <= _SR_52W_FAR_THRESHOLD_PCT:
+                score_52w = _SR_SCORE_52W
+            else:
+                score_52w = max(_SR_SCORE_PER_TOUCH, _SR_SCORE_52W * (_SR_52W_FAR_THRESHOLD_PCT / dist_pct))
         zone["score"] = (
-            (_SR_SCORE_52W if (zone["is_52w_high"] or zone["is_52w_low"]) else 0)
+            score_52w
             + zone.get("touches", 0) * _SR_SCORE_PER_TOUCH
             + (_SR_SCORE_FIB if zone.get("fib") else 0)
+            + (_SR_SCORE_MA if zone.get("ma") else 0)
         )
 
     def _corroborate(pick: dict) -> dict:
@@ -519,6 +575,7 @@ def _support_resistance(df: pd.DataFrame, price: "float | None") -> "tuple[list,
         members = [z for z in clusters if abs(z["price"] - pick["price"]) <= window]
         prices = [z["price"] for z in members]
         fibs = [z["fib"] for z in members if z.get("fib")]
+        mas = [z["ma"] for z in members if z.get("ma")]
         last_touches = [z["last_touch"] for z in members if z.get("last_touch")]
         lo_p, hi_p = min(prices), max(prices)
         if hi_p - lo_p < pick["price"] * _SR_BAND_MIN_PCT:
@@ -531,6 +588,7 @@ def _support_resistance(df: pd.DataFrame, price: "float | None") -> "tuple[list,
             "touches": sum(z.get("touches", 0) for z in members),
             "strength": sum(z.get("touches", 0) for z in members),   # back-compat alias
             "fib": "/".join(dict.fromkeys(fibs)) if fibs else None,
+            "ma": "/".join(dict.fromkeys(m for entry in mas for m in entry.split("/"))) if mas else None,
             "last_touch": max(last_touches) if last_touches else None,
             "is_52w_high": any(z.get("is_52w_high") for z in members),
             "is_52w_low": any(z.get("is_52w_low") for z in members),
@@ -615,7 +673,7 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         * ``support_levels`` / ``resistance_levels``: one near + one far zone
           below / above the current price (nearest-first), each a price
           **range** ``{"low", "high", "price", "dist_pct", "strength",
-          "touches", "last_touch", "fib", "is_52w_high", "is_52w_low"}`` (see
+          "touches", "last_touch", "fib", "ma", "is_52w_high", "is_52w_low"}`` (see
           :func:`_support_resistance`) -- each is the strongest in its
           distance half, corroborated by merging nearby touches/fib/52w
           evidence. Empty lists when history is too short.
@@ -686,7 +744,9 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     rel_volume, obv_trend = _volume_signals(df)
     rsi_divergence_detail = _rsi_divergence(df)
 
-    supports, resistances, nearest_support, nearest_resistance, fibonacci = _support_resistance(df, price)
+    supports, resistances, nearest_support, nearest_resistance, fibonacci = _support_resistance(
+        df, price, sma50, sma200
+    )
 
     indicators = {
         "price": price,

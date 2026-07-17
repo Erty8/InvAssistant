@@ -311,6 +311,45 @@ def test_support_resistance_prefers_52w_over_fib_in_its_bucket():
     assert far_support["is_52w_low"] is True
 
 
+def test_support_resistance_surfaces_moving_average_after_vertical_run():
+    # A stock that ran vertically past every horizontal shelf: the only swing
+    # pivots sit far below (the pre-run base / 52-week low), but the 200-day is
+    # resting just under price. The MA must surface as the near support instead
+    # of falling back to the distant base -- this is the MRVL case.
+    from sec_analyzer.technical.indicators import _support_resistance
+
+    base = [50.0] * 30                                    # one pre-run shelf ~50
+    ramp = [50.0 + (i + 1) * 2.33 for i in range(60)]     # monotonic run to ~190
+    df = _make_df(base + ramp)
+    price = float(df["Close"].iloc[-1])
+
+    supports, _resistances, nearest_support, _nr, _fib = _support_resistance(
+        df, price, sma50=None, sma200=150.0
+    )
+
+    # The 200-day is folded in as a support and tagged with its MA.
+    ma_supports = [s for s in supports if s.get("ma") and "SMA200" in s["ma"]]
+    assert ma_supports, supports
+    # It is the *near* support -- closer than the distant pre-run base / 52w low.
+    near = min(supports, key=lambda z: abs(z["price"] - price))
+    assert near.get("ma") and "SMA200" in near["ma"]
+    assert near["price"] == nearest_support
+    far = min(supports, key=lambda z: z["price"])
+    assert abs(near["price"] - price) < abs(far["price"] - price)
+
+
+def test_support_resistance_ignores_absent_moving_averages():
+    # When no SMAs are supplied the behaviour is unchanged (no MA-tagged zones),
+    # so short-history tickers without a valid SMA200 are unaffected.
+    from sec_analyzer.technical.indicators import _support_resistance
+
+    df = _multi_swing_df()
+    price = float(df["Close"].iloc[-1])
+    supports, resistances, _ns, _nr, _fib = _support_resistance(df, price)   # sma50/sma200 default None
+    tagged = [z for z in supports + resistances if z.get("ma")]
+    assert tagged == []
+
+
 # ---------------------------------------------------------------------------
 # MACD + volume signals
 # ---------------------------------------------------------------------------

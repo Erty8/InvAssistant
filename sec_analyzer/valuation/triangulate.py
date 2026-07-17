@@ -256,15 +256,23 @@ def _reverse_dcf_rationale(
 
 
 def _raw_multiples_signal(
-    pe_pct: Optional[float], ps_pct: Optional[float], pfcf_pct: Optional[float], sector_type: Optional[str]
+    pe_pct: Optional[float],
+    ps_pct: Optional[float],
+    pfcf_pct: Optional[float],
+    sector_type: Optional[str],
+    pffo_pct: Optional[float] = None,
 ) -> str:
     """Raw multiples signal: uses the primary percentile (P/E, falling back
     to P/S then P/FCF; for growth_unprofitable filers P/S is primary since
-    P/E is usually meaningless there). This is the pre-growth-adjustment
-    signal -- :func:`_multiples_signal` layers the growth-adjusted (PEG /
-    EV-Sales) divergence check on top of it."""
+    P/E is usually meaningless there; for reit, P/FFO is primary, falling
+    back to P/S -- P/E is meaningless for REITs since GAAP depreciation
+    depresses net income, see SPEC.md Sec.8/FFO). This is the
+    pre-growth-adjustment signal -- :func:`_multiples_signal` layers the
+    growth-adjusted (PEG / EV-Sales) divergence check on top of it."""
     if sector_type == "growth_unprofitable":
         candidates = (ps_pct, pe_pct, pfcf_pct)
+    elif sector_type == "reit":
+        candidates = (pffo_pct, ps_pct)
     else:
         candidates = (pe_pct, ps_pct, pfcf_pct)
 
@@ -279,12 +287,14 @@ def _multiples_signal(
     sector_type: Optional[str],
     raw_growth_pair_pct: Optional[float] = None,
     growth_adj_pct: Optional[float] = None,
+    pffo_pct: Optional[float] = None,
 ) -> str:
     """Multiples signal, two-component (VALUATION.md Sec.7).
 
     Starts from the raw primary-percentile signal (see
-    :func:`_raw_multiples_signal`). When BOTH the raw multiple's own
-    percentile (``raw_growth_pair_pct`` -- P/E in standard mode, EV/Sales in
+    :func:`_raw_multiples_signal`; for reit, P/FFO is primary rather than
+    P/E, see SPEC.md Sec.8/FFO). When BOTH the raw multiple's own percentile
+    (``raw_growth_pair_pct`` -- P/E in standard mode, EV/Sales in
     hyper-grower mode; the multiple the growth-adjusted figure is derived
     from) and the growth-adjusted percentile (``growth_adj_pct``) are
     present and fall in DIFFERENT directional buckets, returns
@@ -292,7 +302,7 @@ def _multiples_signal(
     counterpart disagree on direction. When they agree, or either is
     missing, the raw signal is returned unchanged (existing behavior).
     """
-    raw = _raw_multiples_signal(pe_pct, ps_pct, pfcf_pct, sector_type)
+    raw = _raw_multiples_signal(pe_pct, ps_pct, pfcf_pct, sector_type, pffo_pct)
     if raw == SIGNAL_NO_DATA:
         return raw
     if raw_growth_pair_pct is None or growth_adj_pct is None:
@@ -309,11 +319,14 @@ def _multiples_rationale(
     sector_type: Optional[str],
     raw_growth_pair_pct: Optional[float] = None,
     growth_adj_pct: Optional[float] = None,
+    pffo_pct: Optional[float] = None,
 ) -> str:
     """Turkish display sentence explaining the multiples signal, mirroring
     :func:`_multiples_signal`'s branches exactly (same inputs, thresholds)."""
     if sector_type == "growth_unprofitable":
         candidates = ((ps_pct, "P/S"), (pe_pct, "P/E"), (pfcf_pct, "P/FCF"))
+    elif sector_type == "reit":
+        candidates = ((pffo_pct, "P/FFO"), (ps_pct, "P/S"))
     else:
         candidates = ((pe_pct, "P/E"), (ps_pct, "P/S"), (pfcf_pct, "P/FCF"))
 
@@ -356,13 +369,20 @@ def triangulate(
     reverse_dcf_status: Optional[str] = None,
     raw_growth_pair_pct: Optional[float] = None,
     growth_adj_pct: Optional[float] = None,
+    earnings_power_headline: bool = False,
+    mature_revenue_headline: bool = False,
+    midgrowth_revenue_headline: bool = False,
+    pffo_pct: Optional[float] = None,
+    cyclical_fcfe_headline: bool = False,
 ) -> dict:
     """Combine the three method signals into one confidence + direction view.
 
     Args:
         price: Current market price per share.
         dcf_base_band: The base scenario's ``{"lo", "hi"}`` band (DCF, or
-            the P/B x ROE anchor's base band for financial/reit sectors).
+            the P/B x ROE anchor's base band for the financial sector, or
+            the FFO Gordon-growth anchor's base band for the reit sector --
+            see SPEC.md Sec.8/FFO).
         implied_growth: The reverse-DCF implied growth rate, or ``None``.
         realized_cagr: The realized revenue CAGR to compare against, or
             ``None`` (falls back to ``base_growth``).
@@ -371,7 +391,8 @@ def triangulate(
         pe_pct, ps_pct, pfcf_pct: Current-multiple percentile positions (see
             ``multiples.percentile_position``).
         sector_type: One of the ``sector.classify_sector`` buckets; changes
-            which multiple is primary for ``growth_unprofitable`` filers.
+            which multiple is primary for ``growth_unprofitable`` (P/S) and
+            ``reit`` (P/FFO, via ``pffo_pct``) filers.
         hyper_growth: Whether the filer is in hyper-grower revenue-first DCF
             mode (HYPER_SPEC.md Sec.4). When true (and ``bull_band`` is
             usable), the DCF signal gains a 4th value,
@@ -401,6 +422,60 @@ def triangulate(
             ``raw_growth_pair_pct`` fall in different directional buckets,
             the multiples signal becomes :data:`SIGNAL_MIXED`. ``None``
             (default) disables the check, preserving the raw signal.
+        earnings_power_headline: Whether the headline fair-value range came
+            from the earnings-power-value (EPV) anchor rather than the
+            FCF-DCF (SPEC.md Sec.8a -- mature, FCF-suppressed-but-profitable
+            filers like Amazon). When true and confidence would otherwise
+            come out :data:`CONFIDENCE_HIGH`, it's capped at
+            :data:`CONFIDENCE_MEDIUM`: DCF and multiples both ultimately
+            derive from the same underlying earnings signal in this mode,
+            so three-way agreement is weaker evidence than it is when the
+            DCF leg is an independent FCF-based estimate. ``False`` (the
+            default) preserves existing behavior.
+        mature_revenue_headline: Whether the headline fair-value range came
+            from the mature, FCF-suppressed-but-growing revenue-first DCF
+            (VALUATION.md Sec.4/4a addendum -- e.g. Amazon-shaped filers
+            whose realized growth clears the growth gate; see
+            ``engine._build_mature_revenue_dcf``) rather than the raw
+            FCF-DCF or the EPV anchor. Same :data:`CONFIDENCE_MEDIUM` cap as
+            ``earnings_power_headline`` when confidence would otherwise come
+            out :data:`CONFIDENCE_HIGH`: the DCF leg and the reverse-DCF leg
+            both derive from this same revenue-first model in this mode, so
+            they aren't independent evidence of one another. ``False`` (the
+            default) preserves existing behavior. Mutually exclusive with
+            ``earnings_power_headline`` in practice (``engine.py`` never
+            sets both), but if both were ever true, the
+            ``earnings_power_headline`` cap message takes precedence.
+        midgrowth_revenue_headline: Whether the headline fair-value range came
+            from the mid-growth, loss-making revenue-first DCF (SPEC.md
+            Sec.8d -- ``growth_unprofitable`` filers growing 12-20% that
+            ``detect_hyper_grower`` doesn't pick up; see
+            ``engine._build_midgrowth_revenue_dcf``). Same
+            :data:`CONFIDENCE_MEDIUM` cap as ``mature_revenue_headline`` for
+            the same reason: the DCF leg and its reverse-DCF leg both derive
+            from one revenue-first model, so they aren't independent
+            evidence. ``False`` (the default) preserves existing behavior.
+            Mutually exclusive in practice with the two headline flags above.
+        cyclical_fcfe_headline: Whether the headline fair-value range came
+            from the cyclical sustainable-growth FCFE anchor (SPEC.md
+            Sec.8e -- capital-intensive cyclical filers, e.g. Micron, whose
+            FCF-DCF is suppressed by heavy growth CapEx; see
+            ``engine._build_cyclical_fcfe``) rather than the raw FCF-DCF,
+            the cycle-mid normalized FCF-DCF, or the EPV anchor. Same
+            :data:`CONFIDENCE_MEDIUM` cap as the other headline overrides
+            for the same reason: the DCF leg here derives from the same
+            normalized-earnings anchor the reverse-DCF/multiples legs are
+            ultimately compared against, so three-way agreement is weaker
+            evidence than it is for an independent FCF-based estimate.
+            ``False`` (the default) preserves existing behavior. Mutually
+            exclusive in practice with the other headline flags above.
+        pffo_pct: The current P/FFO's historical percentile (see
+            ``multiples.percentile_position`` over ``multiples_history``'s
+            ``pffo`` column). Primary multiples-signal candidate for
+            ``sector_type == "reit"`` (SPEC.md Sec.8/FFO), falling back to
+            ``ps_pct`` when ``None``; ignored for every other sector.
+            ``None`` (the default) preserves existing behavior for callers
+            that don't pass it.
 
     Returns:
         ``{"signals": {"dcf", "reverse_dcf", "multiples"}, "confidence":
@@ -421,6 +496,8 @@ def triangulate(
         return _triangulate(
             price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
             hyper_growth, bull_band, reverse_dcf_status, raw_growth_pair_pct, growth_adj_pct,
+            earnings_power_headline, mature_revenue_headline, midgrowth_revenue_headline, pffo_pct,
+            cyclical_fcfe_headline,
         )
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("triangulate() failed unexpectedly; returning a no-data result.")
@@ -440,16 +517,22 @@ def triangulate(
 def _triangulate(
     price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
     hyper_growth=False, bull_band=None, reverse_dcf_status=None, raw_growth_pair_pct=None, growth_adj_pct=None,
+    earnings_power_headline=False, mature_revenue_headline=False, midgrowth_revenue_headline=False, pffo_pct=None,
+    cyclical_fcfe_headline=False,
 ) -> dict:
     signals = {
         "dcf": _dcf_signal(price, dcf_base_band, hyper_growth, bull_band),
         "reverse_dcf": _reverse_dcf_signal(implied_growth, realized_cagr, base_growth, reverse_dcf_status),
-        "multiples": _multiples_signal(pe_pct, ps_pct, pfcf_pct, sector_type, raw_growth_pair_pct, growth_adj_pct),
+        "multiples": _multiples_signal(
+            pe_pct, ps_pct, pfcf_pct, sector_type, raw_growth_pair_pct, growth_adj_pct, pffo_pct,
+        ),
     }
     rationale = {
         "dcf": _dcf_rationale(price, dcf_base_band, hyper_growth, bull_band),
         "reverse_dcf": _reverse_dcf_rationale(implied_growth, realized_cagr, base_growth, reverse_dcf_status),
-        "multiples": _multiples_rationale(pe_pct, ps_pct, pfcf_pct, sector_type, raw_growth_pair_pct, growth_adj_pct),
+        "multiples": _multiples_rationale(
+            pe_pct, ps_pct, pfcf_pct, sector_type, raw_growth_pair_pct, growth_adj_pct, pffo_pct,
+        ),
     }
 
     substantive = [s for s in signals.values() if s != SIGNAL_NO_DATA]
@@ -483,5 +566,30 @@ def _triangulate(
         confidence = CONFIDENCE_LOW
         direction = _DIRECTION_UNCLEAR
         rationale["confidence"] = "Yöntemler birbirinden farklı sinyaller veriyor; ortak bir yön olmadığı için güven düşük."
+
+    if earnings_power_headline and confidence == CONFIDENCE_HIGH:
+        confidence = CONFIDENCE_MEDIUM
+        rationale["confidence"] += (
+            " (Serbest nakit akışı çapası güvenilmez olduğu için manşet kazanç-gücüne dayanıyor; DCF ve "
+            "çarpan bacakları aynı kazanç sinyalinin türevi olduğundan güven en fazla ORTA ile sınırlandı.)"
+        )
+    elif mature_revenue_headline and confidence == CONFIDENCE_HIGH:
+        confidence = CONFIDENCE_MEDIUM
+        rationale["confidence"] += (
+            " (Manşet, olgun revenue-first DCF'e dayanıyor; bu yöntemin ters-DCF'i de aynı modelden "
+            "türediği için bağımsız bir kanıt değil, güven en fazla ORTA ile sınırlandı.)"
+        )
+    elif midgrowth_revenue_headline and confidence == CONFIDENCE_HIGH:
+        confidence = CONFIDENCE_MEDIUM
+        rationale["confidence"] += (
+            " (Manşet, orta-büyüme revenue-first DCF'e dayanıyor; bu yöntemin ters-DCF'i de aynı modelden "
+            "türediği için bağımsız bir kanıt değil, güven en fazla ORTA ile sınırlandı.)"
+        )
+    elif cyclical_fcfe_headline and confidence == CONFIDENCE_HIGH:
+        confidence = CONFIDENCE_MEDIUM
+        rationale["confidence"] += (
+            " (Manşet, kazanç-tabanlı FCFE çapasından geldiği için — DCF ve çarpanlar bastırılmış FCF'i "
+            "yansıtır — güven ORTA'ya sınırlandı.)"
+        )
 
     return {"signals": signals, "confidence": confidence, "direction": direction, "rationale": rationale}

@@ -89,6 +89,19 @@ def _cagr(series: Dict[int, float], latest_fy: Optional[int], years: int) -> Opt
     return (latest_val / earlier_val) ** (1.0 / years) - 1.0
 
 
+def resolve_fundamental_fy(metrics: dict) -> Optional[int]:
+    """En yeni *temel* (finansal-tablo) mali yılı; hisse-sayısı kapak
+    sayfasının kirlettiği ``latest_fy``'den ayrı.
+
+    ``metrics["latest_fundamental_fy"]`` yoksa veya ``None`` ise
+    ``metrics["latest_fy"]``'ye düşer. Böylece bu anahtarı üretmeden metrics
+    dict'i kuran çağıranlar (özellikle testler) eski davranışı korur.
+    """
+    m = metrics or {}
+    fy = m.get("latest_fundamental_fy")
+    return fy if fy is not None else m.get("latest_fy")
+
+
 def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> dict:
     """Compute valuation and quality metrics for the latest fiscal year.
 
@@ -110,11 +123,19 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
         ``total_debt``, ``net_debt``, ``pe``, ``ps``, ``pfcf``,
         ``revenue_cagr_3y``, ``revenue_cagr_5y``, ``sbc_revenue``,
         ``shares_yoy``, ``buyback_latest``, ``dividends_latest``,
-        ``rnd_revenue``, ``fcf``, ``fcf_per_share``, ``latest_fy``. Every
-        value is ``None``-safe; ratios/growth rates are rounded to 4 decimal
-        places, price/per-share dollar figures to 2, and raw USD amounts
-        (``market_cap``, ``total_debt``, ``net_debt``, ``buyback_latest``,
-        ``dividends_latest``, ``fcf``) are left unrounded.
+        ``rnd_revenue``, ``fcf``, ``fcf_per_share``, ``latest_fy``,
+        ``latest_fundamental_fy``. Every value is ``None``-safe; ratios/growth
+        rates are rounded to 4 decimal places, price/per-share dollar figures
+        to 2, and raw USD amounts (``market_cap``, ``total_debt``,
+        ``net_debt``, ``buyback_latest``, ``dividends_latest``, ``fcf``) are
+        left unrounded. ``latest_fy`` is the latest fiscal year across ALL
+        series including ``SharesOutstanding`` (used only for share count and
+        market cap); ``latest_fundamental_fy`` is the latest fiscal year
+        across every series EXCEPT ``SharesOutstanding`` and is what every
+        other fundamental-data read (EPS, revenue, FCF, CAGRs, ...) is
+        anchored to, since the ``SharesOutstanding`` cover-page series can
+        carry a fiscal year newer than the financial statements actually
+        report (e.g. AMZN).
     """
     shares_series = to_annual_series(normalized, "SharesOutstanding")
     eps_series = to_annual_series(normalized, "EPS")
@@ -153,23 +174,41 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
             "sbc_revenue": None, "shares_yoy": None,
             "buyback_latest": None, "dividends_latest": None,
             "rnd_revenue": None, "fcf": None, "fcf_per_share": None,
-            "latest_fy": None,
+            "latest_fy": None, "latest_fundamental_fy": None,
         }
 
     latest_fy = max(fiscal_years)
+    # SharesOutstanding kapak sayfası (dei) nokta-zaman serisidir ve bazı
+    # filer'larda en yeni 10-K'nın finansal tablolarından daha yeni bir mali
+    # yıl taşır (ör. AMZN). Değerleme çapasını bu seriden ayır: fundamental
+    # veriler (gelir tablosu / nakit akışı / bilanço) SharesOutstanding HARİÇ
+    # serilerin en yenisinden okunur. Bu dışlama, mevcut kavram setinde tek
+    # nokta-zaman serisinin SharesOutstanding olması varsayımına dayanır;
+    # gelecekte başka bir kapak-sayfası serisi eklenirse buradaki dışlama
+    # listesi güncellenmelidir.
+    fundamental_series = (
+        eps_series, ltd_series, ltdc_series, cash_series, revenue_series,
+        sbc_series, rnd_series, buyback_series, dividends_series,
+        ocf_series, capex_series,
+    )
+    fundamental_years: set = set()
+    for series in fundamental_series:
+        fundamental_years |= set(series)
+    latest_fundamental_fy = max(fundamental_years) if fundamental_years else latest_fy
+
     prev_fy = latest_fy - 1
 
     shares = shares_series.get(latest_fy)
     shares_prev = shares_series.get(prev_fy)
-    eps = eps_series.get(latest_fy)
-    ltd = ltd_series.get(latest_fy)
-    ltdc = ltdc_series.get(latest_fy)
-    cash = cash_series.get(latest_fy)
-    revenue = revenue_series.get(latest_fy)
-    sbc = sbc_series.get(latest_fy)
-    rnd = rnd_series.get(latest_fy)
-    buyback = buyback_series.get(latest_fy)
-    dividends = dividends_series.get(latest_fy)
+    eps = eps_series.get(latest_fundamental_fy)
+    ltd = ltd_series.get(latest_fundamental_fy)
+    ltdc = ltdc_series.get(latest_fundamental_fy)
+    cash = cash_series.get(latest_fundamental_fy)
+    revenue = revenue_series.get(latest_fundamental_fy)
+    sbc = sbc_series.get(latest_fundamental_fy)
+    rnd = rnd_series.get(latest_fundamental_fy)
+    buyback = buyback_series.get(latest_fundamental_fy)
+    dividends = dividends_series.get(latest_fundamental_fy)
 
     if ltd is None and ltdc is None:
         total_debt = None
@@ -183,13 +222,13 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
     ps = None if price is None else _safe_div(market_cap, revenue)
 
     ratio_by_fy = {r["fy"]: r for r in (ratios or []) if r.get("fy") is not None}
-    fcf = ratio_by_fy.get(latest_fy, {}).get("fcf")
+    fcf = ratio_by_fy.get(latest_fundamental_fy, {}).get("fcf")
     if fcf is None:
-        fcf = _safe_sub(ocf_series.get(latest_fy), capex_series.get(latest_fy))
+        fcf = _safe_sub(ocf_series.get(latest_fundamental_fy), capex_series.get(latest_fundamental_fy))
     pfcf = None if price is None else _safe_div(market_cap, fcf)
 
-    revenue_cagr_3y = _cagr(revenue_series, latest_fy, _CAGR_WINDOWS["revenue_cagr_3y"])
-    revenue_cagr_5y = _cagr(revenue_series, latest_fy, _CAGR_WINDOWS["revenue_cagr_5y"])
+    revenue_cagr_3y = _cagr(revenue_series, latest_fundamental_fy, _CAGR_WINDOWS["revenue_cagr_3y"])
+    revenue_cagr_5y = _cagr(revenue_series, latest_fundamental_fy, _CAGR_WINDOWS["revenue_cagr_5y"])
 
     sbc_revenue = _safe_div(sbc, revenue)
     rnd_revenue = _safe_div(rnd, revenue)
@@ -221,6 +260,7 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
         "fcf": fcf,
         "fcf_per_share": fcf_per_share,
         "latest_fy": latest_fy,
+        "latest_fundamental_fy": latest_fundamental_fy,
     }
 
     for field in _RATIO_FIELDS:

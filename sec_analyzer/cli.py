@@ -35,6 +35,13 @@ from typing import List, Optional, Tuple
 
 import requests
 
+from sec_analyzer.calibrate import (
+    DEFAULT_TICKERS,
+    print_calibration_table,
+    run_calibration,
+    save_calibration_snapshot,
+    summarize_ratios,
+)
 from sec_analyzer.config import Config, ConfigError
 from sec_analyzer.fetch.companyfacts import get_company_facts, get_submissions
 from sec_analyzer.fetch.filings import estimate_next_earnings
@@ -47,6 +54,7 @@ from sec_analyzer.normalize.normalizer import format_table, normalize_facts
 from sec_analyzer.normalize.ratios import compute_ratios
 from sec_analyzer.normalize.red_flags import detect_red_flags
 from sec_analyzer.report.generator import generate_report
+from sec_analyzer.signals.events import detect_events, summarize_events
 from sec_analyzer.store.database import save_normalized, save_prices, save_verdict
 from sec_analyzer.technical.indicators import compute_indicators
 from sec_analyzer.technical.verdict import technical_verdict
@@ -217,6 +225,34 @@ def _fetch_catalyst(submissions: Optional[dict], ticker: str) -> Optional[dict]:
         return None
 
 
+#: Lookback window (days) for the recent-8-K event signal, and the minimum
+#: severity worth surfacing. Routine "info" filings (earnings releases, votes,
+#: Reg FD, exhibit-only 8-Ks) are dropped so the card/report only shows events
+#: a human should actually weigh against the numbers.
+_EVENTS_LOOKBACK_DAYS = 365
+_EVENTS_MIN_SEVERITY = "warning"
+_EVENTS_MAX = 8
+
+
+def _detect_filing_events(submissions: Optional[dict]) -> List[dict]:
+    """Best-effort recent 8-K event signal from already-fetched submissions.
+
+    Reuses the ``submissions`` document :func:`_fetch_submissions` fetched
+    once for this run (no extra network, no document download, no LLM). Only
+    warning/critical events within the last year are surfaced. ``detect_events``
+    is itself never-raises, so this simply returns an empty list when there's
+    nothing to show.
+    """
+    if not submissions:
+        return []
+    return detect_events(
+        submissions,
+        lookback_days=_EVENTS_LOOKBACK_DAYS,
+        min_severity=_EVENTS_MIN_SEVERITY,
+        max_events=_EVENTS_MAX,
+    )
+
+
 def _save_price_rows(cik: str, price_df) -> None:
     """Convert a price-history DataFrame to row dicts and persist them.
 
@@ -295,12 +331,59 @@ def _scenario_line(label: str, scenario: Optional[dict]) -> str:
 
 
 def _valuation_method_label(valuation: dict) -> str:
-    """Return the fair-value method label for the card's "Fair Value" line:
-    ``"DCF"`` normally, or ``"P/B×ROE"`` when the FCF-based DCF is disabled
-    for this filer's sector (financial/REIT -- see
-    ``valuation["dcf"]["enabled"]``, SPEC.md Sec.8/11)."""
-    dcf = (valuation or {}).get("dcf") or {}
-    return "DCF" if dcf.get("enabled", True) else "P/B×ROE"
+    """Return the fair-value method label for the card's "Fair Value" line.
+
+    Checked in order, depending on which anchor actually produced the
+    headline fair-value band for this filer (SPEC.md Sec.8/8e/11):
+
+    - ``"Revenue-DCF (hiper-büyüme)"``: the hyper-grower revenue-first DCF is
+      the headline (``valuation["hyper_growth"]`` truthy and its
+      ``hyper_growth_detail`` present and not suppressed -- SPEC.md Sec.3.5,
+      which takes precedence over every anchor below).
+    - ``"FCFE (kazanç+büyüme)"``: the cyclical sustainable-growth FCFE
+      anchor is the headline (``valuation["cyclical_fcfe_headline"]`` --
+      SPEC.md Sec.8e, e.g. Micron-shaped capital-intensive cyclicals whose
+      FCF-DCF is suppressed by growth CapEx).
+    - ``"EPV"``: the zero-growth earnings-power-value anchor is the headline
+      (``valuation["earnings_power_headline"]`` -- SPEC.md Sec.8a, e.g.
+      Amazon-shaped mature filers, or a cyclical whose FCFE anchor couldn't
+      clear the EPV floor).
+    - ``"Revenue-DCF"``: a revenue-first DCF is the headline
+      (``valuation["mature_revenue_headline"]`` or
+      ``["midgrowth_revenue_headline"]``).
+    - ``"DCF"``: the FCF-based DCF is enabled (``valuation["dcf"]["enabled"]``
+      is truthy) -- the common case for non-financial, non-REIT sectors when
+      none of the anchors above headlined.
+    - ``"FFO"``: the DCF is disabled and ``valuation["ffo"]`` is a populated
+      FFO-based Gordon growth block (has a ``"scenarios"`` key) -- REIT/GYO
+      filers valued via FFO multiples instead of a cash-flow DCF.
+    - ``"P/B×ROE"``: the DCF is disabled and there's no populated FFO block --
+      financial (banks/insurers) filers valued via the P/B x ROE anchor, or a
+      REIT that fell back to the P/B x ROE anchor without a populated FFO
+      block.
+    """
+    valuation = valuation or {}
+    # Hyper-grower revenue-first DCF takes precedence over every other anchor
+    # (SPEC.md Sec.3.5). It's the headline whenever it was detected and its
+    # detail wasn't suppressed; the standard FCF-DCF is still computed as a
+    # secondary (so ``dcf.enabled`` stays truthy) -- without this check a
+    # hyper-headlined filer (e.g. Reddit) would mislabel as "DCF".
+    hyper_detail = valuation.get("hyper_growth_detail") or {}
+    if valuation.get("hyper_growth") and hyper_detail and not hyper_detail.get("suppressed"):
+        return "Revenue-DCF (hiper-büyüme)"
+    if valuation.get("cyclical_fcfe_headline"):
+        return "FCFE (kazanç+büyüme)"
+    if valuation.get("earnings_power_headline"):
+        return "EPV"
+    if valuation.get("mature_revenue_headline") or valuation.get("midgrowth_revenue_headline"):
+        return "Revenue-DCF"
+    dcf = valuation.get("dcf") or {}
+    if dcf.get("enabled", True):
+        return "DCF"
+    ffo = valuation.get("ffo")
+    if isinstance(ffo, dict) and "scenarios" in ffo:
+        return "FFO"
+    return "P/B×ROE"
 
 
 def _format_pct_signed(value) -> str:
@@ -355,20 +438,38 @@ def _multiples_line(valuation: dict) -> str:
     sinyal"``. When the growth-adjusted figure is not applicable, falls back
     to the original descriptive form (``"P/E kendi Ny medyanının N.
     yüzdeliğinde"``). ``"veri yetersiz"`` when no raw percentile is usable
-    (fewer than 5 years of price-backed history)."""
+    (fewer than 5 years of price-backed history).
+
+    For ``valuation["sector_type"] == "reit"``, P/E and P/FCF (and the
+    P/E-derived PEG) are meaningless -- GAAP depreciation distorts REIT
+    earnings the same way it distorts book equity (SPEC.md Sec.8c), which is
+    why REITs get their own FFO-based anchor. The reit primary multiple is
+    P/FFO, falling back to P/S (mirroring
+    ``triangulate._raw_multiples_signal``'s reit candidate order); no
+    growth-adjusted component is ever rendered for reit."""
     label = "Multiples:".ljust(_CARD_LABEL_WIDTH)
     multiples = valuation.get("multiples") or {}
     history_years = multiples.get("history_years") or 0
-    growth_adjusted = multiples.get("growth_adjusted") or {}
+    is_reit = valuation.get("sector_type") == "reit"
+    growth_adjusted = {} if is_reit else (multiples.get("growth_adjusted") or {})
     multiples_signal = ((valuation.get("triangulation") or {}).get("signals") or {}).get("multiples")
 
-    # Primary raw multiple, using the same P/E → P/S → P/FCF fallback order.
+    # Primary raw multiple. Reit uses P/FFO -> P/S only (P/E and P/FCF are
+    # meaningless for REITs); everything else keeps the P/E -> P/S -> P/FCF
+    # fallback order.
     primary = None
-    for name, percentile in (
-        ("P/E", multiples.get("pe_percentile")),
-        ("P/S", multiples.get("ps_percentile")),
-        ("P/FCF", multiples.get("pfcf_percentile")),
-    ):
+    if is_reit:
+        primary_candidates = (
+            ("P/FFO", multiples.get("pffo_percentile")),
+            ("P/S", multiples.get("ps_percentile")),
+        )
+    else:
+        primary_candidates = (
+            ("P/E", multiples.get("pe_percentile")),
+            ("P/S", multiples.get("ps_percentile")),
+            ("P/FCF", multiples.get("pfcf_percentile")),
+        )
+    for name, percentile in primary_candidates:
         if percentile is not None:
             primary = (name, percentile)
             break
@@ -589,8 +690,9 @@ def _print_verdict_card(
 
     When ``result["valuation"]`` (the dict from
     :func:`sec_analyzer.valuation.engine.run_valuation`, SPEC.md Sec.13) is
-    present, the "Fair Value" line gains a method label (``"DCF"`` or
-    ``"P/B×ROE"``) and a "Güven:" confidence suffix, and four extra lines
+    present, the "Fair Value" line gains a method label (``"DCF"``, ``"FFO"``,
+    or ``"P/B×ROE"`` -- see :func:`_valuation_method_label`) and a "Güven:"
+    confidence suffix, and four extra lines
     follow the bear/bull line: "Reverse DCF:", "Multiples:", "Üçgenleme:",
     and "Duyarlılık:". Without a ``"valuation"`` key (e.g. an older stored
     result, or a phase-2 provider failure that still reached this function)
@@ -609,6 +711,12 @@ def _print_verdict_card(
             :func:`sec_analyzer.normalize.red_flags.detect_red_flags`, used
             as a fallback "Red flags:" line when ``result`` has no
             ``red_flags_comment`` (e.g. an error result).
+
+    The "Olaylar:" line summarizes ``result["events"]`` (the recent 8-K event
+    list attached in ``cmd_analyze`` via
+    :func:`sec_analyzer.signals.events.detect_events`) using
+    :func:`sec_analyzer.signals.events.summarize_events`; it reads ``"yok"``
+    when there are no recent warning/critical events.
     """
     result = result or {}
     metrics = metrics or {}
@@ -686,6 +794,9 @@ def _print_verdict_card(
         red_flags_line = "yok"
     print(f"{'Red flags:'.ljust(_CARD_LABEL_WIDTH)}{red_flags_line}")
 
+    events_line = summarize_events(result.get("events") or [])
+    print(f"{'Olaylar:'.ljust(_CARD_LABEL_WIDTH)}{events_line}")
+
     print(f"{'Katalizör:'.ljust(_CARD_LABEL_WIDTH)}{result.get('catalyst') or _DASH}")
 
     summary = result.get("summary")
@@ -711,6 +822,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     flags = detect_red_flags(normalized, ratios, metrics, horizon)
     submissions = _fetch_submissions(cik, args.ticker, args.no_cache)
     catalyst = _fetch_catalyst(submissions, args.ticker)
+    events = _detect_filing_events(submissions)
 
     if price_df is not None:
         _save_price_rows(cik, price_df)
@@ -727,6 +839,14 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         submissions=submissions,
         price_df=price_df,
     )
+
+    # Recent 8-K events are deterministic filing-metadata facts, not model
+    # output, so they're attached to the result post-interpret (like the
+    # numbers the card renders directly) rather than routed through the LLM
+    # payload. This also persists them with the verdict and carries them into
+    # the HTML report, which reads result.events.
+    if isinstance(result, dict):
+        result["events"] = events
 
     if "error" in result:
         print(
@@ -766,6 +886,37 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         except Exception as exc:  # noqa: BLE001 - a report-writing failure must not crash analyze
             logger.exception("Failed to generate HTML report for %s", args.ticker)
             print(f"\nWARNING: failed to generate HTML report: {exc}", file=sys.stderr)
+
+
+def cmd_calibrate(args: argparse.Namespace) -> None:
+    """Handle the ``calibrate`` subcommand: run the headless script-provider
+    pipeline over a ticker basket and report the fair-value/price ratio
+    distribution (normalization Work Package 0 -- see
+    :mod:`sec_analyzer.calibrate`).
+
+    Prints the per-ticker table, a readable summary of the ratio
+    distribution, and the path of the saved JSON snapshot.
+    """
+    tickers = (
+        [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
+        if getattr(args, "tickers", None)
+        else DEFAULT_TICKERS
+    )
+
+    rows = run_calibration(tickers, years=args.years, no_cache=args.no_cache)
+    print()
+    print_calibration_table(rows)
+
+    summary = summarize_ratios(rows)
+    print("\nSummary:")
+    for key, value in summary.items():
+        print(f"  {key}: {value}")
+
+    path = save_calibration_snapshot(args.label, rows, summary)
+    if path:
+        print(f"\nSaved calibration snapshot to: {path}")
+    else:
+        print("\nWARNING: failed to save calibration snapshot.", file=sys.stderr)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -840,6 +991,42 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     analyze_parser.set_defaults(func=cmd_analyze)
+
+    calibrate_parser = subparsers.add_parser(
+        "calibrate",
+        help=(
+            "Run the headless script-provider pipeline over a ticker basket "
+            "and report the fair-value/price ratio distribution (normalization "
+            "measurement tool; see sec_analyzer.calibrate)."
+        ),
+    )
+    calibrate_parser.add_argument(
+        "--tickers",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated ticker list, e.g. 'AAPL,MSFT'. "
+            "Default: sec_analyzer.calibrate.DEFAULT_TICKERS (~28-ticker basket)."
+        ),
+    )
+    calibrate_parser.add_argument(
+        "--label",
+        type=str,
+        default="run",
+        help="Short label used in the saved snapshot's filename (default: 'run').",
+    )
+    calibrate_parser.add_argument(
+        "--years",
+        type=int,
+        default=5,
+        help="Number of most-recent fiscal years to retain (default: 5).",
+    )
+    calibrate_parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Bypass the on-disk raw JSON/price caches and re-fetch.",
+    )
+    calibrate_parser.set_defaults(func=cmd_calibrate)
 
     return parser
 

@@ -123,7 +123,8 @@ from sec_analyzer.config import Config, ConfigError
 from sec_analyzer.interpret import planning, rule_based
 from sec_analyzer.interpret.ollama_client import OllamaError, chat_json
 from sec_analyzer.normalize.normalizer import to_annual_series
-from sec_analyzer.valuation import run_valuation, validate_assumptions
+from sec_analyzer.valuation import damodaran, run_valuation, validate_assumptions
+from sec_analyzer.valuation.capm import compute_cost_of_equity
 from sec_analyzer.valuation.sector import classify_sector
 
 try:
@@ -209,11 +210,18 @@ chance to revise; if still invalid, a deterministic default is substituted
 instead of your proposal), per bear/base/bull scenario:
 
 - terminal_growth must not exceed 4%.
+- discount_rate is a levered COST OF EQUITY (özkaynak maliyeti), NOT a WACC
+  -- the DCF is FCFE-direct (the projected free cash flow is already a
+  levered/equity cash flow, so no net-debt bridge is applied), so it must be
+  discounted at a cost of equity. For a typical profitable large-cap this is
+  usually ~8-12%, higher for a riskier, smaller, or unprofitable company.
 - discount_rate must be at least 7% (at least 10% if the company is
   currently unprofitable) -- a low discount rate hides risk.
 - discount_rate must always be strictly greater than terminal_growth (the
   Gordon-growth terminal value is undefined otherwise; this is never
-  silently "fixed").
+  silently "fixed"), and by a comfortable margin -- a discount rate only a
+  point or two above terminal_growth implies an implausibly thin equity
+  risk premium and is rejected too.
 - growth_5y above 20% is allowed (the model structurally fades growth
   toward terminal_growth after year 5), but above 40% is rejected as
   implausible.
@@ -225,8 +233,11 @@ Sector-to-method map (final classification is made deterministically from
 the filer's SIC code by application code -- your "sector_type" guess is
 only used as a fallback when SIC is unavailable):
 
-- financial / reit: a P/B x ROE anchor is used instead of a cash-flow DCF
-  (FCF-based DCF is unreliable for banks/REITs).
+- financial: a P/B x ROE anchor is used instead of a cash-flow DCF (FCF-based
+  DCF is unreliable for banks/insurers).
+- reit: an FFO-based Gordon growth model (FFO = net income + depreciation/
+  amortization) is used instead of a cash-flow DCF, with P/FFO-based
+  multiples (FCF-based DCF is unreliable for REITs).
 - growth_unprofitable: a P/S multiple and reverse DCF are weighted most
   heavily in the triangulation (P/E and P/FCF percentiles are usually
   unavailable).
@@ -874,7 +885,12 @@ def _extract_phase1_fields(parsed: dict) -> "Tuple[Optional[dict], Optional[str]
     return assumptions, sector_type, hyper_growth_extras
 
 
-def _fallback_assumptions_result(metrics: dict, sector_hint: Optional[str]) -> dict:
+def _fallback_assumptions_result(
+    metrics: dict,
+    sector_hint: Optional[str],
+    capm: Optional[dict] = None,
+    risk_free_pct: Optional[float] = None,
+) -> dict:
     """The deterministic phase-1 fallback result (SPEC.md Sec.12): used for
     the ``"script"`` provider and for every LLM failure mode.
 
@@ -882,10 +898,21 @@ def _fallback_assumptions_result(metrics: dict, sector_hint: Optional[str]) -> d
     fallback never has an LLM-refined TAM/margin to offer (HYPER_SPEC.md
     Sec.5); the engine's own deterministic hyper-grower inputs (Sec.3) are
     unaffected and still apply when ``sector.detect_hyper_grower`` fires.
+
+    ``capm`` (the :func:`sec_analyzer.valuation.capm.compute_cost_of_equity`
+    result, or ``None``) is forwarded to ``default_assumptions`` so the base
+    discount rate is the firm's CAPM cost of equity when it was computable.
+    ``risk_free_pct`` (the global risk-free rate, independent of any
+    SIC/industry matching) is likewise forwarded as the ``terminal_growth``
+    fallback source used only when ``capm`` is absent or lacks its own
+    numeric ``risk_free`` (see
+    :func:`sec_analyzer.interpret.rule_based._terminal_growth_anchor`).
     """
     sector_type = sector_hint or "mature"
     return {
-        "assumptions": rule_based.default_assumptions(metrics, sector_type),
+        "assumptions": rule_based.default_assumptions(
+            metrics, sector_type, capm=capm, risk_free_pct=risk_free_pct
+        ),
         "sector_type": sector_type,
         "hyper_growth_extras": None,
         "_provider": "script",
@@ -902,6 +929,8 @@ def propose_assumptions(
     api_key: Optional[str] = None,
     host: Optional[str] = None,
     horizon: str = "1y",
+    capm: Optional[dict] = None,
+    risk_free_pct: Optional[float] = None,
 ) -> dict:
     """Phase 1 of the two-phase valuation flow: propose bear/base/bull
     growth/terminal-growth/discount-rate assumptions (SPEC.md Sec.12).
@@ -941,6 +970,17 @@ def propose_assumptions(
         host: Base URL of the Ollama server (ollama provider only).
         horizon: Investment horizon, included in the user payload as
             context only -- phase 1 does not weight assumptions by horizon.
+        capm: The optional
+            :func:`sec_analyzer.valuation.capm.compute_cost_of_equity`
+            result, forwarded to the deterministic fallback as its CAPM base
+            discount rate. ``None`` if unavailable.
+        risk_free_pct: The global risk-free rate (a PERCENTAGE number, e.g.
+            ``4.20`` for 4.2%), independent of any SIC/industry matching.
+            Forwarded to the deterministic fallback as the ``terminal_growth``
+            fallback source used only when ``capm`` is absent or lacks its
+            own numeric ``risk_free`` (see
+            :func:`sec_analyzer.interpret.rule_based._terminal_growth_anchor`).
+            ``None`` if unavailable.
 
     Returns:
         ``{"assumptions": {"bear": {...}, "base": {...}, "bull": {...}},
@@ -956,11 +996,11 @@ def propose_assumptions(
     try:
         return _propose_assumptions(
             normalized or {}, ratios or [], metrics or {}, sector_hint,
-            provider, model, api_key, host, horizon,
+            provider, model, api_key, host, horizon, capm, risk_free_pct,
         )
     except Exception:  # noqa: BLE001 - phase 1 must never raise
         logger.exception("propose_assumptions() failed unexpectedly; falling back to deterministic defaults.")
-        return _fallback_assumptions_result(metrics or {}, sector_hint)
+        return _fallback_assumptions_result(metrics or {}, sector_hint, capm, risk_free_pct)
 
 
 def _propose_assumptions(
@@ -973,11 +1013,13 @@ def _propose_assumptions(
     api_key: Optional[str],
     host: Optional[str],
     horizon: str,
+    capm: Optional[dict] = None,
+    risk_free_pct: Optional[float] = None,
 ) -> dict:
     resolved_provider = (provider or Config.ANALYZER_PROVIDER or "ollama").lower()
 
     if resolved_provider in _SCRIPT_PROVIDER_ALIASES:
-        return _fallback_assumptions_result(metrics, sector_hint)
+        return _fallback_assumptions_result(metrics, sector_hint, capm, risk_free_pct)
 
     system_prompt = _build_phase1_system_prompt()
     user_payload = _build_phase1_user_payload(normalized, ratios, metrics, sector_hint, horizon)
@@ -989,7 +1031,7 @@ def _propose_assumptions(
             "Phase-1 assumption proposal via %s failed (%s); using deterministic defaults.",
             resolved_provider, exc,
         )
-        return _fallback_assumptions_result(metrics, sector_hint)
+        return _fallback_assumptions_result(metrics, sector_hint, capm, risk_free_pct)
 
     parsed = _parse_model_json(raw_text)
     assumptions, llm_sector_type, hyper_growth_extras = _extract_phase1_fields(parsed)
@@ -999,7 +1041,7 @@ def _propose_assumptions(
             "Phase-1 response from %s was not usable JSON; using deterministic defaults.",
             resolved_provider,
         )
-        return _fallback_assumptions_result(metrics, sector_hint)
+        return _fallback_assumptions_result(metrics, sector_hint, capm, risk_free_pct)
 
     sector_type = llm_sector_type or sector_hint or "mature"
     violations = validate_assumptions(assumptions, is_unprofitable=(sector_type == "growth_unprofitable"))
@@ -1019,7 +1061,7 @@ def _propose_assumptions(
                 "Phase-1 revision call via %s failed (%s); using deterministic defaults.",
                 resolved_provider, exc,
             )
-            return _fallback_assumptions_result(metrics, sector_hint)
+            return _fallback_assumptions_result(metrics, sector_hint, capm, risk_free_pct)
 
         revised_parsed = _parse_model_json(raw_text)
         # The revision request explicitly asks the provider to resend only
@@ -1032,7 +1074,7 @@ def _propose_assumptions(
                 "Phase-1 revision response from %s was not usable JSON; using deterministic defaults.",
                 resolved_provider,
             )
-            return _fallback_assumptions_result(metrics, sector_hint)
+            return _fallback_assumptions_result(metrics, sector_hint, capm, risk_free_pct)
 
         sector_type = revised_sector_type or sector_type
         violations = validate_assumptions(
@@ -1043,7 +1085,7 @@ def _propose_assumptions(
                 "Phase-1 assumptions from %s still invalid after revision (%s); using deterministic defaults.",
                 resolved_provider, violations,
             )
-            return _fallback_assumptions_result(metrics, sector_hint)
+            return _fallback_assumptions_result(metrics, sector_hint, capm, risk_free_pct)
         assumptions = revised_assumptions
 
     return {
@@ -1467,9 +1509,32 @@ def interpret(
         sic_description = (submissions or {}).get("sicDescription")
         sector_hint = classify_sector(sic, normalized, metrics) if sic is not None else None
 
+        # Firm-specific CAPM cost of equity (rf + betaL x ERP) from the local
+        # Damodaran reference data, used as the deterministic base discount
+        # rate in place of the flat sector-agnostic default. None (missing
+        # beta/ERP/risk-free, or unmatched SIC) leaves the flat default in
+        # place; the LLM path uses this only as its fallback base. Loaded
+        # once into `sector_data` and reused for both the CAPM lookup and
+        # the global risk-free fallback below, rather than reading the CSVs
+        # twice.
+        sector_data = damodaran.load_sector_data(Config.DAMODARAN_DIR)
+        capm = compute_cost_of_equity(
+            sector_data,
+            sic_description,
+            metrics,
+            is_unprofitable=(sector_hint == "growth_unprofitable"),
+        )
+        # Global risk-free rate (erp.csv), independent of SIC/industry
+        # matching -- used by the phase-1 fallback's terminal-growth anchor
+        # when `capm` itself is None (e.g. the SIC didn't match any
+        # Damodaran industry) so terminal growth isn't ALSO flattened to the
+        # old constant on top of the flat discount rate.
+        risk_free_pct = sector_data.get("risk_free") if sector_data else None
+
         phase1 = propose_assumptions(
             normalized, ratios, metrics, sector_hint=sector_hint,
             provider=provider, model=model, api_key=api_key, host=host, horizon=horizon,
+            capm=capm, risk_free_pct=risk_free_pct,
         )
         assumptions = phase1["assumptions"]
         # If SIC is known, its deterministic classification (sector_hint)

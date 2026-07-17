@@ -95,7 +95,7 @@ def test_sector_medians_alias_table_returns_full_row_shape():
     result = sector_medians(_sector_data(), "PHARMACEUTICAL PREPARATIONS")
     assert result == {
         "industry": "Drugs (Pharmaceutical)", "pe": 19.5, "ps": 4.0, "pfcf": 18.0,
-        "growth": None, "peg": None,
+        "growth": None, "peg": None, "beta": None,
     }
 
 
@@ -133,6 +133,52 @@ def test_sector_medians_fuzzy_fallback_resolves_via_distinctive_token_overlap():
 def test_sector_medians_fuzzy_fallback_returns_none_for_nonsense_string():
     result = sector_medians(_sector_data(), "ZZZ QReW")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Consumer-staples alias block (beverages/tobacco/household products): KO's
+# SIC 2086 ("BOTTLED & CANNED SOFT DRINKS & CARBONATED WATERS") matched
+# NOTHING before this block was added, so it fell back to no CAPM beta at
+# all. This fixture carries real ``unlevered_beta`` values straight off
+# ``data/damodaran/multiples.csv`` (Beverage (Soft)=0.70, Beverage
+# (Alcoholic)=0.65, Tobacco=0.65, Household Products=0.70) so the beta
+# assertions below are checked against the actual reference data, not an
+# assumed placeholder.
+# ---------------------------------------------------------------------------
+
+_STAPLES_INDUSTRIES = [
+    ("Beverage (Alcoholic)", 16.57, 1.75, 0.65),
+    ("Beverage (Soft)", 26.25, 3.57, 0.70),
+    ("Food Processing", 16.50, 1.05, 0.60),
+    ("Household Products", 19.66, 2.67, 0.70),
+    ("Tobacco", 19.81, 5.30, 0.65),
+]
+
+
+def _staples_sector_data():
+    data = _sector_data()
+    data["multiples"] = data["multiples"] + [
+        {"industry": name, "pe": pe, "ps": ps, "pfcf": None, "beta": beta}
+        for name, pe, ps, beta in _STAPLES_INDUSTRIES
+    ]
+    return data
+
+
+_STAPLES_ACCEPTANCE_CASES = [
+    ("BOTTLED & CANNED SOFT DRINKS & CARBONATED WATERS", "Beverage (Soft)", 0.70),
+    ("MALT BEVERAGES", "Beverage (Alcoholic)", 0.65),
+    ("CIGARETTES", "Tobacco", 0.65),
+    ("SOAP, DETERGENT, CLEANING PREPARATIONS, PERFUME, COSMETICS", "Household Products", 0.70),
+]
+
+
+@pytest.mark.parametrize("sic_description, expected_industry, expected_beta", _STAPLES_ACCEPTANCE_CASES)
+def test_sector_medians_resolves_consumer_staples_aliases(sic_description, expected_industry, expected_beta):
+    result = sector_medians(_staples_sector_data(), sic_description)
+    assert result is not None
+    assert result["industry"] == expected_industry
+    assert result["pe"] is not None
+    assert result["beta"] == pytest.approx(expected_beta)
 
 
 # ---------------------------------------------------------------------------
@@ -188,10 +234,37 @@ def test_load_sector_data_parses_multiples_and_us_erp_from_csvs(tmp_path):
     assert result is not None
     assert result["erp"] == pytest.approx(4.6)
     assert isinstance(result["erp"], float)
+    # Older two-/four-column CSVs without unlevered_beta / risk_free still
+    # parse: the new fields degrade to None rather than breaking.
+    assert result["risk_free"] is None
     assert result["multiples"] == [
-        {"industry": "Semiconductor", "pe": 28.4, "ps": 6.1, "pfcf": 24.7, "growth": None, "peg": None},
-        {"industry": "Retail (General)", "pe": 18.6, "ps": 1.1, "pfcf": 17.2, "growth": None, "peg": None},
+        {"industry": "Semiconductor", "pe": 28.4, "ps": 6.1, "pfcf": 24.7, "growth": None, "peg": None, "beta": None},
+        {"industry": "Retail (General)", "pe": 18.6, "ps": 1.1, "pfcf": 17.2, "growth": None, "peg": None, "beta": None},
     ]
+
+
+def test_load_sector_data_parses_unlevered_beta_and_risk_free(tmp_path):
+    """When the CSVs carry the CAPM columns (unlevered_beta / risk_free) they
+    are parsed: beta into each multiples row's "beta", risk_free from the US
+    erp row."""
+    (tmp_path / "multiples.csv").write_text(
+        "industry,pe,ps,pfcf,unlevered_beta\n"
+        "Semiconductor,28.4,6.1,24.7,1.5\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "erp.csv").write_text(
+        "region,erp,risk_free\n"
+        "US,4.6,4.2\n",
+        encoding="utf-8",
+    )
+
+    result = load_sector_data(str(tmp_path))
+
+    assert result is not None
+    assert result["risk_free"] == pytest.approx(4.2)
+    assert result["multiples"][0]["beta"] == pytest.approx(1.5)
+    # And the matched-row projection exposes it too.
+    assert sector_medians(result, "SEMICONDUCTORS & RELATED DEVICES")["beta"] == pytest.approx(1.5)
 
 
 def test_load_sector_data_returns_none_for_missing_directory(tmp_path):

@@ -76,6 +76,181 @@ def project_fcf(
     return fcf_path
 
 
+def fcfe_sustainable_growth_per_share(
+    ni0: Optional[float],
+    roe: float,
+    growth_5y: float,
+    terminal_growth: float,
+    discount_rate: float,
+    shares: Optional[float],
+    dilution_rate: float = 0.0,
+    terminal_roe: Optional[float] = None,
+) -> dict:
+    """Compute a per-share, sustainable-growth FCFE fair value from
+    normalized earnings and ROE (SPEC.md Sec.8e).
+
+    This is the growth-inclusive counterpart to earnings-power-value (EPV,
+    see ``engine._build_earnings_power``): instead of capitalizing
+    zero-growth normalized earnings, it grows those earnings along the SAME
+    10-year, two-stage path :func:`project_fcf` uses for FCF (years 1-5 at
+    ``growth_5y``, years 6-10 fading linearly to ``terminal_growth`` via
+    :func:`_year_growth_rate`), and funds that growth out of the earnings
+    themselves via the sustainable-growth identity: to grow earnings at rate
+    ``g`` while holding ROE constant, the firm must retain (reinvest) a
+    fraction ``b = g / roe`` of net income; the rest, ``ni * (1 - b)``, is
+    the free cash flow to equity (FCFE) actually distributable to
+    shareholders that year. This is the textbook reason growth only adds
+    value over the no-growth EPV floor when ``roe > discount_rate``: at
+    ``roe == discount_rate`` every dollar reinvested earns exactly the
+    return investors require, so retaining it instead of distributing it is
+    value-neutral (this anchor collapses to EPV in that case); at
+    ``roe > discount_rate`` reinvested dollars earn an excess return and
+    growth is genuinely value-accretive; at ``roe < discount_rate`` growth
+    actually destroys value; this function does not special-case that last
+    condition (it isn't the caller's gate to enforce here), so a low-ROE
+    filer will simply produce a lower FCFE-anchor value than its EPV floor,
+    and it is the caller's job (mirroring the "beats-floor" guardrail
+    already used for the mature-sector revenue-first anchor) to fall back to
+    EPV when that happens.
+
+    Growth cannot exceed the return that funds it: for every projected year
+    (including the terminal year), the growth rate actually booked is
+    ``g_eff = min(g, roe)`` -- both the earnings compounding for that year
+    AND the reinvestment rate ``b = g_eff / roe`` use this capped rate, not
+    the raw assumption. When ``g >= roe`` the firm cannot fund that growth
+    purely out of its own earnings (it would require external equity), so
+    the model caps growth at what ROE can internally fund rather than
+    inventing cash via a reinvestment rate above 1.0 or booking growth the
+    earnings base can't actually sustain. This also means the implied
+    reinvestment rate is never artificially clamped at a fixed ceiling
+    (e.g. a flat 90%): it rides up to (but never past) 1.0 as ``g_eff``
+    approaches ``roe``, driving distributable FCFE to (but never below) 0
+    for that year.
+
+    Terminal ROE fade to cost of equity: by default (``terminal_roe=None``)
+    the terminal year's reinvestment is computed against the same ``roe``
+    used for years 1-10 (backward compatible). When ``terminal_roe`` is
+    supplied, the terminal-year reinvestment rate ``b_t = min(terminal_growth,
+    terminal_roe) / terminal_roe`` is computed against it instead -- callers
+    typically pass the scenario's own ``discount_rate`` here, so the
+    terminal (perpetuity) phase assumes the firm's excess return has faded
+    to zero (terminal ROE == cost of equity), the standard Damodaran
+    stable-growth-phase convention: a firm cannot sustain an ROE above its
+    cost of equity indefinitely once competitive advantages erode, even if
+    its near-term (years 1-10) ROE is higher. Years 1-10 are unaffected by
+    ``terminal_roe`` -- they always use the current-period ``roe``.
+
+    FCFE-direct, cost-of-equity discounting: like :func:`dcf_per_share`,
+    this projects an already-levered (equity) cash flow -- normalized net
+    income is a post-interest, post-tax figure -- so ``discount_rate`` must
+    be a levered cost of equity, not a WACC, and no net-debt bridge is
+    applied (``ev`` and ``equity`` are the same number, both kept for
+    caller convenience). Dilution uses the same ``effective_shares = shares
+    * (1 + dilution_rate) ** 5`` convention as :func:`dcf_per_share` (see
+    its docstring for why year 5, the horizon's midpoint, is used).
+
+    Args:
+        ni0: Base-year (year 0) normalized net income the earnings
+            projection starts from (e.g. EPV's own
+            ``normalized_net_income``).
+        roe: Return on equity (normalized net income / stockholders'
+            equity) used both to derive the sustainable reinvestment rate
+            ``b = g_eff / roe`` for projection years 1-10 and, implicitly,
+            to determine whether growth adds or destroys value relative to
+            the ``discount_rate``.
+        growth_5y: Constant earnings-growth rate for projection years 1-5
+            (decimal fraction).
+        terminal_growth: Growth rate years 6-10 fade to, and the terminal
+            year's own growth rate (before the ``min(terminal_growth,
+            terminal_roe)`` cap described above).
+        discount_rate: Annual discount rate (decimal fraction) -- a levered
+            COST OF EQUITY, exactly like :func:`dcf_per_share`.
+        shares: Diluted shares outstanding used as the pre-dilution base.
+        dilution_rate: Annual share-count growth rate applied over 5 years
+            to derive the effective share count. Defaults to ``0.0``.
+        terminal_roe: ROE assumed for the terminal (perpetuity) year's
+            reinvestment rate only. Defaults to ``None``, which falls back
+            to ``roe`` (backward compatible). Callers modeling a fade to a
+            stable, competition-eroded terminal phase should pass the
+            scenario's own cost of equity here (see the terminal-ROE-fade
+            note above).
+
+    Returns:
+        A dict with keys ``per_share``, ``ev``, ``equity`` (equal, see
+        above), ``ni_path`` (the 10 projected normalized-net-income
+        floats), ``fcfe_path`` (the 10 projected FCFE floats), ``tv``
+        (undiscounted terminal value), and ``effective_shares``. Nothing is
+        rounded here -- rounding is the caller's (``engine.py``'s)
+        responsibility.
+
+    Raises:
+        ValueError: If ``ni0`` is ``None``, if ``shares`` is falsy or
+            ``<= 0``, if ``roe <= 0`` (a non-positive ROE makes the
+            reinvestment rate meaningless), or if ``discount_rate <=
+            terminal_growth`` (the Gordon-growth terminal value is
+            undefined in that case -- this is never silently "fixed").
+    """
+    if ni0 is None:
+        raise ValueError(
+            "fcfe_sustainable_growth_per_share: ni0 is None; cannot project an earnings path without a base."
+        )
+    if not shares or shares <= 0:
+        raise ValueError(f"fcfe_sustainable_growth_per_share: shares must be a positive number, got {shares!r}.")
+    if roe <= 0:
+        raise ValueError(f"fcfe_sustainable_growth_per_share: roe must be positive, got {roe!r}.")
+    if discount_rate <= terminal_growth:
+        raise ValueError(
+            f"fcfe_sustainable_growth_per_share: discount_rate ({discount_rate}) must be strictly greater than "
+            f"terminal_growth ({terminal_growth}) for the Gordon-growth terminal value to be defined."
+        )
+
+    ni_path: List[float] = []
+    fcfe_path: List[float] = []
+    previous_ni = ni0
+    pv_sum = 0.0
+    for year in range(1, HORIZON_YEARS + 1):
+        growth_rate = _year_growth_rate(year, growth_5y, terminal_growth)
+        g_eff = min(growth_rate, roe)
+        ni_year = previous_ni * (1 + g_eff)
+        reinvestment_rate = g_eff / roe
+        fcfe_year = ni_year * (1 - reinvestment_rate)
+
+        ni_path.append(ni_year)
+        fcfe_path.append(fcfe_year)
+        pv_sum += fcfe_year / (1 + discount_rate) ** year
+        previous_ni = ni_year
+
+    # Terminal phase: fade to `terminal_roe` (cost of equity, by convention)
+    # when supplied, else fall back to the current-period `roe`. NOTE: the
+    # Gordon-growth denominator below deliberately keeps the ORIGINAL,
+    # uncapped `terminal_growth` -- only the terminal earnings/reinvestment
+    # computation is capped, matching the already-validated
+    # `discount_rate > terminal_growth` guard above.
+    terminal_roe_resolved = terminal_roe if terminal_roe is not None else roe
+    g_t_eff = min(terminal_growth, terminal_roe_resolved)
+    ni_terminal = ni_path[-1] * (1 + g_t_eff)
+    terminal_reinvestment_rate = g_t_eff / terminal_roe_resolved
+    fcfe_terminal = ni_terminal * (1 - terminal_reinvestment_rate)
+    tv = fcfe_terminal / (discount_rate - terminal_growth)
+    pv_tv = tv / (1 + discount_rate) ** HORIZON_YEARS
+
+    equity = pv_sum + pv_tv
+    ev = equity  # FCFE-direct: no net-debt subtraction, see the docstring above.
+
+    effective_shares = shares * (1 + dilution_rate) ** _DILUTION_HORIZON_YEARS
+    per_share = equity / effective_shares
+
+    return {
+        "per_share": per_share,
+        "ev": ev,
+        "equity": equity,
+        "ni_path": ni_path,
+        "fcfe_path": fcfe_path,
+        "tv": tv,
+        "effective_shares": effective_shares,
+    }
+
+
 def dcf_per_share(
     fcf0: Optional[float],
     growth_5y: float,
@@ -103,7 +278,9 @@ def dcf_per_share(
     every projected year's FCF, once again as a lump-sum balance-sheet
     deduction from the PV). So ``ev`` and ``equity`` below are the same
     number; both keys are kept for backward-compatible callers that read
-    either one.
+    either one. Consequently ``discount_rate`` must be a levered cost of
+    equity, not a WACC: discounting an already-levered equity cash flow at a
+    WACC would double-count the leverage adjustment a WACC already bakes in.
 
     Dilution: ``effective_shares = shares * (1 + dilution_rate) ** 5``. Five
     years (the midpoint of the 10-year horizon, not year 0 or year 10) is
@@ -118,7 +295,11 @@ def dcf_per_share(
             fraction).
         terminal_growth: Growth rate years 6-10 fade to, and the Gordon-
             growth terminal-value growth rate.
-        discount_rate: Annual discount rate (decimal fraction).
+        discount_rate: Annual discount rate (decimal fraction) -- a levered
+            COST OF EQUITY, not a WACC (see the FCFE-direct note above: the
+            discounted cash flow is already an equity cash flow, so the
+            rate that discounts it must be the rate equity holders require,
+            not a blend with the cost of debt).
         shares: Diluted shares outstanding used as the pre-dilution base.
         dilution_rate: Annual share-count growth rate applied over 5 years
             to derive the effective share count. Defaults to ``0.0`` (no

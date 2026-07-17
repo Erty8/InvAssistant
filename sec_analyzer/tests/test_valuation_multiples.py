@@ -365,3 +365,109 @@ def test_multiples_history_ev_sales_equals_ps_when_no_debt_or_cash_concepts():
     history = multiples_history(_mh_normalized(), _mh_price_df())
     fy2021 = next(h for h in history if h["fy"] == 2021)
     assert fy2021["ev_sales"] == pytest.approx(fy2021["ps"])
+
+
+# ---------------------------------------------------------------------------
+# 9. P/FFO in multiples_history (Package 2 / SPEC.md Sec.8/FFO)
+# ---------------------------------------------------------------------------
+
+
+def _pffo_normalized():
+    """FY2020-2022, adding NetIncome/Depreciation on top of _mh_normalized's
+    Revenue/EPS/Shares/OCF/CapEx, so ffo = net_income + depreciation is
+    computable for every year.
+
+    FY2021: NetIncome=60, Depreciation=40 -> ffo=100; price=10, shares=100
+    -> pffo = 10*100/100 = 10.0.
+    FY2022: NetIncome=-10, Depreciation=5 -> ffo=-5 (<=0) -> pffo must be
+    None for that year (never a negative/zero P/FFO).
+    """
+    def r(fy, v):
+        return _mh_record(fy, v, f"{fy}-12-31")
+
+    concepts = {
+        "Revenue": [r(2020, 900.0), r(2021, 1000.0), r(2022, 1100.0)],
+        "EPS": [r(2020, 0.8), r(2021, 1.0), r(2022, 1.2)],
+        "SharesOutstanding": [r(2020, 95.0), r(2021, 100.0), r(2022, 100.0)],
+        "OperatingCashFlow": [r(2020, 140.0), r(2021, 150.0), r(2022, 160.0)],
+        "CapEx": [r(2020, 50.0), r(2021, 50.0), r(2022, 60.0)],
+        "NetIncome": [r(2020, 50.0), r(2021, 60.0), r(2022, -10.0)],
+        "Depreciation": [r(2020, 30.0), r(2021, 40.0), r(2022, 5.0)],
+    }
+    return {"cik": 1, "entity_name": "FFO Co", "currency": "USD", "annual": concepts, "quarterly": {}, "missing": [], "matched_tags": {}}
+
+
+def test_multiples_history_computes_pffo_from_net_income_plus_depreciation():
+    history = multiples_history(_pffo_normalized(), _mh_price_df())
+
+    # FY2021: price=10.0 (exact-match row), ffo = 60+40 = 100.
+    #   pffo = 10.0*100/100 = 10.0
+    fy2021 = next(h for h in history if h["fy"] == 2021)
+    assert fy2021["pffo"] == pytest.approx(10.0)
+
+    # FY2022: ffo = -10+5 = -5 <= 0 -> pffo must be None, never negative.
+    fy2022 = next(h for h in history if h["fy"] == 2022)
+    assert fy2022["pffo"] is None
+
+
+def test_multiples_history_pffo_none_when_depreciation_missing():
+    # _mh_normalized() carries no Depreciation series at all -> pffo is None
+    # for every fiscal year, while pe/ps/pfcf remain unaffected (additive
+    # field, doesn't disturb the existing multiples).
+    history = multiples_history(_mh_normalized(), _mh_price_df())
+    fy2021 = next(h for h in history if h["fy"] == 2021)
+    assert fy2021["pffo"] is None
+    assert fy2021["pe"] == pytest.approx(10.0)
+
+
+# ---------------------------------------------------------------------------
+# 10. pffo gain-on-sale / impairment adjustment (Package 2 / P2a)
+# ---------------------------------------------------------------------------
+
+
+def _pffo_normalized_with_re_adjustment(gain=None, impair=None):
+    """Same fixture as ``_pffo_normalized`` (FY2021: NetIncome=60,
+    Depreciation=40 -> base ffo=100; price=10.0, shares=100), with an
+    optional GainOnSaleRealEstate and/or RealEstateImpairment record added
+    for FY2021 only."""
+    normalized = _pffo_normalized()
+    if gain is not None:
+        normalized["annual"]["GainOnSaleRealEstate"] = [_mh_record(2021, gain, "2021-12-31")]
+    if impair is not None:
+        normalized["annual"]["RealEstateImpairment"] = [_mh_record(2021, impair, "2021-12-31")]
+    return normalized
+
+
+def test_multiples_history_pffo_reduced_by_gain_on_sale():
+    # base ffo (FY2021) = 60+40 = 100; gain=20 -> ffo = 100-20 = 80.
+    #   pffo = 10.0*100/80 = 12.5
+    history = multiples_history(_pffo_normalized_with_re_adjustment(gain=20.0), _mh_price_df())
+    fy2021 = next(h for h in history if h["fy"] == 2021)
+    assert fy2021["pffo"] == pytest.approx(12.5)
+
+
+def test_multiples_history_pffo_increased_by_impairment():
+    # base ffo = 100; impair=25 -> ffo = 100+25 = 125.
+    #   pffo = 10.0*100/125 = 8.0
+    history = multiples_history(_pffo_normalized_with_re_adjustment(impair=25.0), _mh_price_df())
+    fy2021 = next(h for h in history if h["fy"] == 2021)
+    assert fy2021["pffo"] == pytest.approx(8.0)
+
+
+def test_multiples_history_pffo_negative_gain_ie_loss_is_added_back():
+    # A negative GainOnSaleRealEstate value is a LOSS on sale (a us-gaap
+    # GainLoss element is negative for a loss); "-gain" with gain=-30
+    # becomes "+30", added back like an impairment: ffo = 100+30 = 130.
+    #   pffo = 10.0*100/130 = 7.692307...
+    history = multiples_history(_pffo_normalized_with_re_adjustment(gain=-30.0), _mh_price_df())
+    fy2021 = next(h for h in history if h["fy"] == 2021)
+    assert fy2021["pffo"] == pytest.approx(1000.0 / 130.0)
+
+
+def test_multiples_history_pffo_unchanged_when_no_re_adjustment_tags():
+    # Backward compatibility: _pffo_normalized() carries neither new
+    # concept -> pffo must be IDENTICAL to before this change (10.0, same
+    # as test_multiples_history_computes_pffo_from_net_income_plus_depreciation).
+    history = multiples_history(_pffo_normalized(), _mh_price_df())
+    fy2021 = next(h for h in history if h["fy"] == 2021)
+    assert fy2021["pffo"] == pytest.approx(10.0)

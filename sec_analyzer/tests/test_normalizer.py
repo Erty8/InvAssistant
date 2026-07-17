@@ -96,6 +96,64 @@ def test_restatement_dedup_keeps_latest_filed_value():
     assert annual[0]["filed"] == "2023-06-15"
 
 
+def test_depreciation_concept_extracted_as_annual_flow_series():
+    """Depreciation (Package 2's new REIT-FFO concept) should extract from a
+    cash-flow-statement D&A tag exactly like any other annual flow concept
+    (Revenue, NetIncome): a full ~12-month span with a usable value yields
+    one annual row, and the concept is classified as a "flow" (both
+    ``start``/``end`` meaningful), not a "stock" snapshot.
+    """
+    usgaap = {
+        "DepreciationAndAmortization": _usd_tag(
+            [
+                {
+                    "start": "2022-01-01",
+                    "end": "2022-12-31",
+                    "val": 250_000,
+                    "accn": "0000000000-23-000001",
+                    "fy": 2022,
+                    "fp": "FY",
+                    "form": "10-K",
+                    "filed": "2023-02-01",
+                }
+            ]
+        ),
+    }
+    result = normalize_facts(_make_facts(usgaap=usgaap))
+
+    assert result["matched_tags"]["Depreciation"] == ["DepreciationAndAmortization"]
+    annual = result["annual"]["Depreciation"]
+    assert annual is not None
+    assert annual[0]["value"] == 250_000
+    assert annual[0]["fy"] == 2022
+
+
+def test_depreciation_concept_fallback_tag_priority():
+    """`DepreciationDepletionAndAmortization` (the broadest combined tag) is
+    tried first; when absent, the normalizer falls back to
+    `DepreciationAndAmortization`, exactly mirroring the Revenue fallback
+    test above."""
+    usgaap = {
+        "DepreciationAndAmortization": _usd_tag(
+            [
+                {
+                    "start": "2022-01-01",
+                    "end": "2022-12-31",
+                    "val": 100_000,
+                    "fy": 2022,
+                    "fp": "FY",
+                    "form": "10-K",
+                    "filed": "2023-02-01",
+                }
+            ]
+        ),
+    }
+    result = normalize_facts(_make_facts(usgaap=usgaap))
+
+    assert result["matched_tags"]["Depreciation"] == ["DepreciationAndAmortization"]
+    assert "DepreciationDepletionAndAmortization" not in usgaap
+
+
 def test_missing_concept_is_reported_without_raising():
     """A concept whose tags are entirely absent should land in `missing`."""
     usgaap = {
