@@ -322,6 +322,25 @@ def test_support_resistance_prefers_52w_over_fib_in_its_bucket():
     assert far_support["is_52w_low"] is True
 
 
+def test_support_resistance_excludes_levels_beyond_max_distance():
+    # A stock that ran vertically from a ~50 base to ~190: the 52-week low sits
+    # ~73% below price -- too far to be an actionable trigger. It must NOT
+    # surface as a support level; the reported levels stay within the distance
+    # cap, and the "far" slot is filled by a nearer in-range level instead.
+    from sec_analyzer.technical.indicators import _SR_MAX_DIST_PCT
+
+    base = [50.0] * 30
+    ramp = [50.0 + (i + 1) * 2.33 for i in range(60)]     # monotonic run to ~190
+    ind = compute_indicators(_make_df(base + ramp))
+
+    all_levels = ind["support_levels"] + ind["resistance_levels"]
+    assert all_levels, "expected at least one in-range level"
+    # Every reported level is within the distance cap...
+    assert all(abs(lvl["dist_pct"]) <= _SR_MAX_DIST_PCT for lvl in all_levels)
+    # ...and the far ~50 base (a 52-week low ~73% below) is gone.
+    assert not any(s.get("is_52w_low") for s in ind["support_levels"])
+
+
 def test_support_resistance_surfaces_moving_average_after_vertical_run():
     # A stock that ran vertically past every horizontal shelf: the only swing
     # pivots sit far below (the pre-run base / 52-week low), but the 200-day is

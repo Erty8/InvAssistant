@@ -83,6 +83,14 @@ _SR_SCORE_MA = 50
 #: closer, well-tested zone just because it's the all-time extreme.
 _SR_52W_FAR_THRESHOLD_PCT = 60.0
 
+#: Hard cap on how far a support/resistance level may sit from the current
+#: price and still be reported. A level beyond this distance (e.g. a 52-week
+#: low ~73% below a stock that has run up hard) is not an actionable trigger,
+#: so it is dropped from selection entirely -- the "far" slot on that side is
+#: then filled by the nearest strong in-range level (a tested shelf / Fib /
+#: MA) instead of the extreme, or left empty if none qualifies.
+_SR_MAX_DIST_PCT = 60.0
+
 #: Corroboration window: when finalizing a chosen level, all evidence within
 #: this fraction of its price is merged into it (summed touches, unioned fib
 #: ratios, 52w flags) and defines its price *range*.
@@ -456,10 +464,12 @@ def _support_resistance(
     vertical run still reports that MA as support/resistance instead of falling
     back to a stale pre-breakout shelf or the 52-week extreme.
 
-    Selection (per side): every zone is scored -- a 52-week extreme dominates,
-    a moving-average confluence is a strong boost (~a well-tested shelf), swing
-    touches accumulate, a Fibonacci confluence adds a smaller boost -- then
-    exactly **one near and one far** level are chosen, each the *strongest* in its distance half (so
+    Selection (per side): zones beyond :data:`_SR_MAX_DIST_PCT` from price are
+    first dropped (a shelf ~70% away is not an actionable trigger); every
+    remaining zone is scored -- a 52-week extreme dominates, a moving-average
+    confluence is a strong boost (~a well-tested shelf), swing touches
+    accumulate, a Fibonacci confluence adds a smaller boost -- then exactly
+    **one near and one far** level are chosen, each the *strongest* in its distance half (so
     both are well-corroborated, not the weakest nearby). Each chosen level is
     then **strengthened by merging every nearby evidence source** within
     :data:`_SR_CORROBORATE_PCT` (summed touches, unioned fib ratios, 52w
@@ -632,8 +642,17 @@ def _support_resistance(
             return [near_fmt]
         return [near_fmt, far_fmt]
 
-    supports = _pick_near_far([c for c in clusters if c["price"] < price * (1 - gap)])
-    resistances = _pick_near_far([c for c in clusters if c["price"] > price * (1 + gap)])
+    # Exclude levels beyond _SR_MAX_DIST_PCT from price: a shelf ~70% away is
+    # not an actionable trigger, so the "far" slot is filled by the nearest
+    # strong in-range level instead of the 52-week extreme (or left empty).
+    max_dist = _SR_MAX_DIST_PCT / 100.0
+    lo_bound, hi_bound = price * (1 - max_dist), price * (1 + max_dist)
+    supports = _pick_near_far(
+        [c for c in clusters if lo_bound <= c["price"] < price * (1 - gap)]
+    )
+    resistances = _pick_near_far(
+        [c for c in clusters if price * (1 + gap) < c["price"] <= hi_bound]
+    )
     supports.sort(key=lambda z: z["price"], reverse=True)   # nearest below first
     resistances.sort(key=lambda z: z["price"])              # nearest above first
 
@@ -697,7 +716,9 @@ def compute_indicators(df: pd.DataFrame) -> dict:
           "touches", "last_touch", "fib", "ma", "is_52w_high", "is_52w_low"}`` (see
           :func:`_support_resistance`) -- each is the strongest in its
           distance half, corroborated by merging nearby touches/fib/52w
-          evidence. Empty lists when history is too short.
+          evidence. Levels beyond :data:`_SR_MAX_DIST_PCT` from price are
+          excluded (not actionable triggers). Empty lists when history is too
+          short.
         * ``fibonacci``: ``{"high", "low", "direction", "levels"}`` for the
           dominant swing's retracement grid, or ``None``.
         * ``price_series``: a compact multi-resolution ``{"t": date, "c":
