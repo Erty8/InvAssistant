@@ -66,6 +66,11 @@ _VERDICTS_EXTRA_COLUMNS: List[Tuple[str, str]] = [
     ("implied_growth", "REAL"),
     ("fair_value_json", "TEXT"),
     ("valuation_json", "TEXT"),
+    # Optional manual annotation: flags a verdict to KEEP (never overwrite in
+    # spirit -- the table is append-only anyway) as a deliberate forward test
+    # case, e.g. a model↔market divergence whose thesis a few quarters of data
+    # will referee. Defaults NULL; never written by save_verdict.
+    ("watch_note", "TEXT"),
 ]
 
 

@@ -49,6 +49,30 @@ CONFIDENCE_LOW = "DÜŞÜK"
 
 _DIRECTION_UNCLEAR = "belirsiz"
 
+#: Model–market divergence governor (the "expectations discipline" backstop).
+#: When the base fair-value band sits a large multiple away from the price,
+#: the three method signals are NOT independent confirmation -- they all read
+#: off the same assumption set, so a unanimous "cheap"/"expensive" is one
+#: assumption reflected in three mirrors, not three witnesses. In that case
+#: the honest reading is "the model and the market disagree about this
+#: company's entire future", not a high-confidence verdict.
+#:
+#: The trigger is symmetric but its ACTION is not (yet):
+#:  * UP-side (model says deeply cheap): ``base_lo > price * _DIVERGENCE_UP_FACTOR``
+#:    -- confidence is floored to :data:`CONFIDENCE_LOW` now, and the payload
+#:    carries ``action="verdict"`` so the report/interpret layer can restate
+#:    the headline as an explicit divergence rather than "cheap".
+#:  * DOWN-side (model says deeply expensive): ``base_hi < price *
+#:    _DIVERGENCE_DOWN_FACTOR`` -- ``action="log_only"``: the payload is
+#:    recorded but confidence/direction are left untouched, so the coming
+#:    low-side calibration pass inherits "which names, which paths" data
+#:    without any verdict changing today.
+#: Anchored on the base band's NEAR edge (lo for up, hi for down) so a merely
+#: wide band can't trip it on optimism alone. Threshold 2.0/0.5 is a starting
+#: point, tuned by how many names in the calibration basket trip it.
+_DIVERGENCE_UP_FACTOR = 2.0
+_DIVERGENCE_DOWN_FACTOR = 0.5
+
 #: Turkish display labels for each signal value, used in rationale sentences.
 _SIGNAL_LABEL_TR = {
     SIGNAL_CHEAP: "ucuz",
@@ -511,6 +535,7 @@ def triangulate(
                 "multiples": "Veri yok.",
                 "confidence": "Veri yok.",
             },
+            "divergence": None,
         }
 
 
@@ -592,4 +617,45 @@ def _triangulate(
             "yansıtır — güven ORTA'ya sınırlandı.)"
         )
 
-    return {"signals": signals, "confidence": confidence, "direction": direction, "rationale": rationale}
+    # --- Model–market divergence governor (expectations discipline) --------
+    # Runs LAST, after every headline confidence cap, so it takes precedence.
+    divergence = _divergence(price, dcf_base_band)
+    if divergence is not None and divergence["action"] == "verdict":
+        confidence = CONFIDENCE_LOW
+        rationale["confidence"] = (
+            f"Model-piyasa ayrışması: baz değerleme aralığının alt ucu ({_money(divergence['band_edge'])}) "
+            f"fiyatın ({_money(price)}) {divergence['factor']:.1f} katı. Üç yöntem de aynı büyüme/marj "
+            "varsayımından beslendiği için oybirliği bağımsız bir doğrulama değil — aynı varsayımın üç "
+            "aynada yansımasıdır. Model büyümenin sürdüğünü, piyasa bittiğini fiyatlıyor; hakem önümüzdeki "
+            "çeyreklerin gerçekleşen büyümesidir. Güven düşük."
+        )
+
+    return {
+        "signals": signals,
+        "confidence": confidence,
+        "direction": direction,
+        "rationale": rationale,
+        "divergence": divergence,
+    }
+
+
+def _divergence(price: Optional[float], dcf_base_band: Optional[dict]) -> Optional[dict]:
+    """Detect a model–market divergence from the base band vs. price (the
+    governor; see :data:`_DIVERGENCE_UP_FACTOR`).
+
+    Returns ``None`` when price/band are unusable or the band sits within the
+    normal range of the price. Otherwise a dict:
+    ``{"direction": "ucuz"|"pahali", "action": "verdict"|"log_only",
+    "factor": <band_edge / price>, "band_edge": <the triggering lo or hi>}``.
+    The UP-side ("ucuz") returns ``action="verdict"``; the DOWN-side
+    ("pahali") returns ``action="log_only"`` (recorded but not yet acted on).
+    """
+    if price is None or price <= 0 or not dcf_base_band:
+        return None
+    lo = dcf_base_band.get("lo")
+    hi = dcf_base_band.get("hi")
+    if lo is not None and lo > price * _DIVERGENCE_UP_FACTOR:
+        return {"direction": SIGNAL_CHEAP, "action": "verdict", "factor": lo / price, "band_edge": lo}
+    if hi is not None and hi < price * _DIVERGENCE_DOWN_FACTOR:
+        return {"direction": SIGNAL_EXPENSIVE, "action": "log_only", "factor": hi / price, "band_edge": hi}
+    return None

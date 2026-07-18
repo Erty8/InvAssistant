@@ -105,6 +105,19 @@ class Config:
     # over the network. Overridable via DAMODARAN_DIR.
     DAMODARAN_DIR = os.getenv("DAMODARAN_DIR", os.path.join(os.getcwd(), "data", "damodaran"))
 
+    # Benchmark-based mature-state FCF-margin ceiling for the hyper-grower
+    # revenue-first DCF (valuation engine "B-prime", staged). The mature target
+    # FCF margin is FLAGGED up to this ceiling and CAPPED beyond it -- replacing
+    # the earlier arbitrary flat cap. The value is the empirical upper-decile
+    # sustained FCF margin of mature software companies (Damodaran "Software
+    # (System & Application)"; MSFT/ADBE realized margins sit at ~35-40%). This
+    # is a hardcoded placeholder: once the per-sector upper-decile FCF margin is
+    # available in DAMODARAN_DIR, read it from there instead. Overridable via
+    # MATURE_SOFTWARE_FCF_MARGIN_CEILING.
+    MATURE_SOFTWARE_FCF_MARGIN_CEILING = float(
+        os.getenv("MATURE_SOFTWARE_FCF_MARGIN_CEILING", "0.37")
+    )
+
     @classmethod
     def get_user_agent(cls) -> str:
         """Return the User-Agent string SEC requires for all EDGAR requests.

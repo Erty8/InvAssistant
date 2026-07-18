@@ -517,3 +517,91 @@ def implied_target_margin(
             hi, diff_hi = mid, diff_mid
 
     return round((lo + hi) / 2.0, 4)
+
+
+#: Upper bound of the flat cost-of-equity the discount-rate reverse solve
+#: searches over (decimal). The lower bound is derived per-call as
+#: ``terminal_growth + _DISCOUNT_RATE_BRACKET_EPS`` so the Gordon terminal
+#: value stays defined (``r > terminal_growth``).
+_DISCOUNT_RATE_BRACKET_HI = 0.60
+_DISCOUNT_RATE_BRACKET_EPS = 1e-3
+
+
+def implied_discount_rate(
+    price: Optional[float],
+    revenue0: Optional[float],
+    start_growth: float,
+    terminal_growth: float,
+    current_margin: float,
+    target_fcf_margin: float,
+    steady_state_year: int,
+    shares0: Optional[float],
+    annual_dilution: float,
+    financing_shares: float = 0.0,
+) -> Optional[float]:
+    """Bisect for the FLAT cost of equity that makes the revenue-first DCF match ``price``.
+
+    The mirror of :func:`implied_start_growth`/:func:`implied_target_margin`
+    for the third reverse lens: holding revenue growth and the mature margin
+    at the model's base-scenario assumptions, what single (un-faded) discount
+    rate must the market be applying to justify today's price? A large gap
+    between this and the model's own cost of equity is one face of a
+    model-market divergence (the price implies a far higher risk premium than
+    the model charges).
+
+    A flat rate is used deliberately -- both the year-1 cohort rate AND the
+    mature fade target are set to the solved ``r`` -- so the answer is a
+    single interpretable "the market discounts this at X%", not a fade pair.
+    Per-share value is strictly decreasing in ``r``, so the bracket is
+    ``[terminal_growth + _DISCOUNT_RATE_BRACKET_EPS, _DISCOUNT_RATE_BRACKET_HI]``.
+
+    Returns:
+        The implied flat discount rate (decimal, rounded to 4), or ``None``
+        if any required input is unusable or the price isn't reachable by any
+        rate in the bracket (no sign change).
+    """
+    if price is None or price <= 0 or revenue0 is None or revenue0 <= 0:
+        return None
+    if not shares0 or shares0 <= 0:
+        return None
+
+    lo = terminal_growth + _DISCOUNT_RATE_BRACKET_EPS
+    hi = _DISCOUNT_RATE_BRACKET_HI
+    if lo >= hi:
+        return None
+
+    def diff_at(r: float) -> Optional[float]:
+        try:
+            result = revenue_first_dcf(
+                revenue0, start_growth, terminal_growth, r, current_margin, target_fcf_margin,
+                steady_state_year, shares0, annual_dilution, financing_shares,
+                mature_discount_rate=r,
+            )
+        except ValueError:
+            return None
+        return result["per_share"] - price
+
+    diff_lo = diff_at(lo)
+    diff_hi = diff_at(hi)
+    if diff_lo is None or diff_hi is None:
+        return None
+    if diff_lo == 0:
+        return round(lo, 4)
+    if diff_hi == 0:
+        return round(hi, 4)
+    if (diff_lo > 0) == (diff_hi > 0):
+        return None
+
+    for _ in range(_MAX_ITERATIONS):
+        mid = (lo + hi) / 2.0
+        diff_mid = diff_at(mid)
+        if diff_mid is None:
+            return None
+        if diff_mid == 0 or (hi - lo) / 2.0 < _TOLERANCE:
+            return round(mid, 4)
+        if (diff_mid > 0) == (diff_lo > 0):
+            lo, diff_lo = mid, diff_mid
+        else:
+            hi, diff_hi = mid, diff_mid
+
+    return round((lo + hi) / 2.0, 4)

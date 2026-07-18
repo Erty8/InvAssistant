@@ -9,6 +9,7 @@ or Yahoo Finance.
 
 import io
 import sys
+from datetime import date
 
 import pandas as pd
 import pytest
@@ -267,10 +268,20 @@ def test_price_series_is_ascending_capped_and_ends_at_latest_close():
     ind = compute_indicators(_make_df(closes))
     series = ind["price_series"]
 
-    assert 2 <= len(series) <= 252                      # capped at ~1 year
+    # Multi-resolution contract: the recent tail is kept daily while older
+    # history is down-sampled to ~weekly, so a 400-row input is compressed
+    # (older thinned) yet stays well under the ~5y cap (~520 points max).
+    assert 2 <= len(series) <= 520
+    assert 252 < len(series) < 400                      # older thinned, recent daily
     assert all({"t", "c"} <= set(p) for p in series)
     assert [p["t"] for p in series] == sorted(p["t"] for p in series)   # ascending
     assert series[-1]["c"] == ind["price"]              # last point == current price
+
+    # The most recent points are at daily (business-day) resolution.
+    def _d(s):
+        y, m, day = (int(x) for x in s.split("-"))
+        return date(y, m, day)
+    assert (_d(series[-1]["t"]) - _d(series[-2]["t"])).days <= 4
 
 
 def _multi_swing_df():

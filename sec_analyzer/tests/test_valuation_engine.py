@@ -83,6 +83,67 @@ def test_triangulate_two_or_more_no_data_signals_give_low_confidence():
     assert result["direction"] == "belirsiz"
 
 
+def test_triangulate_upside_divergence_floors_confidence_and_flags_verdict():
+    # All three say "ucuz" (would normally be YÜKSEK), but the base band low
+    # (250) is 2.5x the price (100) -> model-market divergence: three method
+    # votes read off the SAME assumption set, so unanimity isn't independent
+    # confirmation. Confidence is floored to DÜŞÜK and a verdict-action
+    # divergence payload is attached. direction stays "ucuz" (the verdict
+    # rename is a presentation-layer step, not done here).
+    result = triangulate(
+        price=100, dcf_base_band={"lo": 250, "hi": 300}, implied_growth=0.05,
+        realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
+        sector_type="mature",
+    )
+    assert result["signals"]["dcf"] == "ucuz"
+    assert result["confidence"] == "DÜŞÜK"
+    assert result["divergence"] is not None
+    assert result["divergence"]["direction"] == "ucuz"
+    assert result["divergence"]["action"] == "verdict"
+    assert result["divergence"]["factor"] == pytest.approx(2.5)
+    assert result["divergence"]["band_edge"] == 250
+    assert "Model-piyasa ayrışması" in result["rationale"]["confidence"]
+
+
+def test_triangulate_downside_divergence_is_log_only_and_leaves_confidence():
+    # price 100, base band [30,40]: hi (40) is 0.4x price (< 0.5x) -> downside
+    # divergence. All three say "pahali" -> confidence must STAY YÜKSEK
+    # (down-side is log-only this pass); only the payload is recorded, with
+    # action="log_only", so the coming low-side pass inherits the data.
+    result = triangulate(
+        price=100, dcf_base_band={"lo": 30, "hi": 40}, implied_growth=0.20,
+        realized_cagr=None, base_growth=0.10, pe_pct=90, ps_pct=None, pfcf_pct=None,
+        sector_type="mature",
+    )
+    assert result["signals"]["dcf"] == "pahali"
+    assert result["confidence"] == "YÜKSEK"
+    assert result["direction"] == "pahali"
+    assert result["divergence"]["action"] == "log_only"
+    assert result["divergence"]["direction"] == "pahali"
+    assert result["divergence"]["factor"] == pytest.approx(0.4)
+
+
+def test_triangulate_no_divergence_within_normal_range():
+    # base low (150) is 1.5x price (100): below the 2.0x up trigger; hi (180)
+    # is 1.8x, above the 0.5x down trigger -> no divergence, unanimity stands.
+    result = triangulate(
+        price=100, dcf_base_band={"lo": 150, "hi": 180}, implied_growth=0.05,
+        realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
+        sector_type="mature",
+    )
+    assert result["divergence"] is None
+    assert result["confidence"] == "YÜKSEK"
+
+
+def test_triangulate_divergence_up_trigger_is_strict():
+    # base low exactly 2.0x price -> NOT triggered (strict >); just past fires.
+    at = triangulate(100, {"lo": 200, "hi": 260}, 0.05, None, 0.10, 20, None, None, "mature")
+    past = triangulate(100, {"lo": 200.01, "hi": 260}, 0.05, None, 0.10, 20, None, None, "mature")
+    assert at["divergence"] is None
+    assert past["divergence"] is not None
+    assert past["divergence"]["action"] == "verdict"
+
+
 def test_triangulate_dcf_direction_boundaries_are_strict():
     # price exactly at band.lo/band.hi must be "makul" (strict < / > only).
     at_lo = triangulate(100, {"lo": 100, "hi": 120}, None, None, None, None, None, None, "mature")
@@ -1852,6 +1913,53 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline(tmp_path)
     assert base_fvr["discount_rate"] == "%12"
     assert "Hiper-büyüme" in base_fvr["note"]
     assert "%30" in base_fvr["note"]  # mature target FCF margin
+
+
+def test_run_valuation_hyper_grower_deceleration_guard_caps_start_growth(tmp_path):
+    # Deceleration guard (A): with a prior-year revenue present, the latest
+    # realized YoY is computable and BELOW the blended growth anchor, so
+    # base/bull start growth are capped at the realized YoY -- a visibly
+    # decelerating grower is not assumed to first re-accelerate before fading.
+    #
+    #   Revenue FY2023=1000, FY2022=800 -> latest_yoy = 1000/800 - 1 = 0.25.
+    #   metrics revenue_cagr_5y=0.50 -> growth_anchor = 0.5*0.50 + 0.5*0.25
+    #                                                 = 0.375.
+    #   raw start growth: bear=min(0.375,0.60)*0.6=0.225, base=0.375,
+    #                     bull=min(0.375*1.2=0.45,0.60)=0.45.
+    #   decel_cap=0.25: bear 0.225<=0.25 kept; base 0.375->0.25; bull 0.45->0.25.
+    normalized = _normalized({"Revenue": [_rec(2023, 1000.0), _rec(2022, 800.0)]})
+    assumptions = _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)
+    result = run_valuation(
+        normalized, _HYPER_RATIOS, _HYPER_METRICS, price=50.0, price_df=None,
+        assumptions=assumptions, sector_type="growth_unprofitable",
+        damodaran_dir=str(tmp_path / "no_damodaran"),
+    )
+    assert result["hyper_growth"] is True
+    detail = result["hyper_growth_detail"]
+    assert detail["scenarios"]["bear"]["start_growth"] == pytest.approx(0.225)
+    assert detail["scenarios"]["base"]["start_growth"] == pytest.approx(0.25)
+    assert detail["scenarios"]["bull"]["start_growth"] == pytest.approx(0.25)
+    # base and bull now share the same (capped) start growth, so bull's only
+    # remaining lever is its margin uplift -- the "two 1.2x optimisms compound"
+    # problem is gone in rule-based mode.
+    assert any("Yavaşlama koruması" in n for n in result["notes"])
+
+
+def test_run_valuation_hyper_grower_start_growth_override_allows_reacceleration(tmp_path):
+    # AI-mode escape hatch: an explicit per-scenario start_growth override in
+    # hyper_growth_extras is honored even above the deceleration cap, and a
+    # deviation note is surfaced (re-acceleration is allowed, but never silent).
+    normalized = _normalized({"Revenue": [_rec(2023, 1000.0), _rec(2022, 800.0)]})
+    assumptions = _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)
+    result = run_valuation(
+        normalized, _HYPER_RATIOS, _HYPER_METRICS, price=50.0, price_df=None,
+        assumptions=assumptions, sector_type="growth_unprofitable",
+        damodaran_dir=str(tmp_path / "no_damodaran"),
+        hyper_growth_extras={"per_scenario": {"base": {"start_growth": 0.45}}},
+    )
+    detail = result["hyper_growth_detail"]
+    assert detail["scenarios"]["base"]["start_growth"] == pytest.approx(0.45)
+    assert any("re-acceleration" in n.lower() for n in result["notes"])
 
 
 def test_run_valuation_hyper_grower_terminal_growth_linked_to_risk_free(tmp_path):

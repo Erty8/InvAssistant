@@ -92,9 +92,17 @@ _SR_CORROBORATE_PCT = 0.03
 #: so a single-price level still reads as a band rather than a point.
 _SR_BAND_MIN_PCT = 0.005
 
-#: How many recent daily closes to expose for the report's price chart
-#: (~1 trading year); keeps the embedded payload small.
-_PRICE_SERIES_MAX = 252
+#: Price-chart series exposed for the report. The report's chart supports a
+#: client-side range switch (3m / 1y / 5y), so the payload must carry enough
+#: history to cover the widest range while staying small: the most recent
+#: ``_PRICE_SERIES_DAILY`` trading days are kept at daily resolution (for the
+#: 3m/1y views), and everything older -- up to ``_PRICE_SERIES_MAX_ROWS`` (~5
+#: trading years) -- is down-sampled to roughly weekly. The chart slices this
+#: single ascending series by *date*, so the mixed resolution is transparent
+#: to the 3m/1y views (which fall entirely inside the daily tail).
+_PRICE_SERIES_DAILY = 320
+_PRICE_SERIES_MAX_ROWS = 1300
+_PRICE_SERIES_WEEKLY_STEP = 5
 
 #: Only the most recent ~2 years of pivots feed support/resistance, so a
 #: decade-old level doesn't outrank a fresh, actively-tested one.
@@ -316,11 +324,24 @@ def _volume_signals(df: pd.DataFrame) -> "tuple[float | None, str | None]":
     return rel_volume, obv_trend
 
 
-def _price_series(df: pd.DataFrame, max_points: int = _PRICE_SERIES_MAX) -> "list[dict]":
-    """The most recent ``max_points`` daily closes as ``[{"t": date, "c":
-    close}]`` (ascending) -- the compact time series the report's price chart
-    draws. Kept small so the embedded report payload stays light."""
-    close = df["Close"].tail(max_points)
+def _price_series(df: pd.DataFrame) -> "list[dict]":
+    """A compact, multi-resolution close series as ``[{"t": date, "c": close}]``
+    (ascending) for the report's range-switchable price chart.
+
+    The most recent ``_PRICE_SERIES_DAILY`` trading days are kept daily; older
+    history (up to ``_PRICE_SERIES_MAX_ROWS`` ~ 5 trading years) is
+    down-sampled to roughly weekly. The chart slices by date, so the 3m/1y
+    views land entirely in the daily tail while the 5y view spans the whole
+    (mixed-resolution) series. Kept small so the embedded report payload stays
+    light (~500 points for a 5y history)."""
+    close = df["Close"].dropna()
+    if close.empty:
+        return []
+    close = close.tail(_PRICE_SERIES_MAX_ROWS)
+    if len(close) > _PRICE_SERIES_DAILY:
+        older = close.iloc[:-_PRICE_SERIES_DAILY].iloc[::_PRICE_SERIES_WEEKLY_STEP]
+        daily = close.iloc[-_PRICE_SERIES_DAILY:]
+        close = pd.concat([older, daily])
     series: "list[dict]" = []
     for timestamp, value in close.items():
         if pd.isna(value):
@@ -679,8 +700,10 @@ def compute_indicators(df: pd.DataFrame) -> dict:
           evidence. Empty lists when history is too short.
         * ``fibonacci``: ``{"high", "low", "direction", "levels"}`` for the
           dominant swing's retracement grid, or ``None``.
-        * ``price_series``: up to ~252 recent ``{"t": date, "c": close}``
-          points (ascending) for the report's price chart.
+        * ``price_series``: a compact multi-resolution ``{"t": date, "c":
+          close}`` series (ascending, ~500 points spanning up to ~5y: daily
+          tail + weekly older) for the report's range-switchable price chart
+          (see :func:`_price_series`).
         * ``nearest_support`` / ``nearest_resistance``: the closest zone
           price on each side, or ``None``.
     """

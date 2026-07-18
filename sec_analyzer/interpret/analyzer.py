@@ -1103,6 +1103,18 @@ def _propose_assumptions(
 #: never from a provider's own output.
 _HIGH_EXPECTATION_VERDICT = "YÜKSEK BEKLENTİ FİYATLANMIŞ"
 
+#: Model–market divergence verdict (the DOWN-price mirror of
+#: :data:`_HIGH_EXPECTATION_VERDICT`). Emitted deterministically by
+#: :func:`_postprocess_phase2_result` when the triangulation governor
+#: (``valuation.triangulation.divergence``, see ``valuation/triangulate.py``)
+#: flags an up-side divergence (``action == "verdict"``): the base fair-value
+#: band sits more than ~2x above price, so the three method votes read off ONE
+#: assumption set rather than independently confirming "cheap". The honest
+#: headline is then a model↔market disagreement, not "UCUZ". Applied AFTER the
+#: reconcile step, overriding whatever verdict any provider (LLM or script)
+#: produced; the low confidence is already set by the governor itself.
+_DIVERGENCE_VERDICT = "MODEL-PİYASA AYRIŞMASI"
+
 #: Map from a triangulation direction signal to the schema's verdict
 #: string; "veri_yok" deliberately has no entry.
 _DCF_SIGNAL_TO_VERDICT = {
@@ -1249,6 +1261,15 @@ def _postprocess_phase2_result(
         result.get("fundamental_verdict"), dcf_signal, provider
     )
 
+    # Model–market divergence override (governor, action="verdict"; see
+    # _DIVERGENCE_VERDICT). Deterministic, numbers-driven, applied LAST so it
+    # overrides any provider's verdict; confidence is already floored to DÜŞÜK
+    # by the governor via triangulation.confidence above.
+    divergence = triangulation.get("divergence") or {}
+    divergence_active = divergence.get("action") == "verdict"
+    if divergence_active:
+        result["fundamental_verdict"] = _DIVERGENCE_VERDICT
+
     if not result.get("catalyst"):
         result["catalyst"] = catalyst.get("label") if catalyst else "bilinmiyor"
 
@@ -1265,6 +1286,17 @@ def _postprocess_phase2_result(
         valuation, technical, red_flags, result["entry_plan"], catalyst
     )
     result["thesis_metric"] = planning.select_thesis_metric(valuation.get("sector_type"), ratios, metrics)
+    if divergence_active:
+        # In a divergence the kill-switch is whether the market-priced
+        # assumption (a growth collapse the model rejects) actually
+        # materializes, so reframe the thesis metric's rationale around that
+        # referee while keeping its computed name/value/trend intact.
+        thesis_metric = dict(result["thesis_metric"] or {})
+        thesis_metric["rationale"] = (
+            "Model-piyasa ayrışması: hakem, piyasanın fiyatladığı büyüme yavaşlamasının gerçekleşip "
+            "gerçekleşmemesidir. Bu metriğin önümüzdeki çeyreklerdeki seyri tezi doğrular ya da çürütür."
+        )
+        result["thesis_metric"] = thesis_metric
 
     result["valuation"] = valuation
     result["_provider"] = provider

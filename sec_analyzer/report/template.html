@@ -391,6 +391,37 @@
     .hyper-note { margin-left: 0; }
   }
 
+  /* ---- Model <-> market divergence block (governor, verdict action) ------*/
+  .divergence-box {
+    margin: 12px 0 0 46px;
+    padding: 10px 12px;
+    border: 1px solid var(--caution);
+    border-radius: 8px;
+    background: rgba(224, 132, 42, 0.08);
+    font-size: 0.76rem;
+    line-height: 1.5;
+  }
+  .divergence-title {
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--caution);
+    font-size: 0.72rem;
+    margin-bottom: 8px;
+  }
+  .divergence-table { width: 100%; border-collapse: collapse; }
+  .divergence-table th, .divergence-table td {
+    text-align: right; padding: 3px 6px; white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .divergence-table th:first-child, .divergence-table td:first-child { text-align: left; color: var(--muted); font-weight: 400; }
+  .divergence-table thead th { color: var(--muted); font-weight: 600; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .divergence-model { color: var(--text); }
+  .divergence-market { color: var(--caution); font-weight: 600; }
+  .divergence-referee { color: var(--muted); margin-top: 8px; }
+  @media (max-width: 560px) {
+    .divergence-box { margin-left: 0; }
+  }
+
   /* ---- Assumption strip (SCENARIO / GROWTH / DISCOUNT / RATIONALE) -------*/
   .assumption-strip {
     display: grid;
@@ -629,7 +660,51 @@
   .sr-fib-caption { font-size: 0.68rem; color: var(--muted); margin-bottom: 6px; }
   .tech-empty { color: var(--muted); font-size: 0.82rem; }
 
+  /* ---- Trend & triggers (Technical card primary view) --------------------*/
+  .trend-regime { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 6px; }
+  .regime-badge { display: inline-block; border-radius: 999px; padding: 4px 14px; font-size: 0.9rem; font-weight: 700; }
+  .regime-up { background: rgba(77, 224, 130, 0.15); color: var(--green); border: 1px solid rgba(77, 224, 130, 0.4); }
+  .regime-down { background: rgba(255, 180, 171, 0.15); color: var(--red); border: 1px solid rgba(147, 0, 10, 0.55); }
+  .regime-neutral { background: rgba(255, 185, 83, 0.15); color: var(--amber); border: 1px solid rgba(255, 185, 83, 0.4); }
+  .regime-sub { font-size: 0.72rem; color: var(--muted); font-family: var(--mono); }
+  .regime-evi { font-size: 0.78rem; color: var(--muted); line-height: 1.5; margin-bottom: 14px; }
+  .trend-callout { display: flex; align-items: flex-start; gap: 8px; border-radius: 10px; padding: 10px 12px; margin-bottom: 16px; font-size: 0.84rem; line-height: 1.45; }
+  .callout-up { background: rgba(77, 224, 130, 0.10); border: 1px solid rgba(77, 224, 130, 0.35); }
+  .callout-up .co-arrow { color: var(--green); }
+  .callout-down { background: rgba(255, 180, 171, 0.10); border: 1px solid rgba(147, 0, 10, 0.5); }
+  .callout-down .co-arrow { color: var(--red); }
+  .co-arrow { font-size: 1rem; line-height: 1.2; flex-shrink: 0; }
+  .trigger-ladder { display: flex; flex-direction: column; gap: 5px; }
+  .trig-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; border-left: 3px solid transparent; background: rgba(255, 255, 255, 0.03); }
+  .trig-up { border-left-color: var(--green); }
+  .trig-down { border-left-color: var(--red); }
+  .trig-now { border-left-color: var(--primary); background: rgba(90, 167, 255, 0.14); }
+  .trig-nearest { box-shadow: 0 0 0 1px rgba(192, 199, 211, 0.5) inset; }
+  .trig-arrow { width: 14px; text-align: center; font-size: 0.8rem; flex-shrink: 0; }
+  .trig-up .trig-arrow { color: var(--green); }
+  .trig-down .trig-arrow { color: var(--red); }
+  .trig-now .trig-arrow { color: var(--primary); }
+  .trig-price { font-family: var(--mono); font-weight: 700; font-size: 0.9rem; min-width: 104px; flex-shrink: 0; }
+  .trig-rule { flex: 1; font-size: 0.8rem; line-height: 1.35; min-width: 0; }
+  .trig-reason { color: var(--muted); }
+  .trig-now-tag { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.05em; color: var(--primary-light); }
+  .trig-dist { font-family: var(--mono); font-size: 0.82rem; font-weight: 700; min-width: 60px; text-align: right; flex-shrink: 0; }
+  .tech-toggle { margin-top: 14px; background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 8px; padding: 7px 12px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; cursor: pointer; font-family: var(--mono); }
+  .tech-toggle:hover { border-color: var(--outline); color: var(--text); }
+  .tech-details { margin-top: 14px; }
+  @media (max-width: 560px) {
+    .trig-rule { flex-basis: 100%; order: 3; }
+  }
+
   /* ---- Price chart (price line + S/R + fair-value bands) -----------------*/
+  .pchart-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .pchart-head .card-title { margin: 0; }
   .pchart svg { width: 100%; height: auto; display: block; }
   .pchart-area { fill: rgba(90, 167, 255, 0.12); stroke: none; }
   .pchart-line { fill: none; stroke: #5aa7ff; stroke-width: 1.6; }
@@ -641,13 +716,20 @@
      the fair-value box. */
   .pchart-sr-line { stroke: #7a1f1f; stroke-width: 1.5; opacity: 0.9; }
   .pchart-band-label { font-size: 9px; font-weight: 600; fill: #c0605f; }
-  .pchart-fv-rect { fill: none; stroke-width: 1; stroke-dasharray: 4 3; }
   .pchart-fv-bull { stroke: var(--green); }
-  .pchart-fv-base { stroke: #5aa7ff; }
   .pchart-fv-bear { stroke: var(--red); }
   .pchart-fv-label { font-size: 9px; }
+  .pchart-fv-ann { font-size: 8px; fill: var(--muted); }
   .pchart-now-line { stroke: var(--text); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.75; }
   .pchart-now-label { font-size: 10px; fill: var(--text); font-weight: 700; }
+  /* ---- Fair-value fan (today -> horizon projection cone) ---------------- */
+  .pchart-fan-outer { fill: rgba(139, 145, 157, 0.14); stroke: none; }
+  .pchart-fan-up { fill: rgba(77, 224, 130, 0.15); stroke: none; }
+  .pchart-fan-down { fill: rgba(255, 180, 171, 0.15); stroke: none; }
+  .pchart-fan-line { stroke-width: 1.2; fill: none; opacity: 0.85; }
+  .pchart-fan-baseline { stroke: #5aa7ff; stroke-width: 1.2; fill: none; stroke-dasharray: 5 3; }
+  .pchart-apex { fill: var(--text); stroke: var(--bg); stroke-width: 1; }
+  .pchart-caption { font-size: 0.72rem; color: var(--muted); margin-top: 8px; line-height: 1.5; }
   .pchart-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 0.7rem; color: var(--muted); }
   .pchart-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .pchart-sw { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
@@ -998,6 +1080,11 @@
   // free-text meant for direct display).
   var SIGNAL_LABEL = { ucuz: "CHEAP", makul: "FAIR", yuksek_beklenti: "HIGH EXP", pahali: "EXPENSIVE", karisik: "MIXED", veri_yok: "NO DATA" };
   var HORIZON_SHORT = { "3m": "3M", "1y": "1Y", "5y": "5Y" };
+  // Calendar-day windows the price chart slices its (up-to-5y) series by for
+  // each range, and the year counts used to annualize the "if price converges
+  // to this scenario by the horizon end" expected return.
+  var HORIZON_DAYS = { "3m": 95, "1y": 370, "5y": 2000 };
+  var HORIZON_YEARS = { "3m": 0.25, "1y": 1, "5y": 5 };
 
   function signalLabel(s) {
     if (!s) return "—";
@@ -1131,6 +1218,50 @@
     return '<div class="capex-note">' + escapeHtml(noteText) + '</div>';
   }
 
+  // Model <-> market divergence block (triangulate.py governor, action="verdict"):
+  // when the base fair-value band sits >2x above price, the three method votes
+  // aren't independent confirmation -- they read off ONE assumption set. Show,
+  // side by side, what the model assumes vs what today's price implies for the
+  // three reverse-lens levers, so the divergence is concrete. Only rendered for
+  // hyper-growers (the implied values live in hyper_growth_detail.implied).
+  function divergenceHtml(valuation) {
+    var tri = (valuation && valuation.triangulation) || {};
+    var div = tri.divergence;
+    if (!div || div.action !== "verdict") return "";
+    var detail = (valuation && valuation.hyper_growth_detail) || {};
+    var implied = detail.implied || {};
+    var base = (detail.scenarios || {}).base || {};
+
+    function row(label, modelText, marketVal) {
+      if (!isNum(marketVal)) return "";
+      return '<tr><td>' + escapeHtml(label) + '</td>' +
+        '<td class="divergence-model">' + escapeHtml(modelText) + '</td>' +
+        '<td class="divergence-market">' + fmtPctTr(marketVal) + '</td></tr>';
+    }
+    var rows = "";
+    rows += row("Başlangıç büyüme", isNum(base.start_growth) ? fmtPctTr(base.start_growth) : "—", implied.growth);
+    rows += row("Olgun FCF marjı", isNum(base.target_fcf_margin) ? fmtPctTr(base.target_fcf_margin) : "—", implied.steady_state_margin);
+    var modelDr = isNum(detail.base_discount_rate)
+      ? (fmtPctTr(detail.base_discount_rate) +
+         (isNum(detail.mature_discount_rate) ? " → " + fmtPctTr(detail.mature_discount_rate) : ""))
+      : "—";
+    rows += row("İskonto oranı", modelDr, implied.discount_rate);
+    if (!rows) return "";
+
+    return (
+      '<div class="divergence-box">' +
+        '<div class="divergence-title">MODEL ↔ PİYASA AYRIŞMASI</div>' +
+        '<table class="divergence-table">' +
+          '<thead><tr><th>Varsayım</th><th>Model</th><th>Piyasa fiyatlıyor</th></tr></thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+        '<div class="divergence-referee">Üç yöntem de aynı büyüme/marj varsayımından beslendiği için ' +
+          'oybirliği bağımsız bir doğrulama değil. Model büyümenin sürdüğünü, piyasa bittiğini fiyatlıyor; ' +
+          'hakem önümüzdeki çeyreklerin gerçekleşen büyümesidir.</div>' +
+      '</div>'
+    );
+  }
+
   function hyperGrowthExtraHtml(valuation) {
     if (!valuation || !valuation.hyper_growth) return "";
     var detail = valuation.hyper_growth_detail || {};
@@ -1169,6 +1300,7 @@
     var capexHtml = capexNormalizationHtml(detail.capex_normalization);
 
     return (
+      divergenceHtml(valuation) +
       '<div class="hyper-note">' +
         '<div class="hyper-implied-line">' + escapeHtml(impliedText) + '</div>' +
         evHtml +
@@ -1291,7 +1423,7 @@
     }
     innerHtml += hyperGrowthExtraHtml(result.valuation);
     innerHtml += midgrowthRevenueExtraHtml(result.valuation);
-    return '<div class="card"><div class="card-title">Fair Value Fan Chart</div>' + innerHtml + '</div>';
+    return '<div class="card"><div class="card-title">Valuation Scenarios</div>' + innerHtml + '</div>';
   }
 
   // Updates the assumption strip's four cells for one scenario key
@@ -1450,106 +1582,225 @@
   // Self-contained inline SVG (no libraries -- CSP blocks them), same
   // hand-rolled approach as the fan chart. Overlays only what the user asked
   // for: support/resistance ranges and the fair-value band.
-  function priceChartCardHtml(technical, result) {
-    var t = technical || {};
-    var series = t.price_series || [];
-    if (series.length < 2) return "";
+  // Parse a "YYYY-MM-DD" price-series date into a Date (local midnight), or
+  // null if it doesn't look like one.
+  function parseYMD(s) {
+    var parts = String(s || "").split("-");
+    if (parts.length !== 3) return null;
+    var y = Number(parts[0]), m = Number(parts[1]), d = Number(parts[2]);
+    if (!y || !m || !d) return null;
+    return new Date(y, m - 1, d);
+  }
 
-    var W = 760, H = 340, PL = 48, PR = 104, PT = 14, PB = 28;
+  // Slice the (up-to-5y, multi-resolution) price_series down to the calendar
+  // window for a range (3m/1y/5y). The 3m/1y windows land entirely in the
+  // daily tail; 5y returns the whole series. Falls back to the last ~40
+  // points if a window would leave too few to draw.
+  function sliceSeriesByHorizon(series, range) {
+    if (!series || series.length < 2) return series || [];
+    var days = HORIZON_DAYS[range];
+    if (!days) return series;
+    var last = parseYMD(series[series.length - 1].t);
+    if (!last) return series;
+    var cutoff = last.getTime() - days * 86400000;
+    var out = series.filter(function (p) {
+      var d = parseYMD(p.t);
+      return d && d.getTime() >= cutoff;
+    });
+    return out.length >= 2 ? out : series.slice(-Math.min(series.length, 40));
+  }
+
+  // Implied annualized return IF price converged to `fv` by the end of the
+  // range: (fv/price)^(1/years) - 1. Not a forecast -- see the chart caption.
+  function annualizedReturn(fv, price, range) {
+    if (!isNum(fv) || !isNum(price) || Number(price) <= 0 || Number(fv) <= 0) return null;
+    var years = HORIZON_YEARS[range] || 1;
+    return Math.pow(Number(fv) / Number(price), 1 / years) - 1;
+  }
+
+  // Total return over the sliced window and its annualized volatility. Vol is
+  // resolution-aware: it annualizes the log-return stdev by the periods-per-
+  // year implied by the median calendar gap between points, so the daily
+  // (3m/1y) and weekly-tail (5y) slices are both handled correctly.
+  function computeRangeStats(slice) {
+    if (!slice || slice.length < 2) return null;
+    var first = Number(slice[0].c), last = Number(slice[slice.length - 1].c);
+    var ret = (isNum(first) && isNum(last) && first > 0) ? (last / first - 1) : null;
+    var rets = [], gaps = [];
+    for (var i = 1; i < slice.length; i++) {
+      var c0 = Number(slice[i - 1].c), c1 = Number(slice[i].c);
+      if (c0 > 0 && c1 > 0) rets.push(Math.log(c1 / c0));
+      var d0 = parseYMD(slice[i - 1].t), d1 = parseYMD(slice[i].t);
+      if (d0 && d1) gaps.push((d1.getTime() - d0.getTime()) / 86400000);
+    }
+    var vol = null;
+    if (rets.length >= 5) {
+      var mean = rets.reduce(function (a, b) { return a + b; }, 0) / rets.length;
+      var varr = rets.reduce(function (a, b) { return a + (b - mean) * (b - mean); }, 0) / (rets.length - 1);
+      var sd = Math.sqrt(varr);
+      gaps.sort(function (a, b) { return a - b; });
+      var medGap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 1.4;
+      var perYear = medGap > 0 ? 365 / medGap : 252;
+      vol = sd * Math.sqrt(perYear);
+    }
+    return { ret: ret, vol: vol };
+  }
+
+  // Two stat tiles above the chart: realized return over the selected window
+  // and its annualized volatility. Both recompute on a range switch.
+  function rangeStatsTilesHtml(slice, range) {
+    var s = computeRangeStats(slice);
+    if (!s) return "";
+    var retTxt = isNum(s.ret) ? fmtSignedPct(s.ret * 100) : "—";
+    var retCls = isNum(s.ret) ? (s.ret >= 0 ? "tech-pos" : "tech-neg") : "";
+    var volTxt = isNum(s.vol) ? Math.round(s.vol * 100) + "%" : "—";
+    return '<div class="tech-stats" style="margin-bottom:12px;">' +
+      '<div class="tech-stat"><div class="tech-stat-label">Getiri (' + escapeHtml(horizonLabel(range)) + ')</div>' +
+        '<div class="tech-stat-val ' + retCls + '">' + retTxt + '</div></div>' +
+      '<div class="tech-stat"><div class="tech-stat-label">Volatilite (yıl.)</div>' +
+        '<div class="tech-stat-val">' + volTxt + '</div></div>' +
+      '</div>';
+  }
+
+  // Client-side range switch (3m/1y/5y). Reuses the shared horizon-toggle
+  // styling; scoped by the .range-toggle wrapper so its clicks are distinct
+  // from the header's read-only analyzed-horizon indicator.
+  function rangeToggleHtml(current) {
+    var pills = ["3m", "1y", "5y"].map(function (v) {
+      return '<button type="button" class="horizon-pill' + (v === current ? " active" : "") +
+        '" data-range="' + v + '">' + escapeHtml(horizonLabel(v)) + '</button>';
+    }).join("");
+    return '<div class="horizon-toggle interactive range-toggle">' + pills + '</div>';
+  }
+
+  // The SVG price chart + fan for one range, plus its legend and caption.
+  // `slice` is the range-windowed series; `range` drives the horizon label and
+  // the annualized-return figures on the fan endpoints.
+  function priceChartSvg(t, result, range, slice) {
+    var W = 760, H = 340, PL = 48, PR = 112, PT = 14, PB = 28;
     var plotW = W - PL - PR, plotH = H - PT - PB;
 
     var supports = (t.support_levels || []).filter(function (z) { return isNum(z.low) && isNum(z.high); });
     var resistances = (t.resistance_levels || []).filter(function (z) { return isNum(z.low) && isNum(z.high); });
     var fv = (result || {}).fair_value_range || {};
-    var fvChoices = [
-      { key: "bull", label: "Bull", cls: "pchart-fv-bull", b: fv.bull },
-      { key: "base", label: "Base", cls: "pchart-fv-base", b: fv.base },
-      { key: "bear", label: "Bear", cls: "pchart-fv-bear", b: fv.bear },
-    ].filter(function (f) { return f.b && isNum(f.b.lo) && isNum(f.b.hi); });
 
-    // Show only ONE fair-value band: the one the price sits inside, else the
-    // nearest. Tie-break base > bull > bear (base is the headline scenario).
-    var fvBand = null;
-    if (fvChoices.length) {
-      var pref = { base: 0, bull: 1, bear: 2 };
-      function fvDist(f) {
-        if (!isNum(t.price)) return 0;
-        if (t.price >= f.b.lo && t.price <= f.b.hi) return 0;
-        return Math.min(Math.abs(t.price - f.b.lo), Math.abs(t.price - f.b.hi));
-      }
-      fvBand = fvChoices.slice().sort(function (a, b) {
-        var da = fvDist(a), db = fvDist(b);
-        return da !== db ? da - db : pref[a.key] - pref[b.key];
-      })[0];
-    }
+    function bandMid(b) { return (b && isNum(b.lo) && isNum(b.hi)) ? (Number(b.lo) + Number(b.hi)) / 2 : null; }
+    var baseMid = bandMid(fv.base);
+    var bullTop = (fv.bull && isNum(fv.bull.hi)) ? Number(fv.bull.hi)
+      : (fv.base && isNum(fv.base.hi) ? Number(fv.base.hi) : baseMid);
+    var bearBot = (fv.bear && isNum(fv.bear.lo)) ? Number(fv.bear.lo)
+      : (fv.base && isNum(fv.base.lo) ? Number(fv.base.lo) : baseMid);
+    var sens = ((result || {}).valuation || {}).sensitivity || {};
+    var sensLo = isNum(sens.lo) ? Number(sens.lo) : null;
+    var sensHi = isNum(sens.hi) ? Number(sens.hi) : null;
+    var highUncertainty = !!sens.high_uncertainty;
 
-    // y-domain spans the price series AND every overlay band, so nothing is
-    // clipped off-chart.
-    var vals = series.map(function (p) { return p.c; });
+    var hasFan = baseMid !== null && bullTop !== null && bearBot !== null && isNum(t.price);
+
+    var vals = slice.map(function (p) { return p.c; });
     if (isNum(t.price)) vals.push(t.price);
     supports.concat(resistances).forEach(function (z) { vals.push(z.low, z.high); });
-    if (fvBand) { vals.push(fvBand.b.lo, fvBand.b.hi); }
+    if (hasFan) {
+      vals.push(bullTop, bearBot, baseMid);
+      if (sensLo !== null) vals.push(sensLo);
+      if (sensHi !== null) vals.push(sensHi);
+    }
     var vmin = Math.min.apply(null, vals), vmax = Math.max.apply(null, vals);
     if (vmax <= vmin) vmax = vmin + 1;
     var padY = (vmax - vmin) * 0.06;
     var lo = vmin - padY, hi = vmax + padY;
 
-    var n = series.length;
-    function xOf(i) { return PL + plotW * (i / (n - 1)); }
+    var fanFrac = 0.30;
+    var histW = hasFan ? plotW * (1 - fanFrac) : plotW;
+    var xToday = PL + histW;
+    var xEnd = PL + plotW;
+
+    var n = slice.length;
+    function xOf(i) { return PL + histW * (i / (n - 1)); }
     function yOf(v) { return PT + plotH * (hi - v) / (hi - lo); }
 
-    // Price area + line.
-    var linePts = series.map(function (p, i) { return (i ? "L" : "M") + xOf(i).toFixed(1) + " " + yOf(p.c).toFixed(1); }).join(" ");
+    var linePts = slice.map(function (p, i) { return (i ? "L" : "M") + xOf(i).toFixed(1) + " " + yOf(p.c).toFixed(1); }).join(" ");
     var areaPath = "M" + PL + " " + (PT + plotH).toFixed(1) + " " +
-      series.map(function (p, i) { return "L" + xOf(i).toFixed(1) + " " + yOf(p.c).toFixed(1); }).join(" ") +
-      " L" + (PL + plotW).toFixed(1) + " " + (PT + plotH).toFixed(1) + " Z";
+      slice.map(function (p, i) { return "L" + xOf(i).toFixed(1) + " " + yOf(p.c).toFixed(1); }).join(" ") +
+      " L" + xToday.toFixed(1) + " " + (PT + plotH).toFixed(1) + " Z";
 
-    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Price chart">';
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Price and fair-value fan chart">';
 
-    // Y grid + labels (4 ticks).
     for (var g = 0; g <= 4; g++) {
       var vy = lo + (hi - lo) * g / 4;
       var yy = yOf(vy).toFixed(1);
-      svg += '<line class="pchart-grid" x1="' + PL + '" y1="' + yy + '" x2="' + (PL + plotW) + '" y2="' + yy + '"/>';
+      svg += '<line class="pchart-grid" x1="' + PL + '" y1="' + yy + '" x2="' + xEnd + '" y2="' + yy + '"/>';
       svg += '<text class="pchart-tick" x="' + (PL - 5) + '" y="' + (Number(yy) + 3) + '" text-anchor="end">' + fmtMoney(vy) + '</text>';
     }
-    // X date ticks (first / middle / last).
     [0, Math.floor((n - 1) / 2), n - 1].forEach(function (i) {
-      var parts = String(series[i].t || "").split("-");
-      var lbl = parts.length === 3 ? (parts[1] + "/" + parts[0].slice(2)) : series[i].t;
+      var parts = String(slice[i].t || "").split("-");
+      var lbl = parts.length === 3 ? (parts[1] + "/" + parts[0].slice(2)) : slice[i].t;
       var anchor = i === 0 ? "start" : (i === n - 1 ? "end" : "middle");
       svg += '<text class="pchart-tick" x="' + xOf(i).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="' + anchor + '">' + escapeHtml(lbl) + '</text>';
     });
 
-    // Support/resistance: one thin dark-red line per zone (at its price),
-    // labeled at the right margin. Same color/style for both sides -- only
-    // the R/S prefix tells them apart, which keeps the chart simple.
     function srLine(z, sideLabel) {
       var y = yOf(z.price).toFixed(1);
-      return '<line class="pchart-sr-line" x1="' + PL + '" y1="' + y + '" x2="' + (PL + plotW) + '" y2="' + y + '"/>' +
-        '<text class="pchart-band-label" x="' + (PL + plotW + 5) + '" y="' + (Number(y) + 3) + '">' + sideLabel + " " + fmtMoney(z.price) + '</text>';
+      return '<line class="pchart-sr-line" x1="' + PL + '" y1="' + y + '" x2="' + xToday.toFixed(1) + '" y2="' + y + '"/>' +
+        '<text class="pchart-band-label" x="' + (xEnd + 5) + '" y="' + (Number(y) + 3) + '">' + sideLabel + " " + fmtMoney(z.price) + '</text>';
     }
     resistances.forEach(function (z) { svg += srLine(z, "R"); });
     supports.forEach(function (z) { svg += srLine(z, "S"); });
 
-    // The single relevant fair-value band (dashed outline), labeled at left.
-    if (fvBand) {
-      var fvYhi = yOf(fvBand.b.hi), fvYlo = yOf(fvBand.b.lo);
-      var fvH = Math.max(2, fvYlo - fvYhi);
-      svg += '<rect class="pchart-fv-rect ' + fvBand.cls + '" x="' + PL + '" y="' + fvYhi.toFixed(1) + '" width="' + plotW + '" height="' + fvH.toFixed(1) + '"/>' +
-        '<text class="pchart-fv-label" x="' + (PL + 4) + '" y="' + (fvYhi + 10).toFixed(1) + '" fill="' +
-        (fvBand.key === "bull" ? "var(--green)" : fvBand.key === "bear" ? "var(--red)" : "#5aa7ff") +
-        '">Fair value (' + fvBand.label.toLowerCase() + ')</text>';
+    if (hasFan) {
+      var apexY = yOf(Number(t.price));
+      var yBull = yOf(bullTop), yBear = yOf(bearBot), yBase = yOf(baseMid);
+
+      svg += '<line class="pchart-now-line" x1="' + xToday.toFixed(1) + '" y1="' + PT + '" x2="' + xToday.toFixed(1) + '" y2="' + (PT + plotH).toFixed(1) + '"/>';
+
+      if (sensLo !== null && sensHi !== null) {
+        var ySensHi = yOf(sensHi), ySensLo = yOf(sensLo);
+        svg += '<polygon class="pchart-fan-outer" points="' +
+          xToday.toFixed(1) + ',' + apexY.toFixed(1) + ' ' +
+          xEnd.toFixed(1) + ',' + ySensHi.toFixed(1) + ' ' +
+          xEnd.toFixed(1) + ',' + ySensLo.toFixed(1) + '"/>';
+      }
+
+      svg += '<polygon class="pchart-fan-up" points="' +
+        xToday.toFixed(1) + ',' + apexY.toFixed(1) + ' ' +
+        xEnd.toFixed(1) + ',' + yBull.toFixed(1) + ' ' +
+        xEnd.toFixed(1) + ',' + yBase.toFixed(1) + '"/>';
+      svg += '<polygon class="pchart-fan-down" points="' +
+        xToday.toFixed(1) + ',' + apexY.toFixed(1) + ' ' +
+        xEnd.toFixed(1) + ',' + yBase.toFixed(1) + ' ' +
+        xEnd.toFixed(1) + ',' + yBear.toFixed(1) + '"/>';
+
+      svg += '<line class="pchart-fan-line pchart-fv-bull" x1="' + xToday.toFixed(1) + '" y1="' + apexY.toFixed(1) + '" x2="' + xEnd.toFixed(1) + '" y2="' + yBull.toFixed(1) + '"/>';
+      svg += '<line class="pchart-fan-baseline" x1="' + xToday.toFixed(1) + '" y1="' + apexY.toFixed(1) + '" x2="' + xEnd.toFixed(1) + '" y2="' + yBase.toFixed(1) + '"/>';
+      svg += '<line class="pchart-fan-line pchart-fv-bear" x1="' + xToday.toFixed(1) + '" y1="' + apexY.toFixed(1) + '" x2="' + xEnd.toFixed(1) + '" y2="' + yBear.toFixed(1) + '"/>';
+
+      // Scenario endpoint labels (value line + implied annualized-return line).
+      var annBull = annualizedReturn(bullTop, t.price, range);
+      var annBase = annualizedReturn(baseMid, t.price, range);
+      var annBear = annualizedReturn(bearBot, t.price, range);
+      function annLine(y, ann) {
+        return ann === null ? "" :
+          '<text class="pchart-fv-ann" x="' + (xEnd + 5) + '" y="' + (y + 11).toFixed(1) + '">' + fmtSignedPct(ann * 100) + '/y</text>';
+      }
+      svg += '<text class="pchart-fv-label" x="' + (xEnd + 5) + '" y="' + (yBull + 1).toFixed(1) + '" fill="var(--green)">Bull ' + fmtMoney(bullTop) + '</text>' + annLine(yBull, annBull);
+      svg += '<text class="pchart-fv-label" x="' + (xEnd + 5) + '" y="' + (yBase + 1).toFixed(1) + '" fill="#5aa7ff">Base ' + fmtMoney(baseMid) + '</text>' + annLine(yBase, annBase);
+      svg += '<text class="pchart-fv-label" x="' + (xEnd + 5) + '" y="' + (yBear + 1).toFixed(1) + '" fill="var(--red)">Bear ' + fmtMoney(bearBot) + '</text>' + annLine(yBear, annBear);
+
+      svg += '<text class="pchart-tick" x="' + ((xToday + xEnd) / 2).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle">' + escapeHtml(horizonLabel(range)) + ' →</text>';
     }
 
     svg += '<path class="pchart-area" d="' + areaPath + '"/>';
     svg += '<path class="pchart-line" d="' + linePts + '"/>';
 
-    // Current price marker.
     if (isNum(t.price)) {
-      var yp = yOf(t.price).toFixed(1);
-      svg += '<line class="pchart-now-line" x1="' + PL + '" y1="' + yp + '" x2="' + (PL + plotW) + '" y2="' + yp + '"/>';
-      svg += '<text class="pchart-now-label" x="' + (PL + plotW + 5) + '" y="' + (Number(yp) + 3) + '">' + fmtMoney(t.price) + '</text>';
+      var yp = yOf(t.price);
+      if (hasFan) {
+        svg += '<circle class="pchart-apex" cx="' + xToday.toFixed(1) + '" cy="' + yp.toFixed(1) + '" r="3"/>';
+        svg += '<text class="pchart-now-label" x="' + (PL + 4) + '" y="' + (PT + 12) + '">Now ' + fmtMoney(t.price) + '</text>';
+      } else {
+        svg += '<line class="pchart-now-line" x1="' + PL + '" y1="' + yp.toFixed(1) + '" x2="' + xEnd + '" y2="' + yp.toFixed(1) + '"/>';
+        svg += '<text class="pchart-now-label" x="' + (xEnd + 5) + '" y="' + (yp + 3).toFixed(1) + '">' + fmtMoney(t.price) + '</text>';
+      }
     }
     svg += '</svg>';
 
@@ -1557,10 +1808,63 @@
       '<div class="pchart-legend">' +
         '<span><span class="pchart-sw" style="background:#5aa7ff"></span>Price</span>' +
         ((resistances.length || supports.length) ? '<span><span class="pchart-sw" style="background:#7a1f1f"></span>Support / Resistance</span>' : "") +
-        (fvBand ? '<span><span class="pchart-sw" style="border:1px dashed #5aa7ff"></span>Fair value (' + fvBand.label.toLowerCase() + ')</span>' : "") +
+        (hasFan ? '<span><span class="pchart-sw" style="background:' + hexToRgba("#4de082", 0.5) + '"></span>Upside</span>' +
+                  '<span><span class="pchart-sw" style="background:' + hexToRgba("#ffb4ab", 0.5) + '"></span>Downside</span>' +
+                  (sensLo !== null && sensHi !== null ? '<span><span class="pchart-sw" style="background:' + hexToRgba("#8b919d", 0.35) + '"></span>Sensitivity</span>' : "") : "") +
       '</div>';
 
-    return '<div class="card pchart"><div class="card-title">Price &amp; Levels</div>' + svg + legend + '</div>';
+    var caption = hasFan
+      ? '<div class="pchart-caption">Yelpaze bugünkü fiyattan senaryo değerlerine (ayı · baz · boğa) açılır; sağdaki ' +
+        '<b>%/yıl</b>, fiyat ufuk sonunda o senaryoya yakınsarsa ima edilen yıllık getiridir — bir tahmin ya da ' +
+        'fiyat yörüngesi değildir.' +
+        (highUncertainty ? ' <span class="uncertainty-tag">Yüksek belirsizlik</span>' : "") +
+        '</div>'
+      : "";
+
+    return svg + legend + caption;
+  }
+
+  // Body of the price card for one range: stat tiles + chart. Re-rendered in
+  // place by wirePriceRange() when the user flips the range toggle.
+  function priceRangeBodyHtml(technical, result, range) {
+    var t = technical || {};
+    var series = t.price_series || [];
+    var slice = sliceSeriesByHorizon(series, range);
+    return rangeStatsTilesHtml(slice, range) + priceChartSvg(t, result, range, slice);
+  }
+
+  function priceChartCardHtml(technical, result, horizon) {
+    var t = technical || {};
+    var series = t.price_series || [];
+    if (series.length < 2) return "";
+    var defRange = HORIZON_DAYS[horizon] ? horizon : "1y";
+    return '<div class="card pchart">' +
+      '<div class="pchart-head">' +
+        '<div class="card-title">Price &amp; Fair-Value Fan</div>' +
+        rangeToggleHtml(defRange) +
+      '</div>' +
+      '<div id="price-range-body">' + priceRangeBodyHtml(technical, result, defRange) + '</div>' +
+      '</div>';
+  }
+
+  // Wire the client-side range toggle: flipping 3m/1y/5y re-slices the chart
+  // window and recomputes the stat tiles + annualized-return figures with no
+  // server round-trip (valuation is horizon-independent). This is a chart
+  // *lens*, separate from the analyzed horizon shown in the header pill.
+  function wirePriceRange(technical, result) {
+    var toggle = bodyEl.querySelector(".range-toggle");
+    var body = document.getElementById("price-range-body");
+    if (!toggle || !body) return;
+    toggle.addEventListener("click", function (e) {
+      var btn = e.target.closest ? e.target.closest(".horizon-pill") : null;
+      if (!btn) return;
+      var range = btn.getAttribute("data-range");
+      if (!range) return;
+      toggle.querySelectorAll(".horizon-pill").forEach(function (p) {
+        p.classList.toggle("active", p === btn);
+      });
+      body.innerHTML = priceRangeBodyHtml(technical, result, range);
+    });
   }
 
   // ---- Verdict cards (fundamental/technical/profile fit) ------------------
@@ -1589,6 +1893,58 @@
     return '<span class="' + (num >= 0 ? "tech-pos" : "tech-neg") + '">' + txt + '</span>';
   }
 
+  // ---- S/R helpers (shared by the trigger ladder + the detail rows) -------
+  // Why a level matters: 52-week extreme / how many swing points tested it /
+  // Fibonacci retracement / a major moving average. `withLast` appends the
+  // recency of the last test (used only in the collapsed detail section).
+  function srReason(lvl, withLast) {
+    var parts = [];
+    if (lvl.is_52w_high) parts.push("52h tepe");
+    else if (lvl.is_52w_low) parts.push("52h dip");
+    else if ((lvl.touches || 0) >= 1) parts.push(lvl.touches + "× test");
+    if (lvl.fib) parts.push("Fib " + lvl.fib);
+    if (lvl.ma) parts.push(lvl.ma);
+    var base = parts.length ? parts.join(" + ") : "seviye";
+    if (withLast && lvl.last_touch) base += " · son " + lvl.last_touch;
+    return base;
+  }
+  // Strength: a 52-week extreme, a repeatedly-tested swing, or a swing that
+  // coincides with a Fibonacci level or a major moving average is Strong; a
+  // lone fib / lone MA / single touch is Medium.
+  function srStrength(lvl) {
+    var touches = lvl.touches || 0;
+    var is52wNearEnough = (lvl.is_52w_high || lvl.is_52w_low) && Math.abs(lvl.dist_pct) <= 60;
+    if (is52wNearEnough || touches >= 2 || (touches >= 1 && (lvl.fib || lvl.ma))) {
+      return { label: "Strong", cls: "sr-str-strong" };
+    }
+    if (touches === 1 || lvl.fib || lvl.ma) return { label: "Medium", cls: "sr-str-medium" };
+    return { label: "Weak", cls: "sr-str-weak" };
+  }
+  // A level is a price RANGE (low–high); collapse to one number if the band
+  // is trivially thin.
+  function srRange(lvl) {
+    if (lvl.low != null && lvl.high != null && lvl.high - lvl.low > 0.01) {
+      return fmtMoney(lvl.low) + "–" + fmtMoney(lvl.high);
+    }
+    return fmtMoney(lvl.price != null ? lvl.price : lvl.low);
+  }
+
+  // The action a daily close through a resistance / support implies. SMA-tagged
+  // levels get the "trend line" framing (SMA200 = long-term, SMA50 = short-term)
+  // -- that's the whole point: a close through a moving average flips the trend
+  // regime, not just a horizontal shelf.
+  function resistanceEffect(lvl, regimeDir) {
+    if (lvl.ma && /200/.test(lvl.ma)) return "uzun vadeli UPTREND onayı";
+    if (lvl.ma && /50/.test(lvl.ma)) return regimeDir === "up" ? "uptrend güçlenir" : "düşüş trendi kırılır";
+    return "direnç aşılır, yukarı alan açılır";
+  }
+  function supportEffect(lvl, regimeDir) {
+    if (lvl.is_52w_low) return "yeni 52 hafta dibi";
+    if (lvl.ma && /200/.test(lvl.ma)) return "uzun vadeli trend desteği kırılır";
+    if (lvl.ma && /50/.test(lvl.ma)) return regimeDir === "up" ? "uptrend zayıflar" : "düşüş hızlanır";
+    return "düşüş hızlanır";
+  }
+
   function technicalCardHtml(technical, verdictText) {
     var t = technical || {};
     // No usable indicators at all -> fall back to the plain verdict card.
@@ -1597,7 +1953,109 @@
     }
     var color = bucketColor(verdictText);
 
-    // RSI gauge (0-100, oversold<30 / overbought>70 zones shaded in the bar).
+    // ---- Trend regime: price vs SMA50/SMA200 (the two trend lines) --------
+    var p = isNum(t.price) ? Number(t.price) : null;
+    var s50 = isNum(t.sma50) ? Number(t.sma50) : null;
+    var s200 = isNum(t.sma200) ? Number(t.sma200) : null;
+    var above50 = (p !== null && s50 !== null) ? p >= s50 : null;
+    var above200 = (p !== null && s200 !== null) ? p >= s200 : null;
+    var regime;
+    if (above50 === true && above200 === true) regime = { label: "YÜKSELİŞ TRENDİ", cls: "regime-up", dir: "up", arrow: "↑" };
+    else if (above50 === false && above200 === false) regime = { label: "DÜŞÜŞ TRENDİ", cls: "regime-down", dir: "down", arrow: "↓" };
+    else if (above50 !== null || above200 !== null) regime = { label: "GEÇİŞ / NÖTR", cls: "regime-neutral", dir: "flat", arrow: "→" };
+    else regime = { label: "—", cls: "regime-neutral", dir: "flat", arrow: "" };
+
+    var evi = [];
+    if (s50 !== null && s200 !== null) {
+      var lead = (above50 === above200)
+        ? (above50 ? "Fiyat iki ortalamanın da üstünde" : "Fiyat iki ortalamanın da altında")
+        : "Fiyat ortalamalar arasında";
+      evi.push(lead + " (SMA50 " + fmtMoney(s50) + ", SMA200 " + fmtMoney(s200) + ")");
+    } else if (s50 !== null) {
+      evi.push("SMA50 " + fmtMoney(s50) + (above50 ? " üstünde" : " altında"));
+    }
+    if (t.golden_cross) evi.push("altın kesişim");
+    else if (t.death_cross) evi.push("ölüm kesişimi");
+    if (isNum(t.macd_hist)) evi.push("MACD " + (t.macd_hist > 0 ? "bullish" : t.macd_hist < 0 ? "bearish" : "flat"));
+    if (t.obv_trend) evi.push("OBV " + (t.obv_trend === "up" ? "toplama" : t.obv_trend === "down" ? "dağıtım" : "yatay"));
+
+    var regimeHtml =
+      '<div class="trend-regime">' +
+        '<span class="regime-badge ' + regime.cls + '">' + regime.arrow + ' ' + regime.label + '</span>' +
+        (isNum(t.rsi14) ? '<span class="regime-sub">RSI ' + Math.round(Number(t.rsi14)) + '</span>' : '') +
+      '</div>' +
+      (evi.length ? '<div class="regime-evi">' + escapeHtml(evi.join(" · ")) + '</div>' : '');
+
+    // ---- Trigger ladder: every S/R level as a "close above/below -> X" rule.
+    var res = (t.resistance_levels || []).filter(function (z) { return isNum(z.price) || isNum(z.low); });
+    var sup = (t.support_levels || []).filter(function (z) { return isNum(z.price) || isNum(z.low); });
+
+    function absDist(lvl) { return isNum(lvl.dist_pct) ? Math.abs(Number(lvl.dist_pct)) : Infinity; }
+    function nearestOf(list) {
+      var best = null;
+      list.forEach(function (l) { if (!best || absDist(l) < absDist(best)) best = l; });
+      return best;
+    }
+    var nearRes = nearestOf(res), nearSup = nearestOf(sup);
+    // The PRIMARY trigger is the one that flips the current regime: in a
+    // downtrend/neutral that's the nearest resistance (a close above breaks the
+    // downtrend); in an uptrend it's the nearest support (a close below ends it).
+    // Falls back to the other side when the preferred side has no level.
+    var nearest;
+    if (regime.dir === "up") {
+      nearest = nearSup ? { lvl: nearSup, side: "sup" } : (nearRes ? { lvl: nearRes, side: "res" } : null);
+    } else {
+      nearest = nearRes ? { lvl: nearRes, side: "res" } : (nearSup ? { lvl: nearSup, side: "sup" } : null);
+    }
+
+    var calloutHtml = "";
+    if (nearest) {
+      var nl = nearest.lvl;
+      if (nearest.side === "res") {
+        calloutHtml = '<div class="trend-callout callout-up"><span class="co-arrow">▲</span><div>' +
+          'Sıradaki tetik: <b>' + srRange(nl) + ' üstünde günlük kapanış</b> (' + techSigned(nl.dist_pct) + ') → ' +
+          escapeHtml(resistanceEffect(nl, regime.dir)) + '.</div></div>';
+      } else {
+        calloutHtml = '<div class="trend-callout callout-down"><span class="co-arrow">▼</span><div>' +
+          'Sıradaki tetik: <b>' + srRange(nl) + ' altında günlük kapanış</b> (' + techSigned(nl.dist_pct) + ') → ' +
+          escapeHtml(supportEffect(nl, regime.dir)) + '.</div></div>';
+      }
+    }
+
+    function trigRow(side, lvl) {
+      var s = srStrength(lvl);
+      var isNear = nearest && nearest.side === side && nearest.lvl === lvl;
+      var effect = side === "res" ? resistanceEffect(lvl, regime.dir) : supportEffect(lvl, regime.dir);
+      var verb = side === "res" ? "Üstünde kapanış" : "Altında kapanış";
+      var arrow = side === "res" ? "▲" : "▼";
+      return '<div class="trig-row trig-' + (side === "res" ? "up" : "down") + (isNear ? " trig-nearest" : "") + '">' +
+        '<span class="trig-arrow">' + arrow + '</span>' +
+        '<span class="trig-price">' + srRange(lvl) + '</span>' +
+        '<span class="sr-strength-badge ' + s.cls + '">' + s.label + '</span>' +
+        '<span class="trig-rule"><b>' + verb + '</b> → ' + escapeHtml(effect) +
+          ' <span class="trig-reason">(' + escapeHtml(srReason(lvl, false)) + ')</span></span>' +
+        '<span class="trig-dist">' + techSigned(lvl.dist_pct) + '</span>' +
+      '</div>';
+    }
+
+    var ladderHtml;
+    if (res.length || sup.length) {
+      var rows = res.slice().reverse().map(function (r) { return trigRow("res", r); });
+      rows.push(
+        '<div class="trig-row trig-now">' +
+          '<span class="trig-arrow">◆</span>' +
+          '<span class="trig-price">' + fmtMoney(t.price) + '</span>' +
+          '<span class="trig-now-tag">ŞU AN</span>' +
+          '<span class="trig-rule" style="color:var(--muted)">' + escapeHtml(regime.label.toLowerCase()) + '</span>' +
+        '</div>'
+      );
+      sup.forEach(function (s) { rows.push(trigRow("sup", s)); });
+      ladderHtml = '<div class="trigger-ladder">' + rows.join("") + '</div>';
+    } else {
+      ladderHtml = '<div class="tech-empty">Trend tetikleri için yeterli fiyat geçmişi yok.</div>';
+    }
+
+    // ---- Collapsed detail: RSI gauge + momentum grid + divergence + fib ----
     var rsiHtml = "";
     if (isNum(t.rsi14)) {
       var pos = Math.max(0, Math.min(100, Number(t.rsi14)));
@@ -1608,12 +2066,10 @@
           '<span class="rsi-val">' + Math.round(Number(t.rsi14)) + '</span>' +
         '</div>';
     }
-
     function tile(label, valHtml) {
       return '<div class="tech-stat"><div class="tech-stat-label">' + label +
         '</div><div class="tech-stat-val">' + valHtml + '</div></div>';
     }
-
     var tiles = [
       tile("1M", techSigned(t.return_1m_pct)),
       tile("3M", techSigned(t.return_3m_pct)),
@@ -1621,12 +2077,6 @@
       tile("vs SMA50", techSigned(t.dist_sma50_pct)),
       tile("vs SMA200", techSigned(t.dist_sma200_pct)),
     ];
-    var trend = "—";
-    if (t.sma50_above_sma200 === true) trend = '<span class="tech-pos">Uptrend</span>';
-    else if (t.sma50_above_sma200 === false) trend = '<span class="tech-neg">Downtrend</span>';
-    if (t.golden_cross) trend += ' <span class="tech-pos">· GC</span>';
-    else if (t.death_cross) trend += ' <span class="tech-neg">· DC</span>';
-    tiles.push(tile("Trend", trend));
     if (isNum(t.range_position_pct)) tiles.push(tile("52W Range", Math.round(Number(t.range_position_pct)) + "%"));
     if (isNum(t.volatility_20d)) tiles.push(tile("Volatility", Math.round(Number(t.volatility_20d) * 100) + "%"));
     if (isNum(t.macd_hist)) {
@@ -1655,8 +2105,6 @@
         ? '<span class="tech-pos">Bullish ↑</span>'
         : '<span class="tech-neg">Bearish ↓</span>'));
     }
-
-    // A divergence is a notable reversal warning -> spell out the evidence.
     var divNote = "";
     if (t.rsi_divergence_detail) {
       var d = t.rsi_divergence_detail;
@@ -1670,72 +2118,10 @@
           d.rsi_prev + ' → ' + d.rsi_last + ') — selling pressure fading.</div>';
       }
     }
-
-    // Support/resistance ladder: resistances above (farthest first so the
-    // nearest sits just over the Price row), the Price row, then supports.
-    // Why a level matters: 52-week extreme / how many swing points tested it /
-    // Fibonacci retracement, plus when it was last tested (recency).
-    function srReason(lvl) {
-      var parts = [];
-      if (lvl.is_52w_high) parts.push("52-week high");
-      else if (lvl.is_52w_low) parts.push("52-week low");
-      else if ((lvl.touches || 0) >= 1) parts.push(lvl.touches + "× tested");
-      if (lvl.fib) parts.push("Fib " + lvl.fib);
-      if (lvl.ma) parts.push("at " + lvl.ma);
-      var base = parts.length ? parts.join(" + ") : "level";
-      if (lvl.last_touch) base += " · last " + lvl.last_touch;
-      return base;
-    }
-    // Strength: a 52-week extreme, a repeatedly-tested swing, or a swing that
-    // coincides with a Fibonacci level or a major moving average is Strong; a
-    // lone fib / lone MA / single touch is Medium. (The selector already keeps
-    // only the strongest near & far.)
-    function srStrength(lvl) {
-      var touches = lvl.touches || 0;
-      var is52wNearEnough = (lvl.is_52w_high || lvl.is_52w_low) && Math.abs(lvl.dist_pct) <= 60;
-      if (is52wNearEnough || touches >= 2 || (touches >= 1 && (lvl.fib || lvl.ma))) {
-        return { label: "Strong", cls: "sr-str-strong" };
-      }
-      if (touches === 1 || lvl.fib || lvl.ma) return { label: "Medium", cls: "sr-str-medium" };
-      return { label: "Weak", cls: "sr-str-weak" };
-    }
-    // A level is a price RANGE (low–high); collapse to one number if the band
-    // is trivially thin.
-    function srRange(lvl) {
-      if (lvl.low != null && lvl.high != null && lvl.high - lvl.low > 0.01) {
-        return fmtMoney(lvl.low) + "–" + fmtMoney(lvl.high);
-      }
-      return fmtMoney(lvl.price != null ? lvl.price : lvl.low);
-    }
-    function srRow(sideLabel, cls, lvl) {
-      var s = srStrength(lvl);
-      return '<div class="sr-row ' + cls + '">' +
-        '<span class="sr-side">' + sideLabel + '</span>' +
-        '<span class="sr-lvl">' + srRange(lvl) + '</span>' +
-        '<span class="sr-dist">' + techSigned(lvl.dist_pct) + '</span>' +
-        '<span class="sr-why">' + escapeHtml(srReason(lvl)) + '</span>' +
-        '<span class="sr-strength-badge ' + s.cls + '" title="' + (lvl.touches || 0) + ' swing points">' + s.label + '</span>' +
-      '</div>';
-    }
     var fibCaption = "";
     if (t.fibonacci && isNum(t.fibonacci.low) && isNum(t.fibonacci.high)) {
       fibCaption = '<div class="sr-fib-caption">Fib retracement of ' + fmtMoney(t.fibonacci.low) + '–' +
         fmtMoney(t.fibonacci.high) + ' (' + (t.fibonacci.direction === "up" ? "uptrend" : "downtrend") + ')</div>';
-    }
-    var res = (t.resistance_levels || []).slice().reverse();
-    var sup = t.support_levels || [];
-    var srHtml;
-    if (res.length || sup.length) {
-      var rows = res.map(function (r) { return srRow("Resistance", "sr-res", r); });
-      rows.push(
-        '<div class="sr-row sr-price"><span class="sr-side">Price</span>' +
-        '<span class="sr-lvl">' + fmtMoney(t.price) + '</span>' +
-        '<span class="sr-dist">now</span><span class="sr-why"></span><span class="sr-strength-badge"></span></div>'
-      );
-      sup.forEach(function (s) { rows.push(srRow("Support", "sr-sup", s)); });
-      srHtml = '<div class="sr-ladder">' + rows.join("") + '</div>';
-    } else {
-      srHtml = '<div class="tech-empty">Not enough price history for support/resistance levels.</div>';
     }
 
     return (
@@ -1745,16 +2131,39 @@
           '<div class="gauge"><div class="gauge-marker" style="left:' + GAUGE_POSITION[color] + '%;">▲</div></div>' +
           '<div><span class="badge badge-' + color + '">' + escapeHtml(verdictText || "—") + '</span></div>' +
           (t.verdict_detail ? '<div class="verdict-note">' + escapeHtml(t.verdict_detail) + '</div>' : "") +
-          '<div class="tech-section-title">Momentum</div>' +
-          rsiHtml +
-          '<div class="tech-stats">' + tiles.join("") + '</div>' +
-          divNote +
-          '<div class="tech-section-title">Support / Resistance</div>' +
-          fibCaption +
-          srHtml +
+          regimeHtml +
+          calloutHtml +
+          ladderHtml +
+          '<button type="button" class="tech-toggle" aria-expanded="false">Momentum &amp; detaylar ▾</button>' +
+          '<div class="tech-details" hidden>' +
+            '<div class="tech-section-title">Momentum</div>' +
+            rsiHtml +
+            '<div class="tech-stats">' + tiles.join("") + '</div>' +
+            divNote +
+            (fibCaption ? '<div class="tech-section-title">Seviye ayrıntıları</div>' + fibCaption : "") +
+          '</div>' +
         '</div>' +
       '</div>'
     );
+  }
+
+  // Wire the collapsible momentum/detail section of the Technical card.
+  function wireTechnical() {
+    var btn = bodyEl.querySelector(".tech-toggle");
+    var det = bodyEl.querySelector(".tech-details");
+    if (!btn || !det) return;
+    btn.addEventListener("click", function () {
+      var opening = det.hasAttribute("hidden");
+      if (opening) {
+        det.removeAttribute("hidden");
+        btn.setAttribute("aria-expanded", "true");
+        btn.innerHTML = "Momentum &amp; detaylar ▴";
+      } else {
+        det.setAttribute("hidden", "");
+        btn.setAttribute("aria-expanded", "false");
+        btn.innerHTML = "Momentum &amp; detaylar ▾";
+      }
+    });
   }
 
   // ---- Sensitivity analysis card -------------------------------------------
@@ -2019,7 +2428,7 @@
     var html =
       headerCardHtml(payload) +
       weightBarHtml(result._weights) +
-      priceChartCardHtml(technical, result) +
+      priceChartCardHtml(technical, result, payload.horizon) +
       fanChartCardHtml(result, payload.price) +
       (valuation ? triangulationRowHtml(valuation, result.confidence) : "") +
       verdictCardHtml("Fundamental", result.fundamental_verdict, result.horizon_note) +
@@ -2037,6 +2446,8 @@
 
     bodyEl.innerHTML = html;
     wireFanChart(fv, result.scenario_returns);
+    wirePriceRange(technical, result);
+    wireTechnical();
   }
 
   // ===================================================================

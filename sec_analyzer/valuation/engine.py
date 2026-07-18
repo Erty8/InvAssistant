@@ -377,6 +377,7 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
             "signals": {"dcf": "veri_yok", "reverse_dcf": "veri_yok", "multiples": "veri_yok"},
             "confidence": "DÜŞÜK",
             "direction": "belirsiz",
+            "divergence": None,
         },
         "hyper_growth": False,
         "hyper_growth_detail": None,
@@ -1971,11 +1972,30 @@ def _build_hyper_growth(
         }
         raw_target = {"bear": target_base * 0.7, "base": target_base, "bull": target_base * 1.2}
 
+        # --- Deceleration guard (rule-based start-growth cap) ---------------
+        # A scenario's start growth must not exceed the latest realized YoY
+        # growth. Assuming a visibly decelerating company first RE-accelerates
+        # (e.g. bull's raw ``growth_anchor * 1.2``) before fading to terminal
+        # is internally inconsistent -- the fade already models growth rolling
+        # over, so re-acceleration on top of it double-counts optimism. A
+        # genuine re-acceleration thesis is not forbidden, only made explicit:
+        # it enters ONLY as a per-scenario ``start_growth`` override in
+        # ``hyper_growth_extras`` (AI mode), and is surfaced with a deviation
+        # note (how far above the statistical base it sits) rather than applied
+        # silently. When the latest YoY isn't usable, no cap is applied and
+        # behavior is unchanged. This also subsumes the "bull compounds both
+        # growth AND margin by 1.2" concern in rule-based mode: once bull's
+        # start growth is capped at the same realized YoY as base, its extra
+        # optimism can only come from the margin lever, not a second growth
+        # uplift.
+        decel_cap = latest_yoy if (latest_yoy is not None and latest_yoy > 0) else None
+
         start_growth_by_scenario = {}
         target_by_scenario = {}
         steady_state_by_scenario = {}
         probabilities = {}
         target_margin_overridden = {}
+        start_growth_capped_keys: List[str] = []
 
         for key in _SCENARIO_KEYS:
             scenario_extras = per_scenario_extras.get(key) or {}
@@ -2000,10 +2020,35 @@ def _build_hyper_growth(
             if _is_number(override_prob) and 0.0 <= override_prob <= 1.0:
                 prob = override_prob
 
-            start_growth_by_scenario[key] = raw_start_growth[key]
+            override_start = scenario_extras.get("start_growth")
+            if _is_number(override_start):
+                # AI-mode explicit assumption: honored, but a re-acceleration
+                # above the statistical base is flagged as a deviation.
+                start_growth_by_scenario[key] = override_start
+                base_ref = decel_cap if decel_cap is not None else raw_start_growth[key]
+                if override_start > base_ref:
+                    notes.append(
+                        f"{key.capitalize()} senaryosu başlangıç büyümesi %{override_start * 100:.0f} olarak "
+                        f"açık bir varsayımla (hyper_growth_extras) belirlendi; istatistiksel tabanın "
+                        f"(%{base_ref * 100:.0f}) üzerinde — re-acceleration tezi bilinçli olarak fiyatlanıyor."
+                    )
+            elif decel_cap is not None and raw_start_growth[key] > decel_cap:
+                start_growth_by_scenario[key] = decel_cap
+                start_growth_capped_keys.append(key)
+            else:
+                start_growth_by_scenario[key] = raw_start_growth[key]
+
             target_by_scenario[key] = target
             steady_state_by_scenario[key] = steady_state_year
             probabilities[key] = prob
+
+        if start_growth_capped_keys:
+            names = ", ".join(k.capitalize() for k in start_growth_capped_keys)
+            notes.append(
+                f"Yavaşlama koruması: {names} senaryo(lar)ının başlangıç büyümesi, son gerçekleşen yıllık "
+                f"büyüme (%{decel_cap * 100:.0f}) ile sınırlandı — yavaşlayan bir şirketin önce yeniden "
+                "hızlanacağı varsayılmadı (re-acceleration yalnızca AI modunda açık varsayımla girebilir)."
+            )
 
         # --- WP3: hyper-grower discount-rate fade (Damodaran fade) --------
         # A revenue-first DCF already fades revenue growth and FCF margin
@@ -2275,6 +2320,15 @@ def _build_hyper_growth(
             mature_discount_rate=mature_discount_rate,
         )
 
+        # Third reverse lens: the flat cost of equity the price implies when
+        # growth and margin are held at the model's base assumptions. A large
+        # gap vs the model's own cohort/mature discount rate is one face of a
+        # model-market divergence (see triangulate.py's governor).
+        implied_discount_rate = revenue_dcf.implied_discount_rate(
+            price, latest_revenue, base_start_growth, terminal_growth, current_margin,
+            base_target, base_steady_state_year, shares, annual_dilution, financing_shares,
+        )
+
         implied_tam_share = (
             implied_revenue_10y / tam_usd if (implied_revenue_10y is not None and tam_usd is not None) else None
         )
@@ -2291,8 +2345,10 @@ def _build_hyper_growth(
                 "revenue_10y": implied_revenue_10y,
                 "revenue_multiple": implied_revenue_multiple,
                 "steady_state_margin": implied_margin,
+                "discount_rate": implied_discount_rate,
                 "tam_share": implied_tam_share,
             },
+            "base_discount_rate": round(base_discount_rate, 4),
             "target_margin_source": target_margin_source,
             "target_margin_flag": target_margin_flag,
             "target_margin_pct": round(target_base, 4),
