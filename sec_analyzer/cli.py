@@ -43,6 +43,7 @@ from sec_analyzer.calibrate import (
     summarize_ratios,
 )
 from sec_analyzer.config import Config, ConfigError
+from sec_analyzer.fetch.analyst import get_analyst_targets
 from sec_analyzer.fetch.companyfacts import get_company_facts, get_submissions
 from sec_analyzer.fetch.filings import estimate_next_earnings
 from sec_analyzer.fetch.prices import PriceDataError, get_price_history, latest_price
@@ -179,6 +180,25 @@ def _fetch_price_and_technical(
     except PriceDataError as exc:
         logger.warning("Price data unavailable for %s: %s", ticker, exc)
         return None, None, None, None
+
+
+def _fetch_analyst_targets(ticker: str, no_cache: bool) -> Optional[dict]:
+    """Best-effort fetch of consensus analyst price targets; never raises.
+
+    Display-only cross-check (see :mod:`sec_analyzer.fetch.analyst`) -- never
+    feeds the valuation engine. Any failure is logged and swallowed so it
+    never blocks the rest of ``analyze``.
+
+    Returns:
+        The dict returned by
+        :func:`sec_analyzer.fetch.analyst.get_analyst_targets`, or ``None``
+        if unavailable or the fetch fails for any reason.
+    """
+    try:
+        return get_analyst_targets(ticker, no_cache=no_cache)
+    except Exception:  # noqa: BLE001 - a display-only cross-check must never be fatal
+        logger.warning("Could not fetch analyst targets for %s", ticker, exc_info=True)
+        return None
 
 
 def _fetch_submissions(cik: str, ticker: str, no_cache: bool) -> Optional[dict]:
@@ -328,6 +348,48 @@ def _scenario_line(label: str, scenario: Optional[dict]) -> str:
     growth = scenario.get("growth") or _DASH
     dr = _dr_suffix(scenario.get("discount_rate"))
     return f"{label} {range_text} ({growth}, {dr})"
+
+
+def _analyst_line(analyst: Optional[dict], price) -> Optional[str]:
+    """Render the display-only consensus analyst-target line for the verdict
+    card, e.g. ``"Analist:     $128 ort (34 analist) · +%12 · aralık $95–$160"``.
+
+    This is a reference cross-check only (see
+    :mod:`sec_analyzer.fetch.analyst`) -- it never feeds the valuation
+    engine. ``None`` when ``analyst`` is falsy or has no usable
+    ``target_mean``.
+
+    Args:
+        analyst: The dict returned by
+            :func:`sec_analyzer.fetch.analyst.get_analyst_targets`, or
+            ``None``.
+        price: The latest market price per share (used only to compute the
+            upside vs. the consensus mean), or ``None``.
+    """
+    if not analyst or analyst.get("target_mean") is None:
+        return None
+
+    target_mean = analyst["target_mean"]
+    parts = [f"{_fmt_money(target_mean)} ort"]
+
+    num_analysts = analyst.get("num_analysts")
+    if num_analysts is not None:
+        parts.append(f"({num_analysts} analist)")
+
+    try:
+        price_is_positive = price is not None and float(price) > 0
+    except (TypeError, ValueError):
+        price_is_positive = False
+    if price_is_positive:
+        upside = (target_mean / float(price) - 1) * 100
+        parts.append(f"· {_signed_pct_tr(upside)}")
+
+    target_low, target_high = analyst.get("target_low"), analyst.get("target_high")
+    if target_low is not None and target_high is not None:
+        parts.append(f"· aralık {_fmt_money(target_low)}–{_fmt_money(target_high)}")
+
+    label = "Analist:".ljust(_CARD_LABEL_WIDTH)
+    return f"{label}{' '.join(parts)}"
 
 
 def _valuation_method_label(valuation: dict) -> str:
@@ -679,6 +741,7 @@ def _print_verdict_card(
     metrics: Optional[dict] = None,
     flags: Optional[List[dict]] = None,
     technical: Optional[dict] = None,
+    analyst: Optional[dict] = None,
 ) -> None:
     """Print the compact, Turkish-language terminal verdict card.
 
@@ -711,6 +774,11 @@ def _print_verdict_card(
             :func:`sec_analyzer.normalize.red_flags.detect_red_flags`, used
             as a fallback "Red flags:" line when ``result`` has no
             ``red_flags_comment`` (e.g. an error result).
+        analyst: The dict returned by
+            :func:`sec_analyzer.fetch.analyst.get_analyst_targets`, or
+            ``None``. Display-only consensus cross-check, rendered as an
+            "Analist:" line right after the bear/bull scenario line (see
+            :func:`_analyst_line`); never feeds the valuation engine.
 
     The "Olaylar:" line summarizes ``result["events"]`` (the recent 8-K event
     list attached in ``cmd_analyze`` via
@@ -750,6 +818,10 @@ def _print_verdict_card(
     else:
         print(f"Fair Value (base): {base_range}")
     print(f"  {_scenario_line('bear', fv.get('bear'))} | {_scenario_line('bull', fv.get('bull'))}")
+
+    analyst_line = _analyst_line(analyst, metrics.get('price'))
+    if analyst_line:
+        print(f"  {analyst_line}")
 
     if valuation:
         print(_reverse_dcf_line(result, valuation))
@@ -817,6 +889,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     price, as_of, technical, price_df = _fetch_price_and_technical(
         args.ticker, horizon, args.no_cache
     )
+    analyst = _fetch_analyst_targets(args.ticker, args.no_cache)
 
     metrics = compute_metrics(normalized, ratios, price)
     flags = detect_red_flags(normalized, ratios, metrics, horizon)
@@ -865,7 +938,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         except Exception:  # noqa: BLE001 - persistence failure must not be fatal
             logger.warning("Failed to save verdict for %s", args.ticker, exc_info=True)
 
-    _print_verdict_card(args.ticker, horizon, result, metrics, flags, technical)
+    _print_verdict_card(args.ticker, horizon, result, metrics, flags, technical, analyst=analyst)
 
     if getattr(args, "verbose", False):
         print("\n" + json.dumps(result, indent=2, ensure_ascii=False))
@@ -881,6 +954,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
                 flags=flags,
                 price=price,
                 as_of=as_of,
+                analyst=analyst,
             )
             print(f"\nHTML report saved to: {report_path}")
         except Exception as exc:  # noqa: BLE001 - a report-writing failure must not crash analyze

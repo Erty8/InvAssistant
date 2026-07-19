@@ -27,6 +27,31 @@ Design goals, matching the rest of ``sec_analyzer.interpret``:
 * **Turkish user-facing strings; English code/docstrings.** Trigger text,
   verdict-style labels, and rationale sentences are Turkish, per the rest of
   the ``sec_analyzer.interpret`` package.
+
+The entry plan (:func:`compute_entry_plan`) is two-directional per
+METODOLOJI.md Sec.1 item 5: each tranche carries a ``kind`` of ``"dip"``
+(buy-the-dip, triggered by a daily close below a level) or ``"breakout"``
+(uptrend-confirmation, triggered by a daily close above a reclaimed/broken
+level). Dip tranches share one structural invalidation level; breakout
+tranches each carry their own failed-breakout invalidation (their own
+trigger level, less a buffer). The defensive R:R-monotonicity check is
+scoped to consecutive dip-kind tranches only, since only they share a
+common invalidation and are expected to move monotonically as price falls.
+
+Accepted design tradeoff (deliberate, not a bug): sizing is unified across
+both kinds -- one ~100%-summing, price-descending weight ladder covering
+every selected tranche regardless of ``kind`` (the cheapest tranche, dip or
+breakout, always gets the largest weight; see :data:`_SIZE_WEIGHT_EXPONENT`).
+This is a value-accumulation posture: the plan is sized as if the position
+will be built up gradually as price falls, not as if any single directional
+move (a pure breakout rally, or a pure dip) will ever deploy the full 100%.
+Two consequences follow, and both are intentional: (1) the largest
+allocation can land on the lowest-R:R (deepest-dip) tranche rather than the
+best risk/reward one, since size tracks "how cheap" rather than "how good";
+and (2) the "lower-priced -> higher R:R" monotonicity expectation described
+above is scoped to the dip ladder specifically (which shares one structural
+stop) -- breakout tranches use their own tighter, per-tranche stops and are
+not comparable to dip tranches (or to each other) on that R:R scale.
 """
 
 import logging
@@ -55,7 +80,10 @@ _ROUND_TRIP_COST_PCT = 0.002
 _NEAR_INVALIDATION_BUFFER_PCT = 0.03
 
 #: Two candidate trigger levels within this relative distance of each other
-#: are treated as the same level (only the higher one is kept).
+#: are treated as the same level and one is dropped -- which one depends on
+#: the pass: the descending (dip) pass keeps the higher of the two, while
+#: the ascending (breakout) pass keeps the lower, nearest-to-price one (see
+#: :func:`_dedupe_descending`/:func:`_dedupe_ascending`).
 _DEDUPE_THRESHOLD_PCT = 0.02
 
 #: Entry-plan tranche count bounds. The lower bound is a target, not a hard
@@ -195,16 +223,41 @@ def _compute_scenario_returns(fair_value_range: dict, price: Optional[float]) ->
     return result
 
 
-def _collect_entry_candidates(valuation: dict, technical: Optional[dict]) -> "List[tuple[str, float]]":
-    """Gather every mechanical trigger-level candidate named in the spec:
-    the valuation fair-value band's bear.lo/base.lo/base.hi/bull.hi, and
-    the technical read's low_52w/sma50/sma200. Missing/non-numeric values
-    are simply omitted."""
+def _collect_entry_candidates(
+    valuation: dict, technical: Optional[dict], price: float
+) -> "tuple[List[dict], List[dict]]":
+    """Gather every mechanical trigger-level candidate named in the spec,
+    split into the two directional kinds METODOLOJI.md Sec.1 item 5 requires.
+
+    Dip candidates (``kind="dip"``, level <= ``price``): the valuation
+    fair-value band's bear.lo/base.lo/base.hi/bull.hi, and the technical
+    read's low_52w/sma50/sma200.
+
+    Breakout candidates (``kind="breakout"``, level > ``price``): sma50/
+    sma200 when above price (an uptrend-confirmation reclaim), each
+    ``resistance_levels`` zone's price when above price (a resistance/
+    prior-swing-high breakout), and high_52w when above price (a 52-week-
+    high breakout) -- unless an above-price ``resistance_levels`` zone is
+    itself the 52-week high (``zone["is_52w_high"]``), in which case
+    high_52w is skipped to avoid double-counting the same "new highs" event
+    as two near-identical candidates. ``base.hi``/``bull.hi`` are
+    intentionally never used as breakout triggers -- ``bull.hi`` is the
+    shared upside target (see :func:`_resolve_target`), and ``base.hi`` is
+    excluded by product decision.
+
+    Every candidate is tagged with a short Turkish ``source`` label (used
+    verbatim in the breakout trigger sentence). Missing/non-numeric values
+    are simply omitted from both lists.
+
+    Returns:
+        ``(dip_candidates, breakout_candidates)``, each a list of
+        ``{"source": str, "level": float, "kind": "dip"|"breakout"}``.
+    """
     fvr = valuation.get("fair_value_range") or {}
     bear, base, bull = fvr.get("bear") or {}, fvr.get("base") or {}, fvr.get("bull") or {}
     technical = technical or {}
 
-    raw = [
+    dip_raw = [
         ("bear_lo", bear.get("lo")),
         ("base_lo", base.get("lo")),
         ("base_hi", base.get("hi")),
@@ -213,19 +266,112 @@ def _collect_entry_candidates(valuation: dict, technical: Optional[dict]) -> "Li
         ("sma50", technical.get("sma50")),
         ("sma200", technical.get("sma200")),
     ]
-    return [(label, value) for label, value in raw if isinstance(value, (int, float))]
+    dip = [
+        {"source": label, "level": float(value), "kind": "dip"}
+        for label, value in dip_raw
+        if isinstance(value, (int, float)) and value <= price
+    ]
+
+    breakout_raw = [
+        ("SMA50 geri alımı", technical.get("sma50")),
+        ("SMA200 geri alımı", technical.get("sma200")),
+    ]
+    resistance_zones = technical.get("resistance_levels") or []
+    for zone in resistance_zones:
+        breakout_raw.append(("direnç/önceki zirve kırılımı", (zone or {}).get("price")))
+
+    # Avoid double-counting: a resistance zone can itself BE the 52-week
+    # high (zone["is_52w_high"]), in which case adding high_52w separately
+    # would produce two near-identical "new highs" breakout candidates that
+    # only the dedupe threshold would (unreliably) collapse. Prefer the
+    # resistance zone and skip the separate high_52w candidate whenever any
+    # above-price resistance zone already is the 52-week high.
+    resistance_is_52w_high = any(
+        (zone or {}).get("is_52w_high") and isinstance((zone or {}).get("price"), (int, float)) and (zone or {}).get("price") > price
+        for zone in resistance_zones
+    )
+    if not resistance_is_52w_high:
+        breakout_raw.append(("52 hafta zirve kırılımı", technical.get("high_52w")))
+
+    breakout = [
+        {"source": label, "level": float(value), "kind": "breakout"}
+        for label, value in breakout_raw
+        if isinstance(value, (int, float)) and value > price
+    ]
+
+    return dip, breakout
 
 
-def _dedupe_descending(candidates: "List[tuple[str, float]]") -> "List[tuple[str, float]]":
-    """Sort candidates by descending level and drop any that land within
-    :data:`_DEDUPE_THRESHOLD_PCT` of the previously-kept (higher) level."""
-    ordered = sorted(candidates, key=lambda pair: -pair[1])
-    kept: "List[tuple[str, float]]" = []
-    for label, value in ordered:
-        if kept and kept[-1][1] != 0 and abs(value - kept[-1][1]) / abs(kept[-1][1]) < _DEDUPE_THRESHOLD_PCT:
+def _dedupe_by_level(candidates: "List[dict]", descending: bool) -> "List[dict]":
+    """Sort ``candidates`` by ``level`` (descending or ascending) and drop
+    any that land within :data:`_DEDUPE_THRESHOLD_PCT` of the
+    previously-kept level."""
+    ordered = sorted(candidates, key=lambda c: c["level"], reverse=descending)
+    kept: "List[dict]" = []
+    for cand in ordered:
+        prev = kept[-1]["level"] if kept else None
+        if prev is not None and prev != 0 and abs(cand["level"] - prev) / abs(prev) < _DEDUPE_THRESHOLD_PCT:
             continue
-        kept.append((label, value))
+        kept.append(cand)
     return kept
+
+
+def _dedupe_descending(candidates: "List[dict]") -> "List[dict]":
+    """Dedupe dip candidates, nearest-below-price (highest level) first."""
+    return _dedupe_by_level(candidates, descending=True)
+
+
+def _dedupe_ascending(candidates: "List[dict]") -> "List[dict]":
+    """Dedupe breakout candidates, nearest-above-price (lowest level) first."""
+    return _dedupe_by_level(candidates, descending=False)
+
+
+def _select_tranche_candidates(dip: "List[dict]", breakout: "List[dict]") -> "List[dict]":
+    """Pick up to :data:`_MAX_ENTRY_TRANCHES` candidates total, keeping both
+    directional sides represented whenever both have candidates.
+
+    - Only one side has candidates: take up to the cap from that side
+      (preserves the dip-only behavior from before breakout tranches
+      existed).
+    - Both sides have candidates and together fit within the cap: keep all
+      of them.
+    - Both sides have candidates and together exceed the cap: guarantee one
+      slot per side (nearest to price on each side), then fill the
+      remaining slots by alternating sides, each time taking that side's
+      next nearest-to-price candidate, so neither side crowds out the
+      other.
+    """
+    dip_sorted = _dedupe_descending(dip)  # nearest-below-price first
+    breakout_sorted = _dedupe_ascending(breakout)  # nearest-above-price first
+
+    if not dip_sorted and not breakout_sorted:
+        return []
+    if not dip_sorted or not breakout_sorted:
+        side = dip_sorted or breakout_sorted
+        return side[:_MAX_ENTRY_TRANCHES]
+    if len(dip_sorted) + len(breakout_sorted) <= _MAX_ENTRY_TRANCHES:
+        return dip_sorted + breakout_sorted
+
+    selected = [breakout_sorted[0], dip_sorted[0]]
+    bi, di = 1, 1
+    take_breakout = True
+    while len(selected) < _MAX_ENTRY_TRANCHES:
+        if take_breakout and bi < len(breakout_sorted):
+            selected.append(breakout_sorted[bi])
+            bi += 1
+        elif not take_breakout and di < len(dip_sorted):
+            selected.append(dip_sorted[di])
+            di += 1
+        elif bi < len(breakout_sorted):
+            selected.append(breakout_sorted[bi])
+            bi += 1
+        elif di < len(dip_sorted):
+            selected.append(dip_sorted[di])
+            di += 1
+        else:
+            break
+        take_breakout = not take_breakout
+    return selected
 
 
 def _resolve_target(valuation: dict) -> Optional[float]:
@@ -238,34 +384,61 @@ def _resolve_target(valuation: dict) -> Optional[float]:
 
 
 def _resolve_invalidation(valuation: dict, technical: Optional[dict], lowest_kept_level: float) -> float:
-    """Invalidation level: a buffer below the lower of bear.lo/low_52w, or
-    (if neither is available) below the lowest kept tranche level itself --
-    always strictly below every tranche's price zone by construction."""
+    """Shared structural invalidation level for dip-kind tranches: a buffer
+    below the lowest of bear.lo/low_52w/``lowest_kept_level`` (the lowest
+    kept *dip* tranche's level). ``lowest_kept_level`` is always included in
+    the floor -- not just used as a last resort -- so this always sits
+    strictly below every dip tranche's price zone by construction, even
+    when a dip level (e.g. an sma200/base_lo level) falls below
+    bear.lo/low_52w. Breakout tranches use their own per-tranche failed-
+    breakout invalidation instead (see :func:`_compute_entry_plan`)."""
     fvr = valuation.get("fair_value_range") or {}
     bear_lo = (fvr.get("bear") or {}).get("lo")
     low_52w = (technical or {}).get("low_52w")
     sources = [v for v in (bear_lo, low_52w) if v is not None]
-    base_level = min(sources) if sources else lowest_kept_level
+    base_level = min([*sources, lowest_kept_level])
     return round(base_level * (1 - _INVALIDATION_BUFFER_PCT), 2)
 
 
 def compute_entry_plan(valuation: Optional[dict], technical: Optional[dict], price: Optional[float]) -> list:
     """Build the mechanical, tranche-based scale-in plan (METODOLOJI.md
-    Sec.1 item 5, "Kademeli giriş planı").
+    Sec.1 item 5, "Kademeli giriş planı") -- two directional tranche kinds,
+    unified into one plan.
 
-    Candidate trigger levels are pulled only from already-computed figures
-    -- the fair-value band's ``bear.lo``/``base.lo``/``base.hi``/``bull.hi``
-    and the technical read's ``low_52w``/``sma50``/``sma200`` -- filtered to
-    levels at-or-below the current price, deduplicated when two levels sit
-    within :data:`_DEDUPE_THRESHOLD_PCT` of each other, then sorted
-    descending and capped at :data:`_MAX_ENTRY_TRANCHES`. A single
-    invalidation level and a single upside target apply to every tranche
-    (see :func:`_resolve_invalidation`/:func:`_resolve_target`); because
-    both are fixed while the entry price decreases from tranche to tranche,
-    R:R is mathematically guaranteed to be non-decreasing as price
-    decreases (lower entry -> larger reward, smaller risk) -- the explicit
-    post-hoc monotonicity check below exists to flag it defensively rather
-    than because it's expected to ever fire.
+    Two candidate sets are collected (see :func:`_collect_entry_candidates`):
+    **dip** candidates (``kind="dip"``, level <= price -- from the
+    fair-value band's ``bear.lo``/``base.lo``/``base.hi``/``bull.hi`` and
+    the technical read's ``low_52w``/``sma50``/``sma200``) and **breakout**
+    candidates (``kind="breakout"``, level > price -- ``sma50``/``sma200``
+    reclaims, ``resistance_levels`` breakouts, and a ``high_52w`` breakout).
+    Each side is deduplicated independently when two of its own levels sit
+    within :data:`_DEDUPE_THRESHOLD_PCT` of each other. When both sides
+    have candidates, a balanced subset of up to :data:`_MAX_ENTRY_TRANCHES`
+    is selected guaranteeing at least one tranche per side (see
+    :func:`_select_tranche_candidates`); when only one side has candidates,
+    up to the cap is taken from that side alone (today's dip-only
+    behavior). The final list is ordered by descending price (breakout
+    tranches on top, dip tranches below) and numbered top-to-bottom.
+
+    A single upside target applies to every tranche (see
+    :func:`_resolve_target`). Invalidation is per-tranche: dip tranches
+    share one structural invalidation level (see
+    :func:`_resolve_invalidation`, scoped to the kept dip levels only);
+    each breakout tranche carries its own failed-breakout invalidation --
+    a buffer below *that tranche's own* trigger level, since a daily close
+    back below a reclaimed/broken level voids that setup specifically, not
+    the whole plan. R:R is computed per tranche against its own
+    invalidation, and is only set when both risk and reward are positive
+    (a breakout tranche whose entry is at/above the shared target has no
+    reward, so its ``rr`` is ``None``).
+
+    Because dip tranches share one fixed invalidation/target while their
+    entry price decreases from tranche to tranche, dip-side R:R is
+    mathematically guaranteed to be non-decreasing as price decreases
+    (lower entry -> larger reward, smaller risk). The explicit post-hoc
+    monotonicity check below is scoped to consecutive dip-kind tranches
+    only (breakout tranches each have their own invalidation, so no such
+    guarantee -- and no such check -- applies to them).
 
     Args:
         valuation: The dict returned by
@@ -278,8 +451,8 @@ def compute_entry_plan(valuation: Optional[dict], technical: Optional[dict], pri
     Returns:
         A list of 1-5 tranche dicts (target 3-5; see below for the
         degraded case), ordered by descending ``price_zone`` level (the
-        first tranche triggers first, nearest the current price on the way
-        down)::
+        highest-priced tranche -- a breakout tranche when present -- comes
+        first)::
 
             {
               "n": int,                          # 1-based order
@@ -289,14 +462,15 @@ def compute_entry_plan(valuation: Optional[dict], technical: Optional[dict], pri
               "invalidation": float,               # daily-close level; thesis void below it
               "target": float|None,                # upside anchor; None if neither
                                                     # base.hi nor bull.hi is available
-              "rr": float|None,                    # reward:risk, 1dp
+              "rr": float|None,                    # reward:risk, 1dp; None if no
+                                                    # positive reward or risk
               "note": str|None,
+              "kind": str,                          # "dip" or "breakout"
             }
 
-        ``[]`` if ``price`` is missing/non-positive, or if neither the
-        valuation fair-value band nor the technical levels yield any usable
-        candidate at or below the current price. If usable candidates exist
-        but fewer than 3 distinct levels survive filtering/deduplication,
+        ``[]`` if ``price`` is missing/non-positive, or if neither side
+        yields any usable candidate. If usable candidates exist but fewer
+        than 3 distinct levels survive filtering/deduplication/selection,
         this returns fewer than 3 tranches rather than fabricating extra
         levels not traceable to the inputs above -- see the module
         docstring's "fully mechanical" design goal. Never raises.
@@ -312,64 +486,90 @@ def _compute_entry_plan(valuation: dict, technical: Optional[dict], price: Optio
     if price is None or price <= 0:
         return []
 
-    candidates = _collect_entry_candidates(valuation, technical)
-    if not candidates:
+    dip_candidates, breakout_candidates = _collect_entry_candidates(valuation, technical, price)
+    if not dip_candidates and not breakout_candidates:
         return []
 
-    below_price = [(label, value) for label, value in candidates if value <= price]
-    if not below_price:
+    selected = _select_tranche_candidates(dip_candidates, breakout_candidates)
+    if not selected:
         return []
 
-    kept = _dedupe_descending(below_price)[:_MAX_ENTRY_TRANCHES]
-    if not kept:
-        return []
-
-    n = len(kept)
+    ordered = sorted(selected, key=lambda c: -c["level"])
+    n = len(ordered)
     target = _resolve_target(valuation)
-    invalidation = _resolve_invalidation(valuation, technical, kept[-1][1])
+
+    dip_levels = [c["level"] for c in ordered if c["kind"] == "dip"]
+    dip_invalidation = _resolve_invalidation(valuation, technical, min(dip_levels)) if dip_levels else None
 
     weights = [(idx + 1) ** _SIZE_WEIGHT_EXPONENT for idx in range(n)]
     weight_sum = sum(weights)
     size_pcts = [round(w / weight_sum * 100, 1) for w in weights]
 
     tranches = []
-    for idx, (_label, level) in enumerate(kept):
+    for idx, cand in enumerate(ordered):
+        level, kind, source = cand["level"], cand["kind"], cand["source"]
         lo = round(level * (1 - _ENTRY_ZONE_BAND_PCT), 2)
         hi = round(level * (1 + _ENTRY_ZONE_BAND_PCT), 2)
         entry = round((lo + hi) / 2, 2)
 
+        if kind == "dip":
+            invalidation = dip_invalidation
+            trigger = (
+                f"Günlük kapanış {level:.2f} USD seviyesinin altına inerse (bölge "
+                f"{lo:.2f}-{hi:.2f} USD); gün içi dokunuş tetik saymaz."
+            )
+        else:
+            invalidation = round(level * (1 - _INVALIDATION_BUFFER_PCT), 2)
+            trigger = (
+                f"Günlük kapanış {level:.2f} USD seviyesinin üzerine çıkarsa (yükseliş teyidi "
+                f"— {source}); gün içi dokunuş tetik saymaz."
+            )
+
         rr = None
-        if target is not None:
+        if target is not None and invalidation is not None:
             reward = target * (1 - _ROUND_TRIP_COST_PCT) - entry * (1 + _ROUND_TRIP_COST_PCT)
             risk = entry * (1 + _ROUND_TRIP_COST_PCT) - invalidation
-            if risk > 0:
+            if risk > 0 and reward > 0:
                 rr = round(reward / risk, 1)
+
+        note = None
+        if kind == "breakout" and target is not None and entry >= target:
+            # Product decision: keep above-target breakout tranches (they're
+            # trend-following adds, not value-anchored entries) but mark them,
+            # since rr has no meaningful value-anchored reward to report.
+            note = (
+                f"Model üstü: tetik seviyesi model bull hedefinin ({target:.2f} USD) üzerinde; "
+                "değer-çapalı R:R tanımsız -- yalnızca trend-takip girişi."
+            )
 
         tranches.append(
             {
                 "n": idx + 1,
-                "trigger": (
-                    f"Günlük kapanış {level:.2f} USD seviyesinin altına inerse (bölge "
-                    f"{lo:.2f}-{hi:.2f} USD); gün içi dokunuş tetik saymaz."
-                ),
+                "trigger": trigger,
                 "price_zone": {"lo": lo, "hi": hi},
                 "size_pct": size_pcts[idx],
                 "invalidation": invalidation,
                 "target": target,
                 "rr": rr,
-                "note": None,
+                "note": note,
+                "kind": kind,
             }
         )
 
     # Defensive monotonicity check (METODOLOJI.md Sec.1 item 5): as price
-    # decreases from tranche to tranche, R:R should never decrease. Given
-    # a fixed target/invalidation this is guaranteed by construction (see
-    # the docstring), but flag rather than silently reorder if it somehow
-    # doesn't hold.
+    # decreases from tranche to tranche, dip-side R:R should never decrease.
+    # Given a fixed target/invalidation this is guaranteed by construction
+    # among dip tranches (see the docstring), but flag rather than silently
+    # reorder if it somehow doesn't hold. Breakout tranches each have their
+    # own invalidation, so no such guarantee -- and no such check -- applies
+    # to them or to a dip/breakout pair.
     for idx in range(len(tranches) - 1):
-        rr_cur, rr_next = tranches[idx]["rr"], tranches[idx + 1]["rr"]
+        cur, nxt = tranches[idx], tranches[idx + 1]
+        if cur["kind"] != "dip" or nxt["kind"] != "dip":
+            continue
+        rr_cur, rr_next = cur["rr"], nxt["rr"]
         if rr_cur is not None and rr_next is not None and rr_next < rr_cur:
-            tranches[idx + 1]["note"] = (
+            nxt["note"] = (
                 "R:R sırası ters: bu tranche, bir önceki (daha yüksek fiyatlı) tranche'dan "
                 "daha düşük R:R sunuyor; plan mekanik olarak yeniden gözden geçirilmeli."
             )
@@ -406,7 +606,15 @@ def compute_stop_adding(
             :func:`sec_analyzer.normalize.red_flags.detect_red_flags`, or
             ``None``/``[]``.
         entry_plan: The list returned by :func:`compute_entry_plan` (used
-            for its shared ``invalidation`` level), or ``None``/``[]``.
+            for its structural invalidation floor -- the minimum
+            ``invalidation`` among dip-kind tranches; a tranche with no
+            ``"kind"`` key is treated as dip for backward compatibility.
+            If the plan has no dip-kind tranches at all -- e.g. a
+            breakout-only plan, whose per-tranche failed-breakout stops
+            sit just below price by construction and are not a structural
+            floor -- the NEAR_INVALIDATION signal is skipped entirely
+            rather than falling back to a non-dip invalidation), or
+            ``None``/``[]``.
         catalyst: The ``{"estimate_date", "label", "based_on"}`` dict from
             :func:`sec_analyzer.fetch.filings.estimate_next_earnings`, or
             ``None``.
@@ -449,7 +657,18 @@ def _compute_stop_adding(
         )
 
     if entry_plan:
-        invalidation = entry_plan[-1].get("invalidation")
+        # Backward-compat: a tranche dict with no "kind" key at all (older
+        # callers) is treated as dip, preserving pre-two-directional
+        # behavior. A breakout-only plan's per-tranche failed-breakout
+        # stops sit just below the current price by construction, so
+        # falling back to "min across all tranches" when there are no dip
+        # tranches would fire this signal spuriously -- skip it instead.
+        dip_invalidations = [
+            t.get("invalidation")
+            for t in entry_plan
+            if t.get("kind", "dip") == "dip" and t.get("invalidation") is not None
+        ]
+        invalidation = min(dip_invalidations) if dip_invalidations else None
         if price is not None and invalidation is not None:
             threshold = invalidation * (1 + _NEAR_INVALIDATION_BUFFER_PCT)
             if price <= threshold:

@@ -115,6 +115,7 @@ def render_report_html(
     price: Optional[float] = None,
     as_of: Optional[str] = None,
     entity_name: Optional[str] = None,
+    analyst: Optional[dict] = None,
 ) -> str:
     """Build the standalone verdict-card report HTML as a string.
 
@@ -151,6 +152,10 @@ def render_report_html(
         entity_name: The filer's resolved company name (e.g. ``"Apple
             Inc."``), or ``None`` if unavailable -- shown beside the ticker
             in the header when present, omitted otherwise.
+        analyst: The dict returned by
+            :func:`sec_analyzer.fetch.analyst.get_analyst_targets`, or
+            ``None`` if unavailable. Display-only consensus analyst-target
+            cross-check -- never feeds the valuation engine.
 
     Returns:
         The complete, self-contained report HTML as a string.
@@ -167,6 +172,7 @@ def render_report_html(
         "ticker": ticker_upper,
         "horizon": horizon,
         "price": price,
+        "analyst": analyst,
         "as_of": as_of,
         "generated_on": generated_on,
         "result": result or {},
@@ -238,6 +244,7 @@ def generate_report(
     as_of: Optional[str] = None,
     out_dir: Optional[str] = None,
     entity_name: Optional[str] = None,
+    analyst: Optional[dict] = None,
 ) -> str:
     """Render and save the HTML verdict-card report for one ticker/horizon.
 
@@ -270,6 +277,9 @@ def generate_report(
             ``Config.REPORTS_DIR``; created if it doesn't already exist.
         entity_name: The filer's resolved company name, or ``None`` if
             unavailable -- see :func:`render_report_html`.
+        analyst: The dict returned by
+            :func:`sec_analyzer.fetch.analyst.get_analyst_targets`, or
+            ``None`` if unavailable -- see :func:`render_report_html`.
 
     Returns:
         The path the report was saved to.
@@ -280,7 +290,7 @@ def generate_report(
     html = render_report_html(
         ticker, horizon, result,
         metrics=metrics, technical=technical, flags=flags, price=price, as_of=as_of,
-        entity_name=entity_name,
+        entity_name=entity_name, analyst=analyst,
     )
 
     target_dir = out_dir or Config.REPORTS_DIR

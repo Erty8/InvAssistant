@@ -30,6 +30,7 @@ from typing import Optional, Tuple
 from flask import Flask, jsonify, request
 
 from sec_analyzer.config import Config, ConfigError
+from sec_analyzer.fetch.analyst import get_analyst_targets
 from sec_analyzer.fetch.companyfacts import get_company_facts, get_submissions
 from sec_analyzer.fetch.filings import estimate_next_earnings
 from sec_analyzer.fetch.prices import PriceDataError, get_price_history, latest_price
@@ -275,6 +276,25 @@ def _fetch_catalyst(submissions: Optional[dict], ticker: str) -> Optional[dict]:
         return None
 
 
+def _fetch_analyst_targets(ticker: str, no_cache: bool) -> Optional[dict]:
+    """Best-effort fetch of consensus analyst price targets; never raises.
+
+    Mirrors ``sec_analyzer.cli._fetch_analyst_targets``. Display-only
+    cross-check (see ``sec_analyzer.fetch.analyst``) -- never feeds the
+    valuation engine, and a failure here must never fail the request.
+
+    Returns:
+        The dict returned by
+        :func:`sec_analyzer.fetch.analyst.get_analyst_targets`, or ``None``
+        if unavailable or the fetch fails for any reason.
+    """
+    try:
+        return get_analyst_targets(ticker, no_cache=no_cache)
+    except Exception:  # noqa: BLE001 - a display-only cross-check must never be fatal
+        logger.warning("Could not fetch analyst targets for %s", ticker, exc_info=True)
+        return None
+
+
 def _save_price_rows(cik: str, price_df) -> None:
     """Convert a price-history DataFrame to row dicts and persist them.
 
@@ -310,6 +330,12 @@ def _run_full_pipeline(
     sync. Mirrors ``sec_analyzer.cli.cmd_analyze``: SEC submissions are
     fetched exactly once and reused for both the catalyst estimate and (by
     the caller, via the returned value) SIC-based sector classification.
+
+    Note: the display-only consensus analyst-target cross-check (see
+    ``sec_analyzer.fetch.analyst``) is deliberately NOT part of this tuple --
+    it's fetched separately (:func:`_fetch_analyst_targets`) by each route,
+    so this shared helper's return shape (and the tests that stub it) stay
+    unchanged.
 
     Args:
         ticker: Stock ticker symbol, e.g. "AAPL".
@@ -450,6 +476,10 @@ def api_analyze():
             ``sec_analyzer.normalize.metrics.compute_metrics``).
         red_flags: list of ``{"code", "message", "detail"}`` dicts.
         catalyst: ``{"estimate_date", "label", "based_on"}`` dict, or ``null``.
+        analyst: display-only consensus analyst-target dict (see
+            ``sec_analyzer.fetch.analyst.get_analyst_targets``), or ``null``.
+            Best-effort, never feeds ``interpret(...)`` or the valuation
+            engine -- shown purely as a reference cross-check.
     """
     body = request.get_json(silent=True) or {}
 
@@ -488,6 +518,8 @@ def api_analyze():
             {"ok": False, "error": "An unexpected server error occurred while fetching financials."}
         ), 500
 
+    analyst = _fetch_analyst_targets(ticker, no_cache)
+
     logger.info(
         "Running %s analysis for %s (horizon=%s)", provider or Config.ANALYZER_PROVIDER, ticker, horizon
     )
@@ -524,6 +556,7 @@ def api_analyze():
         "metrics": metrics,
         "red_flags": flags,
         "catalyst": catalyst,
+        "analyst": analyst,
     })
 
 
@@ -643,6 +676,8 @@ def report():
             "An unexpected server error occurred while generating the report."
         ), 500
 
+    analyst = _fetch_analyst_targets(ticker, no_cache)
+
     resolved_provider = provider or Config.ANALYZER_PROVIDER
     logger.info("Running %s analysis for %s report (horizon=%s)", resolved_provider, ticker, horizon)
     analysis = interpret(
@@ -671,7 +706,7 @@ def report():
     html = render_report_html(
         ticker, horizon, analysis,
         metrics=metrics, technical=technical, flags=flags, price=price, as_of=as_of,
-        entity_name=name,
+        entity_name=name, analyst=analyst,
     )
     return html
 
