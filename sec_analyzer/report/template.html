@@ -558,6 +558,27 @@
     line-height: 1.45;
     margin-top: 4px;
   }
+  /* Sector-relative comparison line under the MULTIPLES method: current
+     primary multiple vs its Damodaran sector median (VALUATION.md Sec.7
+     axis-b), coloured by the sector bucket. */
+  .tri-sector {
+    font-size: 0.78rem;
+    line-height: 1.45;
+    margin-top: 6px;
+    font-family: var(--mono);
+  }
+  .tri-sector .tri-sector-label {
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-weight: 700;
+    font-size: 0.66rem;
+    color: var(--muted);
+    font-family: inherit;
+    margin-right: 4px;
+  }
+  .sector-cmp-red { color: var(--red); }
+  .sector-cmp-green { color: var(--green); }
+  .sector-cmp-muted { color: var(--muted); }
   .tri-confidence {
     margin-top: 14px;
     padding-top: 12px;
@@ -676,6 +697,84 @@
     font-size: 0.75rem; line-height: 1.4; margin-top: 4px; margin-bottom: 4px;
     padding: 7px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border);
   }
+  /* Swing reversal-confirmation checklist (momentumReversalHtml). */
+  .rev-block {
+    margin-top: 8px; padding: 9px 11px; border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--border);
+  }
+  .rev-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 7px; }
+  .rev-title { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; }
+  .rev-verdict { font-size: 0.72rem; font-weight: 700; }
+  .rev-verdict.rev-none { color: var(--muted); }
+  .rev-verdict.rev-early { color: var(--amber); }
+  .rev-verdict.rev-strong { color: var(--green); }
+  .rev-help {
+    font-size: 0.68rem; line-height: 1.4; color: var(--muted);
+    margin-bottom: 8px; font-style: italic;
+  }
+  .rev-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .rev-row { display: flex; align-items: flex-start; gap: 7px; font-size: 0.75rem; line-height: 1.35; color: var(--outline); }
+  .rev-icon { flex: none; width: 1em; font-weight: 700; text-align: center; }
+  .rev-row.rev-ok .rev-icon { color: var(--green); }
+  .rev-row.rev-pending .rev-icon { color: var(--amber); }
+  .rev-row.rev-bad .rev-icon { color: var(--red); }
+  .rev-row.rev-none .rev-icon { color: var(--muted); }
+  .rev-row.rev-none, .rev-row.rev-bad { color: var(--muted); }
+  .rev-watch {
+    font-size: 0.72rem; line-height: 1.4; margin-top: 7px;
+    padding: 6px 9px; border-radius: 7px; background: rgba(90,167,255,0.10); border: 1px solid var(--border);
+    color: var(--outline);
+  }
+  .rev-watch-label {
+    font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
+    font-weight: 700; margin-right: 6px;
+  }
+  /* Reversal-building marker chip next to the momentum badge. */
+  .rev-badge-mark {
+    display: inline-block; margin-left: 8px; padding: 2px 9px; border-radius: 999px;
+    font-size: 0.66rem; font-weight: 700; letter-spacing: 0.02em; vertical-align: middle;
+  }
+  .rev-badge-mark.rev-mark-up { color: var(--green); background: rgba(77, 224, 130, 0.15); border: 1px solid rgba(77, 224, 130, 0.4); }
+  .rev-badge-mark.rev-mark-down { color: var(--red); background: rgba(255, 180, 171, 0.15); border: 1px solid rgba(147, 0, 10, 0.55); }
+  .rev-badge-mark.sq-mark { color: var(--amber); background: rgba(255, 185, 83, 0.15); border: 1px solid rgba(255, 185, 83, 0.4); }
+  /* ATR-based risk readout line under the watch line. */
+  .rev-risk {
+    font-size: 0.72rem; line-height: 1.4; margin-top: 6px;
+    padding: 6px 9px; border-radius: 7px; background: var(--bg); border: 1px solid var(--border);
+    color: var(--outline);
+  }
+  .rev-risk.rev-risk-wide { background: rgba(255, 185, 83, 0.10); border-color: rgba(255, 185, 83, 0.4); }
+  .tech-stat-sub { color: var(--muted); font-size: 0.72rem; font-weight: 400; }
+  /* ---- Swing setup grade card -------------------------------------------- */
+  .setup-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .setup-grade {
+    flex: none; width: 44px; height: 44px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.5rem; font-weight: 800; line-height: 1;
+  }
+  .setup-grade.grade-a { color: var(--green); background: rgba(77, 224, 130, 0.16); border: 1px solid rgba(77, 224, 130, 0.5); }
+  .setup-grade.grade-b { color: var(--amber); background: rgba(255, 185, 83, 0.16); border: 1px solid rgba(255, 185, 83, 0.5); }
+  .setup-grade.grade-c { color: var(--muted); background: rgba(139, 145, 157, 0.16); border: 1px solid var(--border); }
+  .setup-note { font-size: 0.82rem; line-height: 1.4; color: var(--text); }
+  .setup-parts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .setup-part {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border-radius: 7px; background: var(--bg); border: 1px solid var(--border);
+    font-size: 0.75rem;
+  }
+  .setup-part-icon { font-weight: 700; }
+  .setup-part.setup-ok .setup-part-icon { color: var(--green); }
+  .setup-part.setup-pending .setup-part-icon { color: var(--amber); }
+  .setup-part.setup-bad .setup-part-icon { color: var(--red); }
+  .setup-part.setup-none .setup-part-icon { color: var(--muted); }
+  .setup-part-label { color: var(--muted); text-transform: uppercase; font-size: 0.62rem; letter-spacing: 0.04em; font-weight: 700; }
+  .setup-part-text { font-weight: 600; }
+  .setup-earn {
+    margin-top: 10px; font-size: 0.74rem; line-height: 1.4; color: var(--outline);
+    padding: 7px 10px; border-radius: 7px; background: rgba(255, 185, 83, 0.10); border: 1px solid rgba(255, 185, 83, 0.4);
+  }
+  .setup-earn-badge { color: var(--amber); font-weight: 700; margin-right: 4px; }
+  .setup-disc { margin-top: 10px; font-size: 0.66rem; color: var(--muted); font-style: italic; }
   .tech-stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
@@ -1627,6 +1726,34 @@
 
   var TRI_MARKER_ICON = { agree: "✓", disagree: "✗", muted: "•" };
 
+  // Sector-relative comparison line for the MULTIPLES method (VALUATION.md
+  // Sec.7 axis-b): shows the current primary multiple vs its Damodaran sector
+  // median explicitly, so the sector standing stays visible even when the
+  // signal itself reads "MIXED". Renders nothing when no sector median
+  // matched (comparison numbers absent).
+  var SECTOR_BUCKET_WORD = {
+    pahali: "sektöre göre pahalı",
+    ucuz: "sektöre göre ucuz",
+    makul: "sektör medyanıyla uyumlu",
+  };
+  function sectorComparisonLineHtml(valuation) {
+    var cmp = (((valuation || {}).multiples || {}).sector || {}).comparison;
+    if (!cmp || !isNum(cmp.current) || !isNum(cmp.median) || !isNum(cmp.ratio)) return "";
+    var word = SECTOR_BUCKET_WORD[cmp.bucket] || "";
+    var cls = cmp.bucket === "pahali" ? "sector-cmp-red"
+            : cmp.bucket === "ucuz" ? "sector-cmp-green"
+            : "sector-cmp-muted";
+    var label = cmp.label || "Çarpan";
+    return (
+      '<div class="tri-sector ' + cls + '">' +
+        '<span class="tri-sector-label">Sektör</span>' +
+        escapeHtml(label) + " " + Number(cmp.current).toFixed(1) +
+        " vs medyan " + Number(cmp.median).toFixed(1) +
+        " (" + Number(cmp.ratio).toFixed(2) + "×" + (word ? " → " + word : "") + ")" +
+      '</div>'
+    );
+  }
+
   function triangulationRowHtml(valuation, confidenceOverride) {
     var tri = (valuation || {}).triangulation;
     if (!tri) return "";
@@ -1676,6 +1803,7 @@
       var sig = signals[m.key];
       var kind = triAgreementKind(sig, direction);
       var reason = rationale[m.key];
+      var extra = (m.key === "multiples") ? sectorComparisonLineHtml(valuation) : "";
       return (
         '<div class="tri-method">' +
           '<div class="tri-method-head">' +
@@ -1684,6 +1812,7 @@
             '<span class="tri-marker tri-marker-' + kind + '">' + TRI_MARKER_ICON[kind] + '</span>' +
           '</div>' +
           (reason ? '<div class="tri-reason">' + escapeHtml(reason) + '</div>' : "") +
+          extra +
         '</div>'
       );
     }).join("");
@@ -2157,7 +2286,244 @@
     }
 
     return { S: S, meterPos: meterPos, dirLabel: dirLabel, dirCls: dirCls, arrow: arrow, accelWord: accelWord,
-      r1: r1, r3: r3, r6: r6, rsi: rsi, mh: mh, mc: mc };
+      dirKind: dirKind, r1: r1, r3: r3, r6: r6, rsi: rsi, mh: mh, mc: mc };
+  }
+
+  // ---- Swing reversal-confirmation checklist ------------------------------
+  // Turns the momentum readout into an actionable "is the trend turning?"
+  // panel. Directional to the prevailing momentum: a DOWN trend looks for a
+  // BULLISH reversal (oversold bounce being reclaimed), an UP trend for a
+  // BEARISH one. Each row is a deterministic check over already-computed
+  // indicators -- RSI reclaim (t.rsi_reclaim, Python side), MACD signal cross
+  // (t.macd_cross), OBV money flow (t.obv_trend), and RSI divergence
+  // (t.rsi_divergence). A confirmed row is a ✓; a still-pending precondition
+  // (e.g. RSI oversold but not yet reclaimed) is a ◦; an outright contra
+  // reading is a ✗. The count of ✓ drives a one-line readiness verdict, and a
+  // watch line maps the nearest S/R zone to the trigger/invalidation level.
+  var _REV_VOLUME_MIN = 1.5; // rel_volume at/above which the turn has real participation
+  function computeReversal(t, momentum) {
+    if (!momentum || (momentum.dirKind !== "up" && momentum.dirKind !== "down")) return null;
+    var bull = momentum.dirKind === "down"; // downtrend -> watch for a bullish turn
+    var rows = [];
+    function row(state, text) { rows.push({ state: state, text: text }); }
+
+    // 1. RSI reclaim of the extreme line.
+    var rsi = isNum(t.rsi14) ? Number(t.rsi14) : null;
+    if (bull) {
+      if (t.rsi_reclaim === "bullish") row("ok", "RSI aşırı satımdan çıktı (30 üstünü geri aldı)");
+      else if (rsi !== null && rsi < 30) row("pending", "RSI aşırı satımda (" + rsi.toFixed(0) + ") — henüz 30 üstünü geri almadı");
+      else row("none", "RSI aşırı satım dönüşü yok");
+    } else {
+      if (t.rsi_reclaim === "bearish") row("ok", "RSI aşırı alımdan döndü (70 altına indi)");
+      else if (rsi !== null && rsi > 70) row("pending", "RSI aşırı alımda (" + rsi.toFixed(0) + ") — henüz 70 altına inmedi");
+      else row("none", "RSI aşırı alım dönüşü yok");
+    }
+
+    // 2. MACD signal-line crossover.
+    if (t.macd_cross === (bull ? "bullish" : "bearish")) row("ok", "MACD " + (bull ? "yukarı" : "aşağı") + " kesişim (taze)");
+    else if (t.macd_cross === (bull ? "bearish" : "bullish")) row("bad", "MACD ters yönde kesişti");
+    else row("none", "MACD kesişimi yok");
+
+    // 3. OBV money flow.
+    if (t.obv_trend === (bull ? "up" : "down")) row("ok", "OBV " + (bull ? "para girişi (toplama)" : "para çıkışı (dağıtım)"));
+    else if (t.obv_trend === (bull ? "down" : "up")) row("bad", "OBV ters yönde (" + (bull ? "dağıtım" : "toplama") + ")");
+    else row("none", "OBV yatay");
+
+    // 4. Volume participation at the turn (rel_volume = last vol / 20d avg). A
+    // reversal on elevated volume is far more trustworthy than one on thin
+    // trade; direction-neutral, so it reads the same for a bullish/bearish turn.
+    var rv = isNum(t.rel_volume) ? Number(t.rel_volume) : null;
+    if (rv !== null) {
+      if (rv >= _REV_VOLUME_MIN) row("ok", "Hacim ortalamanın belirgin üstünde (" + rv.toFixed(1) + "×) — dönüşe katılım var");
+      else row("none", "Hacim sıradan (" + rv.toFixed(1) + "×) — dönüşe güçlü katılım yok");
+    }
+
+    // 5. Volume climax / capitulation bar in the last ~10 sessions. A
+    // wide-range, huge-volume bar in the direction of the exhausting trend
+    // (down-climax while falling, up-climax while rising) marks seller/buyer
+    // exhaustion -- a classic reversal tell. Adds a row only when detected.
+    var vc = t.volume_climax;
+    if (vc && vc.detected && vc.direction === (bull ? "down" : "up")) {
+      var ago = vc.bars_ago === 0 ? "bugün" : vc.bars_ago + " gün önce";
+      row("ok", (bull ? "Kapitülasyon mumu" : "Alım klimaksı") + " (" + ago + ", " + Number(vc.rel_volume).toFixed(1) + "× hacim) — tükeniş");
+    }
+
+    // 6. RSI divergence (bonus corroboration; only adds a row when present).
+    if (t.rsi_divergence === (bull ? "bullish" : "bearish")) {
+      row("ok", (bull ? "Boğa uyumsuzluğu (fiyat yeni dip, RSI değil)" : "Ayı uyumsuzluğu (fiyat yeni zirve, RSI değil)"));
+    }
+
+    var confirmed = rows.filter(function (r) { return r.state === "ok"; }).length;
+    var total = rows.length;
+    var verdict, vcls;
+    if (confirmed === 0) { verdict = (bull ? "Dönüş teyidi yok — düşen trend sürüyor" : "Dönüş teyidi yok — yükseliş sürüyor"); vcls = "rev-none"; }
+    else if (confirmed < 2) { verdict = "Erken dönüş sinyali — teyit zayıf, bekle"; vcls = "rev-early"; }
+    else { verdict = (bull ? "Dönüş teyitleniyor — boğa tarafı güçleniyor" : "Dönüş teyitleniyor — ayı tarafı güçleniyor"); vcls = "rev-strong"; }
+
+    // Watch line: nearest resistance is the trigger to reclaim for a bullish
+    // turn (nearest support the invalidation), mirrored for a bearish turn.
+    var watchHtml = "";
+    var trig = bull ? t.nearest_resistance : t.nearest_support;
+    var inval = bull ? t.nearest_support : t.nearest_resistance;
+    if (isNum(trig) || isNum(inval)) {
+      var parts = [];
+      if (isNum(trig)) parts.push((bull ? "$" + Number(trig).toFixed(2) + " direncini geri alması dönüşü teyit eder" : "$" + Number(trig).toFixed(2) + " desteğini kaybetmesi dönüşü teyit eder"));
+      if (isNum(inval)) parts.push((bull ? "$" + Number(inval).toFixed(2) + " desteği kırılırsa senaryo bozulur" : "$" + Number(inval).toFixed(2) + " direnci aşılırsa senaryo bozulur"));
+      watchHtml = '<div class="rev-watch"><span class="rev-watch-label">İzle</span>' + escapeHtml(parts.join("; ")) + '.</div>';
+    }
+
+    // ATR-based risk readout: how far the invalidation stop sits from price,
+    // in % and ATR multiples -- the yardstick for position sizing (risk per
+    // share). Only when both an invalidation level and ATR are available.
+    var px = isNum(t.price) ? Number(t.price) : null;
+    var atr = isNum(t.atr14) ? Number(t.atr14) : null;
+    var riskHtml = "";
+    if (px !== null && px > 0 && atr !== null && atr > 0 && isNum(inval)) {
+      var stopDist = Math.abs(px - Number(inval));
+      var riskPct = stopDist / px * 100;
+      var atrMult = stopDist / atr;
+      var wide = riskPct > 12; // a stop this far implies an oversized swing risk
+      riskHtml = '<div class="rev-risk' + (wide ? " rev-risk-wide" : "") + '">' +
+        '<span class="rev-watch-label">Risk</span>' +
+        escapeHtml("Stop $" + Number(inval).toFixed(2) + " ≈ girişten %" + riskPct.toFixed(1) +
+          " uzakta (" + atrMult.toFixed(1) + "× ATR); ATR $" + atr.toFixed(2) +
+          (wide ? " — geniş stop, pozisyonu küçült" : "")) + '.</div>';
+    }
+
+    return { bull: bull, rows: rows, confirmed: confirmed, total: total, verdict: verdict, vcls: vcls, watchHtml: watchHtml + riskHtml };
+  }
+
+  // Compact badge marker: only once the turn has ≥2 confirmations, so the
+  // momentum badge itself flags "a reversal is building" at a glance.
+  function reversalBadgeMarkerHtml(rev) {
+    if (!rev || rev.confirmed < 2) return "";
+    var word = rev.bull ? "dönüş yakın ⤴" : "dönüş riski ⤵";
+    var cls = rev.bull ? "rev-mark-up" : "rev-mark-down";
+    return '<span class="rev-badge-mark ' + cls + '">↺ ' + word + '</span>';
+  }
+
+  // Bollinger squeeze chip: flags volatility compression (band width in the
+  // tightest fifth of its ~6-month range) -- an expansion move often follows,
+  // so a squeeze is a "get ready" for swing timing (direction-agnostic).
+  function squeezeBadgeHtml(t) {
+    var sq = t.bb_squeeze;
+    if (!sq || !sq.active) return "";
+    return '<span class="rev-badge-mark sq-mark">⇉ SIKIŞMA (' + Math.round(Number(sq.percentile)) + 'p)</span>';
+  }
+
+  function reversalBlockHtml(rev) {
+    if (!rev) return "";
+    var ICON = { ok: "✓", pending: "◦", bad: "✗", none: "◦" };
+    var rowsHtml = rev.rows.map(function (r) {
+      return '<li class="rev-row rev-' + r.state + '"><span class="rev-icon">' + ICON[r.state] + '</span>' + escapeHtml(r.text) + '</li>';
+    }).join("");
+    var help = "Değerleme 'ne alınır'ı, bu liste 'ne zaman'ı gösterir: kaç bağımsız gösterge " +
+      "trendin döndüğünü teyit ediyor. ✓ arttıkça sinyal güçlenir; tek başına 'ucuz' + düşen trend " +
+      "genelde erkendir. 'İzle' satırı giriş/geçersizlik seviyesini verir.";
+    return (
+      '<div class="rev-block">' +
+        '<div class="rev-head"><span class="rev-title">Dönüş Teyidi</span>' +
+          '<span class="rev-verdict ' + rev.vcls + '">' + rev.confirmed + '/' + rev.total + ' · ' + escapeHtml(rev.verdict) + '</span>' +
+        '</div>' +
+        '<div class="rev-help">' + escapeHtml(help) + '</div>' +
+        '<ul class="rev-list">' + rowsHtml + '</ul>' +
+        rev.watchHtml +
+      '</div>'
+    );
+  }
+
+  // ---- Swing setup grade (A/B/C) ------------------------------------------
+  // A single composite of the three things a swing entry needs: VALUE (is it
+  // cheap? -> triangulation direction), TIMING (is a bullish reversal
+  // confirming? -> computeReversal), and REWARD (best tranche R/R from the
+  // entry plan). Each contributes 0-2 points; the grade is the score ratio.
+  // Long-biased (the common retail swing case) and fully transparent -- the
+  // three component chips are shown so the letter is never a black box.
+  function bestEntryRR(entryPlan) {
+    if (!Array.isArray(entryPlan)) return null;
+    var best = null;
+    entryPlan.forEach(function (tr) {
+      if (tr && isNum(tr.rr)) { var v = Number(tr.rr); if (best === null || v > best) best = v; }
+    });
+    return best;
+  }
+  function daysUntil(isoDate, fromIso) {
+    var a = parseYMD(isoDate), b = parseYMD(fromIso);
+    if (!a || !b) return null;
+    return Math.round((a.getTime() - b.getTime()) / 86400000);
+  }
+  function swingSetupCardHtml(payload, result, technical) {
+    var t = technical || {};
+    var valuation = result.valuation || null;
+    var momentum = computeMomentum(t);
+    var reversal = computeReversal(t, momentum);
+    if (!valuation && !reversal) return "";
+
+    var parts = [], score = 0, maxScore = 0;
+
+    // 1. Value (0-2): triangulation direction.
+    var dir = (valuation && valuation.triangulation) ? valuation.triangulation.direction : null;
+    maxScore += 2;
+    if (dir === "ucuz") { score += 2; parts.push({ state: "ok", label: "Değer", text: "ucuz" }); }
+    else if (dir === "makul") { score += 1; parts.push({ state: "pending", label: "Değer", text: "makul" }); }
+    else if (dir === "pahali" || dir === "yuksek_beklenti") { parts.push({ state: "bad", label: "Değer", text: "pahalı" }); }
+    else if (dir === "karisik") { parts.push({ state: "none", label: "Değer", text: "karışık" }); }
+    else parts.push({ state: "none", label: "Değer", text: "—" });
+
+    // 2. Timing (0-2): bullish reversal confirmation (long-biased).
+    maxScore += 2;
+    if (reversal && reversal.bull) {
+      if (reversal.confirmed >= 2) { score += 2; parts.push({ state: "ok", label: "Zamanlama", text: "dönüş teyitli (" + reversal.confirmed + "/" + reversal.total + ")" }); }
+      else if (reversal.confirmed === 1) { score += 1; parts.push({ state: "pending", label: "Zamanlama", text: "erken dönüş (" + reversal.confirmed + "/" + reversal.total + ")" }); }
+      else parts.push({ state: "bad", label: "Zamanlama", text: "dönüş yok, düşüyor" });
+    } else if (reversal && !reversal.bull) {
+      parts.push({ state: "pending", label: "Zamanlama", text: "yükselişte — geri çekilme bekle" });
+    } else parts.push({ state: "none", label: "Zamanlama", text: "—" });
+
+    // 3. Reward (0-2): best tranche risk/reward.
+    maxScore += 2;
+    var rr = bestEntryRR(result.entry_plan);
+    if (rr !== null) {
+      if (rr >= 2.5) { score += 2; parts.push({ state: "ok", label: "R/R", text: rr.toFixed(1) + "×" }); }
+      else if (rr >= 1.5) { score += 1; parts.push({ state: "pending", label: "R/R", text: rr.toFixed(1) + "×" }); }
+      else parts.push({ state: "bad", label: "R/R", text: rr.toFixed(1) + "× (düşük)" });
+    } else parts.push({ state: "none", label: "R/R", text: "—" });
+
+    var ratio = maxScore ? score / maxScore : 0;
+    var grade, gcls, gnote;
+    if (ratio >= 0.8) { grade = "A"; gcls = "grade-a"; gnote = "Değer + zamanlama + getiri hizalı — güçlü swing kurulumu."; }
+    else if (ratio >= 0.5) { grade = "B"; gcls = "grade-b"; gnote = "Kısmi hizalanma — bir bacak eksik, teyit bekle."; }
+    else { grade = "C"; gcls = "grade-c"; gnote = "Zayıf hizalanma — şu an net bir swing kurulumu yok."; }
+
+    // Earnings proximity (Feature 5): warn if the estimated next-earnings date
+    // is within ~3 weeks of the price as-of date.
+    var earnHtml = "";
+    var eDate = result.catalyst_estimate_date;
+    var dU = eDate ? daysUntil(eDate, payload.as_of || payload.generated_on) : null;
+    if (dU !== null && dU >= 0 && dU <= 21) {
+      earnHtml = '<div class="setup-earn"><span class="setup-earn-badge">⚠ ~' + dU + ' gün içinde earnings</span> ' +
+        escapeHtml("(tahmini " + eDate + ") — pozisyonu bu tarih üzerinden taşımak ekstra risk.") + '</div>';
+    }
+
+    var PICON = { ok: "✓", pending: "◦", bad: "✗", none: "–" };
+    var partsHtml = parts.map(function (p) {
+      return '<div class="setup-part setup-' + p.state + '"><span class="setup-part-icon">' + PICON[p.state] + '</span>' +
+        '<span class="setup-part-label">' + escapeHtml(p.label) + '</span>' +
+        '<span class="setup-part-text">' + escapeHtml(p.text) + '</span></div>';
+    }).join("");
+
+    return (
+      '<div class="card setup-card">' +
+        '<div class="card-title">Swing Kurulumu</div>' +
+        '<div class="setup-head">' +
+          '<span class="setup-grade ' + gcls + '">' + grade + '</span>' +
+          '<span class="setup-note">' + escapeHtml(gnote) + '</span>' +
+        '</div>' +
+        '<div class="setup-parts">' + partsHtml + '</div>' +
+        earnHtml +
+        '<div class="setup-disc">Bileşik gösterge (değer + momentum dönüşü + R/R), long-yönlü. Karar-destek; yatırım tavsiyesi değil.</div>' +
+      '</div>'
+    );
   }
 
   // Plain-language Turkish sentence built from the same raw numbers used by
@@ -2366,6 +2732,20 @@
         ? '<span class="tech-pos">Bullish ↑</span>'
         : '<span class="tech-neg">Bearish ↓</span>'));
     }
+    // ATR tile: volatility in price + % terms (swing stop-distance yardstick).
+    if (isNum(t.atr14) && p !== null && p > 0) {
+      var atrPct = Number(t.atr14) / p * 100;
+      trendTiles.push(tile("ATR (14)", "$" + Number(t.atr14).toFixed(2) + " <span class=\"tech-stat-sub\">(" + atrPct.toFixed(1) + "%)</span>"));
+    }
+    // Relative strength vs benchmark (SPY): 3-month relative return, leader/laggard.
+    var rsData = t.relative_strength;
+    if (rsData && isNum(rsData.rs_3m_pct)) {
+      var rs3 = Number(rsData.rs_3m_pct);
+      var rsCls = rs3 > 0 ? "tech-pos" : (rs3 < 0 ? "tech-neg" : "");
+      var rsSign = rs3 > 0 ? "+" : "";
+      trendTiles.push(tile("vs " + escapeHtml(rsData.benchmark || "SPY") + " (3A)",
+        '<span class="' + rsCls + '">' + rsSign + rs3.toFixed(1) + " pp</span>"));
+    }
     var divNote = "";
     if (t.rsi_divergence_detail) {
       var d = t.rsi_divergence_detail;
@@ -2390,6 +2770,7 @@
     // sentence. When no signal at all is available, show the empty state
     // instead of badge/meter/sentence but still render the rest of the card.
     var momentum = computeMomentum(t);
+    var reversal = computeReversal(t, momentum);
     var momSynthesisHtml;
     if (momentum) {
       // Plain .toUpperCase() mis-cases Turkish "i" (no dot) -> "SABIT" instead
@@ -2398,14 +2779,15 @@
       momSynthesisHtml =
         '<div class="mom-badge-row"><span class="mom-badge ' + momentum.dirCls + '">' +
           momentum.arrow + ' ' + escapeHtml(badgeLabel) +
-        '</span></div>' +
+        '</span>' + reversalBadgeMarkerHtml(reversal) + squeezeBadgeHtml(t) + '</div>' +
         '<div class="mom-meter-row">' +
           '<span class="mom-ends">güçlü↓</span>' +
           '<div class="mom-meter"><div class="mom-meter-marker" style="left:' + momentum.meterPos + '%;"></div></div>' +
           '<span class="mom-ends">güçlü↑</span>' +
         '</div>' +
         (momentum.accelWord ? '<div class="mom-meter-cap">(' + escapeHtml(momentum.accelWord) + ')</div>' : "") +
-        '<div class="mom-note">' + escapeHtml(momentumSentence(momentum)) + '</div>';
+        '<div class="mom-note">' + escapeHtml(momentumSentence(momentum)) + '</div>' +
+        reversalBlockHtml(reversal);
     } else {
       momSynthesisHtml = '<div class="tech-empty">Momentum için yeterli fiyat geçmişi yok.</div>';
     }
@@ -2717,7 +3099,6 @@
     }
 
     var fv = result.fair_value_range || {};
-    var profileFit = result.profile_fit || {};
     var technical = payload.technical || {};
     // result.valuation (SPEC.md Sec.11) is the richer engine payload; it's
     // absent for older callers or when phase-2 interpret() never ran (e.g.
@@ -2727,13 +3108,15 @@
 
     var html =
       headerCardHtml(payload) +
+      swingSetupCardHtml(payload, result, technical) +
       weightBarHtml(result._weights) +
       priceChartCardHtml(technical, result, payload.horizon, payload.analyst) +
       fanChartCardHtml(result, payload.price) +
       (valuation ? triangulationRowHtml(valuation, result.confidence) : "") +
       verdictCardHtml("Fundamental", result.fundamental_verdict, result.horizon_note) +
       technicalCardHtml(technical, result.technical_verdict || technical.verdict) +
-      verdictCardHtml("Profile Fit", profileFit.verdict, profileFit.reason) +
+      // Profile Fit card intentionally removed from the UI for now (still
+      // computed in the payload; just not rendered).
       (valuation ? sensitivityTableHtml(valuation.sensitivity) : "") +
       entryPlanHtml(result.entry_plan) +
       stopAddingHtml(result.stop_adding) +

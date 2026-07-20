@@ -391,6 +391,12 @@ which pieces are missing; never raise. `sector_medians(sector_data,
 sic_description)` matches the company's `sicDescription` to an `industry` row
 by case-insensitive substring/keyword overlap; no match → `None`.
 
+The matched `pe`/`ps`/`pfcf` medians are surfaced in the output's
+`multiples.sector` block AND feed the triangulate multiples signal's
+sector-relative axis-b (`sector_ratio`, Sec.11) — the current primary multiple
+over its matching sector median. When the medians are absent (no match, or no
+Damodaran data), `sector_ratio` is `None` and axis-b is silently skipped.
+
 ## 8. Sector classification — `sector.classify_sector(sic, normalized, metrics) -> str`
 
 Deterministic from SIC (int or str), with financial-statement overrides:
@@ -459,6 +465,24 @@ this file.)
     over-capitalization advisory, Sec.8a) -- that use is untouched by this
     change. `pb_roe`'s output dict gains two additive keys: `"fair_pb"` (the
     raw, unclamped base justified P/B) and `"justified_pb_flag"`.
+
+    **Non-positive `fair_pb` (or book value) makes the anchor unavailable.**
+    When the raw base `fair_pb` comes out `<= 0` — which happens exactly when
+    `roe <= g` (a loss-making, or sub-terminal-growth, filer; the denominator
+    `r - g` is always positive here) — or when book value per share is `<= 0`
+    (negative equity), `_build_pb_roe` returns `None` (anchor unavailable) with
+    a Turkish note, rather than emitting a negative per-share fair value. A
+    price-to-book multiple applied to book equity can never make a share worth
+    zero or negative dollars, so there is no meaningful P/B×ROE fair value for
+    such a filer (e.g. MSTR, classified `financial`, with a negative-ROE year:
+    `fair_pb = (-0.09 - 0.04)/(0.10 - 0.04) = -2.12` → anchor unavailable
+    instead of a −$337/share "fair value"). This is a guard against a
+    degenerate/meaningless multiple, distinct from — and not in tension with —
+    the Work-Package-5 rule above (which is about NOT clamping a legitimately
+    high/low **positive** `fair_pb`). When this anchor is unavailable and no
+    other anchor exists for the sector (e.g. `financial`, whose DCF is
+    disabled), `fair_value_range` is all-`None` (the honest "no opinion"
+    outcome) per Sec.11.
   - `reit`: compute an FFO-based Gordon-growth anchor instead (Sec.8c) --
     P/B×ROE systematically understates a REIT, since GAAP real-estate
     depreciation is a large non-cash charge that depresses both net income
@@ -1188,14 +1212,30 @@ Direction signal per method (`"ucuz" | "makul" | "pahali" | "veri_yok"`):
 - **Multiples**: primary percentile = pe (fallback ps, then pfcf; for
   growth_unprofitable use ps first; for reit use pffo first, fallback ps --
   Sec.8c -- never pe). pct > 70 → pahali; pct < 30 → ucuz; else
-  makul. **Two-component (VALUATION.md Sec.7):** when both `raw_growth_pair_pct`
-  (the raw multiple's percentile — P/E in standard mode, EV/Sales in
-  hyper-grower mode) and `growth_adj_pct` (the growth-adjusted multiple's
-  percentile) are present AND fall in different directional buckets, the signal
-  becomes `"karisik"` (mixed); when they agree, or either is `None`, the raw
-  signal above stands unchanged. `karisik` is a substantive signal (not
-  `veri_yok`), so it naturally can't join a pahali/ucuz/makul majority — it
-  lowers confidence exactly as a genuine disagreement should.
+  makul (position against the company's OWN multiple history — axis-a). **Two
+  divergence checks (VALUATION.md Sec.7) can flip the raw signal to `"karisik"`
+  (mixed), in this precedence order:**
+  1. **Growth-adjusted (axis-a refinement, highest precedence):** when both
+     `raw_growth_pair_pct` (the raw multiple's percentile — P/E in standard
+     mode, EV/Sales in hyper-grower mode) and `growth_adj_pct` (the
+     growth-adjusted multiple's percentile) are present AND fall in different
+     directional buckets.
+  2. **Sector-relative (axis-b):** `sector_ratio` = current primary multiple ÷
+     its Damodaran sector median (SAME primary the axis-a percentile uses;
+     picked with the identical candidate order + first-non-None-percentile
+     rule). Bucketed `> 1.25` → pahali-vs-sector, `< 0.80` → ucuz-vs-sector,
+     else in-line — a **sector-RELATIVE** band, never an absolute multiple
+     value. When its bucket disagrees with the own-history bucket, the signal
+     becomes `"karisik"`. Only evaluated when a usable sector median exists;
+     `sector_ratio is None` (missing median — e.g. reit whose primary is
+     P/FFO, for which no Damodaran median exists) disables the axis and
+     preserves the pure own-history signal.
+
+  When neither divergence fires (both agree, or the relevant inputs are
+  `None`), the raw own-history signal stands unchanged. `karisik` is a
+  substantive signal (not `veri_yok`), so it naturally can't join a
+  pahali/ucuz/makul majority — it lowers confidence exactly as a genuine
+  disagreement should.
 
 Confidence: all three agree (ignoring veri_yok) → `"YÜKSEK"`; exactly two agree
 → `"ORTA"`; else (scattered, or ≥2 veri_yok) → `"DÜŞÜK"`. Returns
@@ -2523,7 +2563,27 @@ sector classification and the CAPM cost of equity) is what gets measured.
   (`fv_base_mid / price`), and `"method"` (`_method_slug`, one of `"hyper"`,
   `"cyclical-fcfe"`, `"epv"`, `"mature-rev"`, `"midgrowth-rev"`, `"dcf"`,
   `"ffo"`, `"pb-roe"` -- mirrors `cli._valuation_method_label`'s exact
-  headline-precedence order, hyper-growth checked first).
+  headline-precedence order, hyper-growth checked first). A row is `"skipped"`
+  (never `"ok"`) when the fair-value base range or price is missing, OR when
+  `metrics["price_reliable"]` is `False` (reason `"unreliable price
+  (implausible P/E and P/S)"`).
+
+  **Price-reliability guard (`metrics.compute_metrics`).** A corrupt
+  market-data feed (e.g. a yfinance fallback that returns a uniformly
+  downscaled series -- observed for BKNG, whose history came back ~31x too
+  small, giving latest ≈ $182 against a true ≈ $5,700) leaves the engine's
+  fair value correct but poisons any `fair_value_range / price` ratio (BKNG
+  read as +1911% "upside"). `compute_metrics` cross-checks the fetched price
+  against SEC per-share fundamentals -- the only price-independent reference --
+  and sets `price_reliable=False` (+ a Turkish `price_reliability_note`) when
+  the implied trailing **P/E and P/S are BOTH positive and below their floors
+  at once** (`_PE_IMPLAUSIBLE_FLOOR=2.0`, `_PS_IMPLAUSIBLE_FLOOR=0.5`). This
+  is the signature of a uniformly-downscaled feed; a legitimately cheap value
+  stock or a peak-cyclical has a low P/E OR a low P/S but essentially never
+  both, so the composite is deliberately conservative (prefers a false
+  negative over wrongly discarding a genuinely cheap stock). The flag is
+  purely additive -- it suppresses no existing metric; only consumers that
+  divide by price (the calibration ratio here) act on it.
 - `summarize_ratios(rows) -> dict`: a pure function over `"ok"` rows'
   `"ratio"` values -- `count`, `median`/`mean`/`p25`/`p75` (deterministic
   sorted-list linear-interpolation percentiles, `None` if `count == 0`), and

@@ -1272,6 +1272,10 @@ def _postprocess_phase2_result(
 
     if not result.get("catalyst"):
         result["catalyst"] = catalyst.get("label") if catalyst else "bilinmiyor"
+    # Surface the raw estimated-earnings ISO date (deterministic, from
+    # estimate_next_earnings) so the report can compute a swing "N days to
+    # earnings" proximity flag; independent of the free-text catalyst label.
+    result["catalyst_estimate_date"] = catalyst.get("estimate_date") if catalyst else None
 
     price = (metrics or {}).get("price")
     if price is None:

@@ -273,6 +273,73 @@ def test_triangulate_multiples_karisik_lowers_confidence_vs_agreement():
 
 
 # ---------------------------------------------------------------------------
+# 7b. triangulate -- sector-relative multiples axis (VALUATION.md Sec.7
+# axis-b): sector_ratio = current primary multiple / Damodaran sector median.
+# Band: > 1.25 expensive-vs-sector, < 0.80 cheap-vs-sector, else in line.
+# ---------------------------------------------------------------------------
+
+
+def test_triangulate_multiples_karisik_when_own_history_and_sector_diverge():
+    # Own-history P/E percentile 88 (expensive vs its own past) but the
+    # current P/E is 0.5x the sector median (cheap vs peers) -> the two axes
+    # disagree -> "karisik".
+    result = triangulate(
+        None, None, None, None, None, 88, None, None, "mature",
+        sector_ratio=0.5,
+    )
+    assert result["signals"]["multiples"] == "karisik"
+    assert "sektör medyanına göre" in result["rationale"]["multiples"]
+
+
+def test_triangulate_multiples_not_karisik_when_own_history_and_sector_agree():
+    # Own-history expensive (88) AND expensive vs sector (1.5x median) agree
+    # -> raw "pahali" stands, with a sector-confirmation clause appended.
+    result = triangulate(
+        None, None, None, None, None, 88, None, None, "mature",
+        sector_ratio=1.5,
+    )
+    assert result["signals"]["multiples"] == "pahali"
+    assert "Sektör medyanına göre de pahalı" in result["rationale"]["multiples"]
+
+
+def test_triangulate_multiples_sector_axis_disabled_when_ratio_none():
+    # No sector_ratio -> pure own-history behavior preserved exactly.
+    result = triangulate(
+        None, None, None, None, None, 88, None, None, "mature",
+        sector_ratio=None,
+    )
+    assert result["signals"]["multiples"] == "pahali"
+    assert "sektör" not in result["rationale"]["multiples"].lower()
+
+
+def test_triangulate_multiples_sector_band_boundaries_are_strict():
+    # Own-history "makul" (pct 50) so any sector divergence is purely axis-b.
+    # ratio exactly 1.25 / 0.80 stays in-line (makul); just past flips it.
+    at_hi = triangulate(None, None, None, None, None, 50, None, None, "mature", sector_ratio=1.25)
+    above_hi = triangulate(None, None, None, None, None, 50, None, None, "mature", sector_ratio=1.26)
+    at_lo = triangulate(None, None, None, None, None, 50, None, None, "mature", sector_ratio=0.80)
+    below_lo = triangulate(None, None, None, None, None, 50, None, None, "mature", sector_ratio=0.79)
+
+    assert at_hi["signals"]["multiples"] == "makul"       # in-line, own-history makul
+    assert above_hi["signals"]["multiples"] == "karisik"  # expensive vs sector, makul own -> mixed
+    assert at_lo["signals"]["multiples"] == "makul"
+    assert below_lo["signals"]["multiples"] == "karisik"  # cheap vs sector, makul own -> mixed
+
+
+def test_triangulate_multiples_peg_divergence_takes_precedence_over_sector():
+    # Both divergences present. PEG divergence (raw 88 vs growth-adj 45) is
+    # higher precedence: the rationale shows the PEG sentence, not the sector
+    # one, though both resolve the signal to "karisik".
+    result = triangulate(
+        None, None, None, None, None, 88, None, None, "mature",
+        raw_growth_pair_pct=88, growth_adj_pct=45, sector_ratio=1.5,
+    )
+    assert result["signals"]["multiples"] == "karisik"
+    assert "büyümeye göre normalize" in result["rationale"]["multiples"]
+    assert "sektör medyanına göre" not in result["rationale"]["multiples"]
+
+
+# ---------------------------------------------------------------------------
 # 8a. triangulate -- hyper-grower "yuksek_beklenti" DCF signal (HYPER_SPEC.md
 # Sec.4): base band [100,120], bull band hi=150.
 # ---------------------------------------------------------------------------
@@ -1554,6 +1621,39 @@ def test_build_pb_roe_flag_is_none_when_fair_pb_inside_reference_band():
     assert result is not None
     assert result["justified_pb_flag"] is None
     assert not any("referans aralığının dışında" in n for n in notes)
+
+
+def test_build_pb_roe_unavailable_when_roe_at_or_below_growth():
+    # A loss-making (or sub-terminal-growth) filer drives the justified P/B
+    # non-positive: roe=-0.09, discount_rate=0.10, terminal_growth=0.04 ->
+    # fair_pb = (-0.09-0.04)/(0.10-0.04) = -0.13/0.06 = -2.17 (<= 0). A
+    # negative price-to-book multiple is economically meaningless, so the
+    # anchor is unavailable (None) with an explanatory note -- NOT a negative
+    # per-share fair value (regression guard for the MSTR anomaly).
+    normalized = _normalized({"StockholdersEquity": [_rec(2023, 1000.0)]})
+    ratios = [{"fy": 2023, "roe": -0.09}]
+    metrics = {"shares": 100.0, "latest_fy": 2023}
+    assumptions = {"base": {"discount_rate": 0.10, "terminal_growth": 0.04}}
+
+    result, notes = _build_pb_roe(assumptions, normalized, metrics, ratios)
+
+    assert result is None
+    assert any("pozitif değil" in n and "P/D x ROE çapası hesaplanamadı" in n for n in notes)
+
+
+def test_build_pb_roe_unavailable_when_book_value_non_positive():
+    # Negative book equity makes book value per share <= 0, so even a positive
+    # justified P/B (roe=0.15, dr=0.10, g=0.03 -> fair_pb=1.71) would produce a
+    # negative per-share value -- the anchor is unavailable instead.
+    normalized = _normalized({"StockholdersEquity": [_rec(2023, -500.0)]})
+    ratios = [{"fy": 2023, "roe": 0.15}]
+    metrics = {"shares": 100.0, "latest_fy": 2023}
+    assumptions = {"base": {"discount_rate": 0.10, "terminal_growth": 0.03}}
+
+    result, notes = _build_pb_roe(assumptions, normalized, metrics, ratios)
+
+    assert result is None
+    assert any("defter değeri" in n and "pozitif değil" in n for n in notes)
 
 
 def test_run_valuation_pb_roe_backward_compat_when_terminal_growth_missing():

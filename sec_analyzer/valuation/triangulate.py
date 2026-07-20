@@ -43,6 +43,17 @@ _REVERSE_DCF_MARGIN = 0.03
 _PERCENTILE_EXPENSIVE = 70
 _PERCENTILE_CHEAP = 30
 
+#: Sector-relative multiple band (VALUATION.md Sec.7 axis-b). The current
+#: primary multiple divided by its Damodaran sector median: above the
+#: expensive bound reads as "expensive vs sector", below the (reciprocal)
+#: cheap bound as "cheap vs sector", between as "in line with the median".
+#: Geometric-symmetric band (0.80 == 1/1.25) so a multiple 25% above and one
+#: 20% below the median are mirror cases. Threshold is sector-RELATIVE, never
+#: an absolute multiple value -- consistent with the "no absolute PEG
+#: threshold" rule (VALUATION.md Sec.7).
+_SECTOR_RATIO_EXPENSIVE = 1.25
+_SECTOR_RATIO_CHEAP = 0.80
+
 CONFIDENCE_HIGH = "YÜKSEK"
 CONFIDENCE_MEDIUM = "ORTA"
 CONFIDENCE_LOW = "DÜŞÜK"
@@ -106,6 +117,30 @@ def _bucket_word_tr(pct: Optional[float]) -> str:
     if bucket == SIGNAL_CHEAP:
         return "ucuz tarafta"
     return "tarihsel ortasında"
+
+
+def _sector_ratio_bucket(ratio: Optional[float]) -> Optional[str]:
+    """Map a ``current primary multiple / sector median`` ratio to its
+    directional bucket (VALUATION.md Sec.7 axis-b), or ``None`` when the
+    ratio is absent/non-positive (no usable sector median). ``> 1.25``
+    expensive vs sector, ``< 0.80`` cheap vs sector, else in line."""
+    if ratio is None or ratio <= 0:
+        return None
+    if ratio > _SECTOR_RATIO_EXPENSIVE:
+        return SIGNAL_EXPENSIVE
+    if ratio < _SECTOR_RATIO_CHEAP:
+        return SIGNAL_CHEAP
+    return SIGNAL_FAIR
+
+
+def _sector_word_tr(bucket: Optional[str]) -> str:
+    """Turkish phrase for a sector-relative bucket, for the mixed-signal
+    rationale sentence (e.g. ``"pahalı"``)."""
+    if bucket == SIGNAL_EXPENSIVE:
+        return "pahalı"
+    if bucket == SIGNAL_CHEAP:
+        return "ucuz"
+    return "medyanla uyumlu"
 
 
 def _money(value: Optional[float]) -> str:
@@ -312,26 +347,46 @@ def _multiples_signal(
     raw_growth_pair_pct: Optional[float] = None,
     growth_adj_pct: Optional[float] = None,
     pffo_pct: Optional[float] = None,
+    sector_ratio: Optional[float] = None,
 ) -> str:
-    """Multiples signal, two-component (VALUATION.md Sec.7).
+    """Multiples signal, positioned on TWO axes (VALUATION.md Sec.7).
 
     Starts from the raw primary-percentile signal (see
     :func:`_raw_multiples_signal`; for reit, P/FFO is primary rather than
-    P/E, see SPEC.md Sec.8/FFO). When BOTH the raw multiple's own percentile
-    (``raw_growth_pair_pct`` -- P/E in standard mode, EV/Sales in
-    hyper-grower mode; the multiple the growth-adjusted figure is derived
-    from) and the growth-adjusted percentile (``growth_adj_pct``) are
-    present and fall in DIFFERENT directional buckets, returns
-    :data:`SIGNAL_MIXED` -- the raw multiple and its growth-normalized
-    counterpart disagree on direction. When they agree, or either is
-    missing, the raw signal is returned unchanged (existing behavior).
+    P/E, see SPEC.md Sec.8/FFO) -- the company's position against its OWN
+    multiple history. Two independent divergence checks can override the raw
+    signal to :data:`SIGNAL_MIXED`, in precedence order:
+
+    1. **Growth-adjusted (axis-a refinement, highest precedence):** when BOTH
+       the raw multiple's own percentile (``raw_growth_pair_pct`` -- P/E in
+       standard mode, EV/Sales in hyper-grower mode) and the growth-adjusted
+       percentile (``growth_adj_pct``) are present and fall in DIFFERENT
+       directional buckets, the raw multiple and its growth-normalized
+       counterpart disagree.
+    2. **Sector-relative (axis-b):** when a usable ``sector_ratio`` (current
+       primary multiple / Damodaran sector median) is present and its bucket
+       (see :func:`_sector_ratio_bucket`) disagrees with the own-history
+       bucket, the company is cheap/expensive against its own past but the
+       opposite against peers.
+
+    When neither divergence fires (they agree, or the relevant inputs are
+    missing), the raw own-history signal is returned unchanged -- so callers
+    that pass neither the growth-adjusted pair nor a sector ratio keep the
+    exact pre-existing behavior.
     """
     raw = _raw_multiples_signal(pe_pct, ps_pct, pfcf_pct, sector_type, pffo_pct)
     if raw == SIGNAL_NO_DATA:
         return raw
-    if raw_growth_pair_pct is None or growth_adj_pct is None:
-        return raw
-    if _percentile_bucket(raw_growth_pair_pct) != _percentile_bucket(growth_adj_pct):
+    # 1. Growth-adjusted divergence takes precedence (most informative).
+    if (
+        raw_growth_pair_pct is not None
+        and growth_adj_pct is not None
+        and _percentile_bucket(raw_growth_pair_pct) != _percentile_bucket(growth_adj_pct)
+    ):
+        return SIGNAL_MIXED
+    # 2. Own-history vs sector-median divergence (only when both defined).
+    sector_bucket = _sector_ratio_bucket(sector_ratio)
+    if sector_bucket is not None and sector_bucket != raw:
         return SIGNAL_MIXED
     return raw
 
@@ -344,9 +399,11 @@ def _multiples_rationale(
     raw_growth_pair_pct: Optional[float] = None,
     growth_adj_pct: Optional[float] = None,
     pffo_pct: Optional[float] = None,
+    sector_ratio: Optional[float] = None,
 ) -> str:
     """Turkish display sentence explaining the multiples signal, mirroring
-    :func:`_multiples_signal`'s branches exactly (same inputs, thresholds)."""
+    :func:`_multiples_signal`'s branches exactly (same inputs, thresholds,
+    precedence)."""
     if sector_type == "growth_unprofitable":
         candidates = ((ps_pct, "P/S"), (pe_pct, "P/E"), (pfcf_pct, "P/FCF"))
     elif sector_type == "reit":
@@ -358,8 +415,8 @@ def _multiples_rationale(
     if pct is None:
         return "Çarpan persentili hesaplanamadı."
 
-    # Growth-adjusted divergence takes precedence over the plain sentence,
-    # matching _multiples_signal's SIGNAL_MIXED branch.
+    # 1. Growth-adjusted divergence takes precedence over the plain sentence,
+    # matching _multiples_signal's first SIGNAL_MIXED branch.
     if (
         raw_growth_pair_pct is not None
         and growth_adj_pct is not None
@@ -371,11 +428,31 @@ def _multiples_rationale(
             f"{_bucket_word_tr(growth_adj_pct)}) ayrışıyor → karışık sinyal."
         )
 
+    # 2. Own-history vs sector-median divergence (second SIGNAL_MIXED branch).
+    own_bucket = _percentile_bucket(pct)
+    sector_bucket = _sector_ratio_bucket(sector_ratio)
+    if sector_bucket is not None and sector_bucket != own_bucket:
+        return (
+            f"{label} persentili {_percentile(pct)} ({_bucket_word_tr(pct)}) "
+            f"ama sektör medyanına göre {_sector_word_tr(sector_bucket)} → karışık sinyal."
+        )
+
+    # Own-history and sector agree (or no sector data): plain sentence, with a
+    # sector-confirmation clause appended when a sector median is available.
+    if sector_bucket == SIGNAL_EXPENSIVE:
+        sector_suffix = " Sektör medyanına göre de pahalı."
+    elif sector_bucket == SIGNAL_CHEAP:
+        sector_suffix = " Sektör medyanına göre de ucuz."
+    elif sector_bucket == SIGNAL_FAIR:
+        sector_suffix = " Sektör medyanıyla da uyumlu."
+    else:
+        sector_suffix = ""
+
     if pct > _PERCENTILE_EXPENSIVE:
-        return f"{label} persentili {_percentile(pct)} (>70) — kendi tarihsel aralığına göre pahalı."
+        return f"{label} persentili {_percentile(pct)} (>70) — kendi tarihsel aralığına göre pahalı.{sector_suffix}"
     if pct < _PERCENTILE_CHEAP:
-        return f"{label} persentili {_percentile(pct)} (<30) — kendi tarihsel aralığına göre ucuz."
-    return f"{label} persentili {_percentile(pct)} — tarihsel aralığın ortalarında → makul."
+        return f"{label} persentili {_percentile(pct)} (<30) — kendi tarihsel aralığına göre ucuz.{sector_suffix}"
+    return f"{label} persentili {_percentile(pct)} — tarihsel aralığın ortalarında → makul.{sector_suffix}"
 
 
 def triangulate(
@@ -398,6 +475,7 @@ def triangulate(
     midgrowth_revenue_headline: bool = False,
     pffo_pct: Optional[float] = None,
     cyclical_fcfe_headline: bool = False,
+    sector_ratio: Optional[float] = None,
 ) -> dict:
     """Combine the three method signals into one confidence + direction view.
 
@@ -500,6 +578,17 @@ def triangulate(
             ``ps_pct`` when ``None``; ignored for every other sector.
             ``None`` (the default) preserves existing behavior for callers
             that don't pass it.
+        sector_ratio: The current primary multiple divided by its Damodaran
+            sector median (VALUATION.md Sec.7 axis-b) -- the SAME primary
+            multiple the own-history percentile signal uses (P/E, or P/S for
+            ``growth_unprofitable``, or P/FFO for ``reit`` when a sector
+            median exists for it). ``> 1.25`` reads as expensive vs sector,
+            ``< 0.80`` as cheap; when its bucket disagrees with the
+            own-history bucket the multiples signal becomes
+            :data:`SIGNAL_MIXED` (second-precedence, after the
+            growth-adjusted check). ``None`` (the default) -- no usable
+            sector median -- disables the axis and preserves the pure
+            own-history behavior.
 
     Returns:
         ``{"signals": {"dcf", "reverse_dcf", "multiples"}, "confidence":
@@ -521,7 +610,7 @@ def triangulate(
             price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
             hyper_growth, bull_band, reverse_dcf_status, raw_growth_pair_pct, growth_adj_pct,
             earnings_power_headline, mature_revenue_headline, midgrowth_revenue_headline, pffo_pct,
-            cyclical_fcfe_headline,
+            cyclical_fcfe_headline, sector_ratio,
         )
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("triangulate() failed unexpectedly; returning a no-data result.")
@@ -543,13 +632,14 @@ def _triangulate(
     price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
     hyper_growth=False, bull_band=None, reverse_dcf_status=None, raw_growth_pair_pct=None, growth_adj_pct=None,
     earnings_power_headline=False, mature_revenue_headline=False, midgrowth_revenue_headline=False, pffo_pct=None,
-    cyclical_fcfe_headline=False,
+    cyclical_fcfe_headline=False, sector_ratio=None,
 ) -> dict:
     signals = {
         "dcf": _dcf_signal(price, dcf_base_band, hyper_growth, bull_band),
         "reverse_dcf": _reverse_dcf_signal(implied_growth, realized_cagr, base_growth, reverse_dcf_status),
         "multiples": _multiples_signal(
             pe_pct, ps_pct, pfcf_pct, sector_type, raw_growth_pair_pct, growth_adj_pct, pffo_pct,
+            sector_ratio=sector_ratio,
         ),
     }
     rationale = {
@@ -557,6 +647,7 @@ def _triangulate(
         "reverse_dcf": _reverse_dcf_rationale(implied_growth, realized_cagr, base_growth, reverse_dcf_status),
         "multiples": _multiples_rationale(
             pe_pct, ps_pct, pfcf_pct, sector_type, raw_growth_pair_pct, growth_adj_pct, pffo_pct,
+            sector_ratio=sector_ratio,
         ),
     }
 

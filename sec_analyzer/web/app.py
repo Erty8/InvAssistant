@@ -43,7 +43,7 @@ from sec_analyzer.normalize.ratios import compute_ratios
 from sec_analyzer.normalize.red_flags import detect_red_flags
 from sec_analyzer.report.generator import render_report_html, render_search_page
 from sec_analyzer.store.database import save_normalized, save_prices, save_verdict
-from sec_analyzer.technical.indicators import compute_indicators
+from sec_analyzer.technical.indicators import compute_indicators, relative_strength
 from sec_analyzer.technical.verdict import technical_verdict
 
 logger = logging.getLogger(__name__)
@@ -229,11 +229,32 @@ def _fetch_price_and_technical(ticker: str, horizon: str, no_cache: bool):
         indicators = compute_indicators(price_df)
         verdict_result = technical_verdict(indicators, horizon)
         technical = {**indicators, **verdict_result}
+        technical["relative_strength"] = _fetch_relative_strength(ticker, price_df, no_cache)
         logger.info("Price data for %s from %s: %.2f as of %s", ticker, source, price, as_of)
         return price, as_of, technical, price_df
     except PriceDataError as exc:
         logger.warning("Price data unavailable for %s: %s", ticker, exc)
         return None, None, None, None
+
+
+#: Benchmark ticker for the relative-strength (RS) cross-check (mirrors
+#: ``sec_analyzer.cli._RS_BENCHMARK``).
+_RS_BENCHMARK = "SPY"
+
+
+def _fetch_relative_strength(ticker: str, price_df, no_cache: bool) -> Optional[dict]:
+    """Best-effort price relative strength vs. :data:`_RS_BENCHMARK`; never
+    raises. Mirrors ``sec_analyzer.cli._fetch_relative_strength`` so the web UI
+    matches the CLI. ``None`` when the ticker is the benchmark or anything
+    fails (display-only cross-check)."""
+    if str(ticker).strip().upper() == _RS_BENCHMARK:
+        return None
+    try:
+        bench_df, _ = get_price_history(_RS_BENCHMARK, no_cache=no_cache)
+        return relative_strength(price_df["Close"], bench_df["Close"], benchmark=_RS_BENCHMARK)
+    except Exception:  # noqa: BLE001 - display-only cross-check, never fatal
+        logger.warning("Could not compute relative strength for %s", ticker, exc_info=True)
+        return None
 
 
 def _fetch_submissions(cik: str, ticker: str, no_cache: bool) -> Optional[dict]:

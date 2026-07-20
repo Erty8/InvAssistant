@@ -57,7 +57,7 @@ from sec_analyzer.normalize.red_flags import detect_red_flags
 from sec_analyzer.report.generator import generate_report
 from sec_analyzer.signals.events import detect_events, summarize_events
 from sec_analyzer.store.database import save_normalized, save_prices, save_verdict
-from sec_analyzer.technical.indicators import compute_indicators
+from sec_analyzer.technical.indicators import compute_indicators, relative_strength
 from sec_analyzer.technical.verdict import technical_verdict
 
 logger = logging.getLogger(__name__)
@@ -173,6 +173,7 @@ def _fetch_price_and_technical(
         indicators = compute_indicators(price_df)
         verdict_result = technical_verdict(indicators, horizon)
         technical = {**indicators, **verdict_result}
+        technical["relative_strength"] = _fetch_relative_strength(ticker, price_df, no_cache)
         logger.info(
             "Price data for %s from %s: %.2f as of %s", ticker, source, price, as_of
         )
@@ -180,6 +181,30 @@ def _fetch_price_and_technical(
     except PriceDataError as exc:
         logger.warning("Price data unavailable for %s: %s", ticker, exc)
         return None, None, None, None
+
+
+#: Benchmark ticker for the relative-strength (RS) cross-check.
+_RS_BENCHMARK = "SPY"
+
+
+def _fetch_relative_strength(ticker: str, price_df, no_cache: bool) -> Optional[dict]:
+    """Best-effort price relative strength vs. the :data:`_RS_BENCHMARK`
+    benchmark; never raises.
+
+    Fetches the benchmark's (cached) price history and compares returns via
+    :func:`sec_analyzer.technical.indicators.relative_strength`. Returns
+    ``None`` when the ticker *is* the benchmark, price data is unavailable, or
+    anything fails -- RS is a display-only cross-check and must never block the
+    rest of ``analyze``.
+    """
+    if str(ticker).strip().upper() == _RS_BENCHMARK:
+        return None
+    try:
+        bench_df, _ = get_price_history(_RS_BENCHMARK, no_cache=no_cache)
+        return relative_strength(price_df["Close"], bench_df["Close"], benchmark=_RS_BENCHMARK)
+    except Exception:  # noqa: BLE001 - display-only cross-check, never fatal
+        logger.warning("Could not compute relative strength for %s", ticker, exc_info=True)
+        return None
 
 
 def _fetch_analyst_targets(ticker: str, no_cache: bool) -> Optional[dict]:

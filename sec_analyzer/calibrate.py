@@ -195,13 +195,16 @@ def run_calibration(tickers: List[str], years: int = 5, no_cache: bool = False) 
         fv = ((valuation.get("fair_value_range") or {}).get("base") or {})
         lo, hi = fv.get("lo"), fv.get("hi")
 
-        if lo is None or hi is None or not price:
+        price_unreliable = isinstance(metrics, dict) and metrics.get("price_reliable") is False
+        if lo is None or hi is None or not price or price_unreliable:
             if isinstance(result, dict) and "error" in result:
                 reason = f"interpret error: {result.get('error')}"
             elif lo is None or hi is None:
                 reason = "missing fair-value base range"
-            else:
+            elif not price:
                 reason = "missing price"
+            else:
+                reason = "unreliable price (implausible P/E and P/S)"
             print(f"{ticker}: skipped ({reason})")
             rows.append({"ticker": ticker, "status": "skipped", "reason": reason})
             continue
