@@ -270,3 +270,126 @@ def test_load_sector_data_parses_unlevered_beta_and_risk_free(tmp_path):
 def test_load_sector_data_returns_none_for_missing_directory(tmp_path):
     missing_dir = tmp_path / "does_not_exist"
     assert load_sector_data(str(missing_dir)) is None
+
+
+# ---------------------------------------------------------------------------
+# load_sector_data -- point-in-time ("as-of") macro resolution.
+#
+# Shared fixture directory for all as_of tests below:
+#   erp.csv:         region,erp,risk_free -> US,4.23,4.20
+#   erp_history.csv: year,erp,risk_free   -> 2022,4.24,1.51 (no 2099 row)
+#   multiples.csv:   one minimal industry row (reused, irrelevant to macro).
+# ---------------------------------------------------------------------------
+
+
+def _asof_fixture_dir(tmp_path):
+    (tmp_path / "multiples.csv").write_text(
+        "industry,pe,ps,pfcf\nSemiconductor,28.4,6.1,24.7\n", encoding="utf-8",
+    )
+    (tmp_path / "erp.csv").write_text(
+        "region,erp,risk_free\nUS,4.23,4.20\n", encoding="utf-8",
+    )
+    (tmp_path / "erp_history.csv").write_text(
+        "year,erp,risk_free\n2022,4.24,1.51\n", encoding="utf-8",
+    )
+    return str(tmp_path)
+
+
+def test_load_sector_data_as_of_none_matches_pre_change_shape_exactly(tmp_path):
+    """Regression guard: as_of=None (the default) must return the EXACT
+    current-value dict, with no "macro_asof" key at all -- byte-for-byte the
+    pre-as-of-feature shape."""
+    dir_path = _asof_fixture_dir(tmp_path)
+
+    result = load_sector_data(dir_path)
+
+    assert result == {
+        "multiples": [
+            {"industry": "Semiconductor", "pe": 28.4, "ps": 6.1, "pfcf": 24.7,
+             "growth": None, "peg": None, "beta": None},
+        ],
+        "erp": pytest.approx(4.23),
+        "risk_free": pytest.approx(4.20),
+    }
+    assert "macro_asof" not in result
+
+
+def test_load_sector_data_as_of_year_hit_uses_erp_history_row(tmp_path):
+    """as_of falls in a year present in erp_history.csv (2022): ERP is
+    sourced from that row (4.24), not the current erp.csv value (4.23)."""
+    dir_path = _asof_fixture_dir(tmp_path)
+
+    result = load_sector_data(dir_path, as_of="2022-06-30")
+
+    assert result["erp"] == pytest.approx(4.24)
+    assert result["macro_asof"]["as_of"] == "2022-06-30"
+    assert result["macro_asof"]["erp_source"] == "erp_history.csv (2022)"
+
+
+def test_load_sector_data_as_of_year_miss_falls_back_to_current_erp_csv(tmp_path):
+    """as_of year (2099) has NO row in erp_history.csv -> ERP falls back to
+    the current erp.csv value (4.23), with the Turkish fallback source
+    string."""
+    dir_path = _asof_fixture_dir(tmp_path)
+
+    result = load_sector_data(dir_path, as_of="2099-01-15")
+
+    assert result["erp"] == pytest.approx(4.23)
+    assert result["macro_asof"]["erp_source"] == "erp.csv (güncel değer)"
+
+
+def test_load_sector_data_as_of_risk_free_prefers_fred_over_history_and_current(tmp_path):
+    """Risk-free precedence link 1: fred_rate, when present, wins over both
+    the erp_history.csv row's risk_free (1.51) and the current erp.csv value
+    (4.20)."""
+    dir_path = _asof_fixture_dir(tmp_path)
+    fred_rate = {"value_pct": 2.98, "date": "2022-06-30", "series": "DGS10"}
+
+    result = load_sector_data(dir_path, as_of="2022-06-30", fred_rate=fred_rate)
+
+    assert result["risk_free"] == pytest.approx(2.98)
+    assert result["macro_asof"]["risk_free_source"] == "DGS10 (2022-06-30)"
+
+
+def test_load_sector_data_as_of_risk_free_falls_back_to_history_row_when_fred_missing(tmp_path):
+    """Risk-free precedence link 2: no fred_rate -> the erp_history.csv
+    row's own risk_free (1.51 for 2022) is used, not the current erp.csv
+    value (4.20)."""
+    dir_path = _asof_fixture_dir(tmp_path)
+
+    result = load_sector_data(dir_path, as_of="2022-06-30", fred_rate=None)
+
+    assert result["risk_free"] == pytest.approx(1.51)
+    assert result["macro_asof"]["risk_free_source"] == "erp_history.csv (2022)"
+
+
+def test_load_sector_data_as_of_risk_free_falls_back_to_current_erp_csv_when_history_lacks_it(tmp_path):
+    """Risk-free precedence link 3: no fred_rate AND the matched
+    erp_history.csv year row has no usable risk_free -> falls back to the
+    current erp.csv value (4.20)."""
+    (tmp_path / "multiples.csv").write_text(
+        "industry,pe,ps,pfcf\nSemiconductor,28.4,6.1,24.7\n", encoding="utf-8",
+    )
+    (tmp_path / "erp.csv").write_text(
+        "region,erp,risk_free\nUS,4.23,4.20\n", encoding="utf-8",
+    )
+    # erp_history.csv 2022 row carries ERP but NO risk_free column value.
+    (tmp_path / "erp_history.csv").write_text(
+        "year,erp\n2022,4.24\n", encoding="utf-8",
+    )
+
+    result = load_sector_data(str(tmp_path), as_of="2022-06-30", fred_rate=None)
+
+    assert result["risk_free"] == pytest.approx(4.20)
+    assert result["macro_asof"]["risk_free_source"] == "erp.csv (güncel değer)"
+    # ERP itself still comes from the history row (independent axis).
+    assert result["erp"] == pytest.approx(4.24)
+
+
+def test_load_sector_data_as_of_accepts_a_date_object(tmp_path):
+    from datetime import date
+
+    dir_path = _asof_fixture_dir(tmp_path)
+    result = load_sector_data(dir_path, as_of=date(2022, 6, 30))
+    assert result["macro_asof"]["as_of"] == "2022-06-30"
+    assert result["erp"] == pytest.approx(4.24)

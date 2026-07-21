@@ -61,7 +61,7 @@ identical to what pre-two-phase callers already expect)::
       ],
       "stop_adding": [{"code": <str>, "message": <str>}, ...],
       "thesis_metric": {"name": <str>, "latest_value": <str|null>,
-        "trend": <str|null>, "rationale": <str>},
+        "trend": <str|null>, "rationale": <str>, "cycle": <dict|null>},
       "_provider": <str>, "_model": <str>,
       "_horizon": <str>, "_weights": {"fundamental": <float>, "technical": <float>}
     }
@@ -729,7 +729,11 @@ def _parse_model_json(text: str) -> dict:
     try:
         return json.loads(cleaned)
     except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("Model response was not valid JSON: %s", exc)
+        logger.warning(
+            "Model response was not valid JSON: %s; response starts with: %r",
+            exc,
+            cleaned[:200] if cleaned else "<empty>",
+        )
         return {
             "error": "parse_failed",
             "raw": text,
@@ -790,7 +794,10 @@ def _call_ollama(system: str, user: str, model: str, host: str) -> str:
             the requested model, or returns a malformed response.
     """
     logger.info("Requesting Ollama analysis using model %s at %s", model, host)
-    return chat_json(system=system, user=user, model=model, host=host)
+    return chat_json(
+        system=system, user=user, model=model, host=host,
+        timeout=Config.OLLAMA_TIMEOUT, num_ctx=Config.OLLAMA_NUM_CTX,
+    )
 
 
 def _dispatch_llm_call(
@@ -1460,6 +1467,8 @@ def interpret(
     valuation: Optional[dict] = None,
     submissions: Optional[dict] = None,
     price_df=None,
+    as_of=None,
+    fred_rate: Optional[dict] = None,
 ) -> dict:
     """Backward-compatible entry point orchestrating the full two-phase flow.
 
@@ -1553,7 +1562,7 @@ def interpret(
         # once into `sector_data` and reused for both the CAPM lookup and
         # the global risk-free fallback below, rather than reading the CSVs
         # twice.
-        sector_data = damodaran.load_sector_data(Config.DAMODARAN_DIR)
+        sector_data = damodaran.load_sector_data(Config.DAMODARAN_DIR, as_of=as_of, fred_rate=fred_rate)
         capm = compute_cost_of_equity(
             sector_data,
             sic_description,
@@ -1585,6 +1594,7 @@ def interpret(
         valuation_result = run_valuation(
             normalized, ratios, metrics, price, price_df, assumptions, sector_type,
             sic_description=sic_description, hyper_growth_extras=phase1.get("hyper_growth_extras"),
+            as_of=as_of, fred_rate=fred_rate,
         )
 
         return interpret_results(

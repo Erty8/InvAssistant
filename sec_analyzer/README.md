@@ -226,11 +226,20 @@ sağlayıcı (LLM'ler dahil) bu alanları kendisi hesaplamaz. METODOLOJI.md
   (henüz bir `POZISYONLAR.md` pozisyon şeması yok — bkz. `ROADMAP.md`).
 - **`thesis_metric`** — tek çapa metrik: `{"name": str, "latest_value":
   str|null, "trend": "iyileşiyor"|"bozuluyor"|"yatay"|null, "rationale":
-  str}`. Metrik, sektör tipine göre seçilir (olgun → net kâr marjı/ROE,
-  kâr etmeyen büyüme → yıllık gelir büyümesi, finansal → ROE, GYO → FCF
-  marjı, döngüsel → brüt/net kâr marjı) ve `ratios`/`metrics`'ten okunur,
-  asla uydurulmaz; `rationale` her zaman METODOLOJI §7'nin "iki ardışık
-  çeyrek tezin aksini gösterirse tez geçersizdir" kuralını içerir.
+  str, "cycle": dict|null}`. Metrik, sektör tipine göre seçilir (olgun →
+  net kâr marjı/ROE, kâr etmeyen büyüme → yıllık gelir büyümesi, finansal →
+  ROE, GYO → FCF marjı, döngüsel → brüt/net kâr marjı) ve
+  `ratios`/`metrics`'ten okunur, asla uydurulmaz; `rationale` her zaman
+  METODOLOJI §7'nin "iki ardışık çeyrek tezin aksini gösterirse tez
+  geçersizdir" kuralını içerir. `cycle`, çapa metriğin güncel değerini kendi
+  çok yıllık dip→zirve aralığı içinde konumlandırır (raporda "döngü konumu"
+  çubuğu olarak çizilir): `{"low", "high", "current", "position" (0..1),
+  "low_fy", "high_fy", "current_fy", "n_years", "is_cyclical", "series"}`.
+  `series`, mali yıla göre artan sıralı tam yıllık seridir (`[{"fy",
+  "value"}, ...]`) ve konum çubuğunun yanında metriğin seyrini gösteren bir
+  sparkline çizgisi çizmek için kullanılır. En az iki farklı yıllık değer
+  yoksa, seri tamamen düzse veya metrik tek-noktalı `metrics` yedeğinden
+  geldiyse `null` olur.
 
 ### Damodaran sektör verisi kurulumu
 

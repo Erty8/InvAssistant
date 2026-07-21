@@ -7,7 +7,13 @@ meaningfully different behavior depending on whether ``result["valuation"]``
 Sec.13) is present.
 """
 
-from sec_analyzer.cli import _print_verdict_card
+from datetime import date, timedelta
+
+import argparse
+
+import pytest
+
+from sec_analyzer.cli import _parse_as_of, _print_verdict_card, build_parser
 
 
 def _fair_value_range():
@@ -390,3 +396,67 @@ def test_print_verdict_card_events_line_absent_key_is_safe(capsys):
     _print_verdict_card("AAPL", "1y", _result_without_valuation(), metrics={"price": 100.0})
     out = capsys.readouterr().out
     assert "Olaylar:" in out
+
+
+# ---------------------------------------------------------------------------
+# _parse_as_of -- argparse `type=` for --as-of: parses ISO dates, rejects a
+# bad format or a future date.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_as_of_accepts_a_valid_past_iso_date():
+    result = _parse_as_of("2022-06-30")
+    assert result == date(2022, 6, 30)
+
+
+def test_parse_as_of_accepts_today():
+    # "on or before today" -- today itself must be accepted, not rejected as
+    # "in the future" (the check is a strict `>`, not `>=`).
+    today_str = date.today().isoformat()
+    assert _parse_as_of(today_str) == date.today()
+
+
+def test_parse_as_of_rejects_malformed_date_string():
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_as_of("not-a-date")
+
+
+def test_parse_as_of_rejects_wrong_format():
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_as_of("06/30/2022")
+
+
+def test_parse_as_of_rejects_a_future_date():
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_as_of(tomorrow)
+
+
+# ---------------------------------------------------------------------------
+# build_parser -- `analyze TICKER --as-of YYYY-MM-DD` wiring.
+# ---------------------------------------------------------------------------
+
+
+def test_build_parser_analyze_accepts_as_of_and_parses_to_a_date():
+    parser = build_parser()
+    args = parser.parse_args(["analyze", "AAPL", "--as-of", "2022-06-30"])
+    assert args.as_of == date(2022, 6, 30)
+
+
+def test_build_parser_analyze_defaults_as_of_to_none():
+    parser = build_parser()
+    args = parser.parse_args(["analyze", "AAPL"])
+    assert args.as_of is None
+
+
+def test_build_parser_analyze_rejects_a_future_as_of_date():
+    parser = build_parser()
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["analyze", "AAPL", "--as-of", tomorrow])
+
+
+def test_build_parser_calibrate_accepts_as_of_too():
+    parser = build_parser()
+    args = parser.parse_args(["calibrate", "--as-of", "2022-06-30"])
+    assert args.as_of == date(2022, 6, 30)

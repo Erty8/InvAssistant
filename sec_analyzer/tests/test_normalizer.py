@@ -673,6 +673,147 @@ def test_dei_tag_absent_falls_back_to_usgaap_shares_tag():
     assert annual[0]["tag"] == "CommonStockSharesOutstanding"
 
 
+# ---------------------------------------------------------------------------
+# Point-in-time ("as-of") mode: normalize_facts(..., as_of=...) drops any
+# record filed after the cutoff BEFORE dedup, so "latest filed on/before
+# as_of" wins instead of "latest filed overall". as_of=None must be
+# byte-for-byte unchanged from pre-existing behavior.
+# ---------------------------------------------------------------------------
+
+
+def test_as_of_restatement_keeps_value_knowable_on_that_date():
+    """Same (period_end, fy/fp/form) restated twice: filed 2023-02-10 -> 100.0,
+    then a later restatement filed 2024-02-09 -> 90.0.
+
+    With as_of="2023-06-30" the 2024 restatement was not yet filed, so it
+    must be excluded before dedup -- the surviving value is the ORIGINAL
+    100.0, not the eventual 90.0. With as_of=None (live/unchanged behavior)
+    the latest-filed row (90.0) wins, exactly like
+    test_restatement_dedup_keeps_latest_filed_value above.
+    """
+    usgaap = {
+        "NetIncomeLoss": _usd_tag(
+            [
+                {
+                    "start": "2022-01-01", "end": "2022-12-31", "val": 100.0,
+                    "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2023-02-10",
+                },
+                {
+                    "start": "2022-01-01", "end": "2022-12-31", "val": 90.0,
+                    "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2024-02-09",
+                },
+            ]
+        ),
+    }
+    facts = _make_facts(usgaap=usgaap)
+
+    as_of_result = normalize_facts(facts, as_of="2023-06-30")
+    annual_as_of = as_of_result["annual"]["NetIncome"]
+    assert annual_as_of is not None
+    assert len(annual_as_of) == 1
+    assert annual_as_of[0]["value"] == 100.0
+    assert annual_as_of[0]["filed"] == "2023-02-10"
+
+    live_result = normalize_facts(facts, as_of=None)
+    annual_live = live_result["annual"]["NetIncome"]
+    assert annual_live is not None
+    assert annual_live[0]["value"] == 90.0
+    assert annual_live[0]["filed"] == "2024-02-09"
+
+
+def test_as_of_accepts_a_date_object_not_just_an_iso_string():
+    """``as_of`` may be a real ``datetime.date`` (the CLI passes one); the
+    ISO-string comparison must handle it via ``.isoformat()`` the same way."""
+    from datetime import date
+
+    usgaap = {
+        "NetIncomeLoss": _usd_tag(
+            [
+                {
+                    "start": "2022-01-01", "end": "2022-12-31", "val": 100.0,
+                    "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2023-02-10",
+                },
+                {
+                    "start": "2022-01-01", "end": "2022-12-31", "val": 90.0,
+                    "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2024-02-09",
+                },
+            ]
+        ),
+    }
+    result = normalize_facts(_make_facts(usgaap=usgaap), as_of=date(2023, 6, 30))
+    annual = result["annual"]["NetIncome"]
+    assert annual is not None
+    assert annual[0]["value"] == 100.0
+
+
+def test_as_of_filed_exactly_on_cutoff_counts_as_knowable():
+    """``filed == as_of`` must survive (the docstring: "filed == as_of counts
+    as knowable"), not be excluded by a strict less-than comparison."""
+    usgaap = {
+        "NetIncomeLoss": _usd_tag(
+            [
+                {
+                    "start": "2022-01-01", "end": "2022-12-31", "val": 100.0,
+                    "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2023-02-10",
+                },
+            ]
+        ),
+    }
+    result = normalize_facts(_make_facts(usgaap=usgaap), as_of="2023-02-10")
+    annual = result["annual"]["NetIncome"]
+    assert annual is not None
+    assert annual[0]["value"] == 100.0
+
+
+def test_as_of_concept_entirely_filed_after_cutoff_is_reported_missing():
+    """Every row for a concept was filed after ``as_of`` -> the concept must
+    degrade to missing/None exactly like a concept with no data at all,
+    rather than raising or leaking a not-yet-knowable value."""
+    usgaap = {
+        "NetIncomeLoss": _usd_tag(
+            [
+                {
+                    "start": "2022-01-01", "end": "2022-12-31", "val": 90.0,
+                    "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2024-02-09",
+                },
+            ]
+        ),
+    }
+    result = normalize_facts(_make_facts(usgaap=usgaap), as_of="2023-06-30")
+
+    assert result["annual"]["NetIncome"] is None
+    assert result["quarterly"]["NetIncome"] is None
+    assert result["matched_tags"]["NetIncome"] is None
+    assert "NetIncome" in result["missing"]
+
+
+def test_as_of_none_matches_pre_existing_behavior_on_an_existing_fixture():
+    """Regression guard: passing ``as_of=None`` explicitly must reproduce the
+    exact same output as calling ``normalize_facts`` without the new
+    parameter at all, on a fixture already covered elsewhere in this file
+    (the NVIDIA-style split-tag merge fixture)."""
+    old_tag_rows = [
+        {"start": "2021-02-01", "end": "2022-01-30", "val": 26_914,
+         "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2022-02-18"},
+        {"start": "2020-02-03", "end": "2021-01-31", "val": 16_675,
+         "fy": 2021, "fp": "FY", "form": "10-K", "filed": "2021-02-26"},
+    ]
+    new_tag_rows = [
+        {"start": "2022-01-31", "end": "2023-01-29", "val": 26_974,
+         "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-02-24"},
+    ]
+    usgaap = {
+        "RevenueFromContractWithCustomerExcludingAssessedTax": _usd_tag(old_tag_rows),
+        "Revenues": _usd_tag(new_tag_rows),
+    }
+    facts = _make_facts(usgaap=usgaap, entity_name="NVIDIA Corp")
+
+    result_without_kw = normalize_facts(facts, years=6)
+    result_with_explicit_none = normalize_facts(facts, years=6, as_of=None)
+
+    assert result_with_explicit_none == result_without_kw
+
+
 def test_concept_with_tag_present_but_wrong_unit_is_missing():
     """A tag that exists but only carries units outside the concept's
     acceptable list must not contribute any rows -- the concept is reported

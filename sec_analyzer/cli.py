@@ -46,7 +46,8 @@ from sec_analyzer.config import Config, ConfigError
 from sec_analyzer.fetch.analyst import get_analyst_targets
 from sec_analyzer.fetch.companyfacts import get_company_facts, get_submissions
 from sec_analyzer.fetch.filings import estimate_next_earnings
-from sec_analyzer.fetch.prices import PriceDataError, get_price_history, latest_price
+from sec_analyzer.fetch.fred import get_risk_free_asof
+from sec_analyzer.fetch.prices import PriceDataError, get_price_history, latest_price, slice_asof
 from sec_analyzer.fetch.tickers import resolve_cik
 from sec_analyzer.http_client import SecHttpClient
 from sec_analyzer.interpret.analyzer import interpret
@@ -119,26 +120,37 @@ def _fetch_normalize_store(args: argparse.Namespace) -> Tuple[str, str, dict, Li
 
     Args:
         args: Parsed CLI arguments; must have ``ticker``, ``years``, and
-            ``no_cache`` attributes.
+            ``no_cache`` attributes. An optional ``as_of`` attribute
+            (``datetime.date`` or ``None``) enables point-in-time mode:
+            only facts filed on/before that date survive normalization, and
+            the truncated slice is NOT persisted to the database (the
+            financials table holds the current-view upsert).
 
     Returns:
         ``(cik, name, normalized, ratios)``.
     """
     client = SecHttpClient()
+    as_of = getattr(args, "as_of", None)
 
     cik, name = resolve_cik(args.ticker, client, no_cache=args.no_cache)
     logger.info("Resolved ticker %s -> CIK %s (%s)", args.ticker, cik, name)
 
     facts = get_company_facts(cik, client, no_cache=args.no_cache)
-    normalized = normalize_facts(facts, years=args.years)
+    normalized = normalize_facts(facts, years=args.years, as_of=as_of)
     ratios = compute_ratios(normalized)
 
     print(format_table(normalized))
     print()
     _print_ratios(ratios)
 
-    save_normalized(args.ticker, cik, name, normalized, ratios, db_path=Config.DB_PATH)
-    print(f"\nSaved to database: {Config.DB_PATH}")
+    if as_of is not None:
+        print(
+            f"\nNot: geçmiş tarih (as-of {as_of.isoformat()}) modunda finansallar "
+            "veritabanına yazılmaz."
+        )
+    else:
+        save_normalized(args.ticker, cik, name, normalized, ratios, db_path=Config.DB_PATH)
+        print(f"\nSaved to database: {Config.DB_PATH}")
 
     return cik, name, normalized, ratios
 
@@ -149,7 +161,7 @@ def cmd_fetch(args: argparse.Namespace) -> None:
 
 
 def _fetch_price_and_technical(
-    ticker: str, horizon: str, no_cache: bool
+    ticker: str, horizon: str, no_cache: bool, as_of=None
 ):
     """Fetch price history and derive the merged technical indicators/verdict.
 
@@ -169,15 +181,23 @@ def _fetch_price_and_technical(
     """
     try:
         price_df, source = get_price_history(ticker, no_cache=no_cache)
-        price, as_of = latest_price(price_df)
+        if as_of is not None:
+            price_df = slice_asof(price_df, as_of)
+            if price_df.empty:
+                logger.warning(
+                    "No price data for %s on/before as-of %s; skipping technical.",
+                    ticker, as_of,
+                )
+                return None, None, None, None
+        price, as_of_date = latest_price(price_df)
         indicators = compute_indicators(price_df)
         verdict_result = technical_verdict(indicators, horizon)
         technical = {**indicators, **verdict_result}
-        technical["relative_strength"] = _fetch_relative_strength(ticker, price_df, no_cache)
+        technical["relative_strength"] = _fetch_relative_strength(ticker, price_df, no_cache, as_of)
         logger.info(
-            "Price data for %s from %s: %.2f as of %s", ticker, source, price, as_of
+            "Price data for %s from %s: %.2f as of %s", ticker, source, price, as_of_date
         )
-        return price, as_of, technical, price_df
+        return price, as_of_date, technical, price_df
     except PriceDataError as exc:
         logger.warning("Price data unavailable for %s: %s", ticker, exc)
         return None, None, None, None
@@ -187,7 +207,7 @@ def _fetch_price_and_technical(
 _RS_BENCHMARK = "SPY"
 
 
-def _fetch_relative_strength(ticker: str, price_df, no_cache: bool) -> Optional[dict]:
+def _fetch_relative_strength(ticker: str, price_df, no_cache: bool, as_of=None) -> Optional[dict]:
     """Best-effort price relative strength vs. the :data:`_RS_BENCHMARK`
     benchmark; never raises.
 
@@ -195,12 +215,15 @@ def _fetch_relative_strength(ticker: str, price_df, no_cache: bool) -> Optional[
     :func:`sec_analyzer.technical.indicators.relative_strength`. Returns
     ``None`` when the ticker *is* the benchmark, price data is unavailable, or
     anything fails -- RS is a display-only cross-check and must never block the
-    rest of ``analyze``.
+    rest of ``analyze``. When ``as_of`` is set the benchmark frame is sliced
+    to the same cutoff so the comparison stays point-in-time.
     """
     if str(ticker).strip().upper() == _RS_BENCHMARK:
         return None
     try:
         bench_df, _ = get_price_history(_RS_BENCHMARK, no_cache=no_cache)
+        if as_of is not None:
+            bench_df = slice_asof(bench_df, as_of)
         return relative_strength(price_df["Close"], bench_df["Close"], benchmark=_RS_BENCHMARK)
     except Exception:  # noqa: BLE001 - display-only cross-check, never fatal
         logger.warning("Could not compute relative strength for %s", ticker, exc_info=True)
@@ -226,6 +249,22 @@ def _fetch_analyst_targets(ticker: str, no_cache: bool) -> Optional[dict]:
         return None
 
 
+def _fetch_risk_free_asof(as_of, no_cache: bool) -> Optional[dict]:
+    """Best-effort historical risk-free rate (FRED DGS10) for as-of mode; never raises.
+
+    Thin wrapper over :func:`sec_analyzer.fetch.fred.get_risk_free_asof` so a
+    FRED outage degrades to the archived ERP/risk-free fallback rather than
+    blocking ``analyze``.
+    """
+    if as_of is None:
+        return None
+    try:
+        return get_risk_free_asof(as_of, no_cache=no_cache)
+    except Exception:  # noqa: BLE001 - macro fetch must never be fatal
+        logger.warning("Could not fetch FRED risk-free rate for as-of %s", as_of, exc_info=True)
+        return None
+
+
 def _fetch_submissions(cik: str, ticker: str, no_cache: bool) -> Optional[dict]:
     """Best-effort fetch of a filer's raw SEC submissions document; never raises.
 
@@ -247,13 +286,16 @@ def _fetch_submissions(cik: str, ticker: str, no_cache: bool) -> Optional[dict]:
         return None
 
 
-def _fetch_catalyst(submissions: Optional[dict], ticker: str) -> Optional[dict]:
+def _fetch_catalyst(submissions: Optional[dict], ticker: str, as_of=None) -> Optional[dict]:
     """Best-effort next-earnings estimate from already-fetched submissions; never raises.
 
     Args:
         submissions: The dict returned by :func:`_fetch_submissions`, or
             ``None``.
         ticker: Stock ticker symbol, used only for the warning log message.
+        as_of: Optional point-in-time reference date; forwarded as
+            ``estimate_next_earnings(today=as_of)`` so the projection walks
+            forward from that date and ignores filings dated after it.
 
     Returns:
         The dict returned by
@@ -264,7 +306,7 @@ def _fetch_catalyst(submissions: Optional[dict], ticker: str) -> Optional[dict]:
     if not submissions:
         return None
     try:
-        return estimate_next_earnings(submissions)
+        return estimate_next_earnings(submissions, today=as_of)
     except Exception:  # noqa: BLE001 - a catalyst estimate is a nice-to-have, never fatal
         logger.warning("Could not estimate next earnings date for %s", ticker, exc_info=True)
         return None
@@ -279,14 +321,15 @@ _EVENTS_MIN_SEVERITY = "warning"
 _EVENTS_MAX = 8
 
 
-def _detect_filing_events(submissions: Optional[dict]) -> List[dict]:
+def _detect_filing_events(submissions: Optional[dict], as_of=None) -> List[dict]:
     """Best-effort recent 8-K event signal from already-fetched submissions.
 
     Reuses the ``submissions`` document :func:`_fetch_submissions` fetched
     once for this run (no extra network, no document download, no LLM). Only
     warning/critical events within the last year are surfaced. ``detect_events``
     is itself never-raises, so this simply returns an empty list when there's
-    nothing to show.
+    nothing to show. When ``as_of`` is set it is the reference date for the
+    lookback window, and filings dated after it are excluded.
     """
     if not submissions:
         return []
@@ -295,6 +338,7 @@ def _detect_filing_events(submissions: Optional[dict]) -> List[dict]:
         lookback_days=_EVENTS_LOOKBACK_DAYS,
         min_severity=_EVENTS_MIN_SEVERITY,
         max_events=_EVENTS_MAX,
+        today=as_of,
     )
 
 
@@ -767,6 +811,7 @@ def _print_verdict_card(
     flags: Optional[List[dict]] = None,
     technical: Optional[dict] = None,
     analyst: Optional[dict] = None,
+    as_of=None,
 ) -> None:
     """Print the compact, Turkish-language terminal verdict card.
 
@@ -821,6 +866,17 @@ def _print_verdict_card(
     print()
     print(header)
     print("─" * len(header))
+    if as_of is not None:
+        print(
+            f"Geçmiş tarih modu: {as_of.isoformat()} — yalnızca bu tarihte "
+            "bilinen veriler (analist konsensüsü gösterilmiyor)"
+        )
+        macro_asof = (result.get("valuation") or {}).get("macro_asof") if isinstance(result, dict) else None
+        if macro_asof:
+            print(
+                f"  Makro: ERP {macro_asof.get('erp_source')} · risksiz faiz "
+                f"{macro_asof.get('risk_free_source')}"
+            )
     print(f"Fiyat: {_fmt_money(metrics.get('price'))}")
 
     if "error" in result:
@@ -906,23 +962,42 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     fundamental + technical interpretation, printed as a verdict card (and,
     with ``--html``, saved as a standalone HTML report)."""
     horizon = getattr(args, "horizon", None) or "1y"
+    as_of = getattr(args, "as_of", None)
     cik, _name, normalized, ratios = _fetch_normalize_store(args)
 
     provider = getattr(args, "provider", None) or Config.ANALYZER_PROVIDER
     print(f"\nRunning {provider} analysis (horizon={horizon})...")
 
-    price, as_of, technical, price_df = _fetch_price_and_technical(
-        args.ticker, horizon, args.no_cache
+    # Point-in-time no-data guard: if the as-of cutoff predates every filed
+    # fact, there's nothing to analyze -- print a minimal Turkish card and
+    # stop before the rest of the pipeline (which would otherwise divide by
+    # missing fundamentals). Never crashes the CLI.
+    if as_of is not None and not any((normalized.get("annual") or {}).values()):
+        result = {
+            "error": "as_of_no_data",
+            "summary": (
+                f"{as_of.isoformat()} tarihi itibarıyla dosyalanmış SEC verisi "
+                "bulunamadı; şirketin ilk dosyalaması bu tarihten sonra olabilir."
+            ),
+        }
+        _print_verdict_card(args.ticker, horizon, result, {}, [], None, as_of=as_of)
+        return
+
+    price, price_as_of, technical, price_df = _fetch_price_and_technical(
+        args.ticker, horizon, args.no_cache, as_of
     )
-    analyst = _fetch_analyst_targets(args.ticker, args.no_cache)
+    # Analyst consensus (yfinance) is undated and cannot be made point-in-time,
+    # so it is suppressed entirely in as-of mode (SPEC: as-of contract).
+    analyst = None if as_of is not None else _fetch_analyst_targets(args.ticker, args.no_cache)
+    fred_rate = _fetch_risk_free_asof(as_of, args.no_cache)
 
     metrics = compute_metrics(normalized, ratios, price)
     flags = detect_red_flags(normalized, ratios, metrics, horizon)
     submissions = _fetch_submissions(cik, args.ticker, args.no_cache)
-    catalyst = _fetch_catalyst(submissions, args.ticker)
-    events = _detect_filing_events(submissions)
+    catalyst = _fetch_catalyst(submissions, args.ticker, as_of)
+    events = _detect_filing_events(submissions, as_of)
 
-    if price_df is not None:
+    if price_df is not None and as_of is None:
         _save_price_rows(cik, price_df)
 
     result = interpret(
@@ -936,6 +1011,8 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         catalyst=catalyst,
         submissions=submissions,
         price_df=price_df,
+        as_of=as_of,
+        fred_rate=fred_rate,
     )
 
     # Recent 8-K events are deterministic filing-metadata facts, not model
@@ -945,6 +1022,8 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     # the HTML report, which reads result.events.
     if isinstance(result, dict):
         result["events"] = events
+        if as_of is not None:
+            result["as_of"] = as_of.isoformat()
 
     if "error" in result:
         print(
@@ -959,11 +1038,12 @@ def cmd_analyze(args: argparse.Namespace) -> None:
             save_verdict(
                 args.ticker, cik, horizon, provider, price, result,
                 db_path=Config.DB_PATH, valuation=result.get("valuation"),
+                as_of=as_of.isoformat() if as_of is not None else None,
             )
         except Exception:  # noqa: BLE001 - persistence failure must not be fatal
             logger.warning("Failed to save verdict for %s", args.ticker, exc_info=True)
 
-    _print_verdict_card(args.ticker, horizon, result, metrics, flags, technical, analyst=analyst)
+    _print_verdict_card(args.ticker, horizon, result, metrics, flags, technical, analyst=analyst, as_of=as_of)
 
     if getattr(args, "verbose", False):
         print("\n" + json.dumps(result, indent=2, ensure_ascii=False))
@@ -978,8 +1058,9 @@ def cmd_analyze(args: argparse.Namespace) -> None:
                 technical=technical,
                 flags=flags,
                 price=price,
-                as_of=as_of,
+                as_of=price_as_of,
                 analyst=analyst,
+                analysis_as_of=as_of.isoformat() if as_of is not None else None,
             )
             print(f"\nHTML report saved to: {report_path}")
         except Exception as exc:  # noqa: BLE001 - a report-writing failure must not crash analyze
@@ -1002,8 +1083,11 @@ def cmd_calibrate(args: argparse.Namespace) -> None:
         else DEFAULT_TICKERS
     )
 
-    rows = run_calibration(tickers, years=args.years, no_cache=args.no_cache)
+    as_of = getattr(args, "as_of", None)
+    rows = run_calibration(tickers, years=args.years, no_cache=args.no_cache, as_of=as_of)
     print()
+    if as_of is not None:
+        print(f"As-of (geçmiş tarih) modu: {as_of.isoformat()}")
     print_calibration_table(rows)
 
     summary = summarize_ratios(rows)
@@ -1011,11 +1095,33 @@ def cmd_calibrate(args: argparse.Namespace) -> None:
     for key, value in summary.items():
         print(f"  {key}: {value}")
 
-    path = save_calibration_snapshot(args.label, rows, summary)
+    path = save_calibration_snapshot(
+        args.label, rows, summary, as_of=as_of.isoformat() if as_of is not None else None
+    )
     if path:
         print(f"\nSaved calibration snapshot to: {path}")
     else:
         print("\nWARNING: failed to save calibration snapshot.", file=sys.stderr)
+
+
+def _parse_as_of(value: str) -> date:
+    """argparse ``type`` for ``--as-of``: parse an ISO date, reject the future.
+
+    A point-in-time cutoff after today is meaningless (there's no "future
+    knowledge" to restrict to) and almost always a typo, so it's rejected up
+    front rather than silently behaving like a live run.
+    """
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid as-of date {value!r}; expected YYYY-MM-DD."
+        )
+    if parsed > date.today():
+        raise argparse.ArgumentTypeError(
+            f"as-of date {value} is in the future; expected a past date."
+        )
+    return parsed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1089,6 +1195,19 @@ def build_parser() -> argparse.ArgumentParser:
             "script = deterministic rule-based analysis, no AI/LLM required."
         ),
     )
+    analyze_parser.add_argument(
+        "--as-of",
+        metavar="YYYY-MM-DD",
+        type=_parse_as_of,
+        default=None,
+        dest="as_of",
+        help=(
+            "Point-in-time mode: analyze TICKER using only data knowable on "
+            "this past date -- SEC facts filed on/before it, prices up to it, "
+            "and archived ERP/risk-free macro. Analyst consensus is suppressed "
+            "and financials are not written to the database."
+        ),
+    )
     analyze_parser.set_defaults(func=cmd_analyze)
 
     calibrate_parser = subparsers.add_parser(
@@ -1124,6 +1243,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-cache",
         action="store_true",
         help="Bypass the on-disk raw JSON/price caches and re-fetch.",
+    )
+    calibrate_parser.add_argument(
+        "--as-of",
+        metavar="YYYY-MM-DD",
+        type=_parse_as_of,
+        default=None,
+        dest="as_of",
+        help=(
+            "Point-in-time mode: run the whole basket as of this past date "
+            "(e.g. --as-of 2021-11-19 --label peak2021 vs --as-of 2022-10-14 "
+            "--label trough2022) to separate engine conservatism from the "
+            "market regime. See sec_analyzer.calibrate."
+        ),
     )
     calibrate_parser.set_defaults(func=cmd_calibrate)
 

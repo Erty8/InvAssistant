@@ -889,3 +889,75 @@ def test_select_thesis_metric_never_raises_on_garbage_input():
     assert result["latest_value"] is None
     result2 = planning.select_thesis_metric(123, "not a list", "not a dict")
     assert result2["latest_value"] is None
+
+
+# ---------------------------------------------------------------------------
+# thesis_metric cycle position (select_thesis_metric -> _compute_cycle_position)
+# ---------------------------------------------------------------------------
+
+
+def test_select_thesis_metric_always_carries_cycle_key():
+    # The "cycle" key is part of the documented shape (SPEC.md), present even
+    # when it degrades to None.
+    for result in (
+        planning.select_thesis_metric("mature", [], {}),
+        planning.select_thesis_metric("mature", [{"fy": 2023, "net_margin": 0.12}], {}),
+    ):
+        assert "cycle" in result
+
+
+def test_select_thesis_metric_cycle_positions_current_in_trough_peak_range():
+    # low=fy2021=0.10, high=fy2022=0.30, current=latest fy2023=0.20
+    # position = (0.20 - 0.10) / (0.30 - 0.10) = 0.10 / 0.20 = 0.5
+    ratios = [
+        {"fy": 2021, "net_margin": 0.10},
+        {"fy": 2022, "net_margin": 0.30},
+        {"fy": 2023, "net_margin": 0.20},
+    ]
+    cycle = planning.select_thesis_metric("mature", ratios, {})["cycle"]
+    assert cycle is not None
+    assert cycle["low"] == 0.10 and cycle["low_fy"] == 2021
+    assert cycle["high"] == 0.30 and cycle["high_fy"] == 2022
+    assert cycle["current"] == 0.20 and cycle["current_fy"] == 2023
+    assert cycle["position"] == 0.5
+    assert cycle["n_years"] == 3
+    assert cycle["is_cyclical"] is False
+    # series is the full annual series, sorted ascending by fiscal year.
+    assert cycle["series"] == [
+        {"fy": 2021, "value": 0.10},
+        {"fy": 2022, "value": 0.30},
+        {"fy": 2023, "value": 0.20},
+    ]
+
+
+def test_select_thesis_metric_cycle_is_cyclical_flag_true_for_cyclical_sector():
+    ratios = [
+        {"fy": 2020, "gross_margin": 0.15},
+        {"fy": 2021, "gross_margin": 0.45},
+        {"fy": 2022, "gross_margin": 0.30},
+    ]
+    cycle = planning.select_thesis_metric("cyclical", ratios, {})["cycle"]
+    assert cycle is not None
+    assert cycle["is_cyclical"] is True
+    # current = latest fy2022 = 0.30; low=0.15, high=0.45
+    # position = (0.30 - 0.15) / (0.45 - 0.15) = 0.15 / 0.30 = 0.5
+    assert cycle["position"] == 0.5
+
+
+def test_select_thesis_metric_cycle_none_with_single_fiscal_year():
+    ratios = [{"fy": 2023, "net_margin": 0.12}]
+    assert planning.select_thesis_metric("mature", ratios, {})["cycle"] is None
+
+
+def test_select_thesis_metric_cycle_none_when_series_is_flat():
+    # Two years, identical values -> trough == peak -> no placeable position.
+    ratios = [{"fy": 2022, "net_margin": 0.20}, {"fy": 2023, "net_margin": 0.20}]
+    assert planning.select_thesis_metric("mature", ratios, {})["cycle"] is None
+
+
+def test_select_thesis_metric_cycle_none_for_single_point_metrics_fallback():
+    # growth_unprofitable with no ratios series falls back to a single
+    # metrics figure -> no derivable trough/peak series -> cycle is None.
+    result = planning.select_thesis_metric("growth_unprofitable", [], {"revenue_cagr_5y": 0.25})
+    assert result["latest_value"] == "%25.0"
+    assert result["cycle"] is None

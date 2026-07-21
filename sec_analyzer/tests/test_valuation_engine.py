@@ -2492,3 +2492,91 @@ def test_run_valuation_headline_band_matches_hand_computed_sensitivity_grid():
     assert result["dcf"]["scenarios"]["base"]["hi"] == pytest.approx(hand_hi)
     assert result["fair_value_range"]["base"]["lo"] == pytest.approx(hand_lo)
     assert result["fair_value_range"]["base"]["hi"] == pytest.approx(hand_hi)
+
+
+# ---------------------------------------------------------------------------
+# 11. run_valuation -- point-in-time ("as-of") macro threading (Sec.11 of the
+# as-of implementation): as_of=None must never carry "macro_asof"; as_of set
+# must carry it (copied verbatim from damodaran.load_sector_data) plus two
+# Turkish notes; the shared terminal-growth anchor must use the resolved
+# as-of risk-free rate.
+# ---------------------------------------------------------------------------
+
+
+def test_run_valuation_without_as_of_never_carries_macro_asof_key(tmp_path):
+    normalized = _normalized({})
+    ratios = [{"fy": 2023, "fcf": 100.0}]
+    metrics = {"shares": 10.0, "latest_fy": 2023, "fcf": 100.0, "net_debt": 0.0}
+    assumptions = _assumptions()
+
+    result = run_valuation(
+        normalized, ratios, metrics, price=None, price_df=None,
+        assumptions=assumptions, sector_type="mature",
+        damodaran_dir=str(tmp_path / "no_damodaran"),
+    )
+
+    assert "macro_asof" not in result
+
+
+def test_run_valuation_as_of_copies_macro_asof_and_appends_notes(tmp_path):
+    """as_of set + a resolvable macro (via fred_rate, even with an otherwise
+    empty Damodaran directory) must copy `macro_asof` verbatim into the
+    top-level result and append both documented Turkish notes: one naming
+    the as-of macro sources ("Geçmiş tarih"), one caveating that sector
+    multiples/betas stay a static current snapshot."""
+    damodaran_dir = tmp_path / "damodaran"
+    damodaran_dir.mkdir()  # exists but has no CSVs -- fred_rate alone must be enough
+
+    normalized = _normalized({})
+    ratios = [{"fy": 2023, "fcf": 100.0}]
+    metrics = {"shares": 10.0, "latest_fy": 2023, "fcf": 100.0, "net_debt": 0.0}
+    assumptions = _assumptions()
+    fred_rate = {"value_pct": 2.98, "date": "2022-06-29", "series": "DGS10"}
+
+    result = run_valuation(
+        normalized, ratios, metrics, price=None, price_df=None,
+        assumptions=assumptions, sector_type="mature",
+        damodaran_dir=str(damodaran_dir),
+        as_of="2022-06-30", fred_rate=fred_rate,
+    )
+
+    assert result["macro_asof"] == {
+        "as_of": "2022-06-30",
+        "erp_source": "erp.csv (güncel değer)",
+        "risk_free_source": "DGS10 (2022-06-29)",
+    }
+    assert any("Geçmiş tarih" in n and "2022-06-30" in n for n in result["notes"])
+    assert any(
+        "Sektör çarpanları ve betaları güncel Damodaran anlık görüntüsüdür" in n
+        for n in result["notes"]
+    )
+
+
+def test_run_valuation_hyper_grower_terminal_growth_anchor_uses_as_of_fred_rate(tmp_path):
+    # Hand-verified: fred_rate value_pct=2.98 -> risk_free_pct=2.98 ->
+    # terminal_growth_anchor = min(2.98/100, sanity._TERMINAL_GROWTH_MAX=0.04)
+    #   = min(0.0298, 0.04) = 0.0298.
+    # This mirrors test_run_valuation_hyper_grower_terminal_growth_linked_to_risk_free
+    # above (which uses the REAL data/damodaran/erp.csv, resolving to 4.20%
+    # and clamping at the 4% ceiling) but drives the same code path off an
+    # as-of fred_rate instead, landing BELOW the ceiling so the resolved
+    # value itself (2.98%, not the 4% cap) is what's under test. The engine's
+    # own note f-string rounds to 1dp: 2.98 -> "3.0" (engine._build_hyper_growth
+    # uses `terminal_growth * 100:.1f}`).
+    damodaran_dir = tmp_path / "damodaran"
+    damodaran_dir.mkdir()
+    fred_rate = {"value_pct": 2.98, "date": "2022-06-29", "series": "DGS10"}
+
+    normalized = _normalized(_HYPER_CONCEPTS_OVERRIDES)
+    assumptions = _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)
+
+    result = run_valuation(
+        normalized, _HYPER_RATIOS, _HYPER_METRICS, price=50.0, price_df=None,
+        assumptions=assumptions, sector_type="growth_unprofitable",
+        damodaran_dir=str(damodaran_dir), as_of="2022-06-30", fred_rate=fred_rate,
+    )
+
+    assert result["hyper_growth"] is True
+    wp2_notes = [n for n in result["notes"] if "risksiz getiri oranına bağlandı" in n]
+    assert wp2_notes, "expected the WP2 terminal-growth note to fire with an as-of fred_rate"
+    assert any("%3.0" in n for n in wp2_notes)

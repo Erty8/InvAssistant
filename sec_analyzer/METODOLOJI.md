@@ -59,3 +59,51 @@ Verdict ağırlıkları analizde belirtilen vadeye göre değişir (3m: teknik %
 - Veri eksikse (yeni halka arz, ADR, kısa geçmiş) bant genişletilir ve güven düşürülür; kesinlik taklidi yapılmaz.
 - Model bir önceki analizde yanıldıysa (invalidation çalıştı, tetik hatalıydı) bu saklanmaz, bir sonraki analizde açıkça not edilir.
 - Hiçbir çıktı yatırım tavsiyesi değildir; mekanik referans çerçevesidir. Nihai karar kullanıcınındır.
+
+## 7. Geçmiş tarih (backtest / otopsi) modu
+
+`--as-of YYYY-MM-DD` bayrağı, motoru o tarihte BİLİNEBİLECEK verilerle
+çalıştırır: yalnızca o tarihten önce dosyalanmış SEC faktları, o tarihe kadarki
+fiyat geçmişi ve o tarihin ERP/risksiz getiri arşivi kullanılır — sonradan
+gelen düzeltmeler (restatement), sonraki fiyat hareketi ve bugünün makro
+verisi modele hiç girmez. Amaç: "model o gün ne derdi, sonradan ne oldu"
+sorusunu cevaplayabilmek — bir tez otopsisi ya da geriye dönük kalibrasyon
+aracı, canlı analizin yerine geçmez.
+
+**Örnek kullanım:**
+```
+python -m sec_analyzer analyze BYND --as-of 2020-06-30
+python -m sec_analyzer analyze AMZN --as-of 2015-12-31
+```
+Bu, "BYND'yi 2020 verisiyle, AMZN'i 2015 verisiyle analiz et" senaryosudur —
+o tarihte elde olan bilgiyle bugünkü motorun ne söylerdi'sini görmek,
+ardından gerçekleşen fiyat hareketiyle karşılaştırmak için kullanılır.
+
+**Kalibrasyon karşılaştırması (2021-zirve vs 2022-dip):**
+```
+python -m sec_analyzer calibrate --as-of 2021-11-19 --label peak2021
+python -m sec_analyzer calibrate --as-of 2022-10-14 --label trough2022
+```
+Aynı sepeti iki farklı piyasa rejiminde (zirve ve dip) çalıştırıp
+`reports/calibration_peak2021_*.json` / `reports/calibration_trough2022_*.json`
+medyan oranlarını karşılaştırmak, motorun KENDİ muhafazakarlığı ile o anki
+piyasa rejiminin etkisini birbirinden ayırmayı sağlar (§9'daki kalibrasyon
+metodolojisiyle aynı araç, farklı zaman noktalarında).
+
+**Bilinmesi gerekenler:**
+- Analist konsensüs hedefleri (yfinance) tarihsiz veridir; `--as-of` modunda
+  hiç çekilmez, raporda bir Türkçe notla belirtilir.
+- Finansallar veritabanına YAZILMAZ (`financials`/`ratios` tabloları güncel
+  görünümdür); yalnızca `verdicts` tablosuna, o kaydın hangi tarihte
+  ("otopsi" mi "canlı" mı) üretildiğini ayırt eden bir `as_of` sütunuyla
+  kaydedilir.
+- En riskli bilinen sınırlama: fiyat verisi (Stooq/yfinance) bugüne göre
+  split-ayarlıdır — `as_of`'tan SONRA gerçekleşen bir hisse bölünmesi (ör.
+  NVDA'nın 2024'teki 10:1 bölünmesi), o bölünmeden önceki bir tarih analiz
+  edildiğinde piyasa değeri/çarpanları bölünme oranı kadar çarpıtır.
+- Sektör çarpanları ve betalar (`multiples.csv`) tarihe göre arşivlenmemiştir;
+  yalnızca ERP ve risksiz getiri geçmişe göre alınır — bu SPEC.md §18'de tam
+  olarak belgelenmiştir.
+
+Tam teknik sözleşme (fonksiyon imzaları, veri kaynağı önceliği, sınırlamalar):
+SPEC.md §18.

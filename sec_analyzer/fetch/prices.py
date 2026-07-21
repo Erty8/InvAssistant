@@ -298,3 +298,22 @@ def latest_price(df: pd.DataFrame) -> "tuple[float, str]":
     last = df.iloc[-1]
     as_of = df.index[-1]
     return float(last["Close"]), as_of.strftime("%Y-%m-%d")
+
+
+def slice_asof(df: pd.DataFrame, as_of) -> pd.DataFrame:
+    """Return the rows of a price-history frame dated on/before ``as_of``.
+
+    Args:
+        df: A price-history DataFrame (Date index, ascending).
+        as_of: Point-in-time cutoff (``datetime.date`` or ISO
+            ``"YYYY-MM-DD"`` string). ``None`` returns ``df`` unchanged.
+
+    Returns:
+        A view/copy of ``df`` with all rows whose index is ``<= as_of``.
+        Never mutates the input. May be empty (e.g. the ticker had not
+        started trading yet), which callers handle gracefully.
+    """
+    if as_of is None:
+        return df
+    cutoff = pd.Timestamp(as_of.isoformat() if hasattr(as_of, "isoformat") else as_of)
+    return df.loc[df.index <= cutoff]

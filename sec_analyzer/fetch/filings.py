@@ -87,11 +87,14 @@ def _next_quarter_label(pairs: List[Tuple[date, str]]) -> str:
     return _QUARTER_LABELS.get(q_count_since_10k, "FY")
 
 
-def estimate_next_earnings(submissions: dict) -> Optional[dict]:
+def estimate_next_earnings(submissions: dict, today: Optional[date] = None) -> Optional[dict]:
     """Best-effort estimate of the next 10-Q/10-K filing (a proxy for the
     next earnings release) from a filer's submissions history.
 
     Args:
+        today: Reference date the projection walks forward from; also the
+            point-in-time cutoff (filings dated after ``today`` are ignored).
+            Defaults to :meth:`date.today`. Exposed for as-of / testing.
         submissions: The dict returned by
             ``sec_analyzer.fetch.companyfacts.get_submissions``, or any dict
             with the same ``filings.recent.{form,filingDate}`` shape.
@@ -110,13 +113,13 @@ def estimate_next_earnings(submissions: dict) -> Optional[dict]:
         This function never raises.
     """
     try:
-        return _estimate_next_earnings(submissions or {})
+        return _estimate_next_earnings(submissions or {}, today or date.today())
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("estimate_next_earnings() failed unexpectedly; returning None.")
         return None
 
 
-def _estimate_next_earnings(submissions: dict) -> Optional[dict]:
+def _estimate_next_earnings(submissions: dict, today: date) -> Optional[dict]:
     recent = ((submissions.get("filings") or {}).get("recent")) or {}
     forms = recent.get("form") or []
     filing_dates = recent.get("filingDate") or []
@@ -127,6 +130,9 @@ def _estimate_next_earnings(submissions: dict) -> Optional[dict]:
             continue
         parsed = _parse_date(filing_date)
         if parsed is None:
+            continue
+        if parsed > today:
+            # Point-in-time guard: filing not yet public as of the reference date.
             continue
         pairs.append((parsed, form))
 
@@ -151,7 +157,6 @@ def _estimate_next_earnings(submissions: dict) -> Optional[dict]:
 
     last_date, _ = pairs[-1]
     next_date = last_date + timedelta(days=median_gap)
-    today = date.today()
     while next_date < today:
         next_date += timedelta(days=median_gap)
 

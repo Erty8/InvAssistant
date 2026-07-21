@@ -553,7 +553,7 @@ def test_interpret_results_injects_all_four_planning_fields_llm_branch(monkeypat
     assert isinstance(result["entry_plan"], list)
     assert len(result["entry_plan"]) > 0
     assert isinstance(result["stop_adding"], list)
-    assert set(result["thesis_metric"].keys()) == {"name", "latest_value", "trend", "rationale"}
+    assert set(result["thesis_metric"].keys()) == {"name", "latest_value", "trend", "rationale", "cycle"}
 
 
 def test_interpret_results_injects_all_four_planning_fields_script_branch():
@@ -565,7 +565,7 @@ def test_interpret_results_injects_all_four_planning_fields_script_branch():
     assert result["scenario_returns"]["base"] == {"ret_lo_pct": -10.0, "ret_hi_pct": 10.0}
     assert isinstance(result["entry_plan"], list) and len(result["entry_plan"]) > 0
     assert isinstance(result["stop_adding"], list)
-    assert set(result["thesis_metric"].keys()) == {"name", "latest_value", "trend", "rationale"}
+    assert set(result["thesis_metric"].keys()) == {"name", "latest_value", "trend", "rationale", "cycle"}
 
 
 def test_interpret_results_uses_ratios_and_red_flags_for_thesis_metric_and_stop_adding(monkeypatch):

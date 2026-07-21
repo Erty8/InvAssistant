@@ -75,6 +75,18 @@ class Config:
     OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:latest")
 
+    # Context window (tokens) requested per Ollama call. Ollama's server-side
+    # default (4096) silently truncates the long methodology system prompt
+    # (~14k tokens alone) + financial JSON payload, which makes local models
+    # emit empty or degenerate output. Overridable via OLLAMA_NUM_CTX.
+    OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "32768"))
+
+    # Per-request timeout (seconds) for Ollama calls. Cold-start evaluation of
+    # the ~20k-token analyzer prompt on consumer hardware can take ~10 minutes
+    # (subsequent calls hit Ollama's prompt cache and finish in ~1 minute), so
+    # this is deliberately generous. Overridable via OLLAMA_TIMEOUT.
+    OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "1200"))
+
     # Per-hold-horizon (fundamental_weight, technical_weight) pairs, used by
     # the interpret layer to tell the LLM/rule-based analyzer how much to
     # lean on fundamentals vs. technicals for a given investment horizon.

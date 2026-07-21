@@ -3490,6 +3490,8 @@ def run_valuation(
     damodaran_dir: Optional[str] = None,
     sic_description: Optional[str] = None,
     hyper_growth_extras: Optional[dict] = None,
+    as_of=None,
+    fred_rate: Optional[dict] = None,
 ) -> dict:
     """Run the full deterministic valuation engine (SPEC Sec.11).
 
@@ -3528,6 +3530,16 @@ def run_valuation(
             TAM per scenario. ``None`` (the default) keeps every hyper-
             grower input fully deterministic -- backward compatible with
             every existing caller.
+        as_of: Optional point-in-time date (``datetime.date`` or ISO string).
+            When set, the Damodaran macro load resolves ERP/risk-free from
+            the historical archive (see
+            :func:`sec_analyzer.valuation.damodaran.load_sector_data`), the
+            resulting ``macro_asof`` provenance is copied into the result,
+            and two Turkish notes (macro source + static-multiples caveat)
+            are appended. ``None`` leaves behavior unchanged.
+        fred_rate: Optional historical risk-free dict (from
+            :func:`sec_analyzer.fetch.fred.get_risk_free_asof`), forwarded to
+            the macro load. Only consulted when ``as_of`` is set.
 
     Returns:
         The ``valuation`` dict documented in SPEC Sec.11. Every
@@ -3538,6 +3550,7 @@ def run_valuation(
         return _run_valuation(
             normalized or {}, ratios or [], metrics or {}, price, price_df, assumptions or {},
             sector_type, damodaran_dir, sic_description, hyper_growth_extras,
+            as_of=as_of, fred_rate=fred_rate,
         )
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("run_valuation() failed unexpectedly; returning a degraded result.")
@@ -3548,6 +3561,8 @@ def _run_valuation(
     normalized: dict, ratios: list, metrics: dict, price: Optional[float], price_df, assumptions: dict,
     sector_type: str, damodaran_dir: Optional[str], sic_description: Optional[str],
     hyper_growth_extras: Optional[dict] = None,
+    as_of=None,
+    fred_rate: Optional[dict] = None,
 ) -> dict:
     notes: List[str] = []
 
@@ -3586,8 +3601,23 @@ def _run_valuation(
     # DCF (built further down) can use it too; `sector_data` is reused as-is
     # by that later section (no second load, no behavior change there: same
     # deterministic local CSV read either way).
-    sector_data = damodaran.load_sector_data(damodaran_dir if damodaran_dir is not None else Config.DAMODARAN_DIR)
+    sector_data = damodaran.load_sector_data(
+        damodaran_dir if damodaran_dir is not None else Config.DAMODARAN_DIR,
+        as_of=as_of,
+        fred_rate=fred_rate,
+    )
     risk_free_pct = sector_data.get("risk_free") if sector_data else None
+    if as_of is not None and sector_data and sector_data.get("macro_asof"):
+        macro_asof = sector_data["macro_asof"]
+        notes.append(
+            f"Geçmiş tarih (as-of) modu: {macro_asof['as_of']} itibarıyla — "
+            f"ERP kaynağı: {macro_asof['erp_source']}; risksiz faiz kaynağı: "
+            f"{macro_asof['risk_free_source']}."
+        )
+        notes.append(
+            "Sektör çarpanları ve betaları güncel Damodaran anlık görüntüsüdür; "
+            "tarihe göre arşivlenmemiştir (yalnızca ERP ve risksiz faiz geçmişe göre alınır)."
+        )
     if _is_number(risk_free_pct):
         terminal_growth_anchor = min(risk_free_pct / 100.0, sanity._TERMINAL_GROWTH_MAX)
     else:
@@ -4306,4 +4336,9 @@ def _run_valuation(
         "cyclical_fcfe_detail": cyclical_fcfe_detail,
         "assumptions": assumptions,
         "notes": notes,
+        **(
+            {"macro_asof": sector_data["macro_asof"]}
+            if as_of is not None and sector_data and sector_data.get("macro_asof")
+            else {}
+        ),
     }

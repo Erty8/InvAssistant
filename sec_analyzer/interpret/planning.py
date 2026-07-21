@@ -104,6 +104,14 @@ _SIZE_WEIGHT_EXPONENT = 1.0
 #: improving/deteriorating.
 _TREND_FLAT_THRESHOLD = 0.01
 
+#: Position thresholds (fraction of the trough->peak range) that bucket the
+#: thesis metric's current value into a qualitative "where in the cycle"
+#: descriptor. These match the report's cycle-position bar zones; the raw
+#: ``position`` float is always returned too, so the template can place the
+#: marker precisely regardless of these buckets.
+_CYCLE_NEAR_TROUGH = 0.2
+_CYCLE_NEAR_PEAK = 0.8
+
 #: METODOLOJI.md Sec.7's invalidation rule, appended to every thesis-metric
 #: rationale regardless of sector.
 _THESIS_INVALIDATION_RULE_TR = (
@@ -722,6 +730,64 @@ def _degraded_thesis_metric() -> dict:
         "latest_value": None,
         "trend": None,
         "rationale": "Bir iç hata nedeniyle tez doğrulama metriği belirlenemedi.",
+        "cycle": None,
+    }
+
+
+def _compute_cycle_position(
+    fy_map: Dict[int, float], current_fy: int, is_cyclical: bool
+) -> Optional[dict]:
+    """Locate the anchor metric's latest value inside its own multi-year
+    trough->peak range, so the report can visualize where the business sits
+    in its cycle (METODOLOJI.md §7; mirrors the ``CYCLICAL_TRAP`` red flag's
+    "latest margin vs historical peak" idea in
+    :mod:`sec_analyzer.normalize.red_flags`).
+
+    Args:
+        fy_map: ``{fiscal_year: value}`` for the chosen anchor metric, with
+            values in the metric's own units (decimal fractions for the
+            margin/ROE/growth candidates). Built by
+            :func:`_select_thesis_metric` from the ``ratios`` series.
+        current_fy: The latest fiscal year in ``fy_map`` (the "you are here"
+            point).
+        is_cyclical: Whether ``sector_type == "cyclical"`` -- only affects
+            the display terminology the template chooses ("döngü" vs
+            "geçmiş aralık"), never the numbers.
+
+    Returns:
+        ``{"low", "high", "current", "position", "low_fy", "high_fy",
+        "current_fy", "n_years", "is_cyclical", "series"}`` -- or ``None``
+        when a position can't be placed (fewer than two fiscal years, or a
+        perfectly flat series where trough == peak, which would make the
+        0..1 position undefined). ``position`` is ``(current - low) /
+        (high - low)`` clamped to ``[0, 1]``. ``series`` is the full annual
+        series ``[{"fy": int, "value": float}, ...]`` sorted ascending by
+        fiscal year, so the report can draw a level sparkline of the
+        metric's trajectory alongside the positional bar.
+    """
+    if len(fy_map) < 2:
+        return None
+
+    low_fy = min(fy_map, key=lambda fy: fy_map[fy])
+    high_fy = max(fy_map, key=lambda fy: fy_map[fy])
+    low = fy_map[low_fy]
+    high = fy_map[high_fy]
+    if high <= low:  # flat series -> no meaningful trough/peak spread
+        return None
+
+    current = fy_map[current_fy]
+    position = _clamp((current - low) / (high - low), 0.0, 1.0)
+    return {
+        "low": low,
+        "high": high,
+        "current": current,
+        "position": round(position, 3),
+        "low_fy": low_fy,
+        "high_fy": high_fy,
+        "current_fy": current_fy,
+        "n_years": len(fy_map),
+        "is_cyclical": is_cyclical,
+        "series": [{"fy": fy, "value": fy_map[fy]} for fy in sorted(fy_map)],
     }
 
 
@@ -747,13 +813,18 @@ def select_thesis_metric(sector_type: Optional[str], ratios: Optional[list], met
 
     Returns:
         ``{"name": str, "latest_value": str|None, "trend": str|None,
-        "rationale": str}``. ``latest_value`` is a formatted Turkish
-        percent string (e.g. ``"%23.4"``) read from the latest available
-        fiscal year, never fabricated -- ``None`` if the chosen metric
-        isn't computable from the given inputs, in which case
+        "rationale": str, "cycle": dict|None}``. ``latest_value`` is a
+        formatted Turkish percent string (e.g. ``"%23.4"``) read from the
+        latest available fiscal year, never fabricated -- ``None`` if the
+        chosen metric isn't computable from the given inputs, in which case
         ``rationale`` says so explicitly. ``trend`` is
         ``"iyileşiyor"``/``"bozuluyor"``/``"yatay"``, or ``None`` if no
-        prior fiscal year's value is available to compare against. Never
+        prior fiscal year's value is available to compare against.
+        ``cycle`` locates the latest value inside the metric's own
+        multi-year trough->peak range (see :func:`_compute_cycle_position`
+        for its shape), or ``None`` when fewer than two fiscal years exist
+        or the series is perfectly flat -- and always ``None`` for the
+        single-point ``metrics`` fallback, which has no series. Never
         raises.
     """
     try:
@@ -769,6 +840,7 @@ def _select_thesis_metric(sector_type: Optional[str], ratios: list, metrics: dic
     chosen_name = candidates[0][1]
     latest_value: Optional[str] = None
     trend: Optional[str] = None
+    cycle: Optional[dict] = None
 
     for key, name in candidates:
         fy_map = {
@@ -786,6 +858,12 @@ def _select_thesis_metric(sector_type: Optional[str], ratios: list, metrics: dic
             if earlier_fys:
                 prior_fy = max(earlier_fys)
                 trend = _classify_trend(value - fy_map[prior_fy])
+
+            # Locate the latest value inside the metric's own trough->peak
+            # range so the report can show where the business sits in its
+            # cycle. Only derivable from a real multi-year series, so it is
+            # skipped for the single-point metrics fallback below.
+            cycle = _compute_cycle_position(fy_map, latest_fy, sector_type == "cyclical")
             break
 
         fallback_keys = _METRICS_FALLBACK_FOR_RATIO_KEY.get(key)
@@ -804,4 +882,10 @@ def _select_thesis_metric(sector_type: Optional[str], ratios: list, metrics: dic
     if latest_value is None:
         rationale += " Mevcut veriyle bu metrik hesaplanamadı."
 
-    return {"name": chosen_name, "latest_value": latest_value, "trend": trend, "rationale": rationale}
+    return {
+        "name": chosen_name,
+        "latest_value": latest_value,
+        "trend": trend,
+        "rationale": rationale,
+        "cycle": cycle,
+    }

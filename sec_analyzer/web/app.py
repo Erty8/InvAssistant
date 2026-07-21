@@ -24,6 +24,7 @@ than crashing.
 """
 
 import logging
+from datetime import date
 from html import escape
 from typing import Optional, Tuple
 
@@ -33,7 +34,8 @@ from sec_analyzer.config import Config, ConfigError
 from sec_analyzer.fetch.analyst import get_analyst_targets
 from sec_analyzer.fetch.companyfacts import get_company_facts, get_submissions
 from sec_analyzer.fetch.filings import estimate_next_earnings
-from sec_analyzer.fetch.prices import PriceDataError, get_price_history, latest_price
+from sec_analyzer.fetch.fred import get_risk_free_asof
+from sec_analyzer.fetch.prices import PriceDataError, get_price_history, latest_price, slice_asof
 from sec_analyzer.fetch.tickers import resolve_cik
 from sec_analyzer.http_client import SecHttpClient
 from sec_analyzer.interpret.analyzer import interpret
@@ -41,8 +43,18 @@ from sec_analyzer.normalize.metrics import compute_metrics
 from sec_analyzer.normalize.normalizer import normalize_facts
 from sec_analyzer.normalize.ratios import compute_ratios
 from sec_analyzer.normalize.red_flags import detect_red_flags
-from sec_analyzer.report.generator import render_report_html, render_search_page
-from sec_analyzer.store.database import save_normalized, save_prices, save_verdict
+from sec_analyzer.report.generator import (
+    render_history_page,
+    render_report_html,
+    render_search_page,
+)
+from sec_analyzer.store.database import (
+    load_latest_stored_price,
+    load_verdicts,
+    save_normalized,
+    save_prices,
+    save_verdict,
+)
 from sec_analyzer.technical.indicators import compute_indicators, relative_strength
 from sec_analyzer.technical.verdict import technical_verdict
 
@@ -172,7 +184,7 @@ def _serialize_financials(normalized: dict, ratios: list) -> dict:
     }
 
 
-def _run_pipeline(ticker: str, years: int, no_cache: bool) -> Tuple[str, str, dict, list]:
+def _run_pipeline(ticker: str, years: int, no_cache: bool, as_of=None) -> Tuple[str, str, dict, list]:
     """Resolve, fetch, normalize, compute ratios for, and persist a ticker.
 
     Shared by both API routes so the fetch/normalize/store logic (and its
@@ -197,15 +209,19 @@ def _run_pipeline(ticker: str, years: int, no_cache: bool) -> Tuple[str, str, di
 
     cik, name = resolve_cik(ticker, client, no_cache=no_cache)
     facts = get_company_facts(cik, client, no_cache=no_cache)
-    normalized = normalize_facts(facts, years=years)
+    normalized = normalize_facts(facts, years=years, as_of=as_of)
     ratios = compute_ratios(normalized)
 
-    save_normalized(ticker, cik, name, normalized, ratios, db_path=Config.DB_PATH)
+    # In as-of mode the normalized slice is a truncated historical view; the
+    # financials table holds the current-view upsert, so don't overwrite it
+    # (mirrors sec_analyzer.cli._fetch_normalize_store).
+    if as_of is None:
+        save_normalized(ticker, cik, name, normalized, ratios, db_path=Config.DB_PATH)
 
     return cik, name, normalized, ratios
 
 
-def _fetch_price_and_technical(ticker: str, horizon: str, no_cache: bool):
+def _fetch_price_and_technical(ticker: str, horizon: str, no_cache: bool, as_of=None):
     """Fetch price history and derive the merged technical indicators/verdict.
 
     Mirrors ``sec_analyzer.cli._fetch_price_and_technical`` so the web UI's
@@ -225,13 +241,20 @@ def _fetch_price_and_technical(ticker: str, horizon: str, no_cache: bool):
     """
     try:
         price_df, source = get_price_history(ticker, no_cache=no_cache)
-        price, as_of = latest_price(price_df)
+        if as_of is not None:
+            price_df = slice_asof(price_df, as_of)
+            if price_df.empty:
+                logger.warning(
+                    "No price data for %s on/before as-of %s; skipping technical.", ticker, as_of
+                )
+                return None, None, None, None
+        price, price_as_of = latest_price(price_df)
         indicators = compute_indicators(price_df)
         verdict_result = technical_verdict(indicators, horizon)
         technical = {**indicators, **verdict_result}
-        technical["relative_strength"] = _fetch_relative_strength(ticker, price_df, no_cache)
-        logger.info("Price data for %s from %s: %.2f as of %s", ticker, source, price, as_of)
-        return price, as_of, technical, price_df
+        technical["relative_strength"] = _fetch_relative_strength(ticker, price_df, no_cache, as_of)
+        logger.info("Price data for %s from %s: %.2f as of %s", ticker, source, price, price_as_of)
+        return price, price_as_of, technical, price_df
     except PriceDataError as exc:
         logger.warning("Price data unavailable for %s: %s", ticker, exc)
         return None, None, None, None
@@ -242,15 +265,18 @@ def _fetch_price_and_technical(ticker: str, horizon: str, no_cache: bool):
 _RS_BENCHMARK = "SPY"
 
 
-def _fetch_relative_strength(ticker: str, price_df, no_cache: bool) -> Optional[dict]:
+def _fetch_relative_strength(ticker: str, price_df, no_cache: bool, as_of=None) -> Optional[dict]:
     """Best-effort price relative strength vs. :data:`_RS_BENCHMARK`; never
     raises. Mirrors ``sec_analyzer.cli._fetch_relative_strength`` so the web UI
     matches the CLI. ``None`` when the ticker is the benchmark or anything
-    fails (display-only cross-check)."""
+    fails (display-only cross-check). When ``as_of`` is set the benchmark frame
+    is sliced to the same cutoff so the comparison stays point-in-time."""
     if str(ticker).strip().upper() == _RS_BENCHMARK:
         return None
     try:
         bench_df, _ = get_price_history(_RS_BENCHMARK, no_cache=no_cache)
+        if as_of is not None:
+            bench_df = slice_asof(bench_df, as_of)
         return relative_strength(price_df["Close"], bench_df["Close"], benchmark=_RS_BENCHMARK)
     except Exception:  # noqa: BLE001 - display-only cross-check, never fatal
         logger.warning("Could not compute relative strength for %s", ticker, exc_info=True)
@@ -279,7 +305,7 @@ def _fetch_submissions(cik: str, ticker: str, no_cache: bool) -> Optional[dict]:
         return None
 
 
-def _fetch_catalyst(submissions: Optional[dict], ticker: str) -> Optional[dict]:
+def _fetch_catalyst(submissions: Optional[dict], ticker: str, as_of=None) -> Optional[dict]:
     """Best-effort next-earnings estimate from already-fetched submissions;
     never raises (see the CLI's equivalent helper for the rationale).
 
@@ -287,11 +313,13 @@ def _fetch_catalyst(submissions: Optional[dict], ticker: str) -> Optional[dict]:
         submissions: The dict returned by :func:`_fetch_submissions`, or
             ``None``.
         ticker: Stock ticker symbol, used only for the warning log message.
+        as_of: Optional point-in-time reference date; forwarded as
+            ``estimate_next_earnings(today=as_of)``.
     """
     if not submissions:
         return None
     try:
-        return estimate_next_earnings(submissions)
+        return estimate_next_earnings(submissions, today=as_of)
     except Exception:  # noqa: BLE001 - a catalyst estimate is a nice-to-have, never fatal
         logger.warning("Could not estimate next earnings date for %s", ticker, exc_info=True)
         return None
@@ -340,10 +368,10 @@ def _save_price_rows(cik: str, price_df) -> None:
 
 
 def _run_full_pipeline(
-    ticker: str, years: int, no_cache: bool, horizon: str
+    ticker: str, years: int, no_cache: bool, horizon: str, as_of=None
 ) -> Tuple[
     str, str, dict, list, dict, Optional[dict], list, Optional[dict], Optional[float],
-    Optional[dict], object,
+    Optional[dict], object, Optional[dict],
 ]:
     """Extend ``_run_pipeline`` with the price/technical/metrics/red-flags/
     submissions/catalyst steps used by both the CLI's ``analyze`` command and
@@ -367,11 +395,13 @@ def _run_full_pipeline(
 
     Returns:
         ``(cik, name, normalized, ratios, metrics, technical, flags,
-        catalyst, price, submissions, price_df)``. ``submissions`` and
-        ``price_df`` are meant to be threaded straight into
+        catalyst, price, submissions, price_df, fred_rate)``. ``submissions``,
+        ``price_df``, and (in as-of mode) ``fred_rate`` are meant to be
+        threaded straight into
         :func:`sec_analyzer.interpret.analyzer.interpret` as
-        ``submissions=``/``price_df=`` so the web UI gets the same full
-        deterministic valuation the CLI does.
+        ``submissions=``/``price_df=``/``fred_rate=`` so the web UI gets the
+        same full deterministic valuation the CLI does. ``fred_rate`` is
+        ``None`` outside as-of mode.
 
     Raises:
         Same as ``_run_pipeline`` -- financials fetch/normalize/store
@@ -379,19 +409,27 @@ def _run_full_pipeline(
         Everything past that point (price, technical, submissions, catalyst)
         is best-effort and never raises.
     """
-    cik, name, normalized, ratios = _run_pipeline(ticker, years, no_cache)
+    cik, name, normalized, ratios = _run_pipeline(ticker, years, no_cache, as_of)
 
-    price, as_of, technical, price_df = _fetch_price_and_technical(ticker, horizon, no_cache)
+    price, _price_as_of, technical, price_df = _fetch_price_and_technical(
+        ticker, horizon, no_cache, as_of
+    )
 
     metrics = compute_metrics(normalized, ratios, price)
     flags = detect_red_flags(normalized, ratios, metrics, horizon)
     submissions = _fetch_submissions(cik, ticker, no_cache)
-    catalyst = _fetch_catalyst(submissions, ticker)
+    catalyst = _fetch_catalyst(submissions, ticker, as_of)
+    fred_rate = get_risk_free_asof(as_of, no_cache=no_cache) if as_of is not None else None
 
-    if price_df is not None:
+    # In as-of mode the sliced price frame is a historical subset; don't
+    # persist it over the current-view prices table (mirrors the CLI).
+    if price_df is not None and as_of is None:
         _save_price_rows(cik, price_df)
 
-    return cik, name, normalized, ratios, metrics, technical, flags, catalyst, price, submissions, price_df
+    return (
+        cik, name, normalized, ratios, metrics, technical, flags, catalyst, price,
+        submissions, price_df, fred_rate,
+    )
 
 
 def _bool_param(value: Optional[str]) -> bool:
@@ -399,6 +437,27 @@ def _bool_param(value: Optional[str]) -> bool:
     if value is None:
         return False
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _parse_as_of_param(value) -> Tuple[Optional[date], Optional[str]]:
+    """Validate an optional as-of date value from a request.
+
+    Returns ``(parsed_date, None)`` on success (``(None, None)`` when the
+    value is blank/absent), or ``(None, error_message)`` when the value is not
+    a valid past ISO date -- the caller turns the message into a 400.
+    """
+    if value is None:
+        return None, None
+    text = str(value).strip()
+    if not text:
+        return None, None
+    try:
+        parsed = date.fromisoformat(text)
+    except ValueError:
+        return None, f"invalid as_of {text!r}; expected YYYY-MM-DD."
+    if parsed > date.today():
+        return None, f"as_of {text} is in the future; expected a past date."
+    return parsed, None
 
 
 @app.route("/")
@@ -414,6 +473,31 @@ def index():
     return render_search_page(
         _HORIZONS, _PROVIDERS, "1y", Config.ANALYZER_PROVIDER, Config.OLLAMA_MODEL
     )
+
+
+@app.route("/history", methods=["GET"])
+def history():
+    """Render the verdict-history screen for a ticker.
+
+    Reads the append-only ``verdicts`` table (via
+    :func:`sec_analyzer.store.database.load_verdicts`) and the latest stored
+    price (:func:`sec_analyzer.store.database.load_latest_stored_price`) and
+    renders them through the shared ``template.html`` shell in
+    ``mode: "history"`` -- no network, no analysis, just stored data.
+
+    Query params:
+        ticker: Stock ticker symbol (required).
+    """
+    ticker = (request.args.get("ticker") or "").strip()
+    if not ticker:
+        return _error_page("Query parameter 'ticker' is required."), 400
+    try:
+        rows = load_verdicts(ticker, db_path=Config.DB_PATH)
+        current_price = load_latest_stored_price(ticker, db_path=Config.DB_PATH)
+        return render_history_page(ticker, rows, current_price=current_price)
+    except Exception:  # noqa: BLE001 - last-resort guard, render a page not a stack trace
+        logger.exception("Unexpected error rendering history for %s", ticker)
+        return _error_page("Analiz geçmişi yüklenirken beklenmeyen bir hata oluştu."), 500
 
 
 @app.route("/api/financials", methods=["GET"])
@@ -520,10 +604,15 @@ def api_analyze():
     provider = body.get("provider") or None
     no_cache = bool(body.get("no_cache", False))
 
+    as_of, as_of_error = _parse_as_of_param(body.get("as_of"))
+    if as_of_error:
+        return jsonify({"ok": False, "error": as_of_error}), 400
+
     try:
-        cik, name, normalized, ratios, metrics, technical, flags, catalyst, price, submissions, price_df = (
-            _run_full_pipeline(ticker, years, no_cache, horizon)
-        )
+        (
+            cik, name, normalized, ratios, metrics, technical, flags, catalyst, price,
+            submissions, price_df, fred_rate,
+        ) = _run_full_pipeline(ticker, years, no_cache, horizon, as_of)
 
     except ConfigError as exc:
         logger.error("Configuration error while analyzing %s: %s", ticker, exc)
@@ -539,10 +628,14 @@ def api_analyze():
             {"ok": False, "error": "An unexpected server error occurred while fetching financials."}
         ), 500
 
-    analyst = _fetch_analyst_targets(ticker, no_cache)
+    # Analyst consensus (yfinance) is undated and cannot be point-in-time, so
+    # it is suppressed in as-of mode (mirrors the CLI's as-of contract).
+    analyst = None if as_of is not None else _fetch_analyst_targets(ticker, no_cache)
 
     logger.info(
-        "Running %s analysis for %s (horizon=%s)", provider or Config.ANALYZER_PROVIDER, ticker, horizon
+        "Running %s analysis for %s (horizon=%s%s)",
+        provider or Config.ANALYZER_PROVIDER, ticker, horizon,
+        f", as_of={as_of.isoformat()}" if as_of is not None else "",
     )
     analysis = interpret(
         normalized,
@@ -555,13 +648,19 @@ def api_analyze():
         catalyst=catalyst,
         submissions=submissions,
         price_df=price_df,
+        as_of=as_of,
+        fred_rate=fred_rate,
     )
+
+    if isinstance(analysis, dict) and as_of is not None:
+        analysis["as_of"] = as_of.isoformat()
 
     if "error" not in analysis:
         try:
             save_verdict(
                 ticker, cik, horizon, provider or Config.ANALYZER_PROVIDER, price, analysis,
                 db_path=Config.DB_PATH, valuation=analysis.get("valuation"),
+                as_of=as_of.isoformat() if as_of is not None else None,
             )
         except Exception:  # noqa: BLE001 - persistence failure must not fail the request
             logger.warning("Failed to save verdict for %s", ticker, exc_info=True)
@@ -578,6 +677,7 @@ def api_analyze():
         "red_flags": flags,
         "catalyst": catalyst,
         "analyst": analyst,
+        "as_of": as_of.isoformat() if as_of is not None else None,
     })
 
 
@@ -678,10 +778,15 @@ def report():
     provider = request.args.get("provider") or None
     no_cache = _bool_param(request.args.get("no_cache"))
 
+    as_of, as_of_error = _parse_as_of_param(request.args.get("as_of"))
+    if as_of_error:
+        return _error_page(as_of_error), 400
+
     try:
-        cik, name, normalized, ratios, metrics, technical, flags, catalyst, price, submissions, price_df = (
-            _run_full_pipeline(ticker, years, no_cache, horizon)
-        )
+        (
+            cik, name, normalized, ratios, metrics, technical, flags, catalyst, price,
+            submissions, price_df, fred_rate,
+        ) = _run_full_pipeline(ticker, years, no_cache, horizon, as_of)
 
     except ConfigError as exc:
         logger.error("Configuration error while generating report for %s: %s", ticker, exc)
@@ -697,7 +802,8 @@ def report():
             "An unexpected server error occurred while generating the report."
         ), 500
 
-    analyst = _fetch_analyst_targets(ticker, no_cache)
+    # Analyst consensus is undated; suppress it in as-of mode (as-of contract).
+    analyst = None if as_of is not None else _fetch_analyst_targets(ticker, no_cache)
 
     resolved_provider = provider or Config.ANALYZER_PROVIDER
     logger.info("Running %s analysis for %s report (horizon=%s)", resolved_provider, ticker, horizon)
@@ -712,22 +818,29 @@ def report():
         catalyst=catalyst,
         submissions=submissions,
         price_df=price_df,
+        as_of=as_of,
+        fred_rate=fred_rate,
     )
+
+    if isinstance(analysis, dict) and as_of is not None:
+        analysis["as_of"] = as_of.isoformat()
 
     if "error" not in analysis:
         try:
             save_verdict(
                 ticker, cik, horizon, resolved_provider, price, analysis,
                 db_path=Config.DB_PATH, valuation=analysis.get("valuation"),
+                as_of=as_of.isoformat() if as_of is not None else None,
             )
         except Exception:  # noqa: BLE001 - persistence failure must not fail the request
             logger.warning("Failed to save verdict for %s", ticker, exc_info=True)
 
-    as_of = technical.get("as_of") if technical else None
+    price_as_of = technical.get("as_of") if technical else None
     html = render_report_html(
         ticker, horizon, analysis,
-        metrics=metrics, technical=technical, flags=flags, price=price, as_of=as_of,
+        metrics=metrics, technical=technical, flags=flags, price=price, as_of=price_as_of,
         entity_name=name, analyst=analyst,
+        analysis_as_of=as_of.isoformat() if as_of is not None else None,
     )
     return html
 
