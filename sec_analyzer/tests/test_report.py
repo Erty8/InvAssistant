@@ -7,7 +7,10 @@ flags side data. These fixtures build that shape directly, matching the
 style of the other ``tests/test_*.py`` modules.
 """
 
-from sec_analyzer.report.generator import generate_report
+import json
+import re
+
+from sec_analyzer.report.generator import generate_report, render_history_page, render_report_html
 
 _SCENARIO = {
     "lo": 90.0,
@@ -172,6 +175,24 @@ def _thesis_metric():
             "(hesaplanamıyorsa ROE) tek çapa metrik olarak izlenir. METODOLOJI §7 kuralı: bu metrik iki "
             "ardışık çeyrek boyunca tezin aksini gösterirse tez geçersiz sayılır ve bu açıkça belirtilir."
         ),
+        "cycle": {
+            "low": 0.05,
+            "high": 0.18,
+            "current": 0.12,
+            "position": 0.538,
+            "low_fy": 2020,
+            "high_fy": 2023,
+            "current_fy": 2024,
+            "n_years": 5,
+            "is_cyclical": False,
+            "series": [
+                {"fy": 2020, "value": 0.05},
+                {"fy": 2021, "value": 0.09},
+                {"fy": 2022, "value": 0.14},
+                {"fy": 2023, "value": 0.18},
+                {"fy": 2024, "value": 0.12},
+            ],
+        },
     }
 
 
@@ -385,6 +406,9 @@ def test_generate_report_embeds_the_four_planning_fields_as_json(tmp_path):
     assert '"entry_plan"' in content
     assert '"stop_adding"' in content
     assert '"thesis_metric"' in content
+    # The thesis metric's cycle-position sub-dict survives verbatim.
+    assert '"cycle"' in content
+    assert '"is_cyclical"' in content
     # Sample values from the fixtures survive JSON encoding verbatim.
     assert '"Net Kâr Marjı"' in content
     assert '"HIGH_UNCERTAINTY"' in content
@@ -402,10 +426,14 @@ def test_generate_report_renders_planning_section_builders_and_markers(tmp_path)
     assert "entryPlanHtml" in content
     assert "stopAddingHtml" in content
     assert "thesisMetricHtml" in content
+    assert "thesisCycleHtml" in content
+    assert "thesisSparklineHtml" in content
     assert "scenarioReturnsListHtml" in content
     # Their CSS/structural markers.
     assert "entry-plan-table" in content
     assert "scenario-returns-list" in content
+    assert "cycle-track" in content
+    assert "spark-line" in content
     # Pre-existing structural markers (fan chart / triangulation / sensitivity)
     # must still be present alongside the new planning sections.
     assert "fan-band" in content
@@ -416,6 +444,136 @@ def test_generate_report_renders_planning_section_builders_and_markers(tmp_path)
     assert "priceChartCardHtml" in content
     assert "pchart-line" in content
     assert '"price_series"' in content
+
+
+def _extract_data_payload(html: str) -> dict:
+    """Pull the injected JSON payload out of the `#report-data` script tag."""
+    match = re.search(
+        r'<script id="report-data" type="application/json">(.*?)</script>',
+        html, re.DOTALL,
+    )
+    assert match is not None, "report-data script tag not found in rendered HTML"
+    return json.loads(match.group(1))
+
+
+# ---------------------------------------------------------------------------
+# Point-in-time ("as-of") mode: render_report_html/generate_report gain
+# "analysis_as_of"; generate_report's filename gains an "_asof-<date>"
+# segment when it's set.
+# ---------------------------------------------------------------------------
+
+
+def test_render_report_html_embeds_analysis_as_of_in_payload():
+    html = render_report_html(
+        "NVDA", "1y", _success_result(),
+        metrics=_metrics(), technical=_technical(), flags=_flags(),
+        price=128.40, as_of="2026-07-11", analysis_as_of="2022-06-30",
+    )
+    payload = _extract_data_payload(html)
+    assert payload["analysis_as_of"] == "2022-06-30"
+    # Distinct from the (unrelated) price as-of date.
+    assert payload["as_of"] == "2026-07-11"
+
+
+def test_render_report_html_analysis_as_of_defaults_to_none():
+    html = render_report_html(
+        "NVDA", "1y", _success_result(),
+        metrics=_metrics(), technical=_technical(), flags=_flags(), price=128.40,
+    )
+    payload = _extract_data_payload(html)
+    assert payload["analysis_as_of"] is None
+
+
+def test_generate_report_filename_gains_asof_segment_when_analysis_as_of_set(tmp_path):
+    path = generate_report(
+        "AAPL", "1y", _success_result(),
+        metrics=_metrics(), technical=_technical(), flags=_flags(),
+        price=128.40, analysis_as_of="2022-06-30", out_dir=str(tmp_path),
+    )
+    filename = path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+    assert "_asof-2022-06-30" in filename
+
+    content = open(path, "r", encoding="utf-8").read()
+    payload = _extract_data_payload(content)
+    assert payload["analysis_as_of"] == "2022-06-30"
+
+
+def test_generate_report_filename_has_no_asof_segment_for_a_live_run(tmp_path):
+    path = generate_report(
+        "AAPL", "1y", _success_result(),
+        metrics=_metrics(), technical=_technical(), flags=_flags(),
+        price=128.40, out_dir=str(tmp_path),
+    )
+    filename = path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+    assert "_asof-" not in filename
+
+
+# ---------------------------------------------------------------------------
+# render_history_page -- the GET /history counterpart: mode:"history"
+# payload carrying the ticker, stored verdict rows, and current price.
+# ---------------------------------------------------------------------------
+
+
+def _history_rows():
+    return [
+        {
+            "id": 2, "cik": "320193", "ticker": "AAPL",
+            "analyzed_at": "2026-07-01T10:00:00", "as_of": "2022-06-30",
+            "horizon": "1y", "provider": "script", "price": 145.0,
+            "fundamental_verdict": "UCUZ", "technical_verdict": "NÖTR",
+            "profile_fit": "KISMEN",
+            "fv_bear_lo": 130.0, "fv_bear_hi": 140.0,
+            "fv_base_lo": 150.0, "fv_base_hi": 170.0,
+            "fv_bull_lo": 180.0, "fv_bull_hi": 200.0,
+            "confidence": "YÜKSEK", "sector_type": "mature",
+            "implied_growth": 0.12, "watch_note": None,
+        },
+        {
+            "id": 1, "cik": "320193", "ticker": "AAPL",
+            "analyzed_at": "2026-01-01T10:00:00", "as_of": None,
+            "horizon": "1y", "provider": "script", "price": 120.0,
+            "fundamental_verdict": "MAKUL", "technical_verdict": "NÖTR",
+            "profile_fit": "KISMEN",
+            "fv_bear_lo": 110.0, "fv_bear_hi": 120.0,
+            "fv_base_lo": 125.0, "fv_base_hi": 140.0,
+            "fv_bull_lo": 145.0, "fv_bull_hi": 160.0,
+            "confidence": "ORTA", "sector_type": "mature",
+            "implied_growth": 0.08, "watch_note": None,
+        },
+    ]
+
+
+def test_render_history_page_payload_mode_and_ticker():
+    html = render_history_page("aapl", _history_rows(), current_price={"date": "2026-07-15", "close": 150.0})
+    payload = _extract_data_payload(html)
+
+    assert payload["mode"] == "history"
+    assert payload["ticker"] == "AAPL"  # upper-cased for display
+
+
+def test_render_history_page_carries_rows_and_current_price_verbatim():
+    rows = _history_rows()
+    html = render_history_page("AAPL", rows, current_price={"date": "2026-07-15", "close": 150.0})
+    payload = _extract_data_payload(html)
+
+    assert payload["rows"] == rows
+    assert payload["current_price"] == {"date": "2026-07-15", "close": 150.0}
+
+
+def test_render_history_page_defaults_current_price_to_none():
+    html = render_history_page("AAPL", _history_rows())
+    payload = _extract_data_payload(html)
+    assert payload["current_price"] is None
+
+
+def test_render_history_page_empty_rows_still_renders_well_formed_html():
+    html = render_history_page("ZZZZ", [], current_price=None)
+    payload = _extract_data_payload(html)
+
+    assert payload["mode"] == "history"
+    assert payload["ticker"] == "ZZZZ"
+    assert payload["rows"] == []
+    assert "<!DOCTYPE html>" in html and "</html>" in html
 
 
 def test_generate_report_without_valuation_still_degrades_planning_sections_gracefully(tmp_path):

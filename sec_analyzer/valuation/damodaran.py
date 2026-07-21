@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 _MULTIPLES_FILENAME = "multiples.csv"
 _ERP_FILENAME = "erp.csv"
+_ERP_HISTORY_FILENAME = "erp_history.csv"
 _ERP_REGION = "US"
 
 
@@ -126,22 +127,66 @@ def _parse_risk_free(rows: List[dict]) -> Optional[float]:
     return _to_float(us_row, "risk_free") if us_row is not None else None
 
 
-def load_sector_data(dir_path: Optional[str]) -> Optional[dict]:
+def _load_erp_history(path: str) -> Optional[Dict[int, dict]]:
+    """Read ``erp_history.csv`` into ``{year: {"erp": float|None, "risk_free": float|None}}``.
+
+    Columns: ``year, erp[, risk_free]`` (percentage numbers, like ``erp.csv``;
+    ``risk_free`` optional). Rows without a parseable integer ``year`` are
+    skipped. First occurrence of a given year wins (deterministic file order).
+    Returns ``None`` if the file is missing/unreadable/empty.
+    """
+    rows = _read_csv_rows(path)
+    if not rows:
+        return None
+    history: Dict[int, dict] = {}
+    for row in rows:
+        try:
+            year = int(str(row.get("year")).strip())
+        except (TypeError, ValueError):
+            continue
+        if year in history:
+            continue
+        history[year] = {
+            "erp": _to_float(row, "erp"),
+            "risk_free": _to_float(row, "risk_free"),
+        }
+    return history or None
+
+
+def load_sector_data(
+    dir_path: Optional[str],
+    as_of=None,
+    fred_rate: Optional[dict] = None,
+) -> Optional[dict]:
     """Load Damodaran multiples/ERP reference CSVs from ``dir_path``.
 
     Args:
         dir_path: Directory expected to contain ``multiples.csv`` and/or
             ``erp.csv`` (typically ``Config.DAMODARAN_DIR``).
+        as_of: Optional point-in-time date (``datetime.date`` or ISO string).
+            When ``None`` (the default) this returns the exact current-value
+            dict, bit-for-bit unchanged. When set, ERP is sourced from
+            ``erp_history.csv`` (row for ``as_of.year``, falling back to the
+            current ``erp.csv`` value if that year is absent), and a
+            ``"macro_asof"`` provenance block is added.
+        fred_rate: Optional ``{"value_pct": float, ...}`` dict (from
+            :func:`sec_analyzer.fetch.fred.get_risk_free_asof`) supplying the
+            historical risk-free rate. Only consulted when ``as_of`` is set.
+            Risk-free precedence when ``as_of`` is set: ``fred_rate`` ->
+            ``erp_history.csv`` row's ``risk_free`` -> current ``erp.csv``.
 
     Returns:
-        ``{"multiples": [{"industry","pe","ps","pfcf","growth","peg","beta"
-        [,"capex_sales"]}, ...] or None, "erp": float or None, "risk_free":
+        ``{"multiples": [...] or None, "erp": float or None, "risk_free":
         float or None}``, or ``None`` if ``dir_path`` doesn't exist or
         neither file yielded anything usable. ``erp``/``risk_free`` are
         percentage numbers (e.g. ``4.23`` for 4.23%). ``capex_sales`` is
         present per-row only when that row's CSV data carried a usable Cap
-        Ex/Sales value (see :func:`_parse_multiples_rows`). Never raises;
-        every missing piece is logged.
+        Ex/Sales value (see :func:`_parse_multiples_rows`). When ``as_of`` is
+        set the dict also carries ``"macro_asof": {"as_of","erp_source",
+        "risk_free_source"}`` (Turkish source strings, surfaced in the report/
+        notes). Sector multiples and betas are NOT date-keyed -- they remain
+        the current static snapshot regardless of ``as_of`` (documented
+        limitation). Never raises; every missing piece is logged.
     """
     if not dir_path or not os.path.isdir(dir_path):
         logger.info("damodaran: directory %r not found; sector medians unavailable.", dir_path)
@@ -156,8 +201,46 @@ def load_sector_data(dir_path: Optional[str]) -> Optional[dict]:
         logger.info("damodaran: %s not found or unreadable in %s.", _ERP_FILENAME, dir_path)
 
     parsed_multiples = _parse_multiples_rows(multiples_rows) if multiples_rows is not None else None
-    erp_value = _parse_erp(erp_rows) if erp_rows is not None else None
-    risk_free_value = _parse_risk_free(erp_rows) if erp_rows is not None else None
+    current_erp = _parse_erp(erp_rows) if erp_rows is not None else None
+    current_risk_free = _parse_risk_free(erp_rows) if erp_rows is not None else None
+
+    if as_of is None:
+        if not parsed_multiples and current_erp is None and current_risk_free is None:
+            return None
+        return {
+            "multiples": parsed_multiples or None,
+            "erp": current_erp,
+            "risk_free": current_risk_free,
+        }
+
+    # --- Point-in-time (as-of) macro resolution ---
+    as_of_year = as_of.year if hasattr(as_of, "year") else int(str(as_of)[:4])
+    as_of_iso = as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of)
+
+    history = _load_erp_history(os.path.join(dir_path, _ERP_HISTORY_FILENAME))
+    hist_row = history.get(as_of_year) if history else None
+
+    # ERP: history year row -> current erp.csv.
+    if hist_row is not None and hist_row.get("erp") is not None:
+        erp_value = hist_row["erp"]
+        erp_source = f"erp_history.csv ({as_of_year})"
+    else:
+        erp_value = current_erp
+        erp_source = "erp.csv (güncel değer)"
+
+    # Risk-free: FRED -> history row -> current erp.csv.
+    fred_value = fred_rate.get("value_pct") if isinstance(fred_rate, dict) else None
+    if fred_value is not None:
+        risk_free_value = fred_value
+        rf_date = fred_rate.get("date")
+        rf_series = fred_rate.get("series") or "FRED"
+        risk_free_source = f"{rf_series} ({rf_date})" if rf_date else str(rf_series)
+    elif hist_row is not None and hist_row.get("risk_free") is not None:
+        risk_free_value = hist_row["risk_free"]
+        risk_free_source = f"erp_history.csv ({as_of_year})"
+    else:
+        risk_free_value = current_risk_free
+        risk_free_source = "erp.csv (güncel değer)"
 
     if not parsed_multiples and erp_value is None and risk_free_value is None:
         return None
@@ -166,6 +249,11 @@ def load_sector_data(dir_path: Optional[str]) -> Optional[dict]:
         "multiples": parsed_multiples or None,
         "erp": erp_value,
         "risk_free": risk_free_value,
+        "macro_asof": {
+            "as_of": as_of_iso,
+            "erp_source": erp_source,
+            "risk_free_source": risk_free_source,
+        },
     }
 
 

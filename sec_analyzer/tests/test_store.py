@@ -286,6 +286,192 @@ def test_save_verdict_new_columns_exist_after_init_db_migration(tmp_path):
         assert expected in columns
 
 
+# ---------------------------------------------------------------------------
+# Point-in-time ("as-of") mode: save_verdict's new "as_of" column + the
+# load_verdicts/load_latest_stored_price read helpers.
+# ---------------------------------------------------------------------------
+
+
+def test_save_verdict_as_of_roundtrips_through_load_verdicts(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    result = _sample_result()
+
+    database.save_verdict(
+        "AAPL", "320193", "1y", "script", 100.0, result, db_path=db_path, as_of="2022-06-30",
+    )
+
+    rows = database.load_verdicts("AAPL", db_path=db_path)
+    assert len(rows) == 1
+    assert rows[0]["as_of"] == "2022-06-30"
+
+
+def test_save_verdict_live_run_has_as_of_none(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    result = _sample_result()
+
+    database.save_verdict("AAPL", "320193", "1y", "script", 100.0, result, db_path=db_path)
+
+    rows = database.load_verdicts("AAPL", db_path=db_path)
+    assert len(rows) == 1
+    assert rows[0]["as_of"] is None
+
+
+def test_save_verdict_as_of_column_is_backfilled_on_a_legacy_database(tmp_path):
+    """A pre-existing database created before the as-of column was added
+    still gets the ``as_of`` column backfilled by ``_ensure_columns`` the
+    next time ``init_db``/``save_verdict`` runs -- mirrors
+    test_save_verdict_new_columns_exist_after_init_db_migration above, for
+    the newer as-of-specific column."""
+    db_path = str(tmp_path / "test.sqlite3")
+    database.init_db(db_path)
+
+    conn = database.get_connection(db_path)
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(verdicts)").fetchall()}
+    finally:
+        conn.close()
+
+    assert "as_of" in columns
+
+
+def test_load_verdicts_orders_newest_analyzed_at_first(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    result = _sample_result()
+
+    database.save_verdict(
+        "AAPL", "320193", "1y", "script", 100.0, result, db_path=db_path,
+        analyzed_at="2026-01-01T10:00:00",
+    )
+    database.save_verdict(
+        "AAPL", "320193", "1y", "script", 105.0, result, db_path=db_path,
+        analyzed_at="2026-03-01T10:00:00",
+    )
+    database.save_verdict(
+        "AAPL", "320193", "1y", "script", 102.0, result, db_path=db_path,
+        analyzed_at="2026-02-01T10:00:00",
+    )
+
+    rows = database.load_verdicts("AAPL", db_path=db_path)
+    assert [r["analyzed_at"] for r in rows] == [
+        "2026-03-01T10:00:00", "2026-02-01T10:00:00", "2026-01-01T10:00:00",
+    ]
+
+
+def test_load_verdicts_respects_limit(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    result = _sample_result()
+    for i in range(5):
+        database.save_verdict(
+            "AAPL", "320193", "1y", "script", 100.0 + i, result, db_path=db_path,
+            analyzed_at=f"2026-01-0{i + 1}T10:00:00",
+        )
+
+    rows = database.load_verdicts("AAPL", db_path=db_path, limit=2)
+    assert len(rows) == 2
+    # Still newest-first even when truncated by the limit.
+    assert rows[0]["analyzed_at"] == "2026-01-05T10:00:00"
+
+
+def test_load_verdicts_matches_ticker_case_insensitively(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    result = _sample_result()
+    database.save_verdict("AAPL", "320193", "1y", "script", 100.0, result, db_path=db_path)
+
+    assert len(database.load_verdicts("aapl", db_path=db_path)) == 1
+    assert len(database.load_verdicts("AaPl", db_path=db_path)) == 1
+    assert len(database.load_verdicts("MSFT", db_path=db_path)) == 0
+
+
+def test_load_verdicts_row_shape_excludes_blobs_and_includes_scalars(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    result = _sample_result()
+    valuation = _sample_valuation()
+    database.save_verdict(
+        "AAPL", "320193", "1y", "script", 100.0, result, db_path=db_path, valuation=valuation,
+    )
+
+    rows = database.load_verdicts("AAPL", db_path=db_path)
+    row = rows[0]
+    for blob_key in ("result_json", "fair_value_json", "valuation_json"):
+        assert blob_key not in row
+    for scalar_key in ("id", "cik", "ticker", "analyzed_at", "as_of", "horizon", "provider",
+                       "price", "fv_base_lo", "fv_base_hi", "confidence", "sector_type",
+                       "implied_growth"):
+        assert scalar_key in row
+
+
+def test_load_verdicts_returns_empty_list_for_unknown_ticker(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    assert database.load_verdicts("NOSUCHTICKER", db_path=db_path) == []
+
+
+def _price_row_for_cik(date_str, price, cik="320193"):
+    return {
+        "date": date_str,
+        "open": price - 0.5, "high": price + 0.5, "low": price - 1.0,
+        "close": price, "volume": 1_000_000,
+    }
+
+
+def test_load_latest_stored_price_returns_the_latest_bar(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    database.init_db(db_path)
+    conn = database.get_connection(db_path)
+    try:
+        with conn:
+            database.upsert_company(conn, "320193", "AAPL", "Apple Inc.")
+    finally:
+        conn.close()
+
+    database.save_prices(
+        "320193",
+        [
+            _price_row_for_cik("2023-01-02", 100.0),
+            _price_row_for_cik("2023-01-05", 103.0),
+            _price_row_for_cik("2023-01-04", 101.5),
+        ],
+        db_path=db_path,
+    )
+
+    result = database.load_latest_stored_price("AAPL", db_path=db_path)
+    assert result == {"date": "2023-01-05", "close": 103.0}
+
+
+def test_load_latest_stored_price_matches_ticker_case_insensitively(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    database.init_db(db_path)
+    conn = database.get_connection(db_path)
+    try:
+        with conn:
+            database.upsert_company(conn, "320193", "AAPL", "Apple Inc.")
+    finally:
+        conn.close()
+    database.save_prices("320193", [_price_row_for_cik("2023-01-02", 100.0)], db_path=db_path)
+
+    assert database.load_latest_stored_price("aapl", db_path=db_path) == {
+        "date": "2023-01-02", "close": 100.0,
+    }
+
+
+def test_load_latest_stored_price_returns_none_for_unknown_ticker(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    database.init_db(db_path)
+    assert database.load_latest_stored_price("NOSUCHTICKER", db_path=db_path) is None
+
+
+def test_load_latest_stored_price_returns_none_when_no_prices_stored(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    database.init_db(db_path)
+    conn = database.get_connection(db_path)
+    try:
+        with conn:
+            database.upsert_company(conn, "320193", "AAPL", "Apple Inc.")
+    finally:
+        conn.close()
+
+    assert database.load_latest_stored_price("AAPL", db_path=db_path) is None
+
+
 def test_save_verdict_handles_missing_band_values_none_safely(tmp_path):
     db_path = str(tmp_path / "test.sqlite3")
     result = {

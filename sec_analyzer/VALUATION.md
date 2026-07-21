@@ -611,3 +611,17 @@ ağına sahip DEĞİLDİR. `script` sağlayıcısında bu şu an etkisiz kalıyo
 kırpıyor), ama bir LLM sağlayıcısının (kendi kırpması olmadan) genç,
 yüksek-büyümeli bir şirketi standart DCF'e yönlendirmesi hâlâ güvenlik ağı
 olmayan bir senaryodur. Bkz. ROADMAP.md.
+
+## 10. Geçmiş tarih (as-of) modu
+
+`analyze TICKER --as-of YYYY-MM-DD` yukarıdaki tüm kuralları (DCF, EPV,
+hiper-grower, çarpanlar, üçgenleme) DEĞİŞTİRMEDEN, yalnızca girdileri o
+tarihte bilinebilecek olanlarla sınırlayarak çalıştırır: SEC faktları
+(dosyalanma tarihine göre), fiyat geçmişi (o tarihe kadar) ve makro (ERP/
+risksiz getiri) `data/damodaran/erp_history.csv` arşivinden ve FRED'in geçmiş
+DGS10 serisinden gelir — sektör çarpanları ve betalar ise (§4'teki CAPM
+girdisi) tarihe göre arşivlenmemiştir, güncel Damodaran anlık görüntüsü
+kullanılır (bilinen bir yaklaşıklık, gizlenmez). Bu, §9'daki kalibrasyon
+aracının geçmiş piyasa rejimlerinde (ör. 2021 zirve vs. 2022 dip) de
+çalıştırılabilmesini sağlar. Tam sözleşme, fonksiyon imzaları ve sınırlamalar:
+SPEC.md §18; pratik kullanım: METODOLOJI.md §7.

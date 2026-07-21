@@ -26,7 +26,9 @@ class OllamaError(Exception):
     """
 
 
-def chat_json(system: str, user: str, model: str, host: str, timeout: int = 300) -> str:
+def chat_json(
+    system: str, user: str, model: str, host: str, timeout: int = 300, num_ctx: int = 32768
+) -> str:
     """Send a chat request to a local Ollama server and return the raw reply text.
 
     Uses Ollama's ``format: "json"`` option so the model is constrained to
@@ -40,14 +42,17 @@ def chat_json(system: str, user: str, model: str, host: str, timeout: int = 300)
         host: Base URL of the Ollama server, e.g. ``"http://localhost:11434"``.
         timeout: Request timeout in seconds. Local generation can be slow on
             CPU-only machines, so this defaults to a generous 300s.
+        num_ctx: Context window (tokens) to request. Ollama's server-side
+            default (4096) silently truncates our long prompts, which makes
+            models emit empty/degenerate output.
 
     Returns:
         The model's raw response text (``response["message"]["content"]``).
 
     Raises:
         OllamaError: If the server is unreachable, the request times out,
-            the model isn't available locally, or the server returns a
-            malformed response.
+            the model isn't available locally, the server returns a
+            malformed response, or the model's reply is empty.
     """
     url = f"{host.rstrip('/')}{_CHAT_PATH}"
     body = {
@@ -58,7 +63,7 @@ def chat_json(system: str, user: str, model: str, host: str, timeout: int = 300)
         ],
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0.2},
+        "options": {"temperature": 0.2, "num_ctx": num_ctx},
     }
 
     try:
@@ -91,10 +96,28 @@ def chat_json(system: str, user: str, model: str, host: str, timeout: int = 300)
 
     try:
         data = resp.json()
-        content = data["message"]["content"]
+        message = data["message"]
+        content = message["content"]
     except (ValueError, KeyError, TypeError) as exc:
         raise OllamaError(
             f"Ollama at {host} returned an unexpected response shape: {exc}"
         ) from exc
+
+    if not isinstance(content, str) or not content.strip():
+        # Thinking-style models can burn their whole output on a reasoning
+        # trace and leave `content` empty; prompt truncation (num_ctx too
+        # small) produces the same symptom.
+        thinking = message.get("thinking") if isinstance(message, dict) else None
+        hint = (
+            " The model produced only a reasoning trace ('thinking') and no "
+            "final answer -- try a non-thinking model or a larger one."
+            if thinking
+            else " This usually means the prompt was truncated (num_ctx too "
+            "small for this model) or the model is too small for the task -- "
+            "try a larger OLLAMA_NUM_CTX or a bigger model."
+        )
+        raise OllamaError(
+            f"Ollama model '{model}' returned an empty response.{hint}"
+        )
 
     return content

@@ -8,6 +8,30 @@ echo    SEC Analyzer - Web Arayuzu
 echo ============================================
 echo.
 
+rem === Projeyi git "main" branch'inden guncelle ===========================
+rem Baslatmadan once en guncel kodu cek. Git kurulu degilse ya da internet
+rem yoksa bu adim atlanir (guncelleme hatasi uygulamayi durdurmaz).
+where git >nul 2>&1
+if errorlevel 1 (
+    echo Git bulunamadi; guncelleme atlaniyor.
+    echo.
+    goto :git_done
+)
+echo Proje guncelleniyor ^(git main^)...
+git -C "%~dp0." fetch origin main
+if errorlevel 1 (
+    echo   Uyari: guncelleme yapilamadi ^(internet/git sorunu^); mevcut kodla devam.
+    echo.
+    goto :git_done
+)
+git -C "%~dp0." pull --ff-only origin main
+if errorlevel 1 (
+    echo   Uyari: "main" birlestirilmesi hizli-ileri degil; mevcut kodla devam.
+    echo   ^(Yerel degisiklikleriniz olabilir; elle "git pull origin main" deneyin.^)
+)
+echo.
+:git_done
+
 rem === Calisan bir Python yorumlayicisi bul ===============================
 rem PATH'teki "python" cogu Windows'ta Microsoft Store kisayoludur ve gercek
 rem yorumlayici degildir; bu yuzden adaylari tek tek deneyip GERCEKTEN calisan

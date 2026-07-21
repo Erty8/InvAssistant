@@ -369,7 +369,11 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
             "pfcf_percentile": None,
             "pffo_percentile": None,
             "history_years": 0,
-            "sector": {"available": False, "industry": None, "pe_median": None, "ps_median": None, "pfcf_median": None},
+            "sector": {
+                "available": False, "industry": None,
+                "pe_median": None, "ps_median": None, "pfcf_median": None,
+                "comparison": {"label": None, "current": None, "median": None, "ratio": None, "bucket": None},
+            },
             "growth_adjusted": _empty_growth_adjusted("peg", "PEG", "P/E", None),
         },
         "sensitivity": None,
@@ -377,6 +381,7 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
             "signals": {"dcf": "veri_yok", "reverse_dcf": "veri_yok", "multiples": "veri_yok"},
             "confidence": "DÜŞÜK",
             "direction": "belirsiz",
+            "divergence": None,
         },
         "hyper_growth": False,
         "hyper_growth_detail": None,
@@ -823,6 +828,33 @@ def _build_pb_roe(
 
     fair_pb_base = _justified_pb(roe, discount_rate_base, terminal_growth_base)
     book_value_per_share = equity_latest / shares
+
+    # A justified P/B of (ROE - g)/(r - g) is non-positive exactly when ROE <= g
+    # (the numerator turns non-positive for a loss-making or sub-growth filer;
+    # the denominator is always positive here since discount_rate_base > 0 and
+    # _justified_pb degrades g to 0 whenever r - g would be <= 0). A book value
+    # per share <= 0 (negative equity) is likewise degenerate. A price-to-book
+    # multiple applied to book equity can never make the stock worth zero or
+    # negative dollars, so the anchor has NO usable opinion in either case --
+    # return None (anchor unavailable) rather than emitting a negative fair
+    # value. This is distinct from the Work-Package-5 "don't clamp a
+    # legitimately high/low POSITIVE fair_pb" rule below (SPEC.md Sec.8): that
+    # rule is about not discarding valid positive signal, not about permitting
+    # an economically meaningless non-positive multiple.
+    if fair_pb_base <= 0 or book_value_per_share <= 0:
+        if fair_pb_base <= 0:
+            notes.append(
+                f"P/D x ROE çapası hesaplanamadı: adil P/D (justified P/B) {fair_pb_base:.2f}x "
+                f"pozitif değil (ROE %{roe * 100:.1f} ≤ büyüme %{(terminal_growth_base or 0) * 100:.1f}); "
+                "zarar eden veya büyümesinin altında getiri üreten bir şirket için anlamlı "
+                "P/D x ROE adil değeri yoktur."
+            )
+        else:
+            notes.append(
+                f"P/D x ROE çapası hesaplanamadı: hisse başına defter değeri {book_value_per_share:.2f} "
+                "pozitif değil (negatif özkaynak); P/D çapası anlamsız."
+            )
+        return None, notes
 
     justified_pb_flag = None
     if fair_pb_base > _PB_CLAMP_HI:
@@ -1971,11 +2003,30 @@ def _build_hyper_growth(
         }
         raw_target = {"bear": target_base * 0.7, "base": target_base, "bull": target_base * 1.2}
 
+        # --- Deceleration guard (rule-based start-growth cap) ---------------
+        # A scenario's start growth must not exceed the latest realized YoY
+        # growth. Assuming a visibly decelerating company first RE-accelerates
+        # (e.g. bull's raw ``growth_anchor * 1.2``) before fading to terminal
+        # is internally inconsistent -- the fade already models growth rolling
+        # over, so re-acceleration on top of it double-counts optimism. A
+        # genuine re-acceleration thesis is not forbidden, only made explicit:
+        # it enters ONLY as a per-scenario ``start_growth`` override in
+        # ``hyper_growth_extras`` (AI mode), and is surfaced with a deviation
+        # note (how far above the statistical base it sits) rather than applied
+        # silently. When the latest YoY isn't usable, no cap is applied and
+        # behavior is unchanged. This also subsumes the "bull compounds both
+        # growth AND margin by 1.2" concern in rule-based mode: once bull's
+        # start growth is capped at the same realized YoY as base, its extra
+        # optimism can only come from the margin lever, not a second growth
+        # uplift.
+        decel_cap = latest_yoy if (latest_yoy is not None and latest_yoy > 0) else None
+
         start_growth_by_scenario = {}
         target_by_scenario = {}
         steady_state_by_scenario = {}
         probabilities = {}
         target_margin_overridden = {}
+        start_growth_capped_keys: List[str] = []
 
         for key in _SCENARIO_KEYS:
             scenario_extras = per_scenario_extras.get(key) or {}
@@ -2000,10 +2051,35 @@ def _build_hyper_growth(
             if _is_number(override_prob) and 0.0 <= override_prob <= 1.0:
                 prob = override_prob
 
-            start_growth_by_scenario[key] = raw_start_growth[key]
+            override_start = scenario_extras.get("start_growth")
+            if _is_number(override_start):
+                # AI-mode explicit assumption: honored, but a re-acceleration
+                # above the statistical base is flagged as a deviation.
+                start_growth_by_scenario[key] = override_start
+                base_ref = decel_cap if decel_cap is not None else raw_start_growth[key]
+                if override_start > base_ref:
+                    notes.append(
+                        f"{key.capitalize()} senaryosu başlangıç büyümesi %{override_start * 100:.0f} olarak "
+                        f"açık bir varsayımla (hyper_growth_extras) belirlendi; istatistiksel tabanın "
+                        f"(%{base_ref * 100:.0f}) üzerinde — re-acceleration tezi bilinçli olarak fiyatlanıyor."
+                    )
+            elif decel_cap is not None and raw_start_growth[key] > decel_cap:
+                start_growth_by_scenario[key] = decel_cap
+                start_growth_capped_keys.append(key)
+            else:
+                start_growth_by_scenario[key] = raw_start_growth[key]
+
             target_by_scenario[key] = target
             steady_state_by_scenario[key] = steady_state_year
             probabilities[key] = prob
+
+        if start_growth_capped_keys:
+            names = ", ".join(k.capitalize() for k in start_growth_capped_keys)
+            notes.append(
+                f"Yavaşlama koruması: {names} senaryo(lar)ının başlangıç büyümesi, son gerçekleşen yıllık "
+                f"büyüme (%{decel_cap * 100:.0f}) ile sınırlandı — yavaşlayan bir şirketin önce yeniden "
+                "hızlanacağı varsayılmadı (re-acceleration yalnızca AI modunda açık varsayımla girebilir)."
+            )
 
         # --- WP3: hyper-grower discount-rate fade (Damodaran fade) --------
         # A revenue-first DCF already fades revenue growth and FCF margin
@@ -2275,6 +2351,15 @@ def _build_hyper_growth(
             mature_discount_rate=mature_discount_rate,
         )
 
+        # Third reverse lens: the flat cost of equity the price implies when
+        # growth and margin are held at the model's base assumptions. A large
+        # gap vs the model's own cohort/mature discount rate is one face of a
+        # model-market divergence (see triangulate.py's governor).
+        implied_discount_rate = revenue_dcf.implied_discount_rate(
+            price, latest_revenue, base_start_growth, terminal_growth, current_margin,
+            base_target, base_steady_state_year, shares, annual_dilution, financing_shares,
+        )
+
         implied_tam_share = (
             implied_revenue_10y / tam_usd if (implied_revenue_10y is not None and tam_usd is not None) else None
         )
@@ -2291,8 +2376,10 @@ def _build_hyper_growth(
                 "revenue_10y": implied_revenue_10y,
                 "revenue_multiple": implied_revenue_multiple,
                 "steady_state_margin": implied_margin,
+                "discount_rate": implied_discount_rate,
                 "tam_share": implied_tam_share,
             },
+            "base_discount_rate": round(base_discount_rate, 4),
             "target_margin_source": target_margin_source,
             "target_margin_flag": target_margin_flag,
             "target_margin_pct": round(target_base, 4),
@@ -3403,6 +3490,8 @@ def run_valuation(
     damodaran_dir: Optional[str] = None,
     sic_description: Optional[str] = None,
     hyper_growth_extras: Optional[dict] = None,
+    as_of=None,
+    fred_rate: Optional[dict] = None,
 ) -> dict:
     """Run the full deterministic valuation engine (SPEC Sec.11).
 
@@ -3441,6 +3530,16 @@ def run_valuation(
             TAM per scenario. ``None`` (the default) keeps every hyper-
             grower input fully deterministic -- backward compatible with
             every existing caller.
+        as_of: Optional point-in-time date (``datetime.date`` or ISO string).
+            When set, the Damodaran macro load resolves ERP/risk-free from
+            the historical archive (see
+            :func:`sec_analyzer.valuation.damodaran.load_sector_data`), the
+            resulting ``macro_asof`` provenance is copied into the result,
+            and two Turkish notes (macro source + static-multiples caveat)
+            are appended. ``None`` leaves behavior unchanged.
+        fred_rate: Optional historical risk-free dict (from
+            :func:`sec_analyzer.fetch.fred.get_risk_free_asof`), forwarded to
+            the macro load. Only consulted when ``as_of`` is set.
 
     Returns:
         The ``valuation`` dict documented in SPEC Sec.11. Every
@@ -3451,6 +3550,7 @@ def run_valuation(
         return _run_valuation(
             normalized or {}, ratios or [], metrics or {}, price, price_df, assumptions or {},
             sector_type, damodaran_dir, sic_description, hyper_growth_extras,
+            as_of=as_of, fred_rate=fred_rate,
         )
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("run_valuation() failed unexpectedly; returning a degraded result.")
@@ -3461,6 +3561,8 @@ def _run_valuation(
     normalized: dict, ratios: list, metrics: dict, price: Optional[float], price_df, assumptions: dict,
     sector_type: str, damodaran_dir: Optional[str], sic_description: Optional[str],
     hyper_growth_extras: Optional[dict] = None,
+    as_of=None,
+    fred_rate: Optional[dict] = None,
 ) -> dict:
     notes: List[str] = []
 
@@ -3499,8 +3601,23 @@ def _run_valuation(
     # DCF (built further down) can use it too; `sector_data` is reused as-is
     # by that later section (no second load, no behavior change there: same
     # deterministic local CSV read either way).
-    sector_data = damodaran.load_sector_data(damodaran_dir if damodaran_dir is not None else Config.DAMODARAN_DIR)
+    sector_data = damodaran.load_sector_data(
+        damodaran_dir if damodaran_dir is not None else Config.DAMODARAN_DIR,
+        as_of=as_of,
+        fred_rate=fred_rate,
+    )
     risk_free_pct = sector_data.get("risk_free") if sector_data else None
+    if as_of is not None and sector_data and sector_data.get("macro_asof"):
+        macro_asof = sector_data["macro_asof"]
+        notes.append(
+            f"Geçmiş tarih (as-of) modu: {macro_asof['as_of']} itibarıyla — "
+            f"ERP kaynağı: {macro_asof['erp_source']}; risksiz faiz kaynağı: "
+            f"{macro_asof['risk_free_source']}."
+        )
+        notes.append(
+            "Sektör çarpanları ve betaları güncel Damodaran anlık görüntüsüdür; "
+            "tarihe göre arşivlenmemiştir (yalnızca ERP ve risksiz faiz geçmişe göre alınır)."
+        )
     if _is_number(risk_free_pct):
         terminal_growth_anchor = min(risk_free_pct / 100.0, sanity._TERMINAL_GROWTH_MAX)
     else:
@@ -4021,6 +4138,52 @@ def _run_valuation(
         "pfcf_median": (sector_medians_result or {}).get("pfcf"),
     }
 
+    # Sector-relative multiples axis (VALUATION.md Sec.7 axis-b): the current
+    # PRIMARY multiple over its Damodaran sector median. The primary is picked
+    # with the SAME sector-type candidate order + first-non-None-percentile
+    # rule as triangulate._raw_multiples_signal, so the sector axis and the
+    # own-history percentile signal describe the identical multiple. No
+    # Damodaran P/FFO median exists, so a reit whose primary is P/FFO yields
+    # no comparison (axis disabled, own-history behavior preserved). The
+    # `comparison` block is surfaced in the report so the sector standing is
+    # explicit, not hidden behind a bare "karisik" signal.
+    if sector_type == "growth_unprofitable":
+        _ratio_candidates = (
+            (ps_pct, "P/S", current.get("ps"), sector_info["ps_median"]),
+            (pe_pct, "P/E", current.get("pe"), sector_info["pe_median"]),
+            (pfcf_pct, "P/FCF", current.get("pfcf"), sector_info["pfcf_median"]),
+        )
+    elif sector_type == "reit":
+        _ratio_candidates = (
+            (pffo_pct, "P/FFO", current.get("pffo"), None),
+            (ps_pct, "P/S", current.get("ps"), sector_info["ps_median"]),
+        )
+    else:
+        _ratio_candidates = (
+            (pe_pct, "P/E", current.get("pe"), sector_info["pe_median"]),
+            (ps_pct, "P/S", current.get("ps"), sector_info["ps_median"]),
+            (pfcf_pct, "P/FCF", current.get("pfcf"), sector_info["pfcf_median"]),
+        )
+    _primary = next(
+        ((lbl, cur, med) for pct, lbl, cur, med in _ratio_candidates if pct is not None),
+        None,
+    )
+    sector_ratio = None
+    sector_info["comparison"] = {
+        "label": None, "current": None, "median": None, "ratio": None, "bucket": None,
+    }
+    if _primary is not None:
+        _lbl, _cur, _med = _primary
+        if _is_number(_cur) and _is_number(_med) and _cur > 0 and _med > 0:
+            sector_ratio = _cur / _med
+            sector_info["comparison"] = {
+                "label": _lbl,
+                "current": round(_cur, 2),
+                "median": round(_med, 2),
+                "ratio": round(sector_ratio, 2),
+                "bucket": triangulate._sector_ratio_bucket(sector_ratio),
+            }
+
     # --- Growth-adjusted multiple (PEG / growth-adjusted EV/Sales) ----------
     # Refines (never replaces) the raw multiples signal by dividing the raw
     # multiple by the assumptions pipeline's base growth (in % points).
@@ -4135,7 +4298,7 @@ def _run_valuation(
         hyper_growth=hyper_growth_active, bull_band=hyper_bull_band, reverse_dcf_status=output_bracket_status,
         raw_growth_pair_pct=ga_raw_pct, growth_adj_pct=ga_pct, earnings_power_headline=epv_headline,
         mature_revenue_headline=mature_revenue_headline, midgrowth_revenue_headline=midgrowth_revenue_headline,
-        pffo_pct=pffo_pct, cyclical_fcfe_headline=cyclical_fcfe_headline,
+        pffo_pct=pffo_pct, cyclical_fcfe_headline=cyclical_fcfe_headline, sector_ratio=sector_ratio,
     )
 
     return {
@@ -4173,4 +4336,9 @@ def _run_valuation(
         "cyclical_fcfe_detail": cyclical_fcfe_detail,
         "assumptions": assumptions,
         "notes": notes,
+        **(
+            {"macro_asof": sector_data["macro_asof"]}
+            if as_of is not None and sector_data and sector_data.get("macro_asof")
+            else {}
+        ),
     }

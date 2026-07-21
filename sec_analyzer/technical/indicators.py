@@ -26,6 +26,12 @@ _RSI_DIVERGENCE_PIVOT = 5
 #: many bars of the end -- a stale divergence isn't actionable.
 _RSI_DIVERGENCE_RECENCY = 30
 
+#: RSI oversold/overbought lines for the swing "reversal reclaim" signal, and
+#: the recent-bar window over which a reclaim still counts as fresh.
+_RSI_OVERSOLD = 30.0
+_RSI_OVERBOUGHT = 70.0
+_RSI_RECLAIM_LOOKBACK = 10
+
 #: Simple moving average windows.
 _SMA_SHORT_WINDOW = 50
 _SMA_LONG_WINDOW = 200
@@ -44,6 +50,28 @@ _TRADING_DAYS_PER_YEAR = 252
 
 #: Momentum-return lookback windows (trading days), roughly 1/3/6 months.
 _RETURN_WINDOWS = {"return_1m_pct": 21, "return_3m_pct": 63, "return_6m_pct": 126}
+
+#: ATR (Average True Range) smoothing period (Wilder), for volatility-scaled
+#: swing stop distance.
+_ATR_PERIOD = 14
+
+#: Bollinger-band period + std multiple, and the lookback over which the
+#: current band width's percentile is ranked. A "squeeze" = band width in the
+#: bottom _BB_SQUEEZE_PCT percentile of its recent range (volatility
+#: compression that often precedes an expansion move) -- direction-agnostic.
+_BB_PERIOD = 20
+_BB_STD = 2.0
+_BB_SQUEEZE_LOOKBACK = 126  # ~6 months
+_BB_SQUEEZE_MIN_SAMPLE = 30
+_BB_SQUEEZE_PCT = 20.0
+
+#: Volume-climax / capitulation scan: over the last _CLIMAX_LOOKBACK bars, a
+#: bar whose volume is at least _CLIMAX_VOLUME_MULT x its trailing average AND
+#: whose high-low range is at least _CLIMAX_RANGE_PCT of price is a climax bar
+#: (seller/buyer exhaustion -- a reversal tell when it lands in a trend).
+_CLIMAX_LOOKBACK = 10
+_CLIMAX_VOLUME_MULT = 2.0
+_CLIMAX_RANGE_PCT = 0.04
 
 #: Half-width (bars on each side) of the swing-pivot detector: a bar is a
 #: swing high/low when its High/Low is the max/min over the +/-k-bar window.
@@ -83,6 +111,14 @@ _SR_SCORE_MA = 50
 #: closer, well-tested zone just because it's the all-time extreme.
 _SR_52W_FAR_THRESHOLD_PCT = 60.0
 
+#: Hard cap on how far a support/resistance level may sit from the current
+#: price and still be reported. A level beyond this distance (e.g. a 52-week
+#: low ~73% below a stock that has run up hard) is not an actionable trigger,
+#: so it is dropped from selection entirely -- the "far" slot on that side is
+#: then filled by the nearest strong in-range level (a tested shelf / Fib /
+#: MA) instead of the extreme, or left empty if none qualifies.
+_SR_MAX_DIST_PCT = 60.0
+
 #: Corroboration window: when finalizing a chosen level, all evidence within
 #: this fraction of its price is merged into it (summed touches, unioned fib
 #: ratios, 52w flags) and defines its price *range*.
@@ -92,9 +128,17 @@ _SR_CORROBORATE_PCT = 0.03
 #: so a single-price level still reads as a band rather than a point.
 _SR_BAND_MIN_PCT = 0.005
 
-#: How many recent daily closes to expose for the report's price chart
-#: (~1 trading year); keeps the embedded payload small.
-_PRICE_SERIES_MAX = 252
+#: Price-chart series exposed for the report. The report's chart supports a
+#: client-side range switch (3m / 1y / 5y), so the payload must carry enough
+#: history to cover the widest range while staying small: the most recent
+#: ``_PRICE_SERIES_DAILY`` trading days are kept at daily resolution (for the
+#: 3m/1y views), and everything older -- up to ``_PRICE_SERIES_MAX_ROWS`` (~5
+#: trading years) -- is down-sampled to roughly weekly. The chart slices this
+#: single ascending series by *date*, so the mixed resolution is transparent
+#: to the 3m/1y views (which fall entirely inside the daily tail).
+_PRICE_SERIES_DAILY = 320
+_PRICE_SERIES_MAX_ROWS = 1300
+_PRICE_SERIES_WEEKLY_STEP = 5
 
 #: Only the most recent ~2 years of pivots feed support/resistance, so a
 #: decade-old level doesn't outrank a fresh, actively-tested one.
@@ -152,6 +196,37 @@ def _rsi14(close: pd.Series) -> "float | None":
     if pd.isna(value):
         return None
     return round(float(value), 1)
+
+
+def _rsi_reclaim(close: pd.Series) -> "str | None":
+    """Detect a fresh RSI reclaim of an extreme line -- the swing "momentum is
+    turning" tell.
+
+    * ``"bullish"``: within the last :data:`_RSI_RECLAIM_LOOKBACK` bars RSI dipped
+      below :data:`_RSI_OVERSOLD` (oversold) AND the latest value is back at/above
+      it -- an oversold bounce being reclaimed.
+    * ``"bearish"``: within that window RSI ran above :data:`_RSI_OVERBOUGHT`
+      (overbought) AND the latest value is back at/below it -- an overbought
+      rollover.
+    * ``None``: neither (still oversold/overbought, or never near either line, or
+      not enough history).
+
+    Pure and NaN-safe: a too-short/flat window (all-``NaN`` RSI tail) returns
+    ``None`` rather than raising.
+    """
+    rsi = _rsi_series(close).dropna()
+    if len(rsi) < 2:
+        return None
+    window = rsi.iloc[-(_RSI_RECLAIM_LOOKBACK + 1):]
+    last = float(window.iloc[-1])
+    prior = window.iloc[:-1]
+    if prior.empty:
+        return None
+    if (prior < _RSI_OVERSOLD).any() and last >= _RSI_OVERSOLD:
+        return "bullish"
+    if (prior > _RSI_OVERBOUGHT).any() and last <= _RSI_OVERBOUGHT:
+        return "bearish"
+    return None
 
 
 def _rsi_divergence(df: pd.DataFrame) -> "dict | None":
@@ -316,11 +391,178 @@ def _volume_signals(df: pd.DataFrame) -> "tuple[float | None, str | None]":
     return rel_volume, obv_trend
 
 
-def _price_series(df: pd.DataFrame, max_points: int = _PRICE_SERIES_MAX) -> "list[dict]":
-    """The most recent ``max_points`` daily closes as ``[{"t": date, "c":
-    close}]`` (ascending) -- the compact time series the report's price chart
-    draws. Kept small so the embedded report payload stays light."""
-    close = df["Close"].tail(max_points)
+def _atr14(df: pd.DataFrame) -> "float | None":
+    """Wilder's 14-period Average True Range in price units, or ``None`` if
+    history is too short.
+
+    True range = ``max(high-low, |high-prev_close|, |low-prev_close|)``,
+    smoothed with the same ``alpha = 1/14`` EWMA convention as RSI. When
+    ``High``/``Low`` are absent (some ADRs/price sources give Close only), TR
+    degrades cleanly to ``|close - prev_close|`` -- a close-only volatility
+    proxy -- rather than failing.
+    """
+    close = pd.to_numeric(df["Close"], errors="coerce")
+    if len(close) < _ATR_PERIOD + 1:
+        return None
+    prev_close = close.shift(1)
+    high = pd.to_numeric(df["High"], errors="coerce") if "High" in df.columns else close
+    low = pd.to_numeric(df["Low"], errors="coerce") if "Low" in df.columns else close
+    tr = pd.concat(
+        [(high - low).abs(), (high - prev_close).abs(), (low - prev_close).abs()],
+        axis=1,
+    ).max(axis=1)
+    atr = tr.ewm(alpha=1 / _ATR_PERIOD, min_periods=_ATR_PERIOD).mean()
+    value = atr.iloc[-1]
+    if pd.isna(value):
+        return None
+    return round(float(value), 2)
+
+
+def _bollinger_squeeze(close: pd.Series) -> "dict | None":
+    """Bollinger-band "squeeze" state, or ``None`` if history is too short.
+
+    Band width = ``(upper - lower) / mid = 2 * _BB_STD * stddev / SMA``. The
+    current width is ranked as a percentile against its own last
+    :data:`_BB_SQUEEZE_LOOKBACK` bars; ``active`` is ``True`` when that
+    percentile is at/below :data:`_BB_SQUEEZE_PCT` (width sits in the tightest
+    fifth of its recent range -- compression that often precedes a move).
+    Direction-agnostic: a squeeze says "expansion likely soon", not which way.
+
+    Returns ``{"active": bool, "bandwidth_pct": float, "percentile": float}``.
+    """
+    if len(close) < _BB_PERIOD + _BB_SQUEEZE_MIN_SAMPLE:
+        return None
+    mid = close.rolling(_BB_PERIOD).mean()
+    std = close.rolling(_BB_PERIOD).std(ddof=0)
+    bandwidth = (2.0 * _BB_STD * std) / mid
+    bw = bandwidth.replace([float("inf"), float("-inf")], pd.NA).dropna()
+    if len(bw) < _BB_SQUEEZE_MIN_SAMPLE:
+        return None
+    window = bw.tail(_BB_SQUEEZE_LOOKBACK)
+    current = float(bw.iloc[-1])
+    percentile = float((window < current).sum()) / float(len(window)) * 100.0
+    return {
+        "active": percentile <= _BB_SQUEEZE_PCT,
+        "bandwidth_pct": round(current * 100.0, 2),
+        "percentile": round(percentile, 1),
+    }
+
+
+def _volume_climax(df: pd.DataFrame) -> "dict | None":
+    """Most recent volume-climax / capitulation bar within the last
+    :data:`_CLIMAX_LOOKBACK` bars, or ``None`` if none (or no usable volume).
+
+    A climax bar has volume >= :data:`_CLIMAX_VOLUME_MULT` x its trailing
+    :data:`_REL_VOLUME_WINDOW`-day average AND a high-low range >=
+    :data:`_CLIMAX_RANGE_PCT` of its close -- the wide-range, huge-volume bar
+    that marks buyer/seller exhaustion. Scans newest-first and returns the
+    first hit, so ``bars_ago == 0`` means it printed on the latest bar.
+
+    Returns ``{"detected": True, "bars_ago": int, "rel_volume": float,
+    "direction": "up"|"down", "date": str}``. ``direction`` is the sign of the
+    climax bar's close vs. the prior close.
+    """
+    if "Volume" not in df.columns:
+        return None
+    volume = pd.to_numeric(df["Volume"], errors="coerce")
+    close = pd.to_numeric(df["Close"], errors="coerce")
+    n = len(close)
+    if n < _REL_VOLUME_WINDOW + _CLIMAX_LOOKBACK:
+        return None
+    if volume.dropna().empty or float(volume.fillna(0).sum()) <= 0:
+        return None
+    high = pd.to_numeric(df["High"], errors="coerce") if "High" in df.columns else close
+    low = pd.to_numeric(df["Low"], errors="coerce") if "Low" in df.columns else close
+    avg = volume.rolling(_REL_VOLUME_WINDOW).mean()
+    for offset in range(_CLIMAX_LOOKBACK):
+        i = n - 1 - offset
+        v, a, px = volume.iloc[i], avg.iloc[i], close.iloc[i]
+        if pd.isna(v) or pd.isna(a) or a <= 0 or pd.isna(px) or px <= 0:
+            continue
+        rng = float(high.iloc[i] - low.iloc[i]) / float(px)
+        rv = float(v) / float(a)
+        if rv >= _CLIMAX_VOLUME_MULT and rng >= _CLIMAX_RANGE_PCT:
+            prev = close.iloc[i - 1] if i > 0 else px
+            direction = "down" if float(px) < float(prev) else "up"
+            return {
+                "detected": True,
+                "bars_ago": offset,
+                "rel_volume": round(rv, 1),
+                "direction": direction,
+                "date": _date_str(close.index[i]),
+            }
+    return None
+
+
+def relative_strength(
+    close: pd.Series,
+    benchmark_close: "pd.Series | None",
+    benchmark: str = "SPY",
+) -> "dict | None":
+    """Price relative strength of ``close`` vs. a benchmark close series.
+
+    Aligns the two series on their common dates, then computes the *relative*
+    return over the 1- and 3-month windows: ``stock_return - benchmark_return``
+    (in percentage points). Positive means the stock outperformed the
+    benchmark over that window; ``leading`` is the 3-month sign. Answers "is
+    this weak on its own, or just moving with the market?".
+
+    Pure and defensive: ``None`` benchmark, misaligned/too-short overlap, or a
+    non-positive endpoint yields ``None`` (RS simply won't render), never a
+    raise.
+
+    Returns ``{"benchmark": str, "rs_1m_pct": float|None,
+    "rs_3m_pct": float|None, "leading": bool|None}``.
+    """
+    if close is None or benchmark_close is None:
+        return None
+    joined = pd.concat(
+        [pd.to_numeric(close, errors="coerce").rename("s"),
+         pd.to_numeric(benchmark_close, errors="coerce").rename("b")],
+        axis=1,
+    ).dropna()
+    if len(joined) <= _RETURN_WINDOWS["return_1m_pct"]:
+        return None
+
+    def _rel(win: int) -> "float | None":
+        if len(joined) <= win:
+            return None
+        s0, s1 = float(joined["s"].iloc[-1 - win]), float(joined["s"].iloc[-1])
+        b0, b1 = float(joined["b"].iloc[-1 - win]), float(joined["b"].iloc[-1])
+        if s0 <= 0 or b0 <= 0:
+            return None
+        # round() of a native float returns a native float -> JSON-serializable
+        # (numpy scalars are NOT, and would crash the report payload dump).
+        return round(((s1 / s0 - 1.0) - (b1 / b0 - 1.0)) * 100.0, 1)
+
+    rs_1m = _rel(_RETURN_WINDOWS["return_1m_pct"])
+    rs_3m = _rel(_RETURN_WINDOWS["return_3m_pct"])
+    return {
+        "benchmark": benchmark,
+        "rs_1m_pct": rs_1m,
+        "rs_3m_pct": rs_3m,
+        "leading": bool(rs_3m > 0) if rs_3m is not None else None,
+    }
+
+
+def _price_series(df: pd.DataFrame) -> "list[dict]":
+    """A compact, multi-resolution close series as ``[{"t": date, "c": close}]``
+    (ascending) for the report's range-switchable price chart.
+
+    The most recent ``_PRICE_SERIES_DAILY`` trading days are kept daily; older
+    history (up to ``_PRICE_SERIES_MAX_ROWS`` ~ 5 trading years) is
+    down-sampled to roughly weekly. The chart slices by date, so the 3m/1y
+    views land entirely in the daily tail while the 5y view spans the whole
+    (mixed-resolution) series. Kept small so the embedded report payload stays
+    light (~500 points for a 5y history)."""
+    close = df["Close"].dropna()
+    if close.empty:
+        return []
+    close = close.tail(_PRICE_SERIES_MAX_ROWS)
+    if len(close) > _PRICE_SERIES_DAILY:
+        older = close.iloc[:-_PRICE_SERIES_DAILY].iloc[::_PRICE_SERIES_WEEKLY_STEP]
+        daily = close.iloc[-_PRICE_SERIES_DAILY:]
+        close = pd.concat([older, daily])
     series: "list[dict]" = []
     for timestamp, value in close.items():
         if pd.isna(value):
@@ -435,10 +677,12 @@ def _support_resistance(
     vertical run still reports that MA as support/resistance instead of falling
     back to a stale pre-breakout shelf or the 52-week extreme.
 
-    Selection (per side): every zone is scored -- a 52-week extreme dominates,
-    a moving-average confluence is a strong boost (~a well-tested shelf), swing
-    touches accumulate, a Fibonacci confluence adds a smaller boost -- then
-    exactly **one near and one far** level are chosen, each the *strongest* in its distance half (so
+    Selection (per side): zones beyond :data:`_SR_MAX_DIST_PCT` from price are
+    first dropped (a shelf ~70% away is not an actionable trigger); every
+    remaining zone is scored -- a 52-week extreme dominates, a moving-average
+    confluence is a strong boost (~a well-tested shelf), swing touches
+    accumulate, a Fibonacci confluence adds a smaller boost -- then exactly
+    **one near and one far** level are chosen, each the *strongest* in its distance half (so
     both are well-corroborated, not the weakest nearby). Each chosen level is
     then **strengthened by merging every nearby evidence source** within
     :data:`_SR_CORROBORATE_PCT` (summed touches, unioned fib ratios, 52w
@@ -611,8 +855,17 @@ def _support_resistance(
             return [near_fmt]
         return [near_fmt, far_fmt]
 
-    supports = _pick_near_far([c for c in clusters if c["price"] < price * (1 - gap)])
-    resistances = _pick_near_far([c for c in clusters if c["price"] > price * (1 + gap)])
+    # Exclude levels beyond _SR_MAX_DIST_PCT from price: a shelf ~70% away is
+    # not an actionable trigger, so the "far" slot is filled by the nearest
+    # strong in-range level instead of the 52-week extreme (or left empty).
+    max_dist = _SR_MAX_DIST_PCT / 100.0
+    lo_bound, hi_bound = price * (1 - max_dist), price * (1 + max_dist)
+    supports = _pick_near_far(
+        [c for c in clusters if lo_bound <= c["price"] < price * (1 - gap)]
+    )
+    resistances = _pick_near_far(
+        [c for c in clusters if price * (1 + gap) < c["price"] <= hi_bound]
+    )
     supports.sort(key=lambda z: z["price"], reverse=True)   # nearest below first
     resistances.sort(key=lambda z: z["price"])              # nearest above first
 
@@ -670,17 +923,34 @@ def compute_indicators(df: pd.DataFrame) -> dict:
           recent price-vs-RSI divergence; ``rsi_divergence_detail`` carries
           the swing prices/RSI values behind it (see
           :func:`_rsi_divergence`).
+        * ``rsi_reclaim``: ``"bullish"``/``"bearish"``/``None`` -- a fresh RSI
+          reclaim of the oversold/overbought line within the last
+          :data:`_RSI_RECLAIM_LOOKBACK` bars (see :func:`_rsi_reclaim`); a
+          swing "momentum turning" input for the report's reversal-confirmation
+          checklist.
+        * ``atr14``: Wilder's 14-period Average True Range in price units, or
+          ``None`` (see :func:`_atr14`) -- volatility-scaled swing stop distance.
+        * ``bb_squeeze``: ``{"active", "bandwidth_pct", "percentile"}`` or
+          ``None`` -- Bollinger band-width compression state (see
+          :func:`_bollinger_squeeze`).
+        * ``volume_climax``: ``{"detected", "bars_ago", "rel_volume",
+          "direction", "date"}`` or ``None`` -- a recent capitulation/climax
+          bar (see :func:`_volume_climax`).
         * ``support_levels`` / ``resistance_levels``: one near + one far zone
           below / above the current price (nearest-first), each a price
           **range** ``{"low", "high", "price", "dist_pct", "strength",
           "touches", "last_touch", "fib", "ma", "is_52w_high", "is_52w_low"}`` (see
           :func:`_support_resistance`) -- each is the strongest in its
           distance half, corroborated by merging nearby touches/fib/52w
-          evidence. Empty lists when history is too short.
+          evidence. Levels beyond :data:`_SR_MAX_DIST_PCT` from price are
+          excluded (not actionable triggers). Empty lists when history is too
+          short.
         * ``fibonacci``: ``{"high", "low", "direction", "levels"}`` for the
           dominant swing's retracement grid, or ``None``.
-        * ``price_series``: up to ~252 recent ``{"t": date, "c": close}``
-          points (ascending) for the report's price chart.
+        * ``price_series``: a compact multi-resolution ``{"t": date, "c":
+          close}`` series (ascending, ~500 points spanning up to ~5y: daily
+          tail + weekly older) for the report's range-switchable price chart
+          (see :func:`_price_series`).
         * ``nearest_support`` / ``nearest_resistance``: the closest zone
           price on each side, or ``None``.
     """
@@ -774,6 +1044,10 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         "obv_trend": obv_trend,
         "rsi_divergence": (rsi_divergence_detail or {}).get("type"),
         "rsi_divergence_detail": rsi_divergence_detail,
+        "rsi_reclaim": _rsi_reclaim(close),
+        "atr14": _atr14(df),
+        "bb_squeeze": _bollinger_squeeze(close),
+        "volume_climax": _volume_climax(df),
         "support_levels": supports,
         "resistance_levels": resistances,
         "nearest_support": nearest_support,

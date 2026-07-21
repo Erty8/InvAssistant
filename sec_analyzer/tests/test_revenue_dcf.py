@@ -11,6 +11,7 @@ file follows.
 import pytest
 
 from sec_analyzer.valuation.revenue_dcf import (
+    implied_discount_rate,
     implied_start_growth,
     implied_target_margin,
     revenue_first_dcf,
@@ -128,6 +129,32 @@ def test_revenue_first_dcf_hand_verified_clean_case():
     assert result["per_share"] == pytest.approx(96.534416, rel=1e-4)
     assert result["final_year_revenue"] == pytest.approx(6538.4756, rel=1e-4)
     assert result["revenue_multiple"] == pytest.approx(6.5384756, rel=1e-4)
+
+
+def test_implied_discount_rate_round_trips():
+    # Round-trip: value the DCF at a known FLAT discount rate to get a price,
+    # then confirm implied_discount_rate recovers that same rate (holding
+    # growth and margin fixed, exactly as the reverse lens does).
+    args = (1000.0, 0.30, 0.04, 0.10, 0.25, 8, 100.0, 0.0, 0.0)
+    #        rev0   sg    tg    cm    tgt  ss  sh0    dil  fin
+    r_true = 0.18
+    ps = revenue_first_dcf(
+        args[0], args[1], args[2], r_true, args[3], args[4], args[5], args[6], args[7], args[8],
+        mature_discount_rate=r_true,
+    )["per_share"]
+    solved = implied_discount_rate(
+        ps, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8],
+    )
+    assert solved == pytest.approx(r_true, abs=1e-3)
+
+
+def test_implied_discount_rate_none_on_bad_or_unreachable_input():
+    # Missing price / non-positive revenue -> None.
+    assert implied_discount_rate(None, 1000.0, 0.3, 0.04, 0.1, 0.25, 8, 100.0, 0.0) is None
+    assert implied_discount_rate(100.0, 0.0, 0.3, 0.04, 0.1, 0.25, 8, 100.0, 0.0) is None
+    # A price no rate in the bracket can reach (value decreases in r; even the
+    # lowest rate can't produce an astronomically high price) -> None.
+    assert implied_discount_rate(1e12, 1000.0, 0.3, 0.04, 0.1, 0.25, 8, 100.0, 0.0) is None
 
 
 def test_revenue_first_dcf_raises_on_programmer_errors():

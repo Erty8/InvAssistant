@@ -110,7 +110,9 @@ def _method_slug(valuation: dict) -> str:
     return "pb-roe"
 
 
-def run_calibration(tickers: List[str], years: int = 5, no_cache: bool = False) -> List[dict]:
+def run_calibration(
+    tickers: List[str], years: int = 5, no_cache: bool = False, as_of=None
+) -> List[dict]:
     """Run the headless script-provider pipeline for each ticker in ``tickers``.
 
     For each ticker: resolve/fetch/normalize/store (reusing
@@ -142,6 +144,12 @@ def run_calibration(tickers: List[str], years: int = 5, no_cache: bool = False) 
             through to ``_fetch_normalize_store``; default: 5).
         no_cache: Bypass the on-disk raw JSON/price caches and re-fetch
             (default: ``False``).
+        as_of: Optional point-in-time date (``datetime.date`` or ``None``).
+            When set, the whole basket runs as of that past date (fundamentals
+            filed on/before it, prices up to it, archived ERP + FRED risk-free
+            macro), so the fair-value/price ratio distribution can be compared
+            across market regimes (e.g. the 2021 peak vs the 2022 trough) to
+            separate engine conservatism from the period's valuation level.
 
     Returns:
         One row dict per ticker, each with a ``"ticker"`` and ``"status"``
@@ -159,21 +167,25 @@ def run_calibration(tickers: List[str], years: int = 5, no_cache: bool = False) 
         _fetch_catalyst,
         _fetch_normalize_store,
         _fetch_price_and_technical,
+        _fetch_risk_free_asof,
         _fetch_submissions,
     )
+
+    # One (cached) FRED fetch for the whole basket in as-of mode.
+    fred_rate = _fetch_risk_free_asof(as_of, no_cache) if as_of is not None else None
 
     rows: List[dict] = []
     for ticker in tickers:
         try:
-            args = argparse.Namespace(ticker=ticker, years=years, no_cache=no_cache)
+            args = argparse.Namespace(ticker=ticker, years=years, no_cache=no_cache, as_of=as_of)
             cik, _name, normalized, ratios = _fetch_normalize_store(args)
-            price, _as_of, technical, price_df = _fetch_price_and_technical(
-                ticker, _CALIBRATION_HORIZON, no_cache
+            price, _price_as_of, technical, price_df = _fetch_price_and_technical(
+                ticker, _CALIBRATION_HORIZON, no_cache, as_of
             )
             metrics = compute_metrics(normalized, ratios, price)
             flags = detect_red_flags(normalized, ratios, metrics, _CALIBRATION_HORIZON)
             submissions = _fetch_submissions(cik, ticker, no_cache)
-            catalyst = _fetch_catalyst(submissions, ticker)
+            catalyst = _fetch_catalyst(submissions, ticker, as_of)
             result = interpret(
                 normalized,
                 ratios,
@@ -185,6 +197,8 @@ def run_calibration(tickers: List[str], years: int = 5, no_cache: bool = False) 
                 catalyst=catalyst,
                 submissions=submissions,
                 price_df=price_df,
+                as_of=as_of,
+                fred_rate=fred_rate,
             )
         except Exception as exc:  # noqa: BLE001 - one bad ticker must not abort the basket
             logger.warning("Calibration failed for %s", ticker, exc_info=True)
@@ -195,13 +209,16 @@ def run_calibration(tickers: List[str], years: int = 5, no_cache: bool = False) 
         fv = ((valuation.get("fair_value_range") or {}).get("base") or {})
         lo, hi = fv.get("lo"), fv.get("hi")
 
-        if lo is None or hi is None or not price:
+        price_unreliable = isinstance(metrics, dict) and metrics.get("price_reliable") is False
+        if lo is None or hi is None or not price or price_unreliable:
             if isinstance(result, dict) and "error" in result:
                 reason = f"interpret error: {result.get('error')}"
             elif lo is None or hi is None:
                 reason = "missing fair-value base range"
-            else:
+            elif not price:
                 reason = "missing price"
+            else:
+                reason = "unreliable price (implausible P/E and P/S)"
             print(f"{ticker}: skipped ({reason})")
             rows.append({"ticker": ticker, "status": "skipped", "reason": reason})
             continue
@@ -330,7 +347,9 @@ def print_calibration_table(rows: List[dict]) -> None:
         print("".join(c.rjust(_COL_WIDTH) for c in cells))
 
 
-def save_calibration_snapshot(label: str, rows: List[dict], summary: dict) -> Optional[str]:
+def save_calibration_snapshot(
+    label: str, rows: List[dict], summary: dict, as_of: Optional[str] = None
+) -> Optional[str]:
     """Persist a calibration run's rows and summary as a JSON snapshot.
 
     Written to ``Config.REPORTS_DIR/calibration_<label>_<YYYYMMDD-HHMM>.json``
@@ -344,6 +363,9 @@ def save_calibration_snapshot(label: str, rows: List[dict], summary: dict) -> Op
             ``"run"``.
         rows: The row list returned by :func:`run_calibration`.
         summary: The dict returned by :func:`summarize_ratios`.
+        as_of: Point-in-time cutoff (ISO ``"YYYY-MM-DD"``) the basket was run
+            against, or ``None`` for a live run. Recorded in the payload and,
+            when set, added to the filename as an ``_asof-<date>`` segment.
 
     Returns:
         The path written, or ``None`` if persistence failed.
@@ -351,10 +373,12 @@ def save_calibration_snapshot(label: str, rows: List[dict], summary: dict) -> Op
     try:
         os.makedirs(Config.REPORTS_DIR, exist_ok=True)
         timestamp = datetime.now()
-        filename = f"calibration_{label}_{timestamp.strftime('%Y%m%d-%H%M')}.json"
+        asof_segment = f"_asof-{as_of}" if as_of else ""
+        filename = f"calibration_{label}{asof_segment}_{timestamp.strftime('%Y%m%d-%H%M')}.json"
         path = os.path.join(Config.REPORTS_DIR, filename)
         payload = {
             "label": label,
+            "as_of": as_of,
             "timestamp": timestamp.isoformat(),
             "rows": rows,
             "summary": summary,

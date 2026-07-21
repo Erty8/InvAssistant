@@ -179,6 +179,34 @@ def test_bad_date_string_is_skipped():
     assert detect_events(subs, today=_TODAY) == []
 
 
+# ---------------------------------------------------------------------------
+# Point-in-time ("as-of") mode: `today` is the reference date the whole
+# lookback window and "was this filing public yet" guard are computed
+# against -- a filing dated after `today` must be excluded even though it
+# would otherwise qualify (e.g. inside the lookback window relative to the
+# real wall-clock date).
+# ---------------------------------------------------------------------------
+
+
+def test_filing_dated_after_today_is_excluded_even_if_within_lookback():
+    as_of = date(2022, 6, 30)
+    subs = _submissions(
+        [
+            ("8-K", "2022-06-15", "5.02", "before", "b.htm"),   # on/before as_of -> kept
+            ("8-K", "2022-07-01", "4.02", "after", "a.htm"),    # after as_of -> point-in-time guard
+        ]
+    )
+    events = detect_events(subs, today=as_of)
+    assert [e["accession"] for e in events] == ["before"]
+
+
+def test_filing_dated_exactly_on_today_is_included():
+    as_of = date(2022, 6, 30)
+    subs = _submissions([("8-K", "2022-06-30", "5.02", "same-day", "s.htm")])
+    events = detect_events(subs, today=as_of)
+    assert [e["accession"] for e in events] == ["same-day"]
+
+
 def test_summarize_events_empty():
     assert summarize_events([]) == "yok"
 

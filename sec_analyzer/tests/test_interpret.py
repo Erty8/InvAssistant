@@ -62,7 +62,7 @@ def _financials_for_valuation():
     return normalized, ratios, metrics
 
 
-def _valuation_fixture(dcf_signal="ucuz", confidence="YÜKSEK", sector_type="mature"):
+def _valuation_fixture(dcf_signal="ucuz", confidence="YÜKSEK", sector_type="mature", divergence=None):
     """A `valuation` dict matching `sec_analyzer/valuation/SPEC.md` Sec.11
     (the shape `run_valuation` returns), parameterized by the triangulated
     DCF signal so tests can drive the fundamental_verdict cross-check."""
@@ -99,6 +99,7 @@ def _valuation_fixture(dcf_signal="ucuz", confidence="YÜKSEK", sector_type="mat
             "signals": {"dcf": dcf_signal, "reverse_dcf": dcf_signal, "multiples": dcf_signal},
             "confidence": confidence,
             "direction": dcf_signal,
+            "divergence": divergence,
         },
         "assumptions": {
             "bear": {"growth_5y": 0.08, "terminal_growth": 0.025, "discount_rate": 0.12, "story": "s"},
@@ -454,6 +455,39 @@ def test_interpret_results_yuksek_beklenti_signal_overrides_script_providers_mak
     assert result["fundamental_verdict"] == "YÜKSEK BEKLENTİ FİYATLANMIŞ"
 
 
+def test_interpret_results_divergence_override_wins_over_any_verdict(monkeypatch):
+    """The model-market divergence governor (action="verdict") restates the
+    headline as MODEL-PİYASA AYRIŞMASI regardless of what any provider (or the
+    ucuz<->pahali reconcile) produced -- it's a deterministic, numbers-driven
+    relabel applied last. Confidence comes straight from the (already-floored)
+    triangulation.confidence, and the thesis-metric rationale is reframed."""
+    up_divergence = {"direction": "ucuz", "action": "verdict", "factor": 3.25, "band_edge": 434.38}
+    for llm_guess in ("UCUZ", "MAKUL", "PAHALI"):
+        monkeypatch.setattr(
+            analyzer, "_call_ollama",
+            lambda system, user, model, host, guess=llm_guess: _commentary_json(fundamental_verdict=guess),
+        )
+        valuation = _valuation_fixture(
+            dcf_signal="ucuz", confidence="DÜŞÜK", divergence=up_divergence,
+        )
+        result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
+        assert result["fundamental_verdict"] == "MODEL-PİYASA AYRIŞMASI"
+        assert result["confidence"] == "DÜŞÜK"
+        assert "ayrışma" in result["thesis_metric"]["rationale"].lower()
+
+
+def test_interpret_results_downside_divergence_log_only_does_not_relabel(monkeypatch):
+    """A down-side divergence is log-only (action="log_only"): the verdict is
+    NOT relabeled -- the normal reconcile stands."""
+    monkeypatch.setattr(
+        analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json(fundamental_verdict="PAHALI")
+    )
+    down_divergence = {"direction": "pahali", "action": "log_only", "factor": 0.4, "band_edge": 40.0}
+    valuation = _valuation_fixture(dcf_signal="pahali", divergence=down_divergence)
+    result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
+    assert result["fundamental_verdict"] == "PAHALI"
+
+
 def test_interpret_results_overwrites_technical_verdict_from_technical_arg(monkeypatch):
     monkeypatch.setattr(
         analyzer,
@@ -519,7 +553,7 @@ def test_interpret_results_injects_all_four_planning_fields_llm_branch(monkeypat
     assert isinstance(result["entry_plan"], list)
     assert len(result["entry_plan"]) > 0
     assert isinstance(result["stop_adding"], list)
-    assert set(result["thesis_metric"].keys()) == {"name", "latest_value", "trend", "rationale"}
+    assert set(result["thesis_metric"].keys()) == {"name", "latest_value", "trend", "rationale", "cycle"}
 
 
 def test_interpret_results_injects_all_four_planning_fields_script_branch():
@@ -531,7 +565,7 @@ def test_interpret_results_injects_all_four_planning_fields_script_branch():
     assert result["scenario_returns"]["base"] == {"ret_lo_pct": -10.0, "ret_hi_pct": 10.0}
     assert isinstance(result["entry_plan"], list) and len(result["entry_plan"]) > 0
     assert isinstance(result["stop_adding"], list)
-    assert set(result["thesis_metric"].keys()) == {"name", "latest_value", "trend", "rationale"}
+    assert set(result["thesis_metric"].keys()) == {"name", "latest_value", "trend", "rationale", "cycle"}
 
 
 def test_interpret_results_uses_ratios_and_red_flags_for_thesis_metric_and_stop_adding(monkeypatch):

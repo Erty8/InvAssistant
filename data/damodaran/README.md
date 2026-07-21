@@ -77,6 +77,52 @@ değil.
   `region,erp` formatı) CAPM devre dışı kalır ve iskonto oranı düz varsayılana
   döner.
 
+### `erp_history.csv` (geçmiş tarih / as-of modu için)
+
+`analyze TICKER --as-of YYYY-MM-DD` (SPEC.md §18) motoru geçmiş bir tarihte
+bilinebilecek verilerle çalıştırır; bunun makro (ERP/risksiz getiri) ayağını
+besleyen dosya budur — `erp.csv`'nin tek satırlık "güncel" değerinin aksine,
+**yıl bazında** bir geçmiş serisi tutar. Kolonlar:
+
+```
+year,erp,risk_free
+2008,4.37,4.02
+2009,6.43,2.21
+...
+2025,4.33,4.58
+```
+
+- `year` — tam sayı yıl (dört haneli).
+- `erp` — o yılın **implied equity risk premium**'u, `erp.csv` ile aynı yüzde
+  formatında (örn. `4.37` = %4.37, oran değil).
+- `risk_free` — **isteğe bağlı** kolon; o yılın risksiz getiri oranı, aynı
+  yüzde formatında. Boş bırakılabilir — motor bu durumda FRED'in geçmiş
+  DGS10 serisine (`fetch/fred.py`, gerçek işlem günü bazında) veya `erp.csv`'nin
+  güncel değerine geri döner (öncelik sırası: FRED -> bu dosyanın `risk_free`
+  hücresi -> `erp.csv`'nin güncel değeri; SPEC.md §18).
+
+**Motor bunu nasıl kullanır:** `--as-of` verildiğinde, motor `as_of` tarihinin
+YILINA denk gelen satırı okur; o yıl bu dosyada yoksa (veya `erp` hücresi
+boşsa) `erp.csv`'nin güncel değerine geri döner — hiçbir zaman hata vermez.
+Hangi kaynağın kullanıldığı raporun `valuation["macro_asof"]` alanında ve bir
+Türkçe notta şeffaf biçimde belirtilir.
+
+**Elle doldurma yöntemi (operatör sorumluluğu):** Bu dosya Damodaran'ın
+`histimpl.xls` ("Implied Equity Risk Premiums (by year)", S&P 500) dosyasından,
+her yıl için **yıl BAŞI (start-of-year) implied ERP** değeri elle satır satır
+okunup girilerek doldurulur (dosyadaki "Implied ERP (FCFE)" kolonu — `erp.csv`
+için kullanılan kolonla aynı tanım, farklı yıl). `risk_free` kolonu da aynı
+sayfadaki ilgili yılın risksiz getiri satırından elle doldurulabilir; boş
+bırakılırsa yukarıdaki FRED geri dönüşü devreye girer.
+
+**Hazır bir başlangıç dosyası zaten mevcut:** Bu klasörde 2008-2025 yıllarını
+kapsayan dolu bir `erp_history.csv` bulunuyor. Bu bir "tohum" (seed) veridir —
+`unlevered_beta`/`capex_sales` gibi, `histimpl.xls`'ten satır satır birebir
+alınmış olsa da, yılda bir Damodaran'ın güncellemesiyle **doğrulanmalı ve
+tazelenmelidir** (özellikle en güncel yıl için, `histimpl.xls`'in kendi
+yıllık güncellemesi tamamlandıktan sonra). Yenilenene kadar as-of hesaplamaları
+yön olarak doğru ama en yeni yıl için yaklaşık kalabilir.
+
 ## Şu an bu klasörde bulunan verinin kökeni
 
 Bu klasördeki `multiples.csv` (94 sektör satırı) ve `erp.csv`, Aswath

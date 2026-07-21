@@ -61,7 +61,7 @@ identical to what pre-two-phase callers already expect)::
       ],
       "stop_adding": [{"code": <str>, "message": <str>}, ...],
       "thesis_metric": {"name": <str>, "latest_value": <str|null>,
-        "trend": <str|null>, "rationale": <str>},
+        "trend": <str|null>, "rationale": <str>, "cycle": <dict|null>},
       "_provider": <str>, "_model": <str>,
       "_horizon": <str>, "_weights": {"fundamental": <float>, "technical": <float>}
     }
@@ -729,7 +729,11 @@ def _parse_model_json(text: str) -> dict:
     try:
         return json.loads(cleaned)
     except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("Model response was not valid JSON: %s", exc)
+        logger.warning(
+            "Model response was not valid JSON: %s; response starts with: %r",
+            exc,
+            cleaned[:200] if cleaned else "<empty>",
+        )
         return {
             "error": "parse_failed",
             "raw": text,
@@ -790,7 +794,10 @@ def _call_ollama(system: str, user: str, model: str, host: str) -> str:
             the requested model, or returns a malformed response.
     """
     logger.info("Requesting Ollama analysis using model %s at %s", model, host)
-    return chat_json(system=system, user=user, model=model, host=host)
+    return chat_json(
+        system=system, user=user, model=model, host=host,
+        timeout=Config.OLLAMA_TIMEOUT, num_ctx=Config.OLLAMA_NUM_CTX,
+    )
 
 
 def _dispatch_llm_call(
@@ -1103,6 +1110,18 @@ def _propose_assumptions(
 #: never from a provider's own output.
 _HIGH_EXPECTATION_VERDICT = "YÜKSEK BEKLENTİ FİYATLANMIŞ"
 
+#: Model–market divergence verdict (the DOWN-price mirror of
+#: :data:`_HIGH_EXPECTATION_VERDICT`). Emitted deterministically by
+#: :func:`_postprocess_phase2_result` when the triangulation governor
+#: (``valuation.triangulation.divergence``, see ``valuation/triangulate.py``)
+#: flags an up-side divergence (``action == "verdict"``): the base fair-value
+#: band sits more than ~2x above price, so the three method votes read off ONE
+#: assumption set rather than independently confirming "cheap". The honest
+#: headline is then a model↔market disagreement, not "UCUZ". Applied AFTER the
+#: reconcile step, overriding whatever verdict any provider (LLM or script)
+#: produced; the low confidence is already set by the governor itself.
+_DIVERGENCE_VERDICT = "MODEL-PİYASA AYRIŞMASI"
+
 #: Map from a triangulation direction signal to the schema's verdict
 #: string; "veri_yok" deliberately has no entry.
 _DCF_SIGNAL_TO_VERDICT = {
@@ -1249,8 +1268,21 @@ def _postprocess_phase2_result(
         result.get("fundamental_verdict"), dcf_signal, provider
     )
 
+    # Model–market divergence override (governor, action="verdict"; see
+    # _DIVERGENCE_VERDICT). Deterministic, numbers-driven, applied LAST so it
+    # overrides any provider's verdict; confidence is already floored to DÜŞÜK
+    # by the governor via triangulation.confidence above.
+    divergence = triangulation.get("divergence") or {}
+    divergence_active = divergence.get("action") == "verdict"
+    if divergence_active:
+        result["fundamental_verdict"] = _DIVERGENCE_VERDICT
+
     if not result.get("catalyst"):
         result["catalyst"] = catalyst.get("label") if catalyst else "bilinmiyor"
+    # Surface the raw estimated-earnings ISO date (deterministic, from
+    # estimate_next_earnings) so the report can compute a swing "N days to
+    # earnings" proximity flag; independent of the free-text catalyst label.
+    result["catalyst_estimate_date"] = catalyst.get("estimate_date") if catalyst else None
 
     price = (metrics or {}).get("price")
     if price is None:
@@ -1265,6 +1297,17 @@ def _postprocess_phase2_result(
         valuation, technical, red_flags, result["entry_plan"], catalyst
     )
     result["thesis_metric"] = planning.select_thesis_metric(valuation.get("sector_type"), ratios, metrics)
+    if divergence_active:
+        # In a divergence the kill-switch is whether the market-priced
+        # assumption (a growth collapse the model rejects) actually
+        # materializes, so reframe the thesis metric's rationale around that
+        # referee while keeping its computed name/value/trend intact.
+        thesis_metric = dict(result["thesis_metric"] or {})
+        thesis_metric["rationale"] = (
+            "Model-piyasa ayrışması: hakem, piyasanın fiyatladığı büyüme yavaşlamasının gerçekleşip "
+            "gerçekleşmemesidir. Bu metriğin önümüzdeki çeyreklerdeki seyri tezi doğrular ya da çürütür."
+        )
+        result["thesis_metric"] = thesis_metric
 
     result["valuation"] = valuation
     result["_provider"] = provider
@@ -1424,6 +1467,8 @@ def interpret(
     valuation: Optional[dict] = None,
     submissions: Optional[dict] = None,
     price_df=None,
+    as_of=None,
+    fred_rate: Optional[dict] = None,
 ) -> dict:
     """Backward-compatible entry point orchestrating the full two-phase flow.
 
@@ -1517,7 +1562,7 @@ def interpret(
         # once into `sector_data` and reused for both the CAPM lookup and
         # the global risk-free fallback below, rather than reading the CSVs
         # twice.
-        sector_data = damodaran.load_sector_data(Config.DAMODARAN_DIR)
+        sector_data = damodaran.load_sector_data(Config.DAMODARAN_DIR, as_of=as_of, fred_rate=fred_rate)
         capm = compute_cost_of_equity(
             sector_data,
             sic_description,
@@ -1549,6 +1594,7 @@ def interpret(
         valuation_result = run_valuation(
             normalized, ratios, metrics, price, price_df, assumptions, sector_type,
             sic_description=sic_description, hyper_growth_extras=phase1.get("hyper_growth_extras"),
+            as_of=as_of, fred_rate=fred_rate,
         )
 
         return interpret_results(

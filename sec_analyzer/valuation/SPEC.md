@@ -391,6 +391,12 @@ which pieces are missing; never raise. `sector_medians(sector_data,
 sic_description)` matches the company's `sicDescription` to an `industry` row
 by case-insensitive substring/keyword overlap; no match → `None`.
 
+The matched `pe`/`ps`/`pfcf` medians are surfaced in the output's
+`multiples.sector` block AND feed the triangulate multiples signal's
+sector-relative axis-b (`sector_ratio`, Sec.11) — the current primary multiple
+over its matching sector median. When the medians are absent (no match, or no
+Damodaran data), `sector_ratio` is `None` and axis-b is silently skipped.
+
 ## 8. Sector classification — `sector.classify_sector(sic, normalized, metrics) -> str`
 
 Deterministic from SIC (int or str), with financial-statement overrides:
@@ -459,6 +465,24 @@ this file.)
     over-capitalization advisory, Sec.8a) -- that use is untouched by this
     change. `pb_roe`'s output dict gains two additive keys: `"fair_pb"` (the
     raw, unclamped base justified P/B) and `"justified_pb_flag"`.
+
+    **Non-positive `fair_pb` (or book value) makes the anchor unavailable.**
+    When the raw base `fair_pb` comes out `<= 0` — which happens exactly when
+    `roe <= g` (a loss-making, or sub-terminal-growth, filer; the denominator
+    `r - g` is always positive here) — or when book value per share is `<= 0`
+    (negative equity), `_build_pb_roe` returns `None` (anchor unavailable) with
+    a Turkish note, rather than emitting a negative per-share fair value. A
+    price-to-book multiple applied to book equity can never make a share worth
+    zero or negative dollars, so there is no meaningful P/B×ROE fair value for
+    such a filer (e.g. MSTR, classified `financial`, with a negative-ROE year:
+    `fair_pb = (-0.09 - 0.04)/(0.10 - 0.04) = -2.12` → anchor unavailable
+    instead of a −$337/share "fair value"). This is a guard against a
+    degenerate/meaningless multiple, distinct from — and not in tension with —
+    the Work-Package-5 rule above (which is about NOT clamping a legitimately
+    high/low **positive** `fair_pb`). When this anchor is unavailable and no
+    other anchor exists for the sector (e.g. `financial`, whose DCF is
+    disabled), `fair_value_range` is all-`None` (the honest "no opinion"
+    outcome) per Sec.11.
   - `reit`: compute an FFO-based Gordon-growth anchor instead (Sec.8c) --
     P/B×ROE systematically understates a REIT, since GAAP real-estate
     depreciation is a large non-cash charge that depresses both net income
@@ -1188,14 +1212,30 @@ Direction signal per method (`"ucuz" | "makul" | "pahali" | "veri_yok"`):
 - **Multiples**: primary percentile = pe (fallback ps, then pfcf; for
   growth_unprofitable use ps first; for reit use pffo first, fallback ps --
   Sec.8c -- never pe). pct > 70 → pahali; pct < 30 → ucuz; else
-  makul. **Two-component (VALUATION.md Sec.7):** when both `raw_growth_pair_pct`
-  (the raw multiple's percentile — P/E in standard mode, EV/Sales in
-  hyper-grower mode) and `growth_adj_pct` (the growth-adjusted multiple's
-  percentile) are present AND fall in different directional buckets, the signal
-  becomes `"karisik"` (mixed); when they agree, or either is `None`, the raw
-  signal above stands unchanged. `karisik` is a substantive signal (not
-  `veri_yok`), so it naturally can't join a pahali/ucuz/makul majority — it
-  lowers confidence exactly as a genuine disagreement should.
+  makul (position against the company's OWN multiple history — axis-a). **Two
+  divergence checks (VALUATION.md Sec.7) can flip the raw signal to `"karisik"`
+  (mixed), in this precedence order:**
+  1. **Growth-adjusted (axis-a refinement, highest precedence):** when both
+     `raw_growth_pair_pct` (the raw multiple's percentile — P/E in standard
+     mode, EV/Sales in hyper-grower mode) and `growth_adj_pct` (the
+     growth-adjusted multiple's percentile) are present AND fall in different
+     directional buckets.
+  2. **Sector-relative (axis-b):** `sector_ratio` = current primary multiple ÷
+     its Damodaran sector median (SAME primary the axis-a percentile uses;
+     picked with the identical candidate order + first-non-None-percentile
+     rule). Bucketed `> 1.25` → pahali-vs-sector, `< 0.80` → ucuz-vs-sector,
+     else in-line — a **sector-RELATIVE** band, never an absolute multiple
+     value. When its bucket disagrees with the own-history bucket, the signal
+     becomes `"karisik"`. Only evaluated when a usable sector median exists;
+     `sector_ratio is None` (missing median — e.g. reit whose primary is
+     P/FFO, for which no Damodaran median exists) disables the axis and
+     preserves the pure own-history signal.
+
+  When neither divergence fires (both agree, or the relevant inputs are
+  `None`), the raw own-history signal stands unchanged. `karisik` is a
+  substantive signal (not `veri_yok`), so it naturally can't join a
+  pahali/ucuz/makul majority — it lowers confidence exactly as a genuine
+  disagreement should.
 
 Confidence: all three agree (ignoring veri_yok) → `"YÜKSEK"`; exactly two agree
 → `"ORTA"`; else (scattered, or ≥2 veri_yok) → `"DÜŞÜK"`. Returns
@@ -2383,16 +2423,31 @@ PROFIL.md → horizon instruction → output contract):
        lands, a concentration-limit signal can be added to this same list.
      - **`thesis_metric`** (`planning.select_thesis_metric`, METODOLOJI.md
        §7, "Tez doğrulama metriği"): `{"name": str, "latest_value":
-       str|None, "trend": str|None, "rationale": str}`. `trend` is one of
-       `"iyileşiyor"` / `"bozuluyor"` / `"yatay"`, or `None` if no prior
-       fiscal year is available to compare against. The anchor metric is
-       chosen from `valuation["sector_type"]` via a fixed sector→metric map
-       (`mature`→net margin, falling back to ROE; `growth_unprofitable`→YoY
-       revenue growth; `financial`→ROE as a NIM proxy; `reit`→FCF margin as
-       an FFO proxy; `cyclical`→gross margin, falling back to net margin;
-       unrecognized/`None`→net margin), read from `ratios`/`metrics` and
-       never fabricated — `latest_value` is `None` (with `rationale` saying
-       so) when the chosen metric isn't computable from the given inputs.
+       str|None, "trend": str|None, "rationale": str, "cycle": dict|None}`.
+       `trend` is one of `"iyileşiyor"` / `"bozuluyor"` / `"yatay"`, or
+       `None` if no prior fiscal year is available to compare against. The
+       anchor metric is chosen from `valuation["sector_type"]` via a fixed
+       sector→metric map (`mature`→net margin, falling back to ROE;
+       `growth_unprofitable`→YoY revenue growth; `financial`→ROE as a NIM
+       proxy; `reit`→FCF margin as an FFO proxy; `cyclical`→gross margin,
+       falling back to net margin; unrecognized/`None`→net margin), read
+       from `ratios`/`metrics` and never fabricated — `latest_value` is
+       `None` (with `rationale` saying so) when the chosen metric isn't
+       computable from the given inputs. `cycle` locates the latest value
+       inside the anchor metric's own multi-year trough→peak range so the
+       report can visualize where the business sits in its cycle (the same
+       idea as the `CYCLICAL_TRAP` red flag's "latest margin vs historical
+       peak"): `{"low": float, "high": float, "current": float, "position":
+       float (0..1, `(current-low)/(high-low)` clamped), "low_fy": int,
+       "high_fy": int, "current_fy": int, "n_years": int, "is_cyclical":
+       bool, "series": [{"fy": int, "value": float}, ...]}`. `series` is
+       the full annual series sorted ascending by fiscal year, used to draw
+       a level sparkline of the metric's trajectory next to the positional
+       bar. It is `None` when the metric came from the single-point
+       `metrics` fallback (no series), when fewer than two fiscal years
+       exist, or when the series is perfectly flat (trough == peak). All
+       sectors get a `cycle` when a multi-year series exists; `is_cyclical`
+       only drives display terminology, never the numbers.
        `rationale` always ends with the METODOLOJI.md §7 rule that two
        consecutive quarters against the thesis invalidate it.
 
@@ -2523,7 +2578,27 @@ sector classification and the CAPM cost of equity) is what gets measured.
   (`fv_base_mid / price`), and `"method"` (`_method_slug`, one of `"hyper"`,
   `"cyclical-fcfe"`, `"epv"`, `"mature-rev"`, `"midgrowth-rev"`, `"dcf"`,
   `"ffo"`, `"pb-roe"` -- mirrors `cli._valuation_method_label`'s exact
-  headline-precedence order, hyper-growth checked first).
+  headline-precedence order, hyper-growth checked first). A row is `"skipped"`
+  (never `"ok"`) when the fair-value base range or price is missing, OR when
+  `metrics["price_reliable"]` is `False` (reason `"unreliable price
+  (implausible P/E and P/S)"`).
+
+  **Price-reliability guard (`metrics.compute_metrics`).** A corrupt
+  market-data feed (e.g. a yfinance fallback that returns a uniformly
+  downscaled series -- observed for BKNG, whose history came back ~31x too
+  small, giving latest ≈ $182 against a true ≈ $5,700) leaves the engine's
+  fair value correct but poisons any `fair_value_range / price` ratio (BKNG
+  read as +1911% "upside"). `compute_metrics` cross-checks the fetched price
+  against SEC per-share fundamentals -- the only price-independent reference --
+  and sets `price_reliable=False` (+ a Turkish `price_reliability_note`) when
+  the implied trailing **P/E and P/S are BOTH positive and below their floors
+  at once** (`_PE_IMPLAUSIBLE_FLOOR=2.0`, `_PS_IMPLAUSIBLE_FLOOR=0.5`). This
+  is the signature of a uniformly-downscaled feed; a legitimately cheap value
+  stock or a peak-cyclical has a low P/E OR a low P/S but essentially never
+  both, so the composite is deliberately conservative (prefers a false
+  negative over wrongly discarding a genuinely cheap stock). The flag is
+  purely additive -- it suppresses no existing metric; only consumers that
+  divide by price (the calibration ratio here) act on it.
 - `summarize_ratios(rows) -> dict`: a pure function over `"ok"` rows'
   `"ratio"` values -- `count`, `median`/`mean`/`p25`/`p75` (deterministic
   sorted-list linear-interpolation percentiles, `None` if `count == 0`), and
@@ -2543,3 +2618,164 @@ sector classification and the CAPM cost of equity) is what gets measured.
 
 See VALUATION.md's calibration-methodology section for the measured
 before/after trajectory of this normalization effort and what remains open.
+
+## 18. Point-in-time (as-of) mode
+
+`python -m sec_analyzer analyze MU --as-of 2022-06-30` runs the entire engine
+using only data knowable on that date -- a backtest/autopsy mode, not a new
+valuation method. Every existing output shape (Sec.11's `valuation` dict,
+`fair_value_range`, `triangulation`, etc.) is unchanged; `as_of` only changes
+which raw inputs (facts, prices, macro, filings) feed the SAME deterministic
+pipeline. **Determinism guarantee:** `as_of=None` (the default, every existing
+caller) is bit-for-bit identical to pre-as-of behavior -- every function below
+takes `as_of` as an additive, defaulted keyword and short-circuits to its old
+code path when it is `None`.
+
+### Contract
+
+- **Fundamentals:** `normalize.normalizer.normalize_facts(facts_json, years=5,
+  as_of=None)` gains the `as_of` parameter. When set (`datetime.date` or ISO
+  `"YYYY-MM-DD"` string), only facts with `filed <= as_of` (plain ISO string
+  compare) survive before the existing dedup step -- so the value that was
+  *actually public* on that date wins ("latest filed as of D"), and any
+  restatement filed later is invisible, exactly as a contemporaneous analyst
+  would have seen it. `filed == as_of` counts as knowable.
+- **Prices/technical:** `fetch.prices.slice_asof(df, as_of) -> pd.DataFrame`
+  returns only the rows of a price-history frame dated `<= as_of` (`as_of=None`
+  returns `df` unchanged). The `analyze` CLI flow slices `price_df` through
+  this before anything downstream touches it, so price, indicators, market
+  cap, the P/S price-reliability gate (Sec.17), and `multiples.
+  multiples_history` all derive from the truncated frame -- there is no
+  separate as-of branch in any of those functions; they simply never see rows
+  after the cutoff.
+- **Macro (ERP / risk-free / terminal-growth anchor):**
+  `damodaran.load_sector_data(dir_path, as_of=None, fred_rate=None)` (Sec.7)
+  gains both parameters. When `as_of` is set:
+  - **ERP:** the row for `as_of.year` in `data/damodaran/erp_history.csv`
+    (columns `year, erp[, risk_free]`, same percentage format as `erp.csv`),
+    falling back to the current `erp.csv` value when that year has no row or
+    the row's `erp` cell is empty.
+  - **Risk-free:** precedence `fred_rate` (the caller-supplied dict from
+    `fetch.fred.get_risk_free_asof`, i.e. the actual FRED DGS10 observation on
+    that date) -> `erp_history.csv`'s row's `risk_free` cell -> current
+    `erp.csv`'s risk-free value.
+  - Provenance is recorded on the returned dict as
+    `sector_data["macro_asof"] = {"as_of": <iso>, "erp_source": <Turkish
+    source string>, "risk_free_source": <Turkish source string>}`, and
+    `engine.run_valuation` copies this block into the output's
+    `valuation["macro_asof"]` (present only when `as_of` was given), plus
+    appends two Turkish notes to `valuation["notes"]`: the macro-source
+    provenance itself, and the static-sector-data caveat (below).
+  - Sector multiples/betas in `multiples.csv` are **NOT** date-keyed -- they
+    remain the current static snapshot regardless of `as_of` (see
+    "Limitations" below).
+  - `fetch.fred.get_risk_free_asof(as_of, no_cache=False) -> Optional[dict]`
+    returns `{"value_pct": float, "date": "YYYY-MM-DD", "series": "DGS10",
+    "source": "FRED DGS10"}` -- the last DGS10 observation on/before `as_of`
+    (walks backward through weekends/holidays) -- or `None` on any failure
+    (network, unparseable CSV, no observation before the cutoff). Never
+    raises. Cached on disk (`Config.RAW_DIR/fred_DGS10.csv`, 24h freshness
+    window); the series is append-only history so a stale cache is harmless
+    for a historical `as_of`.
+- **Filing signals:** `signals.events.detect_events(..., today=as_of)` and
+  `fetch.filings.estimate_next_earnings(submissions, today=None)` (renamed
+  reference-date parameter, defaults to `date.today()`) both take the as-of
+  date as their reference "today" -- filings/events dated after it are
+  excluded, so the 8-K event feed and the next-earnings catalyst estimate
+  both reflect only what had actually been filed by `as_of`.
+- **Suppressed:** analyst consensus price targets (yfinance) are undated at
+  the source and cannot be made point-in-time, so `cli.cmd_analyze` skips
+  fetching them entirely whenever `as_of is not None`, with a Turkish note
+  rather than a silently-live (and thus anachronistic) figure.
+- **Persistence:** in as-of mode, `_fetch_normalize_store` does **not** call
+  `save_normalized` -- the `financials`/`ratios` tables are a current-view
+  upsert, and writing a truncated, pre-restatement slice into them would
+  corrupt the live view for ordinary (non-as-of) callers. `store.database.
+  save_verdict(..., as_of: Optional[str] = None)` gains an `as_of` column
+  (`_VERDICTS_EXTRA_COLUMNS`, `TEXT`, `NULL` for ordinary live runs) on the
+  append-only `verdicts` table, so a backtest verdict is distinguishable from
+  a live one. A new read helper, `store.database.load_verdicts(ticker,
+  db_path=None, limit=100) -> List[dict]`, returns the stored scalar-column
+  verdict history for a ticker (newest first, case-insensitive ticker match)
+  powering a web verdict-history screen (`GET /history?ticker=X`); a sibling
+  helper, `load_latest_stored_price(ticker, db_path=None) -> Optional[dict]`,
+  returns the most recent stored `prices` row (`{"date", "close"}`) for that
+  screen's current-price delta column, network-free.
+- **`calibrate --as-of`** runs the whole calibration basket (Sec.17) as of a
+  past date, e.g. `--as-of 2021-11-19 --label peak2021` vs. `--as-of
+  2022-10-14 --label trough2022`, to separate engine conservatism from the
+  market regime the basket happened to be priced in. `run_calibration(tickers,
+  years=5, no_cache=False, as_of=None)` and `save_calibration_snapshot(label,
+  rows, summary, as_of: Optional[str] = None)` both gain the parameter; the
+  saved snapshot JSON records `as_of` (ISO string or `None`) alongside the
+  existing summary fields.
+
+### Signature amendments (additive, all default to the pre-as-of behavior)
+
+```python
+normalize.normalizer.normalize_facts(facts_json, years=5, as_of=None) -> dict
+fetch.prices.slice_asof(df, as_of) -> pd.DataFrame
+fetch.fred.get_risk_free_asof(as_of, no_cache=False) -> Optional[dict]
+valuation.damodaran.load_sector_data(dir_path, as_of=None, fred_rate=None) -> Optional[dict]
+valuation.engine.run_valuation(..., as_of=None, fred_rate=None) -> dict
+interpret.analyzer.interpret(..., as_of=None, fred_rate=None) -> dict
+signals.events.detect_events(..., today=as_of) -> List[dict]   # today: Optional[date]
+fetch.filings.estimate_next_earnings(submissions, today=None) -> Optional[dict]
+store.database.save_verdict(..., as_of: Optional[str] = None) -> int
+store.database.load_verdicts(ticker, db_path=None, limit=100) -> List[dict]
+store.database.load_latest_stored_price(ticker, db_path=None) -> Optional[dict]
+calibrate.run_calibration(tickers, years=5, no_cache=False, as_of=None) -> List[dict]
+calibrate.save_calibration_snapshot(label, rows, summary, as_of=None) -> Optional[str]
+```
+
+### CLI wiring (`cli.py`)
+
+`analyze` and `calibrate` both gain `--as-of YYYY-MM-DD`, parsed by
+`_parse_as_of(value) -> date` (argparse `type`): rejects unparseable strings
+and any date after `date.today()` (a future cutoff is meaningless and almost
+always a typo) via `argparse.ArgumentTypeError`. `cmd_analyze`'s flow, with
+`as_of = getattr(args, "as_of", None)`:
+
+1. `_fetch_normalize_store` normalizes with `as_of` and skips the DB write
+   when it is set (above).
+2. **No-data guard:** if `as_of is not None` and every `normalized["annual"]`
+   series is empty (the cutoff predates the filer's first filing), the
+   command prints a minimal Turkish `{"error": "as_of_no_data", "summary":
+   ...}` card and returns before touching price/technical/valuation --
+   avoids dividing by absent fundamentals rather than crashing.
+3. Prices/technical are fetched then sliced via `slice_asof`; analyst targets
+   are skipped; `fred_rate = _fetch_risk_free_asof(as_of, args.no_cache)` is
+   resolved once and threaded into both `damodaran.load_sector_data` (via
+   `interpret.analyzer.interpret`) and the report.
+4. `catalyst`/`events` are computed with `as_of` as their reference date.
+5. Price-row persistence (`_save_price_rows`) is skipped when `as_of is not
+   None` (same current-view-upsert rationale as financials).
+6. The result dict gains `result["as_of"] = as_of.isoformat()` when set, is
+   passed to `save_verdict(..., as_of=...)`, and to `report.generator.
+   generate_report(..., analysis_as_of=as_of.isoformat())` (report-card
+   `as_of` continues to mean "date `price` is as of"; `analysis_as_of` is the
+   new, separate point-in-time-cutoff field -- the two coincide in as-of mode
+   but are conceptually distinct, e.g. `as_of` could lag `analysis_as_of` by a
+   weekend).
+
+### Limitations (must be surfaced, not hidden)
+
+1. **Split-adjusted prices vs. historical share counts (highest-risk
+   caveat).** Stooq/yfinance closes are adjusted to today, so a stock split
+   that happened *after* `as_of` (e.g. NVDA's 10:1 split in 2024) skews
+   market cap and every price-derived multiple (P/E, P/S, EV/Sales) by the
+   split factor when analyzing a date before that split. `metrics
+   ["price_reliable"]` (Sec.17's P/E+P/S implausibility gate) catches some,
+   but not all, of the resulting distortion -- it is not a complete guard
+   against this specific failure mode.
+2. **Survivorship bias.** A delisted ticker has no price history on Stooq/
+   yfinance, so an as-of calibration basket (Sec.17/`calibrate --as-of`) can
+   only include names that are still trading today -- its measured
+   ratio/median distribution is systematically skewed toward survivors.
+3. **Static sector multiples and betas.** Only `erp`/`risk_free` are sourced
+   historically (`erp_history.csv`); `multiples.csv`'s `pe`/`ps`/`pfcf`/
+   `unlevered_beta`/`capex_sales` columns remain the current snapshot,
+   NOT date-keyed, for every `as_of` value. Sector-relative multiples
+   comparisons (Sec.10's axis-b) and CAPM beta in as-of mode therefore use
+   today's sector data applied to a historical filer -- a documented
+   approximation, not a historical sector reconstruction.

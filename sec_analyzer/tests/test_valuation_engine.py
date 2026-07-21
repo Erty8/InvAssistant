@@ -83,6 +83,67 @@ def test_triangulate_two_or_more_no_data_signals_give_low_confidence():
     assert result["direction"] == "belirsiz"
 
 
+def test_triangulate_upside_divergence_floors_confidence_and_flags_verdict():
+    # All three say "ucuz" (would normally be YÜKSEK), but the base band low
+    # (250) is 2.5x the price (100) -> model-market divergence: three method
+    # votes read off the SAME assumption set, so unanimity isn't independent
+    # confirmation. Confidence is floored to DÜŞÜK and a verdict-action
+    # divergence payload is attached. direction stays "ucuz" (the verdict
+    # rename is a presentation-layer step, not done here).
+    result = triangulate(
+        price=100, dcf_base_band={"lo": 250, "hi": 300}, implied_growth=0.05,
+        realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
+        sector_type="mature",
+    )
+    assert result["signals"]["dcf"] == "ucuz"
+    assert result["confidence"] == "DÜŞÜK"
+    assert result["divergence"] is not None
+    assert result["divergence"]["direction"] == "ucuz"
+    assert result["divergence"]["action"] == "verdict"
+    assert result["divergence"]["factor"] == pytest.approx(2.5)
+    assert result["divergence"]["band_edge"] == 250
+    assert "Model-piyasa ayrışması" in result["rationale"]["confidence"]
+
+
+def test_triangulate_downside_divergence_is_log_only_and_leaves_confidence():
+    # price 100, base band [30,40]: hi (40) is 0.4x price (< 0.5x) -> downside
+    # divergence. All three say "pahali" -> confidence must STAY YÜKSEK
+    # (down-side is log-only this pass); only the payload is recorded, with
+    # action="log_only", so the coming low-side pass inherits the data.
+    result = triangulate(
+        price=100, dcf_base_band={"lo": 30, "hi": 40}, implied_growth=0.20,
+        realized_cagr=None, base_growth=0.10, pe_pct=90, ps_pct=None, pfcf_pct=None,
+        sector_type="mature",
+    )
+    assert result["signals"]["dcf"] == "pahali"
+    assert result["confidence"] == "YÜKSEK"
+    assert result["direction"] == "pahali"
+    assert result["divergence"]["action"] == "log_only"
+    assert result["divergence"]["direction"] == "pahali"
+    assert result["divergence"]["factor"] == pytest.approx(0.4)
+
+
+def test_triangulate_no_divergence_within_normal_range():
+    # base low (150) is 1.5x price (100): below the 2.0x up trigger; hi (180)
+    # is 1.8x, above the 0.5x down trigger -> no divergence, unanimity stands.
+    result = triangulate(
+        price=100, dcf_base_band={"lo": 150, "hi": 180}, implied_growth=0.05,
+        realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
+        sector_type="mature",
+    )
+    assert result["divergence"] is None
+    assert result["confidence"] == "YÜKSEK"
+
+
+def test_triangulate_divergence_up_trigger_is_strict():
+    # base low exactly 2.0x price -> NOT triggered (strict >); just past fires.
+    at = triangulate(100, {"lo": 200, "hi": 260}, 0.05, None, 0.10, 20, None, None, "mature")
+    past = triangulate(100, {"lo": 200.01, "hi": 260}, 0.05, None, 0.10, 20, None, None, "mature")
+    assert at["divergence"] is None
+    assert past["divergence"] is not None
+    assert past["divergence"]["action"] == "verdict"
+
+
 def test_triangulate_dcf_direction_boundaries_are_strict():
     # price exactly at band.lo/band.hi must be "makul" (strict < / > only).
     at_lo = triangulate(100, {"lo": 100, "hi": 120}, None, None, None, None, None, None, "mature")
@@ -209,6 +270,73 @@ def test_triangulate_multiples_karisik_lowers_confidence_vs_agreement():
     assert result["signals"]["multiples"] == "karisik"
     assert result["signals"]["dcf"] == "pahali"
     assert result["confidence"] == "ORTA"
+
+
+# ---------------------------------------------------------------------------
+# 7b. triangulate -- sector-relative multiples axis (VALUATION.md Sec.7
+# axis-b): sector_ratio = current primary multiple / Damodaran sector median.
+# Band: > 1.25 expensive-vs-sector, < 0.80 cheap-vs-sector, else in line.
+# ---------------------------------------------------------------------------
+
+
+def test_triangulate_multiples_karisik_when_own_history_and_sector_diverge():
+    # Own-history P/E percentile 88 (expensive vs its own past) but the
+    # current P/E is 0.5x the sector median (cheap vs peers) -> the two axes
+    # disagree -> "karisik".
+    result = triangulate(
+        None, None, None, None, None, 88, None, None, "mature",
+        sector_ratio=0.5,
+    )
+    assert result["signals"]["multiples"] == "karisik"
+    assert "sektör medyanına göre" in result["rationale"]["multiples"]
+
+
+def test_triangulate_multiples_not_karisik_when_own_history_and_sector_agree():
+    # Own-history expensive (88) AND expensive vs sector (1.5x median) agree
+    # -> raw "pahali" stands, with a sector-confirmation clause appended.
+    result = triangulate(
+        None, None, None, None, None, 88, None, None, "mature",
+        sector_ratio=1.5,
+    )
+    assert result["signals"]["multiples"] == "pahali"
+    assert "Sektör medyanına göre de pahalı" in result["rationale"]["multiples"]
+
+
+def test_triangulate_multiples_sector_axis_disabled_when_ratio_none():
+    # No sector_ratio -> pure own-history behavior preserved exactly.
+    result = triangulate(
+        None, None, None, None, None, 88, None, None, "mature",
+        sector_ratio=None,
+    )
+    assert result["signals"]["multiples"] == "pahali"
+    assert "sektör" not in result["rationale"]["multiples"].lower()
+
+
+def test_triangulate_multiples_sector_band_boundaries_are_strict():
+    # Own-history "makul" (pct 50) so any sector divergence is purely axis-b.
+    # ratio exactly 1.25 / 0.80 stays in-line (makul); just past flips it.
+    at_hi = triangulate(None, None, None, None, None, 50, None, None, "mature", sector_ratio=1.25)
+    above_hi = triangulate(None, None, None, None, None, 50, None, None, "mature", sector_ratio=1.26)
+    at_lo = triangulate(None, None, None, None, None, 50, None, None, "mature", sector_ratio=0.80)
+    below_lo = triangulate(None, None, None, None, None, 50, None, None, "mature", sector_ratio=0.79)
+
+    assert at_hi["signals"]["multiples"] == "makul"       # in-line, own-history makul
+    assert above_hi["signals"]["multiples"] == "karisik"  # expensive vs sector, makul own -> mixed
+    assert at_lo["signals"]["multiples"] == "makul"
+    assert below_lo["signals"]["multiples"] == "karisik"  # cheap vs sector, makul own -> mixed
+
+
+def test_triangulate_multiples_peg_divergence_takes_precedence_over_sector():
+    # Both divergences present. PEG divergence (raw 88 vs growth-adj 45) is
+    # higher precedence: the rationale shows the PEG sentence, not the sector
+    # one, though both resolve the signal to "karisik".
+    result = triangulate(
+        None, None, None, None, None, 88, None, None, "mature",
+        raw_growth_pair_pct=88, growth_adj_pct=45, sector_ratio=1.5,
+    )
+    assert result["signals"]["multiples"] == "karisik"
+    assert "büyümeye göre normalize" in result["rationale"]["multiples"]
+    assert "sektör medyanına göre" not in result["rationale"]["multiples"]
 
 
 # ---------------------------------------------------------------------------
@@ -1495,6 +1623,39 @@ def test_build_pb_roe_flag_is_none_when_fair_pb_inside_reference_band():
     assert not any("referans aralığının dışında" in n for n in notes)
 
 
+def test_build_pb_roe_unavailable_when_roe_at_or_below_growth():
+    # A loss-making (or sub-terminal-growth) filer drives the justified P/B
+    # non-positive: roe=-0.09, discount_rate=0.10, terminal_growth=0.04 ->
+    # fair_pb = (-0.09-0.04)/(0.10-0.04) = -0.13/0.06 = -2.17 (<= 0). A
+    # negative price-to-book multiple is economically meaningless, so the
+    # anchor is unavailable (None) with an explanatory note -- NOT a negative
+    # per-share fair value (regression guard for the MSTR anomaly).
+    normalized = _normalized({"StockholdersEquity": [_rec(2023, 1000.0)]})
+    ratios = [{"fy": 2023, "roe": -0.09}]
+    metrics = {"shares": 100.0, "latest_fy": 2023}
+    assumptions = {"base": {"discount_rate": 0.10, "terminal_growth": 0.04}}
+
+    result, notes = _build_pb_roe(assumptions, normalized, metrics, ratios)
+
+    assert result is None
+    assert any("pozitif değil" in n and "P/D x ROE çapası hesaplanamadı" in n for n in notes)
+
+
+def test_build_pb_roe_unavailable_when_book_value_non_positive():
+    # Negative book equity makes book value per share <= 0, so even a positive
+    # justified P/B (roe=0.15, dr=0.10, g=0.03 -> fair_pb=1.71) would produce a
+    # negative per-share value -- the anchor is unavailable instead.
+    normalized = _normalized({"StockholdersEquity": [_rec(2023, -500.0)]})
+    ratios = [{"fy": 2023, "roe": 0.15}]
+    metrics = {"shares": 100.0, "latest_fy": 2023}
+    assumptions = {"base": {"discount_rate": 0.10, "terminal_growth": 0.03}}
+
+    result, notes = _build_pb_roe(assumptions, normalized, metrics, ratios)
+
+    assert result is None
+    assert any("defter değeri" in n and "pozitif değil" in n for n in notes)
+
+
 def test_run_valuation_pb_roe_backward_compat_when_terminal_growth_missing():
     # Same fixture as test_run_valuation_financial_sector_disables_dcf_and_computes_pb_roe
     # but with base terminal_growth=None -> _justified_pb degrades to the old
@@ -1852,6 +2013,53 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline(tmp_path)
     assert base_fvr["discount_rate"] == "%12"
     assert "Hiper-büyüme" in base_fvr["note"]
     assert "%30" in base_fvr["note"]  # mature target FCF margin
+
+
+def test_run_valuation_hyper_grower_deceleration_guard_caps_start_growth(tmp_path):
+    # Deceleration guard (A): with a prior-year revenue present, the latest
+    # realized YoY is computable and BELOW the blended growth anchor, so
+    # base/bull start growth are capped at the realized YoY -- a visibly
+    # decelerating grower is not assumed to first re-accelerate before fading.
+    #
+    #   Revenue FY2023=1000, FY2022=800 -> latest_yoy = 1000/800 - 1 = 0.25.
+    #   metrics revenue_cagr_5y=0.50 -> growth_anchor = 0.5*0.50 + 0.5*0.25
+    #                                                 = 0.375.
+    #   raw start growth: bear=min(0.375,0.60)*0.6=0.225, base=0.375,
+    #                     bull=min(0.375*1.2=0.45,0.60)=0.45.
+    #   decel_cap=0.25: bear 0.225<=0.25 kept; base 0.375->0.25; bull 0.45->0.25.
+    normalized = _normalized({"Revenue": [_rec(2023, 1000.0), _rec(2022, 800.0)]})
+    assumptions = _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)
+    result = run_valuation(
+        normalized, _HYPER_RATIOS, _HYPER_METRICS, price=50.0, price_df=None,
+        assumptions=assumptions, sector_type="growth_unprofitable",
+        damodaran_dir=str(tmp_path / "no_damodaran"),
+    )
+    assert result["hyper_growth"] is True
+    detail = result["hyper_growth_detail"]
+    assert detail["scenarios"]["bear"]["start_growth"] == pytest.approx(0.225)
+    assert detail["scenarios"]["base"]["start_growth"] == pytest.approx(0.25)
+    assert detail["scenarios"]["bull"]["start_growth"] == pytest.approx(0.25)
+    # base and bull now share the same (capped) start growth, so bull's only
+    # remaining lever is its margin uplift -- the "two 1.2x optimisms compound"
+    # problem is gone in rule-based mode.
+    assert any("Yavaşlama koruması" in n for n in result["notes"])
+
+
+def test_run_valuation_hyper_grower_start_growth_override_allows_reacceleration(tmp_path):
+    # AI-mode escape hatch: an explicit per-scenario start_growth override in
+    # hyper_growth_extras is honored even above the deceleration cap, and a
+    # deviation note is surfaced (re-acceleration is allowed, but never silent).
+    normalized = _normalized({"Revenue": [_rec(2023, 1000.0), _rec(2022, 800.0)]})
+    assumptions = _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)
+    result = run_valuation(
+        normalized, _HYPER_RATIOS, _HYPER_METRICS, price=50.0, price_df=None,
+        assumptions=assumptions, sector_type="growth_unprofitable",
+        damodaran_dir=str(tmp_path / "no_damodaran"),
+        hyper_growth_extras={"per_scenario": {"base": {"start_growth": 0.45}}},
+    )
+    detail = result["hyper_growth_detail"]
+    assert detail["scenarios"]["base"]["start_growth"] == pytest.approx(0.45)
+    assert any("re-acceleration" in n.lower() for n in result["notes"])
 
 
 def test_run_valuation_hyper_grower_terminal_growth_linked_to_risk_free(tmp_path):
@@ -2284,3 +2492,91 @@ def test_run_valuation_headline_band_matches_hand_computed_sensitivity_grid():
     assert result["dcf"]["scenarios"]["base"]["hi"] == pytest.approx(hand_hi)
     assert result["fair_value_range"]["base"]["lo"] == pytest.approx(hand_lo)
     assert result["fair_value_range"]["base"]["hi"] == pytest.approx(hand_hi)
+
+
+# ---------------------------------------------------------------------------
+# 11. run_valuation -- point-in-time ("as-of") macro threading (Sec.11 of the
+# as-of implementation): as_of=None must never carry "macro_asof"; as_of set
+# must carry it (copied verbatim from damodaran.load_sector_data) plus two
+# Turkish notes; the shared terminal-growth anchor must use the resolved
+# as-of risk-free rate.
+# ---------------------------------------------------------------------------
+
+
+def test_run_valuation_without_as_of_never_carries_macro_asof_key(tmp_path):
+    normalized = _normalized({})
+    ratios = [{"fy": 2023, "fcf": 100.0}]
+    metrics = {"shares": 10.0, "latest_fy": 2023, "fcf": 100.0, "net_debt": 0.0}
+    assumptions = _assumptions()
+
+    result = run_valuation(
+        normalized, ratios, metrics, price=None, price_df=None,
+        assumptions=assumptions, sector_type="mature",
+        damodaran_dir=str(tmp_path / "no_damodaran"),
+    )
+
+    assert "macro_asof" not in result
+
+
+def test_run_valuation_as_of_copies_macro_asof_and_appends_notes(tmp_path):
+    """as_of set + a resolvable macro (via fred_rate, even with an otherwise
+    empty Damodaran directory) must copy `macro_asof` verbatim into the
+    top-level result and append both documented Turkish notes: one naming
+    the as-of macro sources ("Geçmiş tarih"), one caveating that sector
+    multiples/betas stay a static current snapshot."""
+    damodaran_dir = tmp_path / "damodaran"
+    damodaran_dir.mkdir()  # exists but has no CSVs -- fred_rate alone must be enough
+
+    normalized = _normalized({})
+    ratios = [{"fy": 2023, "fcf": 100.0}]
+    metrics = {"shares": 10.0, "latest_fy": 2023, "fcf": 100.0, "net_debt": 0.0}
+    assumptions = _assumptions()
+    fred_rate = {"value_pct": 2.98, "date": "2022-06-29", "series": "DGS10"}
+
+    result = run_valuation(
+        normalized, ratios, metrics, price=None, price_df=None,
+        assumptions=assumptions, sector_type="mature",
+        damodaran_dir=str(damodaran_dir),
+        as_of="2022-06-30", fred_rate=fred_rate,
+    )
+
+    assert result["macro_asof"] == {
+        "as_of": "2022-06-30",
+        "erp_source": "erp.csv (güncel değer)",
+        "risk_free_source": "DGS10 (2022-06-29)",
+    }
+    assert any("Geçmiş tarih" in n and "2022-06-30" in n for n in result["notes"])
+    assert any(
+        "Sektör çarpanları ve betaları güncel Damodaran anlık görüntüsüdür" in n
+        for n in result["notes"]
+    )
+
+
+def test_run_valuation_hyper_grower_terminal_growth_anchor_uses_as_of_fred_rate(tmp_path):
+    # Hand-verified: fred_rate value_pct=2.98 -> risk_free_pct=2.98 ->
+    # terminal_growth_anchor = min(2.98/100, sanity._TERMINAL_GROWTH_MAX=0.04)
+    #   = min(0.0298, 0.04) = 0.0298.
+    # This mirrors test_run_valuation_hyper_grower_terminal_growth_linked_to_risk_free
+    # above (which uses the REAL data/damodaran/erp.csv, resolving to 4.20%
+    # and clamping at the 4% ceiling) but drives the same code path off an
+    # as-of fred_rate instead, landing BELOW the ceiling so the resolved
+    # value itself (2.98%, not the 4% cap) is what's under test. The engine's
+    # own note f-string rounds to 1dp: 2.98 -> "3.0" (engine._build_hyper_growth
+    # uses `terminal_growth * 100:.1f}`).
+    damodaran_dir = tmp_path / "damodaran"
+    damodaran_dir.mkdir()
+    fred_rate = {"value_pct": 2.98, "date": "2022-06-29", "series": "DGS10"}
+
+    normalized = _normalized(_HYPER_CONCEPTS_OVERRIDES)
+    assumptions = _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)
+
+    result = run_valuation(
+        normalized, _HYPER_RATIOS, _HYPER_METRICS, price=50.0, price_df=None,
+        assumptions=assumptions, sector_type="growth_unprofitable",
+        damodaran_dir=str(damodaran_dir), as_of="2022-06-30", fred_rate=fred_rate,
+    )
+
+    assert result["hyper_growth"] is True
+    wp2_notes = [n for n in result["notes"] if "risksiz getiri oranına bağlandı" in n]
+    assert wp2_notes, "expected the WP2 terminal-growth note to fire with an as-of fred_rate"
+    assert any("%3.0" in n for n in wp2_notes)

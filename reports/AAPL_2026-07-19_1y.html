@@ -11,7 +11,7 @@
       top nav carries live controls and a POST to /api/analyze feeds the
       exact same body-rendering function.
 
-  The single "__DATA_JSON__" placeholder (inside the
+  The single "{"mode": "report", "ticker": "AAPL", "horizon": "1y", "price": 333.739990234375, "analyst": {"target_mean": 318.25116, "target_high": 400.0, "target_low": 215.0, "target_median": 325.0, "num_analysts": 43, "currency": "USD", "recommendation": "buy", "source": "yfinance"}, "as_of": "2026-07-17", "generated_on": "2026-07-19", "result": {"fundamental_verdict": "PAHALI", "profile_fit": {"verdict": "KISMEN", "reason": "PROFIL.md bulunamadı; nötr profil varsayıldı (dosyayı oluşturmanız önerilir)."}, "reverse_dcf_comment": "Fiyat, 10 yıllık ufukta %22.0 büyüme ima ediyor (gerçekleşen FCF 3y: %-5.7); piyasa, şirketin geçmiş performansından daha hızlı bir büyümeyi fiyatlıyor -- pahalılık sinyali.", "cyclical_risk": "Olgun sektör sınıflandırması altında döngüsellik riski sınırlı kabul edildi.", "horizon_note": "1y ufkunda fundamental (%50) ve teknik (%50) sinyaller dengeli şekilde değerlendirilir. Duyarlılık matrisi yüksek belirsizlik gösteriyor (bant genişliği baz hücrenin %60'ından fazla).", "key_risks": ["Alacaklar gelirden daha hızlı büyüyor", "Büyümeye göre ayarlı çarpan (PEG) uygulanamaz: base büyüme %5'in altında (payda güvenilir değil)."], "red_flags_comment": "Alacaklar gelirden daha hızlı büyüyor", "catalyst": "Q3 earnings ~31 Tem", "summary": "Değerleme motoru baz senaryoda $79.15-150.31 aralığını işaret ediyor; üçgenleme güveni YÜKSEK. Fiyat okuması: PAHALI. Sektör sınıflandırması: mature. Deterministik, kural tabanlı yorum; eğitim amaçlıdır, yatırım tavsiyesi değildir.", "technical_verdict": "AŞIRI ALIM (RSI 72, SMA50 +%10)", "confidence": "YÜKSEK", "fair_value_range": {"bear": {"lo": 45.6, "hi": 74.71, "growth": "%-3 büyüme", "discount_rate": "%11", "note": "Kötümser (bear) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %-3.2, iskonto oranı %10.9 (CAPM tabanı %8.9 ± senaryo marjı), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "base": {"lo": 79.15, "hi": 150.31, "growth": "%2 büyüme", "discount_rate": "%9", "note": "Temel (base) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %1.8, iskonto oranı %8.9 (CAPM: rf %4.2 + βL 1.11 × ERP %4.23 = %8.9), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "bull": {"lo": 113.42, "hi": 227.13, "growth": "%7 büyüme", "discount_rate": "%8", "note": "İyimser (bull) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %6.8, iskonto oranı %7.9 (CAPM tabanı %8.9 ± senaryo marjı), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}}, "scenario_returns": {"bear": {"ret_lo_pct": -86.3, "ret_hi_pct": -77.6}, "base": {"ret_lo_pct": -76.3, "ret_hi_pct": -55.0}, "bull": {"ret_lo_pct": -66.0, "ret_hi_pct": -31.9}}, "entry_plan": [{"n": 1, "trigger": "Günlük kapanış 302.63 USD seviyesinin altına inerse (bölge 298.09-307.17 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 298.09, "hi": 307.17}, "size_pct": 6.7, "invalidation": 43.32, "target": 227.13, "rr": -0.3, "note": null}, {"n": 2, "trigger": "Günlük kapanış 273.88 USD seviyesinin altına inerse (bölge 269.77-277.99 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 269.77, "hi": 277.99}, "size_pct": 13.3, "invalidation": 43.32, "target": 227.13, "rr": -0.2, "note": null}, {"n": 3, "trigger": "Günlük kapanış 227.13 USD seviyesinin altına inerse (bölge 223.72-230.54 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 223.72, "hi": 230.54}, "size_pct": 20.0, "invalidation": 43.32, "target": 227.13, "rr": -0.0, "note": null}, {"n": 4, "trigger": "Günlük kapanış 201.58 USD seviyesinin altına inerse (bölge 198.56-204.60 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 198.56, "hi": 204.6}, "size_pct": 26.7, "invalidation": 43.32, "target": 227.13, "rr": 0.2, "note": null}, {"n": 5, "trigger": "Günlük kapanış 150.31 USD seviyesinin altına inerse (bölge 148.06-152.56 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 148.06, "hi": 152.56}, "size_pct": 33.3, "invalidation": 43.32, "target": 227.13, "rr": 0.7, "note": null}], "stop_adding": [{"code": "HIGH_UNCERTAINTY", "message": "Duyarlılık matrisi yüksek belirsizlik gösteriyor (bant genişliği baz hücrenin %60'ından fazla); pozisyon büyütmede temkinli olunmalı."}, {"code": "ACTIVE_RED_FLAG", "message": "Aktif red flag(lar) nedeniyle temkinli olunmalı: Alacaklar gelirden daha hızlı büyüyor"}, {"code": "BINARY_CATALYST_NEAR", "message": "Yaklaşan binary katalizör: Q3 earnings ~31 Tem; katalizör tarihinden önce tetiksiz pozisyon büyütülmesi önerilmez."}], "thesis_metric": {"name": "Net Kâr Marjı", "latest_value": "%26.9", "trend": "iyileşiyor", "rationale": "Olgun sektörlerde tezin sağlığı kâr marjının istikrarında görülür; bu yüzden net kâr marjı (hesaplanamıyorsa ROE) tek çapa metrik olarak izlenir. METODOLOJI §7 kuralı: bu metrik iki ardışık çeyrek boyunca tezin aksini gösterirse tez geçersiz sayılır ve bu açıkça belirtilir."}, "valuation": {"sector_type": "mature", "fcf0": 85904000000, "fcf0_source": "ttm", "dcf": {"enabled": true, "disabled_reason": null, "scenarios": {"bear": {"per_share": 57.59, "lo": 45.6, "hi": 74.71}, "base": {"per_share": 106.49, "lo": 79.15, "hi": 150.31}, "bull": {"per_share": 156.1, "lo": 113.42, "hi": 227.13}}, "normalized_variant": null, "high_growth_flag": false}, "pb_roe": null, "ffo": null, "earnings_power": {"scenarios": {"bear": {"per_share": 66.98, "lo": 60.22, "hi": 75.44}, "base": {"per_share": 83.72, "lo": 75.28, "hi": 94.3}, "bull": {"per_share": 100.47, "lo": 90.34, "hi": 113.16}}, "per_share": 83.72, "normalized_net_income": 112010000000, "cost_of_equity": 0.08916191806346496, "sanity_applied": false}, "earnings_power_headline": false, "fair_value_range": {"bear": {"lo": 45.6, "hi": 74.71, "growth": "%-3 büyüme", "discount_rate": "%11", "note": "Kötümser (bear) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %-3.2, iskonto oranı %10.9 (CAPM tabanı %8.9 ± senaryo marjı), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "base": {"lo": 79.15, "hi": 150.31, "growth": "%2 büyüme", "discount_rate": "%9", "note": "Temel (base) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %1.8, iskonto oranı %8.9 (CAPM: rf %4.2 + βL 1.11 × ERP %4.23 = %8.9), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "bull": {"lo": 113.42, "hi": 227.13, "growth": "%7 büyüme", "discount_rate": "%8", "note": "İyimser (bull) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %6.8, iskonto oranı %7.9 (CAPM tabanı %8.9 ± senaryo marjı), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}}, "reverse_dcf": {"implied_growth": 0.22, "realized_cagr_5y": -0.0569, "realized_label": "FCF 3y", "bracket_status": "ok"}, "multiples": {"history": [{"fy": 2021, "end": "2021-09-25", "price": 143.42510986328125, "pe": 25.56597323766154, "ps": 6.6121936935963594, "pfcf": 26.022321607805445, "ev_sales": 6.841212574621571, "pffo": 22.827119214170278}, {"fy": 2022, "end": "2022-09-24", "price": 147.67453002929688, "pe": 24.169317517069864, "ps": 6.1139651461939435, "pfcf": 21.633549421393585, "ev_sales": 6.333176056907867, "pffo": 21.73810172638666}, {"fy": 2023, "end": "2023-09-30", "price": 169.0709686279297, "pe": 27.580908422174502, "ps": 6.975077651785652, "pfcf": 26.846106179352745, "ev_sales": 7.171114543393724, "pffo": 24.63684536340623}, {"fy": 2024, "end": "2024-09-28", "price": 226.09510803222656, "pe": 37.186695400037266, "ps": 8.908908163197182, "pfcf": 32.01719469883197, "ev_sales": 9.079529718812408, "pffo": 33.12095248757675}, {"fy": 2025, "end": "2025-09-27", "price": 254.73931884765625, "pe": 34.14736177582523, "ps": 9.184633575216013, "pfcf": 38.70003435657124, "ev_sales": 9.31617881852329, "pffo": 30.89764844064629}], "current": {"pe": 44.7373, "ps": 12.033, "pfcf": 50.7018, "pffo": 40.4797}, "pe_percentile": 100.0, "ps_percentile": 100.0, "pfcf_percentile": 100.0, "pffo_percentile": 100.0, "history_years": 5, "sector": {"available": true, "industry": "Computers/Peripherals", "pe_median": 34.33, "ps_median": 6.43, "pfcf_median": null}, "growth_adjusted": {"metric": "peg", "label": "PEG", "raw_label": "P/E", "value": null, "percentile": null, "raw_percentile": 100.0, "applicable": false, "reason": "Büyümeye göre ayarlı çarpan (PEG) uygulanamaz: base büyüme %5'in altında (payda güvenilir değil).", "base_growth_pct": 1.8, "sector_peg": null}}, "sensitivity": {"growth_values": [-0.0019, 0.0181, 0.0381], "dr_values": [0.0792, 0.0892, 0.0992], "matrix": [[117.79, 94.53, 79.1], [133.07, 106.41, 88.74], [150.17, 119.68, 99.49]], "lo": 79.1, "hi": 150.17, "high_uncertainty": true}, "triangulation": {"signals": {"dcf": "pahali", "reverse_dcf": "pahali", "multiples": "pahali"}, "confidence": "YÜKSEK", "direction": "pahali", "rationale": {"dcf": "Fiyat $333.74, baz değerleme aralığının ($79.15–$150.31) üzerinde → pahalı.", "reverse_dcf": "Fiyat %22.0 büyüme ima ediyor; gerçekleşen büyüme %-5.7 — piyasa daha fazla büyüme fiyatlıyor → pahalı.", "multiples": "P/E persentili %100 (>70) — kendi tarihsel aralığına göre pahalı.", "confidence": "Üç yöntem de aynı yönü (pahalı) gösteriyor; güven yüksek."}, "divergence": {"direction": "pahali", "action": "log_only", "factor": 0.4503805357463894, "band_edge": 150.31}}, "hyper_growth": false, "hyper_growth_detail": null, "mature_revenue_headline": false, "mature_revenue_detail": null, "midgrowth_revenue_headline": false, "midgrowth_revenue_detail": null, "cyclical_fcfe_headline": false, "cyclical_fcfe_detail": null, "assumptions": {"bear": {"growth_5y": -0.0319, "terminal_growth": 0.04, "discount_rate": 0.10916191806346497, "story": "Kötümser (bear) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %-3.2, iskonto oranı %10.9 (CAPM tabanı %8.9 ± senaryo marjı), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "base": {"growth_5y": 0.0181, "terminal_growth": 0.04, "discount_rate": 0.08916191806346496, "story": "Temel (base) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %1.8, iskonto oranı %8.9 (CAPM: rf %4.2 + βL 1.11 × ERP %4.23 = %8.9), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "bull": {"growth_5y": 0.06810000000000001, "terminal_growth": 0.04, "discount_rate": 0.08499999999999999, "story": "İyimser (bull) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %6.8, iskonto oranı %7.9 (CAPM tabanı %8.9 ± senaryo marjı), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}}, "notes": ["Büyümeye göre ayarlı çarpan (PEG) uygulanamaz: base büyüme %5'in altında (payda güvenilir değil)."]}, "_provider": "script", "_model": "rule-based-v2", "_horizon": "1y", "_weights": {"fundamental": 0.5, "technical": 0.5}, "events": [{"date": "2026-04-20", "form": "8-K", "items": ["5.02"], "categories": ["Üst düzey yönetici/kurul değişikliği"], "severity": "warning", "accession": "0001140361-26-015711", "primary_doc": "ef20071035_8k.htm"}, {"date": "2026-01-02", "form": "8-K", "items": ["5.02"], "categories": ["Üst düzey yönetici/kurul değişikliği"], "severity": "warning", "accession": "0001140361-26-000199", "primary_doc": "ef20060722_8k.htm"}, {"date": "2025-12-05", "form": "8-K", "items": ["5.02"], "categories": ["Üst düzey yönetici/kurul değişikliği"], "severity": "warning", "accession": "0001140361-25-044561", "primary_doc": "ef20060722_8k.htm"}, {"date": "2025-07-25", "form": "8-K", "items": ["5.02"], "categories": ["Üst düzey yönetici/kurul değişikliği"], "severity": "warning", "accession": "0001140361-25-027340", "primary_doc": "ef20052355_8k.htm"}]}, "metrics": {"price": 333.74, "shares": 15004697000, "eps": 7.46, "market_cap": 5007667430249.756, "total_debt": 90678000000, "net_debt": 54744000000, "pe": 44.7373, "ps": 12.033, "pfcf": 50.7018, "revenue_cagr_3y": 0.0181, "revenue_cagr_5y": null, "sbc_revenue": 0.0309, "shares_yoy": -0.0262, "buyback_latest": 90711000000, "dividends_latest": 15421000000, "rnd_revenue": 0.083, "fcf": 98767000000, "fcf_per_share": 6.58, "latest_fy": 2025, "latest_fundamental_fy": 2025}, "technical": {"price": 333.74, "as_of": "2026-07-17", "rsi14": 71.7, "sma50": 302.63, "sma200": 273.88, "dist_sma50_pct": 10.3, "dist_sma200_pct": 21.9, "high_52w": 333.74, "low_52w": 201.58, "range_position_pct": 100.0, "volatility_20d": 0.3629, "golden_cross": false, "death_cross": false, "sma50_above_sma200": true, "return_1m_pct": 11.5, "return_3m_pct": 26.8, "return_6m_pct": 28.6, "macd": 8.822, "macd_signal": 5.488, "macd_hist": 3.334, "macd_cross": null, "rel_volume": 0.94, "obv_trend": "up", "rsi_divergence": null, "rsi_divergence_detail": null, "support_levels": [{"low": 271.32, "high": 277.1, "price": 274.21, "dist_pct": -17.8, "touches": 7, "strength": 7, "fib": "38.2%", "ma": "SMA200", "last_touch": "2026-06-25", "is_52w_high": false, "is_52w_low": false}, {"low": 167.9, "high": 168.74, "price": 168.32, "dist_pct": -49.6, "touches": 2, "strength": 2, "fib": null, "ma": null, "last_touch": "2025-04-08", "is_52w_high": false, "is_52w_low": true}], "resistance_levels": [], "nearest_support": 274.21, "nearest_resistance": null, "fibonacci": {"high": 334.99, "low": 168.32, "direction": "up", "levels": [{"ratio": "23.6%", "price": 295.66, "dist_pct": -11.4}, {"ratio": "38.2%", "price": 271.32, "dist_pct": -18.7}, {"ratio": "50%", "price": 251.66, "dist_pct": -24.6}, {"ratio": "61.8%", "price": 231.99, "dist_pct": -30.5}, {"ratio": "78.6%", "price": 203.99, "dist_pct": -38.9}]}, "price_series": [{"t": "2021-05-13", "c": 121.81}, {"t": "2021-05-20", "c": 124.1}, {"t": "2021-05-27", "c": 122.12}, {"t": "2021-06-04", "c": 122.71}, {"t": "2021-06-11", "c": 124.13}, {"t": "2021-06-18", "c": 127.17}, {"t": "2021-06-25", "c": 129.75}, {"t": "2021-07-02", "c": 136.43}, {"t": "2021-07-12", "c": 140.85}, {"t": "2021-07-19", "c": 138.85}, {"t": "2021-07-26", "c": 145.23}, {"t": "2021-08-02", "c": 141.85}, {"t": "2021-08-09", "c": 142.61}, {"t": "2021-08-16", "c": 147.53}, {"t": "2021-08-23", "c": 146.15}, {"t": "2021-08-30", "c": 149.48}, {"t": "2021-09-07", "c": 152.96}, {"t": "2021-09-14", "c": 144.6}, {"t": "2021-09-21", "c": 140.02}, {"t": "2021-09-28", "c": 138.53}, {"t": "2021-10-05", "c": 137.75}, {"t": "2021-10-12", "c": 138.14}, {"t": "2021-10-19", "c": 145.22}, {"t": "2021-10-26", "c": 145.77}, {"t": "2021-11-02", "c": 146.45}, {"t": "2021-11-09", "c": 147.44}, {"t": "2021-11-16", "c": 147.62}, {"t": "2021-11-23", "c": 157.8}, {"t": "2021-12-01", "c": 161.09}, {"t": "2021-12-08", "c": 171.16}, {"t": "2021-12-15", "c": 175.29}, {"t": "2021-12-22", "c": 171.71}, {"t": "2021-12-30", "c": 174.21}, {"t": "2022-01-06", "c": 168.15}, {"t": "2022-01-13", "c": 168.34}, {"t": "2022-01-21", "c": 158.78}, {"t": "2022-01-28", "c": 166.52}, {"t": "2022-02-04", "c": 168.75}, {"t": "2022-02-11", "c": 165.08}, {"t": "2022-02-18", "c": 163.77}, {"t": "2022-02-28", "c": 161.63}, {"t": "2022-03-07", "c": 155.94}, {"t": "2022-03-14", "c": 147.44}, {"t": "2022-03-21", "c": 161.89}, {"t": "2022-03-28", "c": 171.89}, {"t": "2022-04-04", "c": 174.67}, {"t": "2022-04-11", "c": 162.25}, {"t": "2022-04-19", "c": 163.86}, {"t": "2022-04-26", "c": 153.49}, {"t": "2022-05-03", "c": 156.11}, {"t": "2022-05-10", "c": 151.47}, {"t": "2022-05-17", "c": 146.3}, {"t": "2022-05-24", "c": 137.6}, {"t": "2022-06-01", "c": 145.78}, {"t": "2022-06-08", "c": 145.05}, {"t": "2022-06-15", "c": 132.76}, {"t": "2022-06-23", "c": 135.55}, {"t": "2022-06-30", "c": 134.03}, {"t": "2022-07-08", "c": 144.15}, {"t": "2022-07-15", "c": 147.21}, {"t": "2022-07-22", "c": 151.06}, {"t": "2022-07-29", "c": 159.31}, {"t": "2022-08-05", "c": 162.32}, {"t": "2022-08-12", "c": 168.95}, {"t": "2022-08-19", "c": 168.38}, {"t": "2022-08-26", "c": 160.62}, {"t": "2022-09-02", "c": 152.96}, {"t": "2022-09-12", "c": 160.44}, {"t": "2022-09-19", "c": 151.65}, {"t": "2022-09-26", "c": 148.01}, {"t": "2022-10-03", "c": 139.84}, {"t": "2022-10-10", "c": 137.85}, {"t": "2022-10-17", "c": 139.8}, {"t": "2022-10-24", "c": 146.71}, {"t": "2022-10-31", "c": 150.53}, {"t": "2022-11-07", "c": 136.6}, {"t": "2022-11-14", "c": 145.81}, {"t": "2022-11-21", "c": 145.54}, {"t": "2022-11-29", "c": 138.81}, {"t": "2022-12-06", "c": 140.52}, {"t": "2022-12-13", "c": 143.04}, {"t": "2022-12-20", "c": 130.09}, {"t": "2022-12-28", "c": 123.94}, {"t": "2023-01-05", "c": 122.93}, {"t": "2023-01-12", "c": 131.18}, {"t": "2023-01-20", "c": 135.57}, {"t": "2023-01-27", "c": 143.49}, {"t": "2023-02-03", "c": 151.92}, {"t": "2023-02-10", "c": 148.72}, {"t": "2023-02-17", "c": 150.23}, {"t": "2023-02-27", "c": 145.67}, {"t": "2023-03-06", "c": 151.49}, {"t": "2023-03-13", "c": 148.18}, {"t": "2023-03-20", "c": 155.01}, {"t": "2023-03-27", "c": 155.88}, {"t": "2023-04-03", "c": 163.65}, {"t": "2023-04-11", "c": 158.36}, {"t": "2023-04-18", "c": 163.94}, {"t": "2023-04-25", "c": 161.28}, {"t": "2023-05-02", "c": 165.98}, {"t": "2023-05-09", "c": 169.16}, {"t": "2023-05-16", "c": 169.69}, {"t": "2023-05-23", "c": 169.19}, {"t": "2023-05-31", "c": 174.8}, {"t": "2023-06-07", "c": 175.36}, {"t": "2023-06-14", "c": 181.41}, {"t": "2023-06-22", "c": 184.41}, {"t": "2023-06-29", "c": 186.97}, {"t": "2023-07-07", "c": 188.04}, {"t": "2023-07-14", "c": 188.05}, {"t": "2023-07-21", "c": 189.29}, {"t": "2023-07-28", "c": 193.12}, {"t": "2023-08-04", "c": 179.47}, {"t": "2023-08-11", "c": 175.57}, {"t": "2023-08-18", "c": 172.31}, {"t": "2023-08-25", "c": 176.38}, {"t": "2023-09-01", "c": 187.09}, {"t": "2023-09-11", "c": 177.12}, {"t": "2023-09-18", "c": 175.75}, {"t": "2023-09-25", "c": 173.88}, {"t": "2023-10-02", "c": 171.58}, {"t": "2023-10-09", "c": 176.75}, {"t": "2023-10-16", "c": 176.49}, {"t": "2023-10-23", "c": 170.84}, {"t": "2023-10-30", "c": 168.16}, {"t": "2023-11-06", "c": 176.99}, {"t": "2023-11-13", "c": 182.73}, {"t": "2023-11-20", "c": 189.31}, {"t": "2023-11-28", "c": 188.27}, {"t": "2023-12-05", "c": 191.26}, {"t": "2023-12-12", "c": 192.53}, {"t": "2023-12-19", "c": 194.74}, {"t": "2023-12-27", "c": 190.99}, {"t": "2024-01-04", "c": 179.87}, {"t": "2024-01-11", "c": 183.51}, {"t": "2024-01-19", "c": 189.42}, {"t": "2024-01-26", "c": 190.27}, {"t": "2024-02-02", "c": 183.77}, {"t": "2024-02-09", "c": 186.97}, {"t": "2024-02-16", "c": 180.5}, {"t": "2024-02-26", "c": 179.36}, {"t": "2024-03-04", "c": 173.36}, {"t": "2024-03-11", "c": 171.03}, {"t": "2024-03-18", "c": 171.99}, {"t": "2024-03-25", "c": 169.15}, {"t": "2024-04-02", "c": 167.16}, {"t": "2024-04-09", "c": 167.99}, {"t": "2024-04-16", "c": 167.7}, {"t": "2024-04-23", "c": 165.24}, {"t": "2024-04-30", "c": 168.64}, {"t": "2024-05-07", "c": 180.59}, {"t": "2024-05-14", "c": 185.82}, {"t": "2024-05-21", "c": 190.7}, {"t": "2024-05-29", "c": 188.66}, {"t": "2024-06-05", "c": 194.19}, {"t": "2024-06-12", "c": 211.24}, {"t": "2024-06-20", "c": 207.88}, {"t": "2024-06-27", "c": 212.26}, {"t": "2024-07-05", "c": 224.4}, {"t": "2024-07-12", "c": 228.56}, {"t": "2024-07-19", "c": 222.38}, {"t": "2024-07-26", "c": 216.09}, {"t": "2024-08-02", "c": 217.97}, {"t": "2024-08-09", "c": 214.38}, {"t": "2024-08-16", "c": 224.37}, {"t": "2024-08-23", "c": 225.15}, {"t": "2024-08-30", "c": 227.3}, {"t": "2024-09-09", "c": 219.27}, {"t": "2024-09-16", "c": 214.71}, {"t": "2024-09-23", "c": 224.78}, {"t": "2024-09-30", "c": 231.27}, {"t": "2024-10-07", "c": 220.04}, {"t": "2024-10-14", "c": 229.58}, {"t": "2024-10-21", "c": 234.72}, {"t": "2024-10-28", "c": 231.66}, {"t": "2024-11-04", "c": 220.36}, {"t": "2024-11-11", "c": 222.81}, {"t": "2024-11-18", "c": 226.57}, {"t": "2024-11-25", "c": 231.39}, {"t": "2024-12-03", "c": 241.11}, {"t": "2024-12-10", "c": 246.2}, {"t": "2024-12-17", "c": 251.87}, {"t": "2024-12-24", "c": 256.56}, {"t": "2025-01-02", "c": 242.3}, {"t": "2025-01-10", "c": 235.35}, {"t": "2025-01-17", "c": 228.52}, {"t": "2025-01-27", "c": 228.4}, {"t": "2025-02-03", "c": 226.56}, {"t": "2025-02-10", "c": 226.45}, {"t": "2025-02-18", "c": 243.19}, {"t": "2025-02-25", "c": 245.74}, {"t": "2025-03-04", "c": 234.69}, {"t": "2025-03-11", "c": 219.68}, {"t": "2025-03-18", "c": 211.57}, {"t": "2025-03-25", "c": 222.57}, {"t": "2025-04-01", "c": 222.02}, {"t": "2025-04-08", "c": 171.51}, {"t": "2025-04-09", "c": 197.8}, {"t": "2025-04-10", "c": 189.42}, {"t": "2025-04-11", "c": 197.11}, {"t": "2025-04-14", "c": 201.46}, {"t": "2025-04-15", "c": 201.08}, {"t": "2025-04-16", "c": 193.25}, {"t": "2025-04-17", "c": 195.94}, {"t": "2025-04-21", "c": 192.14}, {"t": "2025-04-22", "c": 198.69}, {"t": "2025-04-23", "c": 203.52}, {"t": "2025-04-24", "c": 207.27}, {"t": "2025-04-25", "c": 208.18}, {"t": "2025-04-28", "c": 209.04}, {"t": "2025-04-29", "c": 210.1}, {"t": "2025-04-30", "c": 211.38}, {"t": "2025-05-01", "c": 212.2}, {"t": "2025-05-02", "c": 204.27}, {"t": "2025-05-05", "c": 197.84}, {"t": "2025-05-06", "c": 197.47}, {"t": "2025-05-07", "c": 195.22}, {"t": "2025-05-08", "c": 196.45}, {"t": "2025-05-09", "c": 197.49}, {"t": "2025-05-12", "c": 209.96}, {"t": "2025-05-13", "c": 212.09}, {"t": "2025-05-14", "c": 211.49}, {"t": "2025-05-15", "c": 210.61}, {"t": "2025-05-16", "c": 210.43}, {"t": "2025-05-19", "c": 207.96}, {"t": "2025-05-20", "c": 206.04}, {"t": "2025-05-21", "c": 201.29}, {"t": "2025-05-22", "c": 200.56}, {"t": "2025-05-23", "c": 194.5}, {"t": "2025-05-27", "c": 199.42}, {"t": "2025-05-28", "c": 199.63}, {"t": "2025-05-29", "c": 199.16}, {"t": "2025-05-30", "c": 200.06}, {"t": "2025-06-02", "c": 200.9}, {"t": "2025-06-03", "c": 202.47}, {"t": "2025-06-04", "c": 202.02}, {"t": "2025-06-05", "c": 199.84}, {"t": "2025-06-06", "c": 203.11}, {"t": "2025-06-09", "c": 200.65}, {"t": "2025-06-10", "c": 201.87}, {"t": "2025-06-11", "c": 197.99}, {"t": "2025-06-12", "c": 198.41}, {"t": "2025-06-13", "c": 195.67}, {"t": "2025-06-16", "c": 197.64}, {"t": "2025-06-17", "c": 194.87}, {"t": "2025-06-18", "c": 195.8}, {"t": "2025-06-20", "c": 200.21}, {"t": "2025-06-23", "c": 200.7}, {"t": "2025-06-24", "c": 199.51}, {"t": "2025-06-25", "c": 200.76}, {"t": "2025-06-26", "c": 200.21}, {"t": "2025-06-27", "c": 200.29}, {"t": "2025-06-30", "c": 204.36}, {"t": "2025-07-01", "c": 207.0}, {"t": "2025-07-02", "c": 211.6}, {"t": "2025-07-03", "c": 212.71}, {"t": "2025-07-07", "c": 209.12}, {"t": "2025-07-08", "c": 209.18}, {"t": "2025-07-09", "c": 210.31}, {"t": "2025-07-10", "c": 211.57}, {"t": "2025-07-11", "c": 210.33}, {"t": "2025-07-14", "c": 207.8}, {"t": "2025-07-15", "c": 208.28}, {"t": "2025-07-16", "c": 209.33}, {"t": "2025-07-17", "c": 209.19}, {"t": "2025-07-18", "c": 210.35}, {"t": "2025-07-21", "c": 211.64}, {"t": "2025-07-22", "c": 213.55}, {"t": "2025-07-23", "c": 213.3}, {"t": "2025-07-24", "c": 212.92}, {"t": "2025-07-25", "c": 213.03}, {"t": "2025-07-28", "c": 213.2}, {"t": "2025-07-29", "c": 210.44}, {"t": "2025-07-30", "c": 208.22}, {"t": "2025-07-31", "c": 206.75}, {"t": "2025-08-01", "c": 201.58}, {"t": "2025-08-04", "c": 202.55}, {"t": "2025-08-05", "c": 202.12}, {"t": "2025-08-06", "c": 212.41}, {"t": "2025-08-07", "c": 219.16}, {"t": "2025-08-08", "c": 228.44}, {"t": "2025-08-11", "c": 226.54}, {"t": "2025-08-12", "c": 229.0}, {"t": "2025-08-13", "c": 232.67}, {"t": "2025-08-14", "c": 232.12}, {"t": "2025-08-15", "c": 230.94}, {"t": "2025-08-18", "c": 230.24}, {"t": "2025-08-19", "c": 229.91}, {"t": "2025-08-20", "c": 225.37}, {"t": "2025-08-21", "c": 224.27}, {"t": "2025-08-22", "c": 227.12}, {"t": "2025-08-25", "c": 226.52}, {"t": "2025-08-26", "c": 228.66}, {"t": "2025-08-27", "c": 229.84}, {"t": "2025-08-28", "c": 231.9}, {"t": "2025-08-29", "c": 231.49}, {"t": "2025-09-02", "c": 229.07}, {"t": "2025-09-03", "c": 237.8}, {"t": "2025-09-04", "c": 239.1}, {"t": "2025-09-05", "c": 239.01}, {"t": "2025-09-08", "c": 237.21}, {"t": "2025-09-09", "c": 233.69}, {"t": "2025-09-10", "c": 226.15}, {"t": "2025-09-11", "c": 229.38}, {"t": "2025-09-12", "c": 233.41}, {"t": "2025-09-15", "c": 236.03}, {"t": "2025-09-16", "c": 237.48}, {"t": "2025-09-17", "c": 238.32}, {"t": "2025-09-18", "c": 237.21}, {"t": "2025-09-19", "c": 244.81}, {"t": "2025-09-22", "c": 255.36}, {"t": "2025-09-23", "c": 253.71}, {"t": "2025-09-24", "c": 251.6}, {"t": "2025-09-25", "c": 256.15}, {"t": "2025-09-26", "c": 254.74}, {"t": "2025-09-29", "c": 253.71}, {"t": "2025-09-30", "c": 253.91}, {"t": "2025-10-01", "c": 254.73}, {"t": "2025-10-02", "c": 256.4}, {"t": "2025-10-03", "c": 257.29}, {"t": "2025-10-06", "c": 255.97}, {"t": "2025-10-07", "c": 255.76}, {"t": "2025-10-08", "c": 257.33}, {"t": "2025-10-09", "c": 253.32}, {"t": "2025-10-10", "c": 244.58}, {"t": "2025-10-13", "c": 246.96}, {"t": "2025-10-14", "c": 247.07}, {"t": "2025-10-15", "c": 248.64}, {"t": "2025-10-16", "c": 246.75}, {"t": "2025-10-17", "c": 251.58}, {"t": "2025-10-20", "c": 261.5}, {"t": "2025-10-21", "c": 262.03}, {"t": "2025-10-22", "c": 257.72}, {"t": "2025-10-23", "c": 258.85}, {"t": "2025-10-24", "c": 262.08}, {"t": "2025-10-27", "c": 268.05}, {"t": "2025-10-28", "c": 268.24}, {"t": "2025-10-29", "c": 268.94}, {"t": "2025-10-30", "c": 270.63}, {"t": "2025-10-31", "c": 269.61}, {"t": "2025-11-03", "c": 268.29}, {"t": "2025-11-04", "c": 269.28}, {"t": "2025-11-05", "c": 269.38}, {"t": "2025-11-06", "c": 269.01}, {"t": "2025-11-07", "c": 267.71}, {"t": "2025-11-10", "c": 268.93}, {"t": "2025-11-11", "c": 274.74}, {"t": "2025-11-12", "c": 272.96}, {"t": "2025-11-13", "c": 272.44}, {"t": "2025-11-14", "c": 271.9}, {"t": "2025-11-17", "c": 266.96}, {"t": "2025-11-18", "c": 266.94}, {"t": "2025-11-19", "c": 268.06}, {"t": "2025-11-20", "c": 265.76}, {"t": "2025-11-21", "c": 270.99}, {"t": "2025-11-24", "c": 275.41}, {"t": "2025-11-25", "c": 276.46}, {"t": "2025-11-26", "c": 277.04}, {"t": "2025-11-28", "c": 278.33}, {"t": "2025-12-01", "c": 282.58}, {"t": "2025-12-02", "c": 285.66}, {"t": "2025-12-03", "c": 283.62}, {"t": "2025-12-04", "c": 280.18}, {"t": "2025-12-05", "c": 278.26}, {"t": "2025-12-08", "c": 277.37}, {"t": "2025-12-09", "c": 276.67}, {"t": "2025-12-10", "c": 278.26}, {"t": "2025-12-11", "c": 277.51}, {"t": "2025-12-12", "c": 277.76}, {"t": "2025-12-15", "c": 273.6}, {"t": "2025-12-16", "c": 274.1}, {"t": "2025-12-17", "c": 271.34}, {"t": "2025-12-18", "c": 271.69}, {"t": "2025-12-19", "c": 273.16}, {"t": "2025-12-22", "c": 270.47}, {"t": "2025-12-23", "c": 271.85}, {"t": "2025-12-24", "c": 273.3}, {"t": "2025-12-26", "c": 272.89}, {"t": "2025-12-29", "c": 273.25}, {"t": "2025-12-30", "c": 272.57}, {"t": "2025-12-31", "c": 271.36}, {"t": "2026-01-02", "c": 270.51}, {"t": "2026-01-05", "c": 266.76}, {"t": "2026-01-06", "c": 261.87}, {"t": "2026-01-07", "c": 259.85}, {"t": "2026-01-08", "c": 258.56}, {"t": "2026-01-09", "c": 258.89}, {"t": "2026-01-12", "c": 259.77}, {"t": "2026-01-13", "c": 260.57}, {"t": "2026-01-14", "c": 259.48}, {"t": "2026-01-15", "c": 257.73}, {"t": "2026-01-16", "c": 255.06}, {"t": "2026-01-20", "c": 246.24}, {"t": "2026-01-21", "c": 247.19}, {"t": "2026-01-22", "c": 247.89}, {"t": "2026-01-23", "c": 247.58}, {"t": "2026-01-26", "c": 254.94}, {"t": "2026-01-27", "c": 257.79}, {"t": "2026-01-28", "c": 255.96}, {"t": "2026-01-29", "c": 257.8}, {"t": "2026-01-30", "c": 259.0}, {"t": "2026-02-02", "c": 269.51}, {"t": "2026-02-03", "c": 268.98}, {"t": "2026-02-04", "c": 275.98}, {"t": "2026-02-05", "c": 275.4}, {"t": "2026-02-06", "c": 277.6}, {"t": "2026-02-09", "c": 274.37}, {"t": "2026-02-10", "c": 273.43}, {"t": "2026-02-11", "c": 275.25}, {"t": "2026-02-12", "c": 261.49}, {"t": "2026-02-13", "c": 255.54}, {"t": "2026-02-17", "c": 263.64}, {"t": "2026-02-18", "c": 264.11}, {"t": "2026-02-19", "c": 260.34}, {"t": "2026-02-20", "c": 264.34}, {"t": "2026-02-23", "c": 265.93}, {"t": "2026-02-24", "c": 271.89}, {"t": "2026-02-25", "c": 273.98}, {"t": "2026-02-26", "c": 272.7}, {"t": "2026-02-27", "c": 263.94}, {"t": "2026-03-02", "c": 264.48}, {"t": "2026-03-03", "c": 263.51}, {"t": "2026-03-04", "c": 262.28}, {"t": "2026-03-05", "c": 260.05}, {"t": "2026-03-06", "c": 257.22}, {"t": "2026-03-09", "c": 259.64}, {"t": "2026-03-10", "c": 260.59}, {"t": "2026-03-11", "c": 260.57}, {"t": "2026-03-12", "c": 255.52}, {"t": "2026-03-13", "c": 249.89}, {"t": "2026-03-16", "c": 252.59}, {"t": "2026-03-17", "c": 254.0}, {"t": "2026-03-18", "c": 249.71}, {"t": "2026-03-19", "c": 248.73}, {"t": "2026-03-20", "c": 247.76}, {"t": "2026-03-23", "c": 251.26}, {"t": "2026-03-24", "c": 251.41}, {"t": "2026-03-25", "c": 252.39}, {"t": "2026-03-26", "c": 252.66}, {"t": "2026-03-27", "c": 248.57}, {"t": "2026-03-30", "c": 246.4}, {"t": "2026-03-31", "c": 253.56}, {"t": "2026-04-01", "c": 255.39}, {"t": "2026-04-02", "c": 255.68}, {"t": "2026-04-06", "c": 258.62}, {"t": "2026-04-07", "c": 253.27}, {"t": "2026-04-08", "c": 258.66}, {"t": "2026-04-09", "c": 260.25}, {"t": "2026-04-10", "c": 260.24}, {"t": "2026-04-13", "c": 258.96}, {"t": "2026-04-14", "c": 258.59}, {"t": "2026-04-15", "c": 266.18}, {"t": "2026-04-16", "c": 263.16}, {"t": "2026-04-17", "c": 269.98}, {"t": "2026-04-20", "c": 272.8}, {"t": "2026-04-21", "c": 265.93}, {"t": "2026-04-22", "c": 272.92}, {"t": "2026-04-23", "c": 273.18}, {"t": "2026-04-24", "c": 270.81}, {"t": "2026-04-27", "c": 267.36}, {"t": "2026-04-28", "c": 270.46}, {"t": "2026-04-29", "c": 269.92}, {"t": "2026-04-30", "c": 271.1}, {"t": "2026-05-01", "c": 279.88}, {"t": "2026-05-04", "c": 276.58}, {"t": "2026-05-05", "c": 283.92}, {"t": "2026-05-06", "c": 287.25}, {"t": "2026-05-07", "c": 287.18}, {"t": "2026-05-08", "c": 293.05}, {"t": "2026-05-11", "c": 292.68}, {"t": "2026-05-12", "c": 294.8}, {"t": "2026-05-13", "c": 298.87}, {"t": "2026-05-14", "c": 298.21}, {"t": "2026-05-15", "c": 300.23}, {"t": "2026-05-18", "c": 297.84}, {"t": "2026-05-19", "c": 298.97}, {"t": "2026-05-20", "c": 302.25}, {"t": "2026-05-21", "c": 304.99}, {"t": "2026-05-22", "c": 308.82}, {"t": "2026-05-26", "c": 308.33}, {"t": "2026-05-27", "c": 310.85}, {"t": "2026-05-28", "c": 312.51}, {"t": "2026-05-29", "c": 312.06}, {"t": "2026-06-01", "c": 306.31}, {"t": "2026-06-02", "c": 315.2}, {"t": "2026-06-03", "c": 310.26}, {"t": "2026-06-04", "c": 311.23}, {"t": "2026-06-05", "c": 307.34}, {"t": "2026-06-08", "c": 301.54}, {"t": "2026-06-09", "c": 290.55}, {"t": "2026-06-10", "c": 291.58}, {"t": "2026-06-11", "c": 295.63}, {"t": "2026-06-12", "c": 291.13}, {"t": "2026-06-15", "c": 296.42}, {"t": "2026-06-16", "c": 299.24}, {"t": "2026-06-17", "c": 295.95}, {"t": "2026-06-18", "c": 298.01}, {"t": "2026-06-22", "c": 297.01}, {"t": "2026-06-23", "c": 294.3}, {"t": "2026-06-24", "c": 293.08}, {"t": "2026-06-25", "c": 275.15}, {"t": "2026-06-26", "c": 283.78}, {"t": "2026-06-29", "c": 281.74}, {"t": "2026-06-30", "c": 289.36}, {"t": "2026-07-01", "c": 294.38}, {"t": "2026-07-02", "c": 308.63}, {"t": "2026-07-06", "c": 312.66}, {"t": "2026-07-07", "c": 310.66}, {"t": "2026-07-08", "c": 313.39}, {"t": "2026-07-09", "c": 316.22}, {"t": "2026-07-10", "c": 315.32}, {"t": "2026-07-13", "c": 317.31}, {"t": "2026-07-14", "c": 314.86}, {"t": "2026-07-15", "c": 327.5}, {"t": "2026-07-16", "c": 333.26}, {"t": "2026-07-17", "c": 333.74}], "verdict": "AŞIRI ALIM", "verdict_detail": "RSI 72, SMA50 +%10", "horizon_summary": "RSI 71.7 seviyesinde. 50 günlük ortalama, 200 günlük ortalamanın üzerinde (SMA50 > SMA200). Fiyat, 200 günlük ortalamanın +%22 üzerinde. Fiyat, 52 haftalık aralığın %100 seviyesinde.", "horizon": "1y"}, "red_flags": [{"code": "RECEIVABLES_OUTPACE", "message": "Alacaklar gelirden daha hızlı büyüyor", "detail": "Son 3 yılda alacak büyümesi gelir büyümesini geride bıraktı (FY2025: alacak %+19.1 vs gelir %+6.4; FY2024: alacak %+13.2 vs gelir %+2.0; FY2023: alacak %+4.7 vs gelir %-2.8). Bu, tahsilatların zayıfladığına veya gelirin erken kaydedildiğine işaret edebilir."}], "entity_name": null}" placeholder (inside the
   <script type="application/json"> element below) is replaced by
   sec_analyzer.report.generator with one JSON payload whose "mode" field
   selects which of the two behaviors above this script runs:
@@ -160,41 +160,6 @@
     cursor: pointer;
   }
   .analyze-btn:disabled { opacity: 0.55; cursor: not-allowed; }
-
-  /* ---- Search-mode as-of date control (reuses .provider-select's box
-     styling; only adds the bits a native <input type=date> needs) --------*/
-  .asof-label {
-    font-size: 0.72rem;
-    color: var(--muted);
-    white-space: nowrap;
-  }
-  .asof-input {
-    max-width: 150px;
-    color-scheme: dark;
-  }
-  .asof-input:disabled { opacity: 0.55; cursor: not-allowed; }
-
-  /* ---- History nav button (search mode) + as-of banner (report mode) ----*/
-  .history-nav-btn {
-    font-size: 0.78rem;
-    font-weight: 600;
-    padding: 7px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .history-nav-btn:hover { color: var(--text); border-color: var(--muted); }
-  .asof-banner {
-    display: inline-block;
-    font-size: 0.72rem;
-    color: var(--amber);
-    background: rgba(255, 185, 83, 0.12);
-    border: 1px solid rgba(255, 185, 83, 0.35);
-    border-radius: 999px;
-    padding: 3px 10px;
-  }
 
   /* ---- Shared horizon-toggle pill row ------------------------------------*/
   .horizon-toggle {
@@ -593,27 +558,6 @@
     line-height: 1.45;
     margin-top: 4px;
   }
-  /* Sector-relative comparison line under the MULTIPLES method: current
-     primary multiple vs its Damodaran sector median (VALUATION.md Sec.7
-     axis-b), coloured by the sector bucket. */
-  .tri-sector {
-    font-size: 0.78rem;
-    line-height: 1.45;
-    margin-top: 6px;
-    font-family: var(--mono);
-  }
-  .tri-sector .tri-sector-label {
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    font-weight: 700;
-    font-size: 0.66rem;
-    color: var(--muted);
-    font-family: inherit;
-    margin-right: 4px;
-  }
-  .sector-cmp-red { color: var(--red); }
-  .sector-cmp-green { color: var(--green); }
-  .sector-cmp-muted { color: var(--muted); }
   .tri-confidence {
     margin-top: 14px;
     padding-top: 12px;
@@ -732,84 +676,6 @@
     font-size: 0.75rem; line-height: 1.4; margin-top: 4px; margin-bottom: 4px;
     padding: 7px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border);
   }
-  /* Swing reversal-confirmation checklist (momentumReversalHtml). */
-  .rev-block {
-    margin-top: 8px; padding: 9px 11px; border-radius: 8px;
-    background: var(--bg); border: 1px solid var(--border);
-  }
-  .rev-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 7px; }
-  .rev-title { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; }
-  .rev-verdict { font-size: 0.72rem; font-weight: 700; }
-  .rev-verdict.rev-none { color: var(--muted); }
-  .rev-verdict.rev-early { color: var(--amber); }
-  .rev-verdict.rev-strong { color: var(--green); }
-  .rev-help {
-    font-size: 0.68rem; line-height: 1.4; color: var(--muted);
-    margin-bottom: 8px; font-style: italic;
-  }
-  .rev-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-  .rev-row { display: flex; align-items: flex-start; gap: 7px; font-size: 0.75rem; line-height: 1.35; color: var(--outline); }
-  .rev-icon { flex: none; width: 1em; font-weight: 700; text-align: center; }
-  .rev-row.rev-ok .rev-icon { color: var(--green); }
-  .rev-row.rev-pending .rev-icon { color: var(--amber); }
-  .rev-row.rev-bad .rev-icon { color: var(--red); }
-  .rev-row.rev-none .rev-icon { color: var(--muted); }
-  .rev-row.rev-none, .rev-row.rev-bad { color: var(--muted); }
-  .rev-watch {
-    font-size: 0.72rem; line-height: 1.4; margin-top: 7px;
-    padding: 6px 9px; border-radius: 7px; background: rgba(90,167,255,0.10); border: 1px solid var(--border);
-    color: var(--outline);
-  }
-  .rev-watch-label {
-    font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
-    font-weight: 700; margin-right: 6px;
-  }
-  /* Reversal-building marker chip next to the momentum badge. */
-  .rev-badge-mark {
-    display: inline-block; margin-left: 8px; padding: 2px 9px; border-radius: 999px;
-    font-size: 0.66rem; font-weight: 700; letter-spacing: 0.02em; vertical-align: middle;
-  }
-  .rev-badge-mark.rev-mark-up { color: var(--green); background: rgba(77, 224, 130, 0.15); border: 1px solid rgba(77, 224, 130, 0.4); }
-  .rev-badge-mark.rev-mark-down { color: var(--red); background: rgba(255, 180, 171, 0.15); border: 1px solid rgba(147, 0, 10, 0.55); }
-  .rev-badge-mark.sq-mark { color: var(--amber); background: rgba(255, 185, 83, 0.15); border: 1px solid rgba(255, 185, 83, 0.4); }
-  /* ATR-based risk readout line under the watch line. */
-  .rev-risk {
-    font-size: 0.72rem; line-height: 1.4; margin-top: 6px;
-    padding: 6px 9px; border-radius: 7px; background: var(--bg); border: 1px solid var(--border);
-    color: var(--outline);
-  }
-  .rev-risk.rev-risk-wide { background: rgba(255, 185, 83, 0.10); border-color: rgba(255, 185, 83, 0.4); }
-  .tech-stat-sub { color: var(--muted); font-size: 0.72rem; font-weight: 400; }
-  /* ---- Swing setup grade card -------------------------------------------- */
-  .setup-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-  .setup-grade {
-    flex: none; width: 44px; height: 44px; border-radius: 10px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 1.5rem; font-weight: 800; line-height: 1;
-  }
-  .setup-grade.grade-a { color: var(--green); background: rgba(77, 224, 130, 0.16); border: 1px solid rgba(77, 224, 130, 0.5); }
-  .setup-grade.grade-b { color: var(--amber); background: rgba(255, 185, 83, 0.16); border: 1px solid rgba(255, 185, 83, 0.5); }
-  .setup-grade.grade-c { color: var(--muted); background: rgba(139, 145, 157, 0.16); border: 1px solid var(--border); }
-  .setup-note { font-size: 0.82rem; line-height: 1.4; color: var(--text); }
-  .setup-parts { display: flex; flex-wrap: wrap; gap: 8px; }
-  .setup-part {
-    display: flex; align-items: center; gap: 6px;
-    padding: 5px 10px; border-radius: 7px; background: var(--bg); border: 1px solid var(--border);
-    font-size: 0.75rem;
-  }
-  .setup-part-icon { font-weight: 700; }
-  .setup-part.setup-ok .setup-part-icon { color: var(--green); }
-  .setup-part.setup-pending .setup-part-icon { color: var(--amber); }
-  .setup-part.setup-bad .setup-part-icon { color: var(--red); }
-  .setup-part.setup-none .setup-part-icon { color: var(--muted); }
-  .setup-part-label { color: var(--muted); text-transform: uppercase; font-size: 0.62rem; letter-spacing: 0.04em; font-weight: 700; }
-  .setup-part-text { font-weight: 600; }
-  .setup-earn {
-    margin-top: 10px; font-size: 0.74rem; line-height: 1.4; color: var(--outline);
-    padding: 7px 10px; border-radius: 7px; background: rgba(255, 185, 83, 0.10); border: 1px solid rgba(255, 185, 83, 0.4);
-  }
-  .setup-earn-badge { color: var(--amber); font-weight: 700; margin-right: 4px; }
-  .setup-disc { margin-top: 10px; font-size: 0.66rem; color: var(--muted); font-style: italic; }
   .tech-stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
@@ -982,26 +848,6 @@
     font-size: 0.72rem;
     line-height: 1.4;
   }
-  .entry-kind-tag {
-    display: inline-block;
-    border-radius: 999px;
-    padding: 1px 7px;
-    font-size: 0.62rem;
-    font-weight: 700;
-    margin-right: 6px;
-    white-space: nowrap;
-    vertical-align: middle;
-  }
-  .entry-kind-breakout {
-    background: rgba(77, 224, 130, 0.15);
-    color: var(--green);
-    border: 1px solid rgba(77, 224, 130, 0.4);
-  }
-  .entry-kind-dip {
-    background: rgba(255, 180, 171, 0.15);
-    color: var(--red);
-    border: 1px solid rgba(147, 0, 10, 0.55);
-  }
   .entry-plan-table tr.entry-note-row td {
     text-align: left;
     color: var(--amber);
@@ -1013,37 +859,6 @@
     color: var(--muted);
     margin: -8px 0 14px;
     line-height: 1.5;
-  }
-
-  /* ---- History mode (verdict-history table, reuses .sensitivity-table's
-     border/spacing but left-aligns text and uses the sans font) -----------*/
-  .history-header {
-    font-family: var(--mono);
-    font-size: 1.1rem;
-    font-weight: 700;
-    margin: 0 0 14px;
-  }
-  .history-caption {
-    font-size: 0.78rem;
-    color: var(--muted);
-    margin: -6px 0 14px;
-  }
-  .history-table th, .history-table td {
-    text-align: left;
-    font-family: var(--sans);
-  }
-  .history-table td.history-num { font-family: var(--mono); white-space: nowrap; }
-  .asof-pill {
-    display: inline-block;
-    font-family: var(--mono);
-    font-size: 0.6rem;
-    font-weight: 700;
-    padding: 1px 6px;
-    border-radius: 999px;
-    background: rgba(90, 167, 255, 0.18);
-    color: var(--primary-light);
-    margin-left: 4px;
-    vertical-align: middle;
   }
 
   /* ---- Scenario returns list ---------------------------------------------*/
@@ -1064,101 +879,6 @@
     line-height: 1.5;
     margin: 0;
   }
-  /* Level sparkline: the anchor metric's year-by-year trajectory
-     (cycle.series). Sits above the positional bar -- the sparkline's x-axis
-     is TIME (fiscal years), the bar's is VALUE position, so each carries its
-     own label to keep the two axes from being read as one. */
-  .spark-block {
-    margin: 12px 0 0;
-    padding: 12px 0 0;
-    border-top: 1px solid var(--border);
-  }
-  .spark-label {
-    font-size: 0.6rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
-    font-weight: 700;
-    margin-bottom: 8px;
-  }
-  .spark-svg {
-    width: 100%;
-    height: auto;
-    display: block;
-    overflow: visible;
-  }
-  .spark-line {
-    fill: none;
-    stroke: var(--primary);
-    stroke-width: 1.6;
-    vector-effect: non-scaling-stroke;
-  }
-  .spark-dot { fill: var(--muted); }
-  .spark-dot-last { fill: var(--primary-light); }
-  .spark-fy { fill: var(--muted); font-size: 11px; font-family: var(--mono); }
-
-  /* Cycle-position bar: where the anchor metric's latest value sits inside
-     its own multi-year trough->peak range (planning._compute_cycle_position).
-     Deliberately a NEUTRAL track -- near-peak is danger for a cyclical but
-     health for a mature name, so the bar states position without colouring
-     a verdict; the marker (bright) carries the reading. */
-  .cycle-block {
-    margin: 12px 0 4px;
-    padding: 12px 0 0;
-    border-top: 1px solid var(--border);
-  }
-  .cycle-label {
-    font-size: 0.6rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
-    font-weight: 700;
-    margin-bottom: 12px;
-  }
-  .cycle-track {
-    position: relative;
-    height: 8px;
-    border-radius: 4px;
-    background: linear-gradient(to right, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.12));
-    border: 1px solid var(--border);
-  }
-  .cycle-mid {
-    position: absolute;
-    left: 50%;
-    top: -3px;
-    bottom: -3px;
-    width: 1px;
-    background: var(--border);
-  }
-  .cycle-marker {
-    position: absolute;
-    top: -5px;
-    width: 2px;
-    height: 18px;
-    background: var(--text);
-    transform: translateX(-1px);
-    border-radius: 1px;
-    box-shadow: 0 0 0 2px rgba(13, 20, 32, 0.7);
-  }
-  .cycle-ends {
-    display: flex;
-    justify-content: space-between;
-    gap: 8px;
-    font-family: var(--mono);
-    font-size: 0.62rem;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    color: var(--muted);
-    margin-top: 9px;
-  }
-  .cycle-ends span:nth-child(2) { opacity: 0.65; }
-  .cycle-caption {
-    font-size: 0.76rem;
-    color: var(--outline);
-    line-height: 1.5;
-    margin-top: 9px;
-  }
-  .cycle-thin { color: var(--amber); font-style: italic; }
 
   /* ---- Alert-style boxes (red flags / stop-adding) -----------------------*/
   .alert-box ul {
@@ -1266,7 +986,7 @@
 </head>
 <body>
 
-<script id="report-data" type="application/json">__DATA_JSON__</script>
+<script id="report-data" type="application/json">{"mode": "report", "ticker": "AAPL", "horizon": "1y", "price": 333.739990234375, "analyst": {"target_mean": 318.25116, "target_high": 400.0, "target_low": 215.0, "target_median": 325.0, "num_analysts": 43, "currency": "USD", "recommendation": "buy", "source": "yfinance"}, "as_of": "2026-07-17", "generated_on": "2026-07-19", "result": {"fundamental_verdict": "PAHALI", "profile_fit": {"verdict": "KISMEN", "reason": "PROFIL.md bulunamadı; nötr profil varsayıldı (dosyayı oluşturmanız önerilir)."}, "reverse_dcf_comment": "Fiyat, 10 yıllık ufukta %22.0 büyüme ima ediyor (gerçekleşen FCF 3y: %-5.7); piyasa, şirketin geçmiş performansından daha hızlı bir büyümeyi fiyatlıyor -- pahalılık sinyali.", "cyclical_risk": "Olgun sektör sınıflandırması altında döngüsellik riski sınırlı kabul edildi.", "horizon_note": "1y ufkunda fundamental (%50) ve teknik (%50) sinyaller dengeli şekilde değerlendirilir. Duyarlılık matrisi yüksek belirsizlik gösteriyor (bant genişliği baz hücrenin %60'ından fazla).", "key_risks": ["Alacaklar gelirden daha hızlı büyüyor", "Büyümeye göre ayarlı çarpan (PEG) uygulanamaz: base büyüme %5'in altında (payda güvenilir değil)."], "red_flags_comment": "Alacaklar gelirden daha hızlı büyüyor", "catalyst": "Q3 earnings ~31 Tem", "summary": "Değerleme motoru baz senaryoda $79.15-150.31 aralığını işaret ediyor; üçgenleme güveni YÜKSEK. Fiyat okuması: PAHALI. Sektör sınıflandırması: mature. Deterministik, kural tabanlı yorum; eğitim amaçlıdır, yatırım tavsiyesi değildir.", "technical_verdict": "AŞIRI ALIM (RSI 72, SMA50 +%10)", "confidence": "YÜKSEK", "fair_value_range": {"bear": {"lo": 45.6, "hi": 74.71, "growth": "%-3 büyüme", "discount_rate": "%11", "note": "Kötümser (bear) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %-3.2, iskonto oranı %10.9 (CAPM tabanı %8.9 ± senaryo marjı), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "base": {"lo": 79.15, "hi": 150.31, "growth": "%2 büyüme", "discount_rate": "%9", "note": "Temel (base) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %1.8, iskonto oranı %8.9 (CAPM: rf %4.2 + βL 1.11 × ERP %4.23 = %8.9), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "bull": {"lo": 113.42, "hi": 227.13, "growth": "%7 büyüme", "discount_rate": "%8", "note": "İyimser (bull) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %6.8, iskonto oranı %7.9 (CAPM tabanı %8.9 ± senaryo marjı), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}}, "scenario_returns": {"bear": {"ret_lo_pct": -86.3, "ret_hi_pct": -77.6}, "base": {"ret_lo_pct": -76.3, "ret_hi_pct": -55.0}, "bull": {"ret_lo_pct": -66.0, "ret_hi_pct": -31.9}}, "entry_plan": [{"n": 1, "trigger": "Günlük kapanış 302.63 USD seviyesinin altına inerse (bölge 298.09-307.17 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 298.09, "hi": 307.17}, "size_pct": 6.7, "invalidation": 43.32, "target": 227.13, "rr": -0.3, "note": null}, {"n": 2, "trigger": "Günlük kapanış 273.88 USD seviyesinin altına inerse (bölge 269.77-277.99 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 269.77, "hi": 277.99}, "size_pct": 13.3, "invalidation": 43.32, "target": 227.13, "rr": -0.2, "note": null}, {"n": 3, "trigger": "Günlük kapanış 227.13 USD seviyesinin altına inerse (bölge 223.72-230.54 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 223.72, "hi": 230.54}, "size_pct": 20.0, "invalidation": 43.32, "target": 227.13, "rr": -0.0, "note": null}, {"n": 4, "trigger": "Günlük kapanış 201.58 USD seviyesinin altına inerse (bölge 198.56-204.60 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 198.56, "hi": 204.6}, "size_pct": 26.7, "invalidation": 43.32, "target": 227.13, "rr": 0.2, "note": null}, {"n": 5, "trigger": "Günlük kapanış 150.31 USD seviyesinin altına inerse (bölge 148.06-152.56 USD); gün içi dokunuş tetik saymaz.", "price_zone": {"lo": 148.06, "hi": 152.56}, "size_pct": 33.3, "invalidation": 43.32, "target": 227.13, "rr": 0.7, "note": null}], "stop_adding": [{"code": "HIGH_UNCERTAINTY", "message": "Duyarlılık matrisi yüksek belirsizlik gösteriyor (bant genişliği baz hücrenin %60'ından fazla); pozisyon büyütmede temkinli olunmalı."}, {"code": "ACTIVE_RED_FLAG", "message": "Aktif red flag(lar) nedeniyle temkinli olunmalı: Alacaklar gelirden daha hızlı büyüyor"}, {"code": "BINARY_CATALYST_NEAR", "message": "Yaklaşan binary katalizör: Q3 earnings ~31 Tem; katalizör tarihinden önce tetiksiz pozisyon büyütülmesi önerilmez."}], "thesis_metric": {"name": "Net Kâr Marjı", "latest_value": "%26.9", "trend": "iyileşiyor", "rationale": "Olgun sektörlerde tezin sağlığı kâr marjının istikrarında görülür; bu yüzden net kâr marjı (hesaplanamıyorsa ROE) tek çapa metrik olarak izlenir. METODOLOJI §7 kuralı: bu metrik iki ardışık çeyrek boyunca tezin aksini gösterirse tez geçersiz sayılır ve bu açıkça belirtilir."}, "valuation": {"sector_type": "mature", "fcf0": 85904000000, "fcf0_source": "ttm", "dcf": {"enabled": true, "disabled_reason": null, "scenarios": {"bear": {"per_share": 57.59, "lo": 45.6, "hi": 74.71}, "base": {"per_share": 106.49, "lo": 79.15, "hi": 150.31}, "bull": {"per_share": 156.1, "lo": 113.42, "hi": 227.13}}, "normalized_variant": null, "high_growth_flag": false}, "pb_roe": null, "ffo": null, "earnings_power": {"scenarios": {"bear": {"per_share": 66.98, "lo": 60.22, "hi": 75.44}, "base": {"per_share": 83.72, "lo": 75.28, "hi": 94.3}, "bull": {"per_share": 100.47, "lo": 90.34, "hi": 113.16}}, "per_share": 83.72, "normalized_net_income": 112010000000, "cost_of_equity": 0.08916191806346496, "sanity_applied": false}, "earnings_power_headline": false, "fair_value_range": {"bear": {"lo": 45.6, "hi": 74.71, "growth": "%-3 büyüme", "discount_rate": "%11", "note": "Kötümser (bear) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %-3.2, iskonto oranı %10.9 (CAPM tabanı %8.9 ± senaryo marjı), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "base": {"lo": 79.15, "hi": 150.31, "growth": "%2 büyüme", "discount_rate": "%9", "note": "Temel (base) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %1.8, iskonto oranı %8.9 (CAPM: rf %4.2 + βL 1.11 × ERP %4.23 = %8.9), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "bull": {"lo": 113.42, "hi": 227.13, "growth": "%7 büyüme", "discount_rate": "%8", "note": "İyimser (bull) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %6.8, iskonto oranı %7.9 (CAPM tabanı %8.9 ± senaryo marjı), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}}, "reverse_dcf": {"implied_growth": 0.22, "realized_cagr_5y": -0.0569, "realized_label": "FCF 3y", "bracket_status": "ok"}, "multiples": {"history": [{"fy": 2021, "end": "2021-09-25", "price": 143.42510986328125, "pe": 25.56597323766154, "ps": 6.6121936935963594, "pfcf": 26.022321607805445, "ev_sales": 6.841212574621571, "pffo": 22.827119214170278}, {"fy": 2022, "end": "2022-09-24", "price": 147.67453002929688, "pe": 24.169317517069864, "ps": 6.1139651461939435, "pfcf": 21.633549421393585, "ev_sales": 6.333176056907867, "pffo": 21.73810172638666}, {"fy": 2023, "end": "2023-09-30", "price": 169.0709686279297, "pe": 27.580908422174502, "ps": 6.975077651785652, "pfcf": 26.846106179352745, "ev_sales": 7.171114543393724, "pffo": 24.63684536340623}, {"fy": 2024, "end": "2024-09-28", "price": 226.09510803222656, "pe": 37.186695400037266, "ps": 8.908908163197182, "pfcf": 32.01719469883197, "ev_sales": 9.079529718812408, "pffo": 33.12095248757675}, {"fy": 2025, "end": "2025-09-27", "price": 254.73931884765625, "pe": 34.14736177582523, "ps": 9.184633575216013, "pfcf": 38.70003435657124, "ev_sales": 9.31617881852329, "pffo": 30.89764844064629}], "current": {"pe": 44.7373, "ps": 12.033, "pfcf": 50.7018, "pffo": 40.4797}, "pe_percentile": 100.0, "ps_percentile": 100.0, "pfcf_percentile": 100.0, "pffo_percentile": 100.0, "history_years": 5, "sector": {"available": true, "industry": "Computers/Peripherals", "pe_median": 34.33, "ps_median": 6.43, "pfcf_median": null}, "growth_adjusted": {"metric": "peg", "label": "PEG", "raw_label": "P/E", "value": null, "percentile": null, "raw_percentile": 100.0, "applicable": false, "reason": "Büyümeye göre ayarlı çarpan (PEG) uygulanamaz: base büyüme %5'in altında (payda güvenilir değil).", "base_growth_pct": 1.8, "sector_peg": null}}, "sensitivity": {"growth_values": [-0.0019, 0.0181, 0.0381], "dr_values": [0.0792, 0.0892, 0.0992], "matrix": [[117.79, 94.53, 79.1], [133.07, 106.41, 88.74], [150.17, 119.68, 99.49]], "lo": 79.1, "hi": 150.17, "high_uncertainty": true}, "triangulation": {"signals": {"dcf": "pahali", "reverse_dcf": "pahali", "multiples": "pahali"}, "confidence": "YÜKSEK", "direction": "pahali", "rationale": {"dcf": "Fiyat $333.74, baz değerleme aralığının ($79.15–$150.31) üzerinde → pahalı.", "reverse_dcf": "Fiyat %22.0 büyüme ima ediyor; gerçekleşen büyüme %-5.7 — piyasa daha fazla büyüme fiyatlıyor → pahalı.", "multiples": "P/E persentili %100 (>70) — kendi tarihsel aralığına göre pahalı.", "confidence": "Üç yöntem de aynı yönü (pahalı) gösteriyor; güven yüksek."}, "divergence": {"direction": "pahali", "action": "log_only", "factor": 0.4503805357463894, "band_edge": 150.31}}, "hyper_growth": false, "hyper_growth_detail": null, "mature_revenue_headline": false, "mature_revenue_detail": null, "midgrowth_revenue_headline": false, "midgrowth_revenue_detail": null, "cyclical_fcfe_headline": false, "cyclical_fcfe_detail": null, "assumptions": {"bear": {"growth_5y": -0.0319, "terminal_growth": 0.04, "discount_rate": 0.10916191806346497, "story": "Kötümser (bear) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %-3.2, iskonto oranı %10.9 (CAPM tabanı %8.9 ± senaryo marjı), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "base": {"growth_5y": 0.0181, "terminal_growth": 0.04, "discount_rate": 0.08916191806346496, "story": "Temel (base) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %1.8, iskonto oranı %8.9 (CAPM: rf %4.2 + βL 1.11 × ERP %4.23 = %8.9), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}, "bull": {"growth_5y": 0.06810000000000001, "terminal_growth": 0.04, "discount_rate": 0.08499999999999999, "story": "İyimser (bull) senaryo: deterministik varsayılan -- büyüme kaynağı 3 yıllık gelir CAGR (%1.8), bu senaryoda uygulanan büyüme %6.8, iskonto oranı %7.9 (CAPM tabanı %8.9 ± senaryo marjı), terminal büyüme %4.0 (risksiz getiri oranına bağlı, üst sınır %4); LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik varsayılan devreye girdi."}}, "notes": ["Büyümeye göre ayarlı çarpan (PEG) uygulanamaz: base büyüme %5'in altında (payda güvenilir değil)."]}, "_provider": "script", "_model": "rule-based-v2", "_horizon": "1y", "_weights": {"fundamental": 0.5, "technical": 0.5}, "events": [{"date": "2026-04-20", "form": "8-K", "items": ["5.02"], "categories": ["Üst düzey yönetici/kurul değişikliği"], "severity": "warning", "accession": "0001140361-26-015711", "primary_doc": "ef20071035_8k.htm"}, {"date": "2026-01-02", "form": "8-K", "items": ["5.02"], "categories": ["Üst düzey yönetici/kurul değişikliği"], "severity": "warning", "accession": "0001140361-26-000199", "primary_doc": "ef20060722_8k.htm"}, {"date": "2025-12-05", "form": "8-K", "items": ["5.02"], "categories": ["Üst düzey yönetici/kurul değişikliği"], "severity": "warning", "accession": "0001140361-25-044561", "primary_doc": "ef20060722_8k.htm"}, {"date": "2025-07-25", "form": "8-K", "items": ["5.02"], "categories": ["Üst düzey yönetici/kurul değişikliği"], "severity": "warning", "accession": "0001140361-25-027340", "primary_doc": "ef20052355_8k.htm"}]}, "metrics": {"price": 333.74, "shares": 15004697000, "eps": 7.46, "market_cap": 5007667430249.756, "total_debt": 90678000000, "net_debt": 54744000000, "pe": 44.7373, "ps": 12.033, "pfcf": 50.7018, "revenue_cagr_3y": 0.0181, "revenue_cagr_5y": null, "sbc_revenue": 0.0309, "shares_yoy": -0.0262, "buyback_latest": 90711000000, "dividends_latest": 15421000000, "rnd_revenue": 0.083, "fcf": 98767000000, "fcf_per_share": 6.58, "latest_fy": 2025, "latest_fundamental_fy": 2025}, "technical": {"price": 333.74, "as_of": "2026-07-17", "rsi14": 71.7, "sma50": 302.63, "sma200": 273.88, "dist_sma50_pct": 10.3, "dist_sma200_pct": 21.9, "high_52w": 333.74, "low_52w": 201.58, "range_position_pct": 100.0, "volatility_20d": 0.3629, "golden_cross": false, "death_cross": false, "sma50_above_sma200": true, "return_1m_pct": 11.5, "return_3m_pct": 26.8, "return_6m_pct": 28.6, "macd": 8.822, "macd_signal": 5.488, "macd_hist": 3.334, "macd_cross": null, "rel_volume": 0.94, "obv_trend": "up", "rsi_divergence": null, "rsi_divergence_detail": null, "support_levels": [{"low": 271.32, "high": 277.1, "price": 274.21, "dist_pct": -17.8, "touches": 7, "strength": 7, "fib": "38.2%", "ma": "SMA200", "last_touch": "2026-06-25", "is_52w_high": false, "is_52w_low": false}, {"low": 167.9, "high": 168.74, "price": 168.32, "dist_pct": -49.6, "touches": 2, "strength": 2, "fib": null, "ma": null, "last_touch": "2025-04-08", "is_52w_high": false, "is_52w_low": true}], "resistance_levels": [], "nearest_support": 274.21, "nearest_resistance": null, "fibonacci": {"high": 334.99, "low": 168.32, "direction": "up", "levels": [{"ratio": "23.6%", "price": 295.66, "dist_pct": -11.4}, {"ratio": "38.2%", "price": 271.32, "dist_pct": -18.7}, {"ratio": "50%", "price": 251.66, "dist_pct": -24.6}, {"ratio": "61.8%", "price": 231.99, "dist_pct": -30.5}, {"ratio": "78.6%", "price": 203.99, "dist_pct": -38.9}]}, "price_series": [{"t": "2021-05-13", "c": 121.81}, {"t": "2021-05-20", "c": 124.1}, {"t": "2021-05-27", "c": 122.12}, {"t": "2021-06-04", "c": 122.71}, {"t": "2021-06-11", "c": 124.13}, {"t": "2021-06-18", "c": 127.17}, {"t": "2021-06-25", "c": 129.75}, {"t": "2021-07-02", "c": 136.43}, {"t": "2021-07-12", "c": 140.85}, {"t": "2021-07-19", "c": 138.85}, {"t": "2021-07-26", "c": 145.23}, {"t": "2021-08-02", "c": 141.85}, {"t": "2021-08-09", "c": 142.61}, {"t": "2021-08-16", "c": 147.53}, {"t": "2021-08-23", "c": 146.15}, {"t": "2021-08-30", "c": 149.48}, {"t": "2021-09-07", "c": 152.96}, {"t": "2021-09-14", "c": 144.6}, {"t": "2021-09-21", "c": 140.02}, {"t": "2021-09-28", "c": 138.53}, {"t": "2021-10-05", "c": 137.75}, {"t": "2021-10-12", "c": 138.14}, {"t": "2021-10-19", "c": 145.22}, {"t": "2021-10-26", "c": 145.77}, {"t": "2021-11-02", "c": 146.45}, {"t": "2021-11-09", "c": 147.44}, {"t": "2021-11-16", "c": 147.62}, {"t": "2021-11-23", "c": 157.8}, {"t": "2021-12-01", "c": 161.09}, {"t": "2021-12-08", "c": 171.16}, {"t": "2021-12-15", "c": 175.29}, {"t": "2021-12-22", "c": 171.71}, {"t": "2021-12-30", "c": 174.21}, {"t": "2022-01-06", "c": 168.15}, {"t": "2022-01-13", "c": 168.34}, {"t": "2022-01-21", "c": 158.78}, {"t": "2022-01-28", "c": 166.52}, {"t": "2022-02-04", "c": 168.75}, {"t": "2022-02-11", "c": 165.08}, {"t": "2022-02-18", "c": 163.77}, {"t": "2022-02-28", "c": 161.63}, {"t": "2022-03-07", "c": 155.94}, {"t": "2022-03-14", "c": 147.44}, {"t": "2022-03-21", "c": 161.89}, {"t": "2022-03-28", "c": 171.89}, {"t": "2022-04-04", "c": 174.67}, {"t": "2022-04-11", "c": 162.25}, {"t": "2022-04-19", "c": 163.86}, {"t": "2022-04-26", "c": 153.49}, {"t": "2022-05-03", "c": 156.11}, {"t": "2022-05-10", "c": 151.47}, {"t": "2022-05-17", "c": 146.3}, {"t": "2022-05-24", "c": 137.6}, {"t": "2022-06-01", "c": 145.78}, {"t": "2022-06-08", "c": 145.05}, {"t": "2022-06-15", "c": 132.76}, {"t": "2022-06-23", "c": 135.55}, {"t": "2022-06-30", "c": 134.03}, {"t": "2022-07-08", "c": 144.15}, {"t": "2022-07-15", "c": 147.21}, {"t": "2022-07-22", "c": 151.06}, {"t": "2022-07-29", "c": 159.31}, {"t": "2022-08-05", "c": 162.32}, {"t": "2022-08-12", "c": 168.95}, {"t": "2022-08-19", "c": 168.38}, {"t": "2022-08-26", "c": 160.62}, {"t": "2022-09-02", "c": 152.96}, {"t": "2022-09-12", "c": 160.44}, {"t": "2022-09-19", "c": 151.65}, {"t": "2022-09-26", "c": 148.01}, {"t": "2022-10-03", "c": 139.84}, {"t": "2022-10-10", "c": 137.85}, {"t": "2022-10-17", "c": 139.8}, {"t": "2022-10-24", "c": 146.71}, {"t": "2022-10-31", "c": 150.53}, {"t": "2022-11-07", "c": 136.6}, {"t": "2022-11-14", "c": 145.81}, {"t": "2022-11-21", "c": 145.54}, {"t": "2022-11-29", "c": 138.81}, {"t": "2022-12-06", "c": 140.52}, {"t": "2022-12-13", "c": 143.04}, {"t": "2022-12-20", "c": 130.09}, {"t": "2022-12-28", "c": 123.94}, {"t": "2023-01-05", "c": 122.93}, {"t": "2023-01-12", "c": 131.18}, {"t": "2023-01-20", "c": 135.57}, {"t": "2023-01-27", "c": 143.49}, {"t": "2023-02-03", "c": 151.92}, {"t": "2023-02-10", "c": 148.72}, {"t": "2023-02-17", "c": 150.23}, {"t": "2023-02-27", "c": 145.67}, {"t": "2023-03-06", "c": 151.49}, {"t": "2023-03-13", "c": 148.18}, {"t": "2023-03-20", "c": 155.01}, {"t": "2023-03-27", "c": 155.88}, {"t": "2023-04-03", "c": 163.65}, {"t": "2023-04-11", "c": 158.36}, {"t": "2023-04-18", "c": 163.94}, {"t": "2023-04-25", "c": 161.28}, {"t": "2023-05-02", "c": 165.98}, {"t": "2023-05-09", "c": 169.16}, {"t": "2023-05-16", "c": 169.69}, {"t": "2023-05-23", "c": 169.19}, {"t": "2023-05-31", "c": 174.8}, {"t": "2023-06-07", "c": 175.36}, {"t": "2023-06-14", "c": 181.41}, {"t": "2023-06-22", "c": 184.41}, {"t": "2023-06-29", "c": 186.97}, {"t": "2023-07-07", "c": 188.04}, {"t": "2023-07-14", "c": 188.05}, {"t": "2023-07-21", "c": 189.29}, {"t": "2023-07-28", "c": 193.12}, {"t": "2023-08-04", "c": 179.47}, {"t": "2023-08-11", "c": 175.57}, {"t": "2023-08-18", "c": 172.31}, {"t": "2023-08-25", "c": 176.38}, {"t": "2023-09-01", "c": 187.09}, {"t": "2023-09-11", "c": 177.12}, {"t": "2023-09-18", "c": 175.75}, {"t": "2023-09-25", "c": 173.88}, {"t": "2023-10-02", "c": 171.58}, {"t": "2023-10-09", "c": 176.75}, {"t": "2023-10-16", "c": 176.49}, {"t": "2023-10-23", "c": 170.84}, {"t": "2023-10-30", "c": 168.16}, {"t": "2023-11-06", "c": 176.99}, {"t": "2023-11-13", "c": 182.73}, {"t": "2023-11-20", "c": 189.31}, {"t": "2023-11-28", "c": 188.27}, {"t": "2023-12-05", "c": 191.26}, {"t": "2023-12-12", "c": 192.53}, {"t": "2023-12-19", "c": 194.74}, {"t": "2023-12-27", "c": 190.99}, {"t": "2024-01-04", "c": 179.87}, {"t": "2024-01-11", "c": 183.51}, {"t": "2024-01-19", "c": 189.42}, {"t": "2024-01-26", "c": 190.27}, {"t": "2024-02-02", "c": 183.77}, {"t": "2024-02-09", "c": 186.97}, {"t": "2024-02-16", "c": 180.5}, {"t": "2024-02-26", "c": 179.36}, {"t": "2024-03-04", "c": 173.36}, {"t": "2024-03-11", "c": 171.03}, {"t": "2024-03-18", "c": 171.99}, {"t": "2024-03-25", "c": 169.15}, {"t": "2024-04-02", "c": 167.16}, {"t": "2024-04-09", "c": 167.99}, {"t": "2024-04-16", "c": 167.7}, {"t": "2024-04-23", "c": 165.24}, {"t": "2024-04-30", "c": 168.64}, {"t": "2024-05-07", "c": 180.59}, {"t": "2024-05-14", "c": 185.82}, {"t": "2024-05-21", "c": 190.7}, {"t": "2024-05-29", "c": 188.66}, {"t": "2024-06-05", "c": 194.19}, {"t": "2024-06-12", "c": 211.24}, {"t": "2024-06-20", "c": 207.88}, {"t": "2024-06-27", "c": 212.26}, {"t": "2024-07-05", "c": 224.4}, {"t": "2024-07-12", "c": 228.56}, {"t": "2024-07-19", "c": 222.38}, {"t": "2024-07-26", "c": 216.09}, {"t": "2024-08-02", "c": 217.97}, {"t": "2024-08-09", "c": 214.38}, {"t": "2024-08-16", "c": 224.37}, {"t": "2024-08-23", "c": 225.15}, {"t": "2024-08-30", "c": 227.3}, {"t": "2024-09-09", "c": 219.27}, {"t": "2024-09-16", "c": 214.71}, {"t": "2024-09-23", "c": 224.78}, {"t": "2024-09-30", "c": 231.27}, {"t": "2024-10-07", "c": 220.04}, {"t": "2024-10-14", "c": 229.58}, {"t": "2024-10-21", "c": 234.72}, {"t": "2024-10-28", "c": 231.66}, {"t": "2024-11-04", "c": 220.36}, {"t": "2024-11-11", "c": 222.81}, {"t": "2024-11-18", "c": 226.57}, {"t": "2024-11-25", "c": 231.39}, {"t": "2024-12-03", "c": 241.11}, {"t": "2024-12-10", "c": 246.2}, {"t": "2024-12-17", "c": 251.87}, {"t": "2024-12-24", "c": 256.56}, {"t": "2025-01-02", "c": 242.3}, {"t": "2025-01-10", "c": 235.35}, {"t": "2025-01-17", "c": 228.52}, {"t": "2025-01-27", "c": 228.4}, {"t": "2025-02-03", "c": 226.56}, {"t": "2025-02-10", "c": 226.45}, {"t": "2025-02-18", "c": 243.19}, {"t": "2025-02-25", "c": 245.74}, {"t": "2025-03-04", "c": 234.69}, {"t": "2025-03-11", "c": 219.68}, {"t": "2025-03-18", "c": 211.57}, {"t": "2025-03-25", "c": 222.57}, {"t": "2025-04-01", "c": 222.02}, {"t": "2025-04-08", "c": 171.51}, {"t": "2025-04-09", "c": 197.8}, {"t": "2025-04-10", "c": 189.42}, {"t": "2025-04-11", "c": 197.11}, {"t": "2025-04-14", "c": 201.46}, {"t": "2025-04-15", "c": 201.08}, {"t": "2025-04-16", "c": 193.25}, {"t": "2025-04-17", "c": 195.94}, {"t": "2025-04-21", "c": 192.14}, {"t": "2025-04-22", "c": 198.69}, {"t": "2025-04-23", "c": 203.52}, {"t": "2025-04-24", "c": 207.27}, {"t": "2025-04-25", "c": 208.18}, {"t": "2025-04-28", "c": 209.04}, {"t": "2025-04-29", "c": 210.1}, {"t": "2025-04-30", "c": 211.38}, {"t": "2025-05-01", "c": 212.2}, {"t": "2025-05-02", "c": 204.27}, {"t": "2025-05-05", "c": 197.84}, {"t": "2025-05-06", "c": 197.47}, {"t": "2025-05-07", "c": 195.22}, {"t": "2025-05-08", "c": 196.45}, {"t": "2025-05-09", "c": 197.49}, {"t": "2025-05-12", "c": 209.96}, {"t": "2025-05-13", "c": 212.09}, {"t": "2025-05-14", "c": 211.49}, {"t": "2025-05-15", "c": 210.61}, {"t": "2025-05-16", "c": 210.43}, {"t": "2025-05-19", "c": 207.96}, {"t": "2025-05-20", "c": 206.04}, {"t": "2025-05-21", "c": 201.29}, {"t": "2025-05-22", "c": 200.56}, {"t": "2025-05-23", "c": 194.5}, {"t": "2025-05-27", "c": 199.42}, {"t": "2025-05-28", "c": 199.63}, {"t": "2025-05-29", "c": 199.16}, {"t": "2025-05-30", "c": 200.06}, {"t": "2025-06-02", "c": 200.9}, {"t": "2025-06-03", "c": 202.47}, {"t": "2025-06-04", "c": 202.02}, {"t": "2025-06-05", "c": 199.84}, {"t": "2025-06-06", "c": 203.11}, {"t": "2025-06-09", "c": 200.65}, {"t": "2025-06-10", "c": 201.87}, {"t": "2025-06-11", "c": 197.99}, {"t": "2025-06-12", "c": 198.41}, {"t": "2025-06-13", "c": 195.67}, {"t": "2025-06-16", "c": 197.64}, {"t": "2025-06-17", "c": 194.87}, {"t": "2025-06-18", "c": 195.8}, {"t": "2025-06-20", "c": 200.21}, {"t": "2025-06-23", "c": 200.7}, {"t": "2025-06-24", "c": 199.51}, {"t": "2025-06-25", "c": 200.76}, {"t": "2025-06-26", "c": 200.21}, {"t": "2025-06-27", "c": 200.29}, {"t": "2025-06-30", "c": 204.36}, {"t": "2025-07-01", "c": 207.0}, {"t": "2025-07-02", "c": 211.6}, {"t": "2025-07-03", "c": 212.71}, {"t": "2025-07-07", "c": 209.12}, {"t": "2025-07-08", "c": 209.18}, {"t": "2025-07-09", "c": 210.31}, {"t": "2025-07-10", "c": 211.57}, {"t": "2025-07-11", "c": 210.33}, {"t": "2025-07-14", "c": 207.8}, {"t": "2025-07-15", "c": 208.28}, {"t": "2025-07-16", "c": 209.33}, {"t": "2025-07-17", "c": 209.19}, {"t": "2025-07-18", "c": 210.35}, {"t": "2025-07-21", "c": 211.64}, {"t": "2025-07-22", "c": 213.55}, {"t": "2025-07-23", "c": 213.3}, {"t": "2025-07-24", "c": 212.92}, {"t": "2025-07-25", "c": 213.03}, {"t": "2025-07-28", "c": 213.2}, {"t": "2025-07-29", "c": 210.44}, {"t": "2025-07-30", "c": 208.22}, {"t": "2025-07-31", "c": 206.75}, {"t": "2025-08-01", "c": 201.58}, {"t": "2025-08-04", "c": 202.55}, {"t": "2025-08-05", "c": 202.12}, {"t": "2025-08-06", "c": 212.41}, {"t": "2025-08-07", "c": 219.16}, {"t": "2025-08-08", "c": 228.44}, {"t": "2025-08-11", "c": 226.54}, {"t": "2025-08-12", "c": 229.0}, {"t": "2025-08-13", "c": 232.67}, {"t": "2025-08-14", "c": 232.12}, {"t": "2025-08-15", "c": 230.94}, {"t": "2025-08-18", "c": 230.24}, {"t": "2025-08-19", "c": 229.91}, {"t": "2025-08-20", "c": 225.37}, {"t": "2025-08-21", "c": 224.27}, {"t": "2025-08-22", "c": 227.12}, {"t": "2025-08-25", "c": 226.52}, {"t": "2025-08-26", "c": 228.66}, {"t": "2025-08-27", "c": 229.84}, {"t": "2025-08-28", "c": 231.9}, {"t": "2025-08-29", "c": 231.49}, {"t": "2025-09-02", "c": 229.07}, {"t": "2025-09-03", "c": 237.8}, {"t": "2025-09-04", "c": 239.1}, {"t": "2025-09-05", "c": 239.01}, {"t": "2025-09-08", "c": 237.21}, {"t": "2025-09-09", "c": 233.69}, {"t": "2025-09-10", "c": 226.15}, {"t": "2025-09-11", "c": 229.38}, {"t": "2025-09-12", "c": 233.41}, {"t": "2025-09-15", "c": 236.03}, {"t": "2025-09-16", "c": 237.48}, {"t": "2025-09-17", "c": 238.32}, {"t": "2025-09-18", "c": 237.21}, {"t": "2025-09-19", "c": 244.81}, {"t": "2025-09-22", "c": 255.36}, {"t": "2025-09-23", "c": 253.71}, {"t": "2025-09-24", "c": 251.6}, {"t": "2025-09-25", "c": 256.15}, {"t": "2025-09-26", "c": 254.74}, {"t": "2025-09-29", "c": 253.71}, {"t": "2025-09-30", "c": 253.91}, {"t": "2025-10-01", "c": 254.73}, {"t": "2025-10-02", "c": 256.4}, {"t": "2025-10-03", "c": 257.29}, {"t": "2025-10-06", "c": 255.97}, {"t": "2025-10-07", "c": 255.76}, {"t": "2025-10-08", "c": 257.33}, {"t": "2025-10-09", "c": 253.32}, {"t": "2025-10-10", "c": 244.58}, {"t": "2025-10-13", "c": 246.96}, {"t": "2025-10-14", "c": 247.07}, {"t": "2025-10-15", "c": 248.64}, {"t": "2025-10-16", "c": 246.75}, {"t": "2025-10-17", "c": 251.58}, {"t": "2025-10-20", "c": 261.5}, {"t": "2025-10-21", "c": 262.03}, {"t": "2025-10-22", "c": 257.72}, {"t": "2025-10-23", "c": 258.85}, {"t": "2025-10-24", "c": 262.08}, {"t": "2025-10-27", "c": 268.05}, {"t": "2025-10-28", "c": 268.24}, {"t": "2025-10-29", "c": 268.94}, {"t": "2025-10-30", "c": 270.63}, {"t": "2025-10-31", "c": 269.61}, {"t": "2025-11-03", "c": 268.29}, {"t": "2025-11-04", "c": 269.28}, {"t": "2025-11-05", "c": 269.38}, {"t": "2025-11-06", "c": 269.01}, {"t": "2025-11-07", "c": 267.71}, {"t": "2025-11-10", "c": 268.93}, {"t": "2025-11-11", "c": 274.74}, {"t": "2025-11-12", "c": 272.96}, {"t": "2025-11-13", "c": 272.44}, {"t": "2025-11-14", "c": 271.9}, {"t": "2025-11-17", "c": 266.96}, {"t": "2025-11-18", "c": 266.94}, {"t": "2025-11-19", "c": 268.06}, {"t": "2025-11-20", "c": 265.76}, {"t": "2025-11-21", "c": 270.99}, {"t": "2025-11-24", "c": 275.41}, {"t": "2025-11-25", "c": 276.46}, {"t": "2025-11-26", "c": 277.04}, {"t": "2025-11-28", "c": 278.33}, {"t": "2025-12-01", "c": 282.58}, {"t": "2025-12-02", "c": 285.66}, {"t": "2025-12-03", "c": 283.62}, {"t": "2025-12-04", "c": 280.18}, {"t": "2025-12-05", "c": 278.26}, {"t": "2025-12-08", "c": 277.37}, {"t": "2025-12-09", "c": 276.67}, {"t": "2025-12-10", "c": 278.26}, {"t": "2025-12-11", "c": 277.51}, {"t": "2025-12-12", "c": 277.76}, {"t": "2025-12-15", "c": 273.6}, {"t": "2025-12-16", "c": 274.1}, {"t": "2025-12-17", "c": 271.34}, {"t": "2025-12-18", "c": 271.69}, {"t": "2025-12-19", "c": 273.16}, {"t": "2025-12-22", "c": 270.47}, {"t": "2025-12-23", "c": 271.85}, {"t": "2025-12-24", "c": 273.3}, {"t": "2025-12-26", "c": 272.89}, {"t": "2025-12-29", "c": 273.25}, {"t": "2025-12-30", "c": 272.57}, {"t": "2025-12-31", "c": 271.36}, {"t": "2026-01-02", "c": 270.51}, {"t": "2026-01-05", "c": 266.76}, {"t": "2026-01-06", "c": 261.87}, {"t": "2026-01-07", "c": 259.85}, {"t": "2026-01-08", "c": 258.56}, {"t": "2026-01-09", "c": 258.89}, {"t": "2026-01-12", "c": 259.77}, {"t": "2026-01-13", "c": 260.57}, {"t": "2026-01-14", "c": 259.48}, {"t": "2026-01-15", "c": 257.73}, {"t": "2026-01-16", "c": 255.06}, {"t": "2026-01-20", "c": 246.24}, {"t": "2026-01-21", "c": 247.19}, {"t": "2026-01-22", "c": 247.89}, {"t": "2026-01-23", "c": 247.58}, {"t": "2026-01-26", "c": 254.94}, {"t": "2026-01-27", "c": 257.79}, {"t": "2026-01-28", "c": 255.96}, {"t": "2026-01-29", "c": 257.8}, {"t": "2026-01-30", "c": 259.0}, {"t": "2026-02-02", "c": 269.51}, {"t": "2026-02-03", "c": 268.98}, {"t": "2026-02-04", "c": 275.98}, {"t": "2026-02-05", "c": 275.4}, {"t": "2026-02-06", "c": 277.6}, {"t": "2026-02-09", "c": 274.37}, {"t": "2026-02-10", "c": 273.43}, {"t": "2026-02-11", "c": 275.25}, {"t": "2026-02-12", "c": 261.49}, {"t": "2026-02-13", "c": 255.54}, {"t": "2026-02-17", "c": 263.64}, {"t": "2026-02-18", "c": 264.11}, {"t": "2026-02-19", "c": 260.34}, {"t": "2026-02-20", "c": 264.34}, {"t": "2026-02-23", "c": 265.93}, {"t": "2026-02-24", "c": 271.89}, {"t": "2026-02-25", "c": 273.98}, {"t": "2026-02-26", "c": 272.7}, {"t": "2026-02-27", "c": 263.94}, {"t": "2026-03-02", "c": 264.48}, {"t": "2026-03-03", "c": 263.51}, {"t": "2026-03-04", "c": 262.28}, {"t": "2026-03-05", "c": 260.05}, {"t": "2026-03-06", "c": 257.22}, {"t": "2026-03-09", "c": 259.64}, {"t": "2026-03-10", "c": 260.59}, {"t": "2026-03-11", "c": 260.57}, {"t": "2026-03-12", "c": 255.52}, {"t": "2026-03-13", "c": 249.89}, {"t": "2026-03-16", "c": 252.59}, {"t": "2026-03-17", "c": 254.0}, {"t": "2026-03-18", "c": 249.71}, {"t": "2026-03-19", "c": 248.73}, {"t": "2026-03-20", "c": 247.76}, {"t": "2026-03-23", "c": 251.26}, {"t": "2026-03-24", "c": 251.41}, {"t": "2026-03-25", "c": 252.39}, {"t": "2026-03-26", "c": 252.66}, {"t": "2026-03-27", "c": 248.57}, {"t": "2026-03-30", "c": 246.4}, {"t": "2026-03-31", "c": 253.56}, {"t": "2026-04-01", "c": 255.39}, {"t": "2026-04-02", "c": 255.68}, {"t": "2026-04-06", "c": 258.62}, {"t": "2026-04-07", "c": 253.27}, {"t": "2026-04-08", "c": 258.66}, {"t": "2026-04-09", "c": 260.25}, {"t": "2026-04-10", "c": 260.24}, {"t": "2026-04-13", "c": 258.96}, {"t": "2026-04-14", "c": 258.59}, {"t": "2026-04-15", "c": 266.18}, {"t": "2026-04-16", "c": 263.16}, {"t": "2026-04-17", "c": 269.98}, {"t": "2026-04-20", "c": 272.8}, {"t": "2026-04-21", "c": 265.93}, {"t": "2026-04-22", "c": 272.92}, {"t": "2026-04-23", "c": 273.18}, {"t": "2026-04-24", "c": 270.81}, {"t": "2026-04-27", "c": 267.36}, {"t": "2026-04-28", "c": 270.46}, {"t": "2026-04-29", "c": 269.92}, {"t": "2026-04-30", "c": 271.1}, {"t": "2026-05-01", "c": 279.88}, {"t": "2026-05-04", "c": 276.58}, {"t": "2026-05-05", "c": 283.92}, {"t": "2026-05-06", "c": 287.25}, {"t": "2026-05-07", "c": 287.18}, {"t": "2026-05-08", "c": 293.05}, {"t": "2026-05-11", "c": 292.68}, {"t": "2026-05-12", "c": 294.8}, {"t": "2026-05-13", "c": 298.87}, {"t": "2026-05-14", "c": 298.21}, {"t": "2026-05-15", "c": 300.23}, {"t": "2026-05-18", "c": 297.84}, {"t": "2026-05-19", "c": 298.97}, {"t": "2026-05-20", "c": 302.25}, {"t": "2026-05-21", "c": 304.99}, {"t": "2026-05-22", "c": 308.82}, {"t": "2026-05-26", "c": 308.33}, {"t": "2026-05-27", "c": 310.85}, {"t": "2026-05-28", "c": 312.51}, {"t": "2026-05-29", "c": 312.06}, {"t": "2026-06-01", "c": 306.31}, {"t": "2026-06-02", "c": 315.2}, {"t": "2026-06-03", "c": 310.26}, {"t": "2026-06-04", "c": 311.23}, {"t": "2026-06-05", "c": 307.34}, {"t": "2026-06-08", "c": 301.54}, {"t": "2026-06-09", "c": 290.55}, {"t": "2026-06-10", "c": 291.58}, {"t": "2026-06-11", "c": 295.63}, {"t": "2026-06-12", "c": 291.13}, {"t": "2026-06-15", "c": 296.42}, {"t": "2026-06-16", "c": 299.24}, {"t": "2026-06-17", "c": 295.95}, {"t": "2026-06-18", "c": 298.01}, {"t": "2026-06-22", "c": 297.01}, {"t": "2026-06-23", "c": 294.3}, {"t": "2026-06-24", "c": 293.08}, {"t": "2026-06-25", "c": 275.15}, {"t": "2026-06-26", "c": 283.78}, {"t": "2026-06-29", "c": 281.74}, {"t": "2026-06-30", "c": 289.36}, {"t": "2026-07-01", "c": 294.38}, {"t": "2026-07-02", "c": 308.63}, {"t": "2026-07-06", "c": 312.66}, {"t": "2026-07-07", "c": 310.66}, {"t": "2026-07-08", "c": 313.39}, {"t": "2026-07-09", "c": 316.22}, {"t": "2026-07-10", "c": 315.32}, {"t": "2026-07-13", "c": 317.31}, {"t": "2026-07-14", "c": 314.86}, {"t": "2026-07-15", "c": 327.5}, {"t": "2026-07-16", "c": 333.26}, {"t": "2026-07-17", "c": 333.74}], "verdict": "AŞIRI ALIM", "verdict_detail": "RSI 72, SMA50 +%10", "horizon_summary": "RSI 71.7 seviyesinde. 50 günlük ortalama, 200 günlük ortalamanın üzerinde (SMA50 > SMA200). Fiyat, 200 günlük ortalamanın +%22 üzerinde. Fiyat, 52 haftalık aralığın %100 seviyesinde.", "horizon": "1y"}, "red_flags": [{"code": "RECEIVABLES_OUTPACE", "message": "Alacaklar gelirden daha hızlı büyüyor", "detail": "Son 3 yılda alacak büyümesi gelir büyümesini geride bıraktı (FY2025: alacak %+19.1 vs gelir %+6.4; FY2024: alacak %+13.2 vs gelir %+2.0; FY2023: alacak %+4.7 vs gelir %-2.8). Bu, tahsilatların zayıfladığına veya gelirin erken kaydedildiğine işaret edebilir."}], "entity_name": null}</script>
 
 <div class="page">
   <nav class="topnav" id="topnav"></nav>
@@ -1370,16 +1090,6 @@
     var pct = Number(v) * 100;
     var d = decimals === undefined ? 1 : decimals;
     return "%" + pct.toFixed(d);
-  }
-
-  // Same Turkish percent-first convention as fmtPctTr, but for a value that
-  // is ALREADY a percentage (not a decimal fraction) and needs an explicit
-  // +/- sign -- used for the history screen's "vs. last analysis" delta.
-  function fmtSignedPctTr(v) {
-    if (!isNum(v)) return "—";
-    var num = Number(v);
-    var sign = num < 0 ? "-" : "+";
-    return "%" + sign + Math.abs(num).toFixed(1);
   }
 
   // growth/discount_rate/note arrive as ready-made, human-readable strings
@@ -1514,16 +1224,7 @@
   // ---- Header card ------------------------------------------------------
   function headerCardHtml(payload) {
     var priceText = fmtMoney(payload.price);
-    // macro_asof (SPEC.md as-of mode) carries which macro-input vintage (ERP,
-    // risk-free rate) fed the valuation when the run is point-in-time; only
-    // present on result.valuation, so this degrades to "" for every older/
-    // live payload without it.
-    var macroAsof = ((payload.result || {}).valuation || {}).macro_asof;
-    var macroNote = (macroAsof && (macroAsof.erp_source || macroAsof.risk_free_source))
-      ? " · Makro: ERP " + escapeHtml(macroAsof.erp_source || "—") +
-        ", risksiz faiz " + escapeHtml(macroAsof.risk_free_source || "—")
-      : "";
-    var sourceNote = "SEC EDGAR + Stooq" + (payload.as_of ? " · as of " + escapeHtml(payload.as_of) : "") + macroNote;
+    var sourceNote = "SEC EDGAR + Stooq" + (payload.as_of ? " · as of " + escapeHtml(payload.as_of) : "");
     var entityHtml = payload.entity_name
       ? '<span class="entity-name">' + escapeHtml(payload.entity_name) + '</span>'
       : "";
@@ -1906,34 +1607,6 @@
 
   var TRI_MARKER_ICON = { agree: "✓", disagree: "✗", muted: "•" };
 
-  // Sector-relative comparison line for the MULTIPLES method (VALUATION.md
-  // Sec.7 axis-b): shows the current primary multiple vs its Damodaran sector
-  // median explicitly, so the sector standing stays visible even when the
-  // signal itself reads "MIXED". Renders nothing when no sector median
-  // matched (comparison numbers absent).
-  var SECTOR_BUCKET_WORD = {
-    pahali: "sektöre göre pahalı",
-    ucuz: "sektöre göre ucuz",
-    makul: "sektör medyanıyla uyumlu",
-  };
-  function sectorComparisonLineHtml(valuation) {
-    var cmp = (((valuation || {}).multiples || {}).sector || {}).comparison;
-    if (!cmp || !isNum(cmp.current) || !isNum(cmp.median) || !isNum(cmp.ratio)) return "";
-    var word = SECTOR_BUCKET_WORD[cmp.bucket] || "";
-    var cls = cmp.bucket === "pahali" ? "sector-cmp-red"
-            : cmp.bucket === "ucuz" ? "sector-cmp-green"
-            : "sector-cmp-muted";
-    var label = cmp.label || "Çarpan";
-    return (
-      '<div class="tri-sector ' + cls + '">' +
-        '<span class="tri-sector-label">Sektör</span>' +
-        escapeHtml(label) + " " + Number(cmp.current).toFixed(1) +
-        " vs medyan " + Number(cmp.median).toFixed(1) +
-        " (" + Number(cmp.ratio).toFixed(2) + "×" + (word ? " → " + word : "") + ")" +
-      '</div>'
-    );
-  }
-
   function triangulationRowHtml(valuation, confidenceOverride) {
     var tri = (valuation || {}).triangulation;
     if (!tri) return "";
@@ -1983,7 +1656,6 @@
       var sig = signals[m.key];
       var kind = triAgreementKind(sig, direction);
       var reason = rationale[m.key];
-      var extra = (m.key === "multiples") ? sectorComparisonLineHtml(valuation) : "";
       return (
         '<div class="tri-method">' +
           '<div class="tri-method-head">' +
@@ -1992,7 +1664,6 @@
             '<span class="tri-marker tri-marker-' + kind + '">' + TRI_MARKER_ICON[kind] + '</span>' +
           '</div>' +
           (reason ? '<div class="tri-reason">' + escapeHtml(reason) + '</div>' : "") +
-          extra +
         '</div>'
       );
     }).join("");
@@ -2466,244 +2137,7 @@
     }
 
     return { S: S, meterPos: meterPos, dirLabel: dirLabel, dirCls: dirCls, arrow: arrow, accelWord: accelWord,
-      dirKind: dirKind, r1: r1, r3: r3, r6: r6, rsi: rsi, mh: mh, mc: mc };
-  }
-
-  // ---- Swing reversal-confirmation checklist ------------------------------
-  // Turns the momentum readout into an actionable "is the trend turning?"
-  // panel. Directional to the prevailing momentum: a DOWN trend looks for a
-  // BULLISH reversal (oversold bounce being reclaimed), an UP trend for a
-  // BEARISH one. Each row is a deterministic check over already-computed
-  // indicators -- RSI reclaim (t.rsi_reclaim, Python side), MACD signal cross
-  // (t.macd_cross), OBV money flow (t.obv_trend), and RSI divergence
-  // (t.rsi_divergence). A confirmed row is a ✓; a still-pending precondition
-  // (e.g. RSI oversold but not yet reclaimed) is a ◦; an outright contra
-  // reading is a ✗. The count of ✓ drives a one-line readiness verdict, and a
-  // watch line maps the nearest S/R zone to the trigger/invalidation level.
-  var _REV_VOLUME_MIN = 1.5; // rel_volume at/above which the turn has real participation
-  function computeReversal(t, momentum) {
-    if (!momentum || (momentum.dirKind !== "up" && momentum.dirKind !== "down")) return null;
-    var bull = momentum.dirKind === "down"; // downtrend -> watch for a bullish turn
-    var rows = [];
-    function row(state, text) { rows.push({ state: state, text: text }); }
-
-    // 1. RSI reclaim of the extreme line.
-    var rsi = isNum(t.rsi14) ? Number(t.rsi14) : null;
-    if (bull) {
-      if (t.rsi_reclaim === "bullish") row("ok", "RSI aşırı satımdan çıktı (30 üstünü geri aldı)");
-      else if (rsi !== null && rsi < 30) row("pending", "RSI aşırı satımda (" + rsi.toFixed(0) + ") — henüz 30 üstünü geri almadı");
-      else row("none", "RSI aşırı satım dönüşü yok");
-    } else {
-      if (t.rsi_reclaim === "bearish") row("ok", "RSI aşırı alımdan döndü (70 altına indi)");
-      else if (rsi !== null && rsi > 70) row("pending", "RSI aşırı alımda (" + rsi.toFixed(0) + ") — henüz 70 altına inmedi");
-      else row("none", "RSI aşırı alım dönüşü yok");
-    }
-
-    // 2. MACD signal-line crossover.
-    if (t.macd_cross === (bull ? "bullish" : "bearish")) row("ok", "MACD " + (bull ? "yukarı" : "aşağı") + " kesişim (taze)");
-    else if (t.macd_cross === (bull ? "bearish" : "bullish")) row("bad", "MACD ters yönde kesişti");
-    else row("none", "MACD kesişimi yok");
-
-    // 3. OBV money flow.
-    if (t.obv_trend === (bull ? "up" : "down")) row("ok", "OBV " + (bull ? "para girişi (toplama)" : "para çıkışı (dağıtım)"));
-    else if (t.obv_trend === (bull ? "down" : "up")) row("bad", "OBV ters yönde (" + (bull ? "dağıtım" : "toplama") + ")");
-    else row("none", "OBV yatay");
-
-    // 4. Volume participation at the turn (rel_volume = last vol / 20d avg). A
-    // reversal on elevated volume is far more trustworthy than one on thin
-    // trade; direction-neutral, so it reads the same for a bullish/bearish turn.
-    var rv = isNum(t.rel_volume) ? Number(t.rel_volume) : null;
-    if (rv !== null) {
-      if (rv >= _REV_VOLUME_MIN) row("ok", "Hacim ortalamanın belirgin üstünde (" + rv.toFixed(1) + "×) — dönüşe katılım var");
-      else row("none", "Hacim sıradan (" + rv.toFixed(1) + "×) — dönüşe güçlü katılım yok");
-    }
-
-    // 5. Volume climax / capitulation bar in the last ~10 sessions. A
-    // wide-range, huge-volume bar in the direction of the exhausting trend
-    // (down-climax while falling, up-climax while rising) marks seller/buyer
-    // exhaustion -- a classic reversal tell. Adds a row only when detected.
-    var vc = t.volume_climax;
-    if (vc && vc.detected && vc.direction === (bull ? "down" : "up")) {
-      var ago = vc.bars_ago === 0 ? "bugün" : vc.bars_ago + " gün önce";
-      row("ok", (bull ? "Kapitülasyon mumu" : "Alım klimaksı") + " (" + ago + ", " + Number(vc.rel_volume).toFixed(1) + "× hacim) — tükeniş");
-    }
-
-    // 6. RSI divergence (bonus corroboration; only adds a row when present).
-    if (t.rsi_divergence === (bull ? "bullish" : "bearish")) {
-      row("ok", (bull ? "Boğa uyumsuzluğu (fiyat yeni dip, RSI değil)" : "Ayı uyumsuzluğu (fiyat yeni zirve, RSI değil)"));
-    }
-
-    var confirmed = rows.filter(function (r) { return r.state === "ok"; }).length;
-    var total = rows.length;
-    var verdict, vcls;
-    if (confirmed === 0) { verdict = (bull ? "Dönüş teyidi yok — düşen trend sürüyor" : "Dönüş teyidi yok — yükseliş sürüyor"); vcls = "rev-none"; }
-    else if (confirmed < 2) { verdict = "Erken dönüş sinyali — teyit zayıf, bekle"; vcls = "rev-early"; }
-    else { verdict = (bull ? "Dönüş teyitleniyor — boğa tarafı güçleniyor" : "Dönüş teyitleniyor — ayı tarafı güçleniyor"); vcls = "rev-strong"; }
-
-    // Watch line: nearest resistance is the trigger to reclaim for a bullish
-    // turn (nearest support the invalidation), mirrored for a bearish turn.
-    var watchHtml = "";
-    var trig = bull ? t.nearest_resistance : t.nearest_support;
-    var inval = bull ? t.nearest_support : t.nearest_resistance;
-    if (isNum(trig) || isNum(inval)) {
-      var parts = [];
-      if (isNum(trig)) parts.push((bull ? "$" + Number(trig).toFixed(2) + " direncini geri alması dönüşü teyit eder" : "$" + Number(trig).toFixed(2) + " desteğini kaybetmesi dönüşü teyit eder"));
-      if (isNum(inval)) parts.push((bull ? "$" + Number(inval).toFixed(2) + " desteği kırılırsa senaryo bozulur" : "$" + Number(inval).toFixed(2) + " direnci aşılırsa senaryo bozulur"));
-      watchHtml = '<div class="rev-watch"><span class="rev-watch-label">İzle</span>' + escapeHtml(parts.join("; ")) + '.</div>';
-    }
-
-    // ATR-based risk readout: how far the invalidation stop sits from price,
-    // in % and ATR multiples -- the yardstick for position sizing (risk per
-    // share). Only when both an invalidation level and ATR are available.
-    var px = isNum(t.price) ? Number(t.price) : null;
-    var atr = isNum(t.atr14) ? Number(t.atr14) : null;
-    var riskHtml = "";
-    if (px !== null && px > 0 && atr !== null && atr > 0 && isNum(inval)) {
-      var stopDist = Math.abs(px - Number(inval));
-      var riskPct = stopDist / px * 100;
-      var atrMult = stopDist / atr;
-      var wide = riskPct > 12; // a stop this far implies an oversized swing risk
-      riskHtml = '<div class="rev-risk' + (wide ? " rev-risk-wide" : "") + '">' +
-        '<span class="rev-watch-label">Risk</span>' +
-        escapeHtml("Stop $" + Number(inval).toFixed(2) + " ≈ girişten %" + riskPct.toFixed(1) +
-          " uzakta (" + atrMult.toFixed(1) + "× ATR); ATR $" + atr.toFixed(2) +
-          (wide ? " — geniş stop, pozisyonu küçült" : "")) + '.</div>';
-    }
-
-    return { bull: bull, rows: rows, confirmed: confirmed, total: total, verdict: verdict, vcls: vcls, watchHtml: watchHtml + riskHtml };
-  }
-
-  // Compact badge marker: only once the turn has ≥2 confirmations, so the
-  // momentum badge itself flags "a reversal is building" at a glance.
-  function reversalBadgeMarkerHtml(rev) {
-    if (!rev || rev.confirmed < 2) return "";
-    var word = rev.bull ? "dönüş yakın ⤴" : "dönüş riski ⤵";
-    var cls = rev.bull ? "rev-mark-up" : "rev-mark-down";
-    return '<span class="rev-badge-mark ' + cls + '">↺ ' + word + '</span>';
-  }
-
-  // Bollinger squeeze chip: flags volatility compression (band width in the
-  // tightest fifth of its ~6-month range) -- an expansion move often follows,
-  // so a squeeze is a "get ready" for swing timing (direction-agnostic).
-  function squeezeBadgeHtml(t) {
-    var sq = t.bb_squeeze;
-    if (!sq || !sq.active) return "";
-    return '<span class="rev-badge-mark sq-mark">⇉ SIKIŞMA (' + Math.round(Number(sq.percentile)) + 'p)</span>';
-  }
-
-  function reversalBlockHtml(rev) {
-    if (!rev) return "";
-    var ICON = { ok: "✓", pending: "◦", bad: "✗", none: "◦" };
-    var rowsHtml = rev.rows.map(function (r) {
-      return '<li class="rev-row rev-' + r.state + '"><span class="rev-icon">' + ICON[r.state] + '</span>' + escapeHtml(r.text) + '</li>';
-    }).join("");
-    var help = "Değerleme 'ne alınır'ı, bu liste 'ne zaman'ı gösterir: kaç bağımsız gösterge " +
-      "trendin döndüğünü teyit ediyor. ✓ arttıkça sinyal güçlenir; tek başına 'ucuz' + düşen trend " +
-      "genelde erkendir. 'İzle' satırı giriş/geçersizlik seviyesini verir.";
-    return (
-      '<div class="rev-block">' +
-        '<div class="rev-head"><span class="rev-title">Dönüş Teyidi</span>' +
-          '<span class="rev-verdict ' + rev.vcls + '">' + rev.confirmed + '/' + rev.total + ' · ' + escapeHtml(rev.verdict) + '</span>' +
-        '</div>' +
-        '<div class="rev-help">' + escapeHtml(help) + '</div>' +
-        '<ul class="rev-list">' + rowsHtml + '</ul>' +
-        rev.watchHtml +
-      '</div>'
-    );
-  }
-
-  // ---- Swing setup grade (A/B/C) ------------------------------------------
-  // A single composite of the three things a swing entry needs: VALUE (is it
-  // cheap? -> triangulation direction), TIMING (is a bullish reversal
-  // confirming? -> computeReversal), and REWARD (best tranche R/R from the
-  // entry plan). Each contributes 0-2 points; the grade is the score ratio.
-  // Long-biased (the common retail swing case) and fully transparent -- the
-  // three component chips are shown so the letter is never a black box.
-  function bestEntryRR(entryPlan) {
-    if (!Array.isArray(entryPlan)) return null;
-    var best = null;
-    entryPlan.forEach(function (tr) {
-      if (tr && isNum(tr.rr)) { var v = Number(tr.rr); if (best === null || v > best) best = v; }
-    });
-    return best;
-  }
-  function daysUntil(isoDate, fromIso) {
-    var a = parseYMD(isoDate), b = parseYMD(fromIso);
-    if (!a || !b) return null;
-    return Math.round((a.getTime() - b.getTime()) / 86400000);
-  }
-  function swingSetupCardHtml(payload, result, technical) {
-    var t = technical || {};
-    var valuation = result.valuation || null;
-    var momentum = computeMomentum(t);
-    var reversal = computeReversal(t, momentum);
-    if (!valuation && !reversal) return "";
-
-    var parts = [], score = 0, maxScore = 0;
-
-    // 1. Value (0-2): triangulation direction.
-    var dir = (valuation && valuation.triangulation) ? valuation.triangulation.direction : null;
-    maxScore += 2;
-    if (dir === "ucuz") { score += 2; parts.push({ state: "ok", label: "Değer", text: "ucuz" }); }
-    else if (dir === "makul") { score += 1; parts.push({ state: "pending", label: "Değer", text: "makul" }); }
-    else if (dir === "pahali" || dir === "yuksek_beklenti") { parts.push({ state: "bad", label: "Değer", text: "pahalı" }); }
-    else if (dir === "karisik") { parts.push({ state: "none", label: "Değer", text: "karışık" }); }
-    else parts.push({ state: "none", label: "Değer", text: "—" });
-
-    // 2. Timing (0-2): bullish reversal confirmation (long-biased).
-    maxScore += 2;
-    if (reversal && reversal.bull) {
-      if (reversal.confirmed >= 2) { score += 2; parts.push({ state: "ok", label: "Zamanlama", text: "dönüş teyitli (" + reversal.confirmed + "/" + reversal.total + ")" }); }
-      else if (reversal.confirmed === 1) { score += 1; parts.push({ state: "pending", label: "Zamanlama", text: "erken dönüş (" + reversal.confirmed + "/" + reversal.total + ")" }); }
-      else parts.push({ state: "bad", label: "Zamanlama", text: "dönüş yok, düşüyor" });
-    } else if (reversal && !reversal.bull) {
-      parts.push({ state: "pending", label: "Zamanlama", text: "yükselişte — geri çekilme bekle" });
-    } else parts.push({ state: "none", label: "Zamanlama", text: "—" });
-
-    // 3. Reward (0-2): best tranche risk/reward.
-    maxScore += 2;
-    var rr = bestEntryRR(result.entry_plan);
-    if (rr !== null) {
-      if (rr >= 2.5) { score += 2; parts.push({ state: "ok", label: "R/R", text: rr.toFixed(1) + "×" }); }
-      else if (rr >= 1.5) { score += 1; parts.push({ state: "pending", label: "R/R", text: rr.toFixed(1) + "×" }); }
-      else parts.push({ state: "bad", label: "R/R", text: rr.toFixed(1) + "× (düşük)" });
-    } else parts.push({ state: "none", label: "R/R", text: "—" });
-
-    var ratio = maxScore ? score / maxScore : 0;
-    var grade, gcls, gnote;
-    if (ratio >= 0.8) { grade = "A"; gcls = "grade-a"; gnote = "Değer + zamanlama + getiri hizalı — güçlü swing kurulumu."; }
-    else if (ratio >= 0.5) { grade = "B"; gcls = "grade-b"; gnote = "Kısmi hizalanma — bir bacak eksik, teyit bekle."; }
-    else { grade = "C"; gcls = "grade-c"; gnote = "Zayıf hizalanma — şu an net bir swing kurulumu yok."; }
-
-    // Earnings proximity (Feature 5): warn if the estimated next-earnings date
-    // is within ~3 weeks of the price as-of date.
-    var earnHtml = "";
-    var eDate = result.catalyst_estimate_date;
-    var dU = eDate ? daysUntil(eDate, payload.as_of || payload.generated_on) : null;
-    if (dU !== null && dU >= 0 && dU <= 21) {
-      earnHtml = '<div class="setup-earn"><span class="setup-earn-badge">⚠ ~' + dU + ' gün içinde earnings</span> ' +
-        escapeHtml("(tahmini " + eDate + ") — pozisyonu bu tarih üzerinden taşımak ekstra risk.") + '</div>';
-    }
-
-    var PICON = { ok: "✓", pending: "◦", bad: "✗", none: "–" };
-    var partsHtml = parts.map(function (p) {
-      return '<div class="setup-part setup-' + p.state + '"><span class="setup-part-icon">' + PICON[p.state] + '</span>' +
-        '<span class="setup-part-label">' + escapeHtml(p.label) + '</span>' +
-        '<span class="setup-part-text">' + escapeHtml(p.text) + '</span></div>';
-    }).join("");
-
-    return (
-      '<div class="card setup-card">' +
-        '<div class="card-title">Swing Kurulumu</div>' +
-        '<div class="setup-head">' +
-          '<span class="setup-grade ' + gcls + '">' + grade + '</span>' +
-          '<span class="setup-note">' + escapeHtml(gnote) + '</span>' +
-        '</div>' +
-        '<div class="setup-parts">' + partsHtml + '</div>' +
-        earnHtml +
-        '<div class="setup-disc">Bileşik gösterge (değer + momentum dönüşü + R/R), long-yönlü. Karar-destek; yatırım tavsiyesi değil.</div>' +
-      '</div>'
-    );
+      r1: r1, r3: r3, r6: r6, rsi: rsi, mh: mh, mc: mc };
   }
 
   // Plain-language Turkish sentence built from the same raw numbers used by
@@ -2912,20 +2346,6 @@
         ? '<span class="tech-pos">Bullish ↑</span>'
         : '<span class="tech-neg">Bearish ↓</span>'));
     }
-    // ATR tile: volatility in price + % terms (swing stop-distance yardstick).
-    if (isNum(t.atr14) && p !== null && p > 0) {
-      var atrPct = Number(t.atr14) / p * 100;
-      trendTiles.push(tile("ATR (14)", "$" + Number(t.atr14).toFixed(2) + " <span class=\"tech-stat-sub\">(" + atrPct.toFixed(1) + "%)</span>"));
-    }
-    // Relative strength vs benchmark (SPY): 3-month relative return, leader/laggard.
-    var rsData = t.relative_strength;
-    if (rsData && isNum(rsData.rs_3m_pct)) {
-      var rs3 = Number(rsData.rs_3m_pct);
-      var rsCls = rs3 > 0 ? "tech-pos" : (rs3 < 0 ? "tech-neg" : "");
-      var rsSign = rs3 > 0 ? "+" : "";
-      trendTiles.push(tile("vs " + escapeHtml(rsData.benchmark || "SPY") + " (3A)",
-        '<span class="' + rsCls + '">' + rsSign + rs3.toFixed(1) + " pp</span>"));
-    }
     var divNote = "";
     if (t.rsi_divergence_detail) {
       var d = t.rsi_divergence_detail;
@@ -2950,7 +2370,6 @@
     // sentence. When no signal at all is available, show the empty state
     // instead of badge/meter/sentence but still render the rest of the card.
     var momentum = computeMomentum(t);
-    var reversal = computeReversal(t, momentum);
     var momSynthesisHtml;
     if (momentum) {
       // Plain .toUpperCase() mis-cases Turkish "i" (no dot) -> "SABIT" instead
@@ -2959,15 +2378,14 @@
       momSynthesisHtml =
         '<div class="mom-badge-row"><span class="mom-badge ' + momentum.dirCls + '">' +
           momentum.arrow + ' ' + escapeHtml(badgeLabel) +
-        '</span>' + reversalBadgeMarkerHtml(reversal) + squeezeBadgeHtml(t) + '</div>' +
+        '</span></div>' +
         '<div class="mom-meter-row">' +
           '<span class="mom-ends">güçlü↓</span>' +
           '<div class="mom-meter"><div class="mom-meter-marker" style="left:' + momentum.meterPos + '%;"></div></div>' +
           '<span class="mom-ends">güçlü↑</span>' +
         '</div>' +
         (momentum.accelWord ? '<div class="mom-meter-cap">(' + escapeHtml(momentum.accelWord) + ')</div>' : "") +
-        '<div class="mom-note">' + escapeHtml(momentumSentence(momentum)) + '</div>' +
-        reversalBlockHtml(reversal);
+        '<div class="mom-note">' + escapeHtml(momentumSentence(momentum)) + '</div>';
     } else {
       momSynthesisHtml = '<div class="tech-empty">Momentum için yeterli fiyat geçmişi yok.</div>';
     }
@@ -3062,8 +2480,7 @@
   // or structural reference levels), not an error -- degrades to a plain
   // sentence rather than an empty table.
   function entryPlanHtml(entryPlan) {
-    var sub = '<div class="card-sub">These levels are a mechanical reference -- not a buy order or investment advice. ' +
-      'Includes both accumulation (dip) and uptrend-confirmation (breakout) zones.</div>';
+    var sub = '<div class="card-sub">These levels are a mechanical reference -- not a buy order or investment advice.</div>';
     if (!entryPlan || entryPlan.length === 0) {
       return (
         '<div class="card"><div class="card-title">Staged Entry Plan</div>' + sub +
@@ -3072,20 +2489,10 @@
     }
     var rows = entryPlan.map(function (t) {
       var zone = t.price_zone || {};
-      // t.kind is a newer field ("breakout" = close ABOVE trigger, uptrend
-      // confirmation; "dip" = close BELOW trigger, accumulation). Older
-      // baked reports/payloads have no t.kind -- kindTag stays empty and the
-      // row renders exactly as before (no glyph, no layout shift).
-      var kindTag = "";
-      if (t.kind === "breakout") {
-        kindTag = '<span class="entry-kind-tag entry-kind-breakout" title="Yükseliş teyidi">▲ teyit</span> ';
-      } else if (t.kind === "dip") {
-        kindTag = '<span class="entry-kind-tag entry-kind-dip" title="Birikim (dip alım)">▼ birikim</span> ';
-      }
       var mainRow =
         '<tr>' +
           '<td>' + escapeHtml(isNum(t.n) ? String(t.n) : "—") + '</td>' +
-          '<td class="entry-trigger">' + kindTag + escapeHtml(t.trigger || "—") + '</td>' +
+          '<td class="entry-trigger">' + escapeHtml(t.trigger || "—") + '</td>' +
           '<td>' + fmtMoney(zone.lo) + '–' + fmtMoney(zone.hi) + '</td>' +
           '<td>' + fmtRawPct(t.size_pct) + '</td>' +
           '<td>' + fmtMoney(t.invalidation) + '</td>' +
@@ -3133,98 +2540,6 @@
   // result.thesis_metric is always a dict (never null) per planning.py, but
   // every field inside it may still be None -- degrades to "not available"
   // rather than "None"/blank.
-  // Cycle-position bar: locate the anchor metric's latest value inside its
-  // own multi-year trough->peak range (planning._compute_cycle_position).
-  // cy is result.thesis_metric.cycle -- null when no series is available, in
-  // which case the whole block is omitted (card falls back to value+trend).
-  function thesisCycleHtml(cy) {
-    if (!cy || !isNum(cy.position) || !isNum(cy.low) || !isNum(cy.high) || !isNum(cy.current)) return "";
-    var isCyc = !!cy.is_cyclical;
-    var markerPct = Math.max(0, Math.min(100, cy.position * 100));
-    var fmtP = function (v) { return "%" + (v * 100).toFixed(1); };
-    var fyTag = function (fy) { return isNum(fy) ? " (FY" + fy + ")" : ""; };
-
-    var label = isCyc ? "Döngü konumu" : "Geçmiş aralık";
-    var loEnd = isCyc ? "dip" : "en düşük";
-    var midEnd = isCyc ? "orta-döngü" : "orta";
-    var hiEnd = isCyc ? "zirve" : "en yüksek";
-
-    var where;
-    if (cy.position >= 0.8) where = isCyc ? "döngüsel zirveye yakın" : "aralığın üst ucunda";
-    else if (cy.position <= 0.2) where = isCyc ? "döngü dibine yakın" : "aralığın alt ucunda";
-    else where = isCyc ? "orta-döngü civarında" : "aralığın ortasında";
-
-    var thinNote = (isNum(cy.n_years) && cy.n_years < 4)
-      ? ' <span class="cycle-thin">(' + cy.n_years + " yıllık sınırlı geçmiş)</span>"
-      : "";
-
-    return (
-      '<div class="cycle-block">' +
-        '<div class="cycle-label">' + escapeHtml(label) + "</div>" +
-        '<div class="cycle-track">' +
-          '<div class="cycle-mid"></div>' +
-          '<div class="cycle-marker" style="left:' + markerPct.toFixed(1) + '%"></div>' +
-        "</div>" +
-        '<div class="cycle-ends">' +
-          "<span>" + escapeHtml(loEnd) + " " + fmtP(cy.low) + escapeHtml(fyTag(cy.low_fy)) + "</span>" +
-          "<span>" + escapeHtml(midEnd) + "</span>" +
-          "<span>" + escapeHtml(hiEnd) + " " + fmtP(cy.high) + escapeHtml(fyTag(cy.high_fy)) + "</span>" +
-        "</div>" +
-        '<div class="cycle-caption">Güncel' + escapeHtml(fyTag(cy.current_fy)) + " " + fmtP(cy.current) +
-          " — <b>" + escapeHtml(where) + "</b>" + thinNote +
-        "</div>" +
-      "</div>"
-    );
-  }
-
-  // Level sparkline: the anchor metric's year-by-year trajectory
-  // (cy.series, sorted ascending by fy). Complements the positional cycle
-  // bar by showing the *shape* of the path (steady climb vs volatile vs a
-  // recent turn). Self-contained inline SVG; latest point emphasized.
-  function thesisSparklineHtml(cy) {
-    if (!cy || !cy.series || !cy.series.length) return "";
-    var pts = cy.series.filter(function (p) { return p && isNum(p.value); });
-    if (pts.length < 2) return "";
-
-    var vals = pts.map(function (p) { return p.value; });
-    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
-    var W = 600, H = 60, padX = 8, padTop = 8, padBot = 18;
-    var innerW = W - padX * 2, innerH = H - padTop - padBot;
-    var n = pts.length;
-    var xAt = function (i) { return padX + (innerW * i) / (n - 1); };
-    var yAt = function (v) {
-      if (hi <= lo) return padTop + innerH / 2;  // flat series -> centre line
-      return padTop + innerH * (1 - (v - lo) / (hi - lo));
-    };
-
-    var path = pts.map(function (p, i) {
-      return (i ? "L" : "M") + xAt(i).toFixed(1) + " " + yAt(p.value).toFixed(1);
-    }).join(" ");
-    var dots = pts.map(function (p, i) {
-      var last = i === n - 1;
-      return '<circle cx="' + xAt(i).toFixed(1) + '" cy="' + yAt(p.value).toFixed(1) +
-        '" r="' + (last ? 3.2 : 2) + '" class="spark-dot' + (last ? " spark-dot-last" : "") + '"/>';
-    }).join("");
-    var fyLabel = function (fy, xx, anchor) {
-      return isNum(fy)
-        ? '<text x="' + xx + '" y="' + (H - 4) + '" class="spark-fy" text-anchor="' + anchor + '">FY' + fy + "</text>"
-        : "";
-    };
-
-    return (
-      '<div class="spark-block">' +
-        '<div class="spark-label">Yıllık seyir</div>' +
-        '<svg class="spark-svg" viewBox="0 0 ' + W + " " + H +
-          '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Çapa metriğin yıllık seyri">' +
-          '<path d="' + path + '" class="spark-line"/>' +
-          dots +
-          fyLabel(pts[0].fy, padX, "start") +
-          fyLabel(pts[n - 1].fy, W - padX, "end") +
-        "</svg>" +
-      "</div>"
-    );
-  }
-
   function thesisMetricHtml(tm) {
     if (!tm) return "";
     var name = tm.name ? escapeHtml(tm.name) : "Thesis Metric";
@@ -3238,16 +2553,12 @@
     var trendHtml = tm.trend
       ? ' <span class="badge badge-' + trendColor + '">' + escapeHtml(tm.trend) + '</span>'
       : "";
-    var sparkHtml = thesisSparklineHtml(tm.cycle);
-    var cycleHtml = thesisCycleHtml(tm.cycle);
     var rationaleHtml = tm.rationale
       ? '<p class="thesis-rationale">' + escapeHtml(tm.rationale) + '</p>'
       : "";
     return (
       '<div class="card"><div class="card-title">Thesis Metric</div>' +
         '<p class="thesis-metric-line">' + name + ': <b>' + valueText + '</b>' + trendHtml + '</p>' +
-        sparkHtml +
-        cycleHtml +
         rationaleHtml +
       '</div>'
     );
@@ -3375,6 +2686,7 @@
     }
 
     var fv = result.fair_value_range || {};
+    var profileFit = result.profile_fit || {};
     var technical = payload.technical || {};
     // result.valuation (SPEC.md Sec.11) is the richer engine payload; it's
     // absent for older callers or when phase-2 interpret() never ran (e.g.
@@ -3384,15 +2696,13 @@
 
     var html =
       headerCardHtml(payload) +
-      swingSetupCardHtml(payload, result, technical) +
       weightBarHtml(result._weights) +
       priceChartCardHtml(technical, result, payload.horizon, payload.analyst) +
       fanChartCardHtml(result, payload.price) +
       (valuation ? triangulationRowHtml(valuation, result.confidence) : "") +
       verdictCardHtml("Fundamental", result.fundamental_verdict, result.horizon_note) +
       technicalCardHtml(technical, result.technical_verdict || technical.verdict) +
-      // Profile Fit card intentionally removed from the UI for now (still
-      // computed in the payload; just not rendered).
+      verdictCardHtml("Profile Fit", profileFit.verdict, profileFit.reason) +
       (valuation ? sensitivityTableHtml(valuation.sensitivity) : "") +
       entryPlanHtml(result.entry_plan) +
       stopAddingHtml(result.stop_adding) +
@@ -3415,18 +2725,10 @@
   // ===================================================================
   function renderReportMode() {
     document.title = String(data.ticker || "") + " · " + String(data.horizon || "") + " · Verdict Terminal";
-    // analysis_as_of (point-in-time backtest cutoff) is distinct from as_of
-    // (the latest price-bar date, shown separately in the header source
-    // note); null on every live run, so this banner is absent by default.
-    var asofBannerHtml = data.analysis_as_of
-      ? '<span class="asof-banner">Geçmiş tarih analizi — ' + escapeHtml(data.analysis_as_of) +
-        ' itibarıyla bilinen verilerle üretildi</span>'
-      : "";
     topnavEl.innerHTML =
       '<div class="nav-inner">' +
         '<span class="brand">VERDICT</span>' +
         (data.generated_on ? '<span class="nav-date">Generated ' + escapeHtml(data.generated_on) + '</span>' : "") +
-        asofBannerHtml +
       '</div>';
     renderBody(data);
   }
@@ -3450,12 +2752,6 @@
       return '<option value="' + escapeHtml(p[0]) + '"' + sel + '>' + escapeHtml(p[1]) + '</option>';
     }).join("");
 
-    // Point-in-time (as-of) analysis is opt-in: an empty date -- the
-    // default -- runs the normal live analysis exactly as before. `max`
-    // pins the native date picker to today so a future cutoff can't even be
-    // selected client-side (the backend rejects one too either way).
-    var todayStr = new Date().toISOString().slice(0, 10);
-
     topnavEl.innerHTML =
       '<div class="nav-inner">' +
         '<span class="brand">VERDICT</span>' +
@@ -3463,10 +2759,7 @@
           '<input type="text" class="ticker-input" id="ticker-input" placeholder="TICKER" autocomplete="off" />' +
           horizonToggleHtml(horizons.map(function (h) { return h[0]; }), state.horizon, true, "nav-horizon-toggle") +
           '<select class="provider-select" id="provider-select">' + providerOptions + '</select>' +
-          '<label class="asof-label" for="asof-input">Geçmiş tarih (ops.)</label>' +
-          '<input type="date" class="provider-select asof-input" id="asof-input" max="' + todayStr + '" />' +
           '<button type="button" class="analyze-btn" id="analyze-btn">Analyse</button>' +
-          '<button type="button" class="history-nav-btn" id="history-nav-btn">Geçmiş</button>' +
         '</div>' +
       '</div>';
 
@@ -3474,18 +2767,8 @@
 
     var tickerInput = document.getElementById("ticker-input");
     var providerSelect = document.getElementById("provider-select");
-    var asofInput = document.getElementById("asof-input");
     var analyzeBtn = document.getElementById("analyze-btn");
     var horizonToggleEl = document.getElementById("nav-horizon-toggle");
-    var historyNavBtn = document.getElementById("history-nav-btn");
-
-    // Only meaningful once a ticker is typed -- navigates to the read-only
-    // verdict-history screen (mode: "history") for that ticker.
-    historyNavBtn.addEventListener("click", function () {
-      var ticker = tickerInput.value.trim().toUpperCase();
-      if (!ticker) return;
-      window.location.href = "/history?ticker=" + encodeURIComponent(ticker);
-    });
 
     horizonToggleEl.addEventListener("click", function (e) {
       var btn = e.target.closest ? e.target.closest(".horizon-pill") : null;
@@ -3504,24 +2787,6 @@
       bodyEl.innerHTML = '<div class="error-banner">' + escapeHtml(message) + '</div>';
     }
 
-    // renderBody() (unlike renderReportMode()) never touches topnavEl, so a
-    // search-mode as-of run needs its own small banner update here -- same
-    // markup/class as the baked-report banner, injected into the still-live
-    // search nav instead of rebuilding it. Called with null to clear a
-    // previous run's banner before/when a live (non-as-of) run replaces it.
-    function updateAsofBanner(analysisAsOf) {
-      var existing = document.getElementById("search-asof-banner");
-      if (existing) existing.remove();
-      if (!analysisAsOf) return;
-      var navInner = topnavEl.querySelector(".nav-inner");
-      if (!navInner) return;
-      navInner.insertAdjacentHTML(
-        "beforeend",
-        '<span class="asof-banner" id="search-asof-banner">Geçmiş tarih analizi — ' +
-          escapeHtml(analysisAsOf) + ' itibarıyla bilinen verilerle üretildi</span>'
-      );
-    }
-
     function runAnalyze() {
       var ticker = tickerInput.value.trim().toUpperCase();
       if (!ticker) {
@@ -3530,33 +2795,20 @@
       }
       analyzeBtn.disabled = true;
       tickerInput.disabled = true;
-      asofInput.disabled = true;
-      updateAsofBanner(null);
       bodyEl.innerHTML =
         '<div class="card"><div class="loading-state"><span class="spinner"></span>' +
         'Running analysis for ' + escapeHtml(ticker) + ' -- this can take 10-40 seconds...</div></div>';
 
-      var requestBody = {
-        ticker: ticker,
-        years: 12,
-        horizon: state.horizon,
-        provider: state.provider,
-        no_cache: false,
-      };
-      // Empty date = normal live analysis (the common case, unchanged from
-      // before); a filled-in date is the only switch for point-in-time mode
-      // -- no separate toggle. The backend validates it and 400s on a bad
-      // or future date, which the existing showError() branch below already
-      // surfaces.
-      var asofValue = asofInput.value ? asofInput.value.trim() : "";
-      if (asofValue) {
-        requestBody.as_of = asofValue;
-      }
-
       fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify({
+          ticker: ticker,
+          years: 12,
+          horizon: state.horizon,
+          provider: state.provider,
+          no_cache: false,
+        }),
       })
         .then(function (response) {
           return response.json().then(function (json) {
@@ -3576,12 +2828,6 @@
             horizon: state.horizon,
             price: (json.metrics || {}).price,
             as_of: technical ? technical.as_of : null,
-            // json.as_of is /api/analyze's echoed point-in-time cutoff (the
-            // request's as_of, string or null) -- distinct from the as_of
-            // above (latest price-bar date). Mapping it through is what
-            // lets headerCardHtml's macro-source note and the nav banner
-            // (via updateAsofBanner below) know this was a backtest run.
-            analysis_as_of: json.as_of || null,
             result: json.analysis || {},
             metrics: json.metrics || {},
             technical: technical || {},
@@ -3589,7 +2835,6 @@
             entity_name: json.name || null,
             analyst: json.analyst || null,
           };
-          updateAsofBanner(reportPayload.analysis_as_of);
           renderBody(reportPayload);
         })
         .catch(function (err) {
@@ -3598,7 +2843,6 @@
         .finally(function () {
           analyzeBtn.disabled = false;
           tickerInput.disabled = false;
-          asofInput.disabled = false;
         });
     }
 
@@ -3611,103 +2855,9 @@
     });
   }
 
-  // ===================================================================
-  // History mode: read-only screen listing every stored analysis run for
-  // one ticker (mode: "history", built by generator.render_history_page /
-  // GET /history). No live fetch, no controls -- just the stored
-  // `verdicts` table rendered as a table, newest first.
-  // `data` shape: {mode, ticker, rows, current_price, generated_on}.
-  // ===================================================================
-
-  // Caption above the table: current stored price plus its % change vs. the
-  // most recent analysis run's price, when both are available. Renders ""
-  // when current_price is absent -- the table still renders on its own.
-  function historyCaptionHtml(currentPrice, rows) {
-    if (!currentPrice || !isNum(currentPrice.close)) return "";
-    var text = "Güncel fiyat: " + fmtMoney(currentPrice.close) +
-      " (" + escapeHtml(safeText(currentPrice.date)) + ")";
-    var lastPrice = (rows && rows.length && isNum(rows[0].price)) ? Number(rows[0].price) : null;
-    if (lastPrice) {
-      var deltaPct = (Number(currentPrice.close) / lastPrice - 1) * 100;
-      text += " · en son analize göre " + fmtSignedPctTr(deltaPct);
-    }
-    return '<div class="history-caption">' + text + '</div>';
-  }
-
-  // One <tr> per stored verdict row. Every field is optional/nullable (see
-  // generator.render_history_page docstring) -- safeText/fmtMoney/isNum
-  // guard every cell so a sparse row never prints "null"/"undefined"/"NaN".
-  function historyRowHtml(row) {
-    row = row || {};
-    var analyzedDate = row.analyzed_at ? escapeHtml(String(row.analyzed_at).slice(0, 10)) : "—";
-    var asOfCell = row.as_of
-      ? escapeHtml(row.as_of) + ' <span class="asof-pill" title="Geçmiş tarih (as-of) analizi">as-of</span>'
-      : "—";
-    var fvBase = (isNum(row.fv_base_lo) && isNum(row.fv_base_hi))
-      ? fmtMoney(row.fv_base_lo) + "–" + fmtMoney(row.fv_base_hi)
-      : "—";
-    return (
-      '<tr>' +
-        '<td>' + analyzedDate + '</td>' +
-        '<td>' + asOfCell + '</td>' +
-        '<td>' + escapeHtml(safeText(row.horizon)) + '</td>' +
-        '<td>' + escapeHtml(safeText(row.provider)) + '</td>' +
-        '<td class="history-num">' + fmtMoney(row.price) + '</td>' +
-        '<td class="history-num">' + fvBase + '</td>' +
-        '<td>' + escapeHtml(safeText(row.fundamental_verdict)) + '</td>' +
-        '<td>' + escapeHtml(safeText(row.technical_verdict)) + '</td>' +
-        '<td>' + escapeHtml(safeText(row.confidence)) + '</td>' +
-        '<td>' + escapeHtml(safeText(row.sector_type)) + '</td>' +
-      '</tr>'
-    );
-  }
-
-  function renderHistoryMode() {
-    var tickerText = String(data.ticker || "—");
-    document.title = tickerText + " — Analiz Geçmişi · Verdict Terminal";
-    topnavEl.innerHTML =
-      '<div class="nav-inner">' +
-        '<span class="brand">VERDICT</span>' +
-        (data.generated_on ? '<span class="nav-date">Generated ' + escapeHtml(data.generated_on) + '</span>' : "") +
-      '</div>';
-
-    var rows = data.rows || [];
-    var headerHtml = '<div class="history-header">' + escapeHtml(tickerText) + ' — Analiz Geçmişi</div>';
-
-    if (!rows.length) {
-      bodyEl.innerHTML =
-        '<div class="card">' +
-          headerHtml +
-          '<div class="empty-state">Bu hisse için kayıtlı analiz bulunamadı.</div>' +
-        '</div>' +
-        globalFooterHtml();
-      return;
-    }
-
-    var tableHtml =
-      '<table class="sensitivity-table history-table">' +
-        '<thead><tr>' +
-          '<th>Tarih</th><th>As-of</th><th>Vade</th><th>Sağlayıcı</th>' +
-          '<th>Fiyat</th><th>FV (baz)</th><th>Temel</th><th>Teknik</th>' +
-          '<th>Güven</th><th>Sektör</th>' +
-        '</tr></thead>' +
-        '<tbody>' + rows.map(historyRowHtml).join("") + '</tbody>' +
-      '</table>';
-
-    bodyEl.innerHTML =
-      '<div class="card">' +
-        headerHtml +
-        historyCaptionHtml(data.current_price, rows) +
-        tableHtml +
-      '</div>' +
-      globalFooterHtml();
-  }
-
   function render() {
     if (data.mode === "search") {
       renderSearchMode();
-    } else if (data.mode === "history") {
-      renderHistoryMode();
     } else {
       renderReportMode();
     }

@@ -331,3 +331,53 @@ def test_latest_fundamental_fy_matches_latest_fy_and_metrics_are_unchanged_witho
     assert metrics["revenue_cagr_3y"] == round((1000 / 500) ** (1 / 3) - 1, 4)
     assert metrics["revenue_cagr_5y"] == round((1000 / 250) ** (1 / 5) - 1, 4)
     assert metrics["fcf"] == 180
+
+
+# ---------------------------------------------------------------------------
+# Price-reliability cross-check (SPEC.md Sec.17): a corrupt, uniformly
+# downscaled price feed collapses P/E and P/S together. Regression guard for
+# the BKNG anomaly (yfinance returned a ~31x-too-small series).
+# ---------------------------------------------------------------------------
+
+
+def test_normal_price_is_reliable():
+    # _full_normalized at price=20 -> pe=10, ps=2, both well above the floors.
+    metrics = compute_metrics(_full_normalized(), _FULL_RATIOS, price=20.0)
+    assert metrics["price_reliable"] is True
+    assert metrics["price_reliability_note"] is None
+
+
+def test_corrupt_downscaled_price_flagged_unreliable():
+    # shares=100, EPS=2.0, revenue=1000. At a corrupt price=3.0:
+    #   pe = 3/2 = 1.5 (< 2.0) AND ps = 3*100/1000 = 0.3 (< 0.5) -> both
+    #   implausibly low at once -> price flagged unreliable.
+    metrics = compute_metrics(_full_normalized(), _FULL_RATIOS, price=3.0)
+    assert metrics["pe"] == 1.5
+    assert metrics["ps"] == 0.3
+    assert metrics["price_reliable"] is False
+    assert "güvenilmez" in (metrics["price_reliability_note"] or "")
+
+
+def test_genuinely_cheap_stock_low_pe_normal_ps_stays_reliable():
+    # Decoupled fixture: shares=100, EPS=2.0, revenue=100. At price=3.0:
+    #   pe = 1.5 (< 2.0) BUT ps = 3*100/100 = 3.0 (>= 0.5). Only ONE multiple
+    #   is implausibly low, so the conservative AND-composite must NOT fire --
+    #   a genuinely cheap value stock is not wrongly discarded.
+    normalized = _normalized(
+        {
+            "SharesOutstanding": [_record(2023, 100)],
+            "EPS": [_record(2023, 2.0)],
+            "Revenue": [_record(2023, 100)],
+        }
+    )
+    metrics = compute_metrics(normalized, [{"fy": 2023, "fcf": 10}], price=3.0)
+    assert metrics["pe"] == 1.5
+    assert metrics["ps"] == 3.0
+    assert metrics["price_reliable"] is True
+    assert metrics["price_reliability_note"] is None
+
+
+def test_no_data_at_all_reports_price_reliable_true():
+    metrics = compute_metrics(_normalized({}), [], price=None)
+    assert metrics["price_reliable"] is True
+    assert metrics["price_reliability_note"] is None

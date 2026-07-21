@@ -9,13 +9,14 @@ or Yahoo Finance.
 
 import io
 import sys
+from datetime import date
 
 import pandas as pd
 import pytest
 
 from sec_analyzer.config import Config
 from sec_analyzer.fetch import prices
-from sec_analyzer.technical.indicators import compute_indicators
+from sec_analyzer.technical.indicators import compute_indicators, relative_strength
 from sec_analyzer.technical.verdict import technical_verdict
 
 # ---------------------------------------------------------------------------
@@ -76,6 +77,129 @@ def test_compute_indicators_falling_series_is_oversold():
 
     verdict = technical_verdict(ind)
     assert verdict["verdict"] == "AŞIRI SATIM"
+
+
+def test_rsi_reclaim_bullish_after_oversold_bounce():
+    """A long decline (RSI driven below 30) followed by a few strong up bars
+    reclaims the 30 line -> ``rsi_reclaim == "bullish"``."""
+    closes = [300 - i for i in range(50)] + [251 + 15 * i for i in range(1, 7)]
+    ind = compute_indicators(_make_df(closes))
+    assert ind["rsi14"] is not None and ind["rsi14"] >= 30
+    assert ind["rsi_reclaim"] == "bullish"
+
+
+def test_rsi_reclaim_bearish_after_overbought_rollover():
+    """A long advance (RSI above 70) followed by a few sharp down bars drops
+    back below the 70 line -> ``rsi_reclaim == "bearish"``."""
+    closes = [100 + i for i in range(50)] + [149 - 15 * i for i in range(1, 7)]
+    ind = compute_indicators(_make_df(closes))
+    assert ind["rsi14"] is not None and ind["rsi14"] <= 70
+    assert ind["rsi_reclaim"] == "bearish"
+
+
+def test_rsi_reclaim_none_while_still_oversold():
+    """A pure, uninterrupted decline never reclaims the line: RSI stays below
+    30 through the last bar -> ``rsi_reclaim is None``."""
+    ind = compute_indicators(_make_df([300 - i for i in range(100)]))
+    assert ind["rsi14"] is not None and ind["rsi14"] < 30
+    assert ind["rsi_reclaim"] is None
+
+
+def test_rsi_reclaim_none_for_steady_uptrend():
+    """A steadily rising series is overbought but never rolled over, so there
+    is no bearish reclaim -> ``rsi_reclaim is None``."""
+    ind = compute_indicators(_make_df([100 + i for i in range(100)]))
+    assert ind["rsi_reclaim"] is None
+
+
+# ---------------------------------------------------------------------------
+# ATR / Bollinger squeeze / volume climax / relative strength (swing extras)
+# ---------------------------------------------------------------------------
+
+
+def test_atr14_present_and_positive_on_sufficient_history():
+    ind = compute_indicators(_make_df([100 + i * 0.5 for i in range(60)]))
+    assert ind["atr14"] is not None and ind["atr14"] > 0
+
+
+def test_atr14_none_on_too_short_history():
+    ind = compute_indicators(_make_df([100.0] * 5))
+    assert ind["atr14"] is None
+
+
+def test_bollinger_squeeze_shape_and_bounds():
+    ind = compute_indicators(_make_df([100 + i * 0.3 for i in range(120)]))
+    sq = ind["bb_squeeze"]
+    assert sq is not None
+    assert set(sq) == {"active", "bandwidth_pct", "percentile"}
+    assert isinstance(sq["active"], bool)
+    assert 0.0 <= sq["percentile"] <= 100.0
+
+
+def test_bollinger_squeeze_active_when_recent_window_calms():
+    # Volatile first ~120 bars (wide bands), then a nearly-flat tail (bands
+    # collapse) -> current band width sits in the bottom percentile -> active.
+    import math
+    closes = [100 + 20 * math.sin(i / 4.0) for i in range(120)] + [140 + i * 0.01 for i in range(40)]
+    sq = compute_indicators(_make_df(closes))["bb_squeeze"]
+    assert sq is not None
+    assert sq["active"] is True
+    assert sq["percentile"] <= 20.0
+
+
+def _ohlcv_df(closes, volumes, highs=None, lows=None, start="2023-01-02"):
+    idx = pd.bdate_range(start=start, periods=len(closes))
+    idx.name = "Date"
+    return pd.DataFrame(
+        {
+            "Open": closes,
+            "High": highs if highs is not None else closes,
+            "Low": lows if lows is not None else closes,
+            "Close": closes,
+            "Volume": volumes,
+        },
+        index=idx,
+    )
+
+
+def test_volume_climax_detected_with_direction_and_bars_ago():
+    n = 60
+    closes = [100.0] * n
+    closes[n - 4] = 92.0   # a sharp down bar 3 bars ago (offset 3)
+    highs = [c * 1.005 for c in closes]
+    lows = [c * 0.995 for c in closes]
+    highs[n - 4], lows[n - 4] = 101.0, 90.0  # wide range on the climax bar
+    volumes = [1_000_000] * n
+    volumes[n - 4] = 6_000_000  # 6x average
+    ind = compute_indicators(_ohlcv_df(closes, volumes, highs, lows))
+    vc = ind["volume_climax"]
+    assert vc is not None and vc["detected"] is True
+    assert vc["bars_ago"] == 3
+    assert vc["direction"] == "down"
+    assert vc["rel_volume"] >= 2.0
+
+
+def test_volume_climax_none_when_no_spike():
+    ind = compute_indicators(_ohlcv_df([100.0] * 60, [1_000_000] * 60))
+    assert ind["volume_climax"] is None
+
+
+def test_relative_strength_outperformance_is_positive_and_leading():
+    idx = pd.bdate_range("2023-01-02", periods=100)
+    stock = pd.Series([100 + i * 0.5 for i in range(100)], index=idx)   # +~50%
+    bench = pd.Series([100 + i * 0.1 for i in range(100)], index=idx)   # +~10%
+    rs = relative_strength(stock, bench)
+    assert rs is not None
+    assert rs["rs_3m_pct"] > 0 and rs["leading"] is True
+    # Native (JSON-serializable) types, not numpy scalars.
+    assert isinstance(rs["rs_3m_pct"], float)
+    assert isinstance(rs["leading"], bool)
+
+
+def test_relative_strength_none_when_benchmark_missing():
+    idx = pd.bdate_range("2023-01-02", periods=100)
+    stock = pd.Series([100 + i for i in range(100)], index=idx)
+    assert relative_strength(stock, None) is None
 
 
 def test_technical_verdict_overbought_when_rsi_high_and_price_above_sma50():
@@ -267,10 +391,20 @@ def test_price_series_is_ascending_capped_and_ends_at_latest_close():
     ind = compute_indicators(_make_df(closes))
     series = ind["price_series"]
 
-    assert 2 <= len(series) <= 252                      # capped at ~1 year
+    # Multi-resolution contract: the recent tail is kept daily while older
+    # history is down-sampled to ~weekly, so a 400-row input is compressed
+    # (older thinned) yet stays well under the ~5y cap (~520 points max).
+    assert 2 <= len(series) <= 520
+    assert 252 < len(series) < 400                      # older thinned, recent daily
     assert all({"t", "c"} <= set(p) for p in series)
     assert [p["t"] for p in series] == sorted(p["t"] for p in series)   # ascending
     assert series[-1]["c"] == ind["price"]              # last point == current price
+
+    # The most recent points are at daily (business-day) resolution.
+    def _d(s):
+        y, m, day = (int(x) for x in s.split("-"))
+        return date(y, m, day)
+    assert (_d(series[-1]["t"]) - _d(series[-2]["t"])).days <= 4
 
 
 def _multi_swing_df():
@@ -309,6 +443,25 @@ def test_support_resistance_prefers_52w_over_fib_in_its_bucket():
     far_support = min(ind["support_levels"], key=lambda z: z["price"])
     assert far_resistance["is_52w_high"] is True
     assert far_support["is_52w_low"] is True
+
+
+def test_support_resistance_excludes_levels_beyond_max_distance():
+    # A stock that ran vertically from a ~50 base to ~190: the 52-week low sits
+    # ~73% below price -- too far to be an actionable trigger. It must NOT
+    # surface as a support level; the reported levels stay within the distance
+    # cap, and the "far" slot is filled by a nearer in-range level instead.
+    from sec_analyzer.technical.indicators import _SR_MAX_DIST_PCT
+
+    base = [50.0] * 30
+    ramp = [50.0 + (i + 1) * 2.33 for i in range(60)]     # monotonic run to ~190
+    ind = compute_indicators(_make_df(base + ramp))
+
+    all_levels = ind["support_levels"] + ind["resistance_levels"]
+    assert all_levels, "expected at least one in-range level"
+    # Every reported level is within the distance cap...
+    assert all(abs(lvl["dist_pct"]) <= _SR_MAX_DIST_PCT for lvl in all_levels)
+    # ...and the far ~50 base (a 52-week low ~73% below) is gone.
+    assert not any(s.get("is_52w_low") for s in ind["support_levels"])
 
 
 def test_support_resistance_surfaces_moving_average_after_vertical_run():

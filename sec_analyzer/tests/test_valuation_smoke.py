@@ -232,6 +232,15 @@ def test_run_valuation_end_to_end_on_minimal_fixture():
     assert result["triangulation"]["confidence"] in ("YÜKSEK", "ORTA", "DÜŞÜK")
     assert isinstance(result["notes"], list)
 
+    # Sector-relative multiples comparison block (VALUATION.md Sec.7 axis-b)
+    # is always shaped, even with no price history / no sector data: the five
+    # keys exist so the report renderer can read them unconditionally. Here
+    # (price_df=None -> no percentile history -> no primary) every value is
+    # None, i.e. axis-b is disabled and the pure own-history signal stands.
+    comparison = result["multiples"]["sector"]["comparison"]
+    assert set(comparison) == {"label", "current", "median", "ratio", "bucket"}
+    assert all(comparison[k] is None for k in comparison)
+
 
 def test_run_valuation_disables_dcf_for_financial_sector():
     normalized = _fake_normalized()

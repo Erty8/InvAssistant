@@ -339,7 +339,7 @@ def _limit_annual_years(records: List[dict], years: int) -> List[dict]:
     return kept
 
 
-def normalize_facts(facts_json: dict, years: int = 5) -> dict:
+def normalize_facts(facts_json: dict, years: int = 5, as_of=None) -> dict:
     """Normalize a raw SEC companyfacts document into tidy time series.
 
     Args:
@@ -348,6 +348,12 @@ def normalize_facts(facts_json: dict, years: int = 5) -> dict:
         years: Number of most-recent distinct fiscal years to retain in the
             annual bucket. The quarterly bucket retains a comparable window
             of ``years * 4 + 1`` most recent periods.
+        as_of: Optional point-in-time cutoff (``datetime.date`` or ISO
+            ``"YYYY-MM-DD"`` string). When set, only facts with
+            ``filed <= as_of`` survive, so the dedup step yields the value
+            as it was known on that date (restatements filed later are
+            invisible). ``filed == as_of`` counts as knowable. ``None``
+            leaves behavior unchanged.
 
     Returns:
         A dict of the form::
@@ -383,6 +389,8 @@ def normalize_facts(facts_json: dict, years: int = 5) -> dict:
     This function never raises because a concept is missing or malformed;
     such concepts are simply reported via ``missing`` and set to ``None``.
     """
+    as_of_str = as_of.isoformat() if hasattr(as_of, "isoformat") else as_of
+
     entity_name = facts_json.get("entityName")
     cik = facts_json.get("cik")
     facts = facts_json.get("facts") or {}
@@ -426,6 +434,19 @@ def normalize_facts(facts_json: dict, years: int = 5) -> dict:
             _build_record(concept, tag, priority, unit, row)
             for priority, tag, unit, row in collected
         ]
+
+        # Point-in-time cutoff: drop any fact not yet filed as of the cutoff
+        # date, so the dedup below picks the latest filing that existed then.
+        if as_of_str:
+            records = [
+                r for r in records if r.get("filed") and r["filed"] <= as_of_str
+            ]
+            if not records:
+                annual[concept] = None
+                quarterly[concept] = None
+                matched_tags[concept] = None
+                missing.append(concept)
+                continue
 
         annual_records = [r for r in records if _is_annual_record(r, concept)]
         quarterly_records = [r for r in records if _is_quarterly_record(r)]

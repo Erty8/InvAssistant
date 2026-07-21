@@ -37,6 +37,39 @@ _PER_SHARE_FIELDS = ("price", "eps", "fcf_per_share")
 #: Number of fiscal years back used for the two CAGR windows.
 _CAGR_WINDOWS = {"revenue_cagr_3y": 3, "revenue_cagr_5y": 5}
 
+#: Price-plausibility floors. A corrupt price feed (e.g. a yfinance fallback
+#: that returns a uniformly downscaled series -- observed for BKNG, whose
+#: history came back ~31x too small) collapses EVERY price-based multiple
+#: together. A legitimately cheap value stock or a peak-cyclical has a low P/E
+#: OR a low P/S, but essentially never BOTH a sub-2 trailing P/E AND a sub-0.5
+#: P/S at the same time on solidly positive earnings and revenue. So the price
+#: is flagged unreliable only when both multiples are positive and below these
+#: floors simultaneously -- a deliberately conservative composite that prefers
+#: a false negative (occasionally trusting a bad price) over a false positive
+#: (wrongly discarding a genuinely cheap stock). See SPEC.md Sec.17.
+_PE_IMPLAUSIBLE_FLOOR = 2.0
+_PS_IMPLAUSIBLE_FLOOR = 0.5
+
+
+def _assess_price_reliability(pe: Optional[float], ps: Optional[float]) -> Optional[str]:
+    """Return a Turkish note when the price looks corrupt, else ``None``.
+
+    Fires only when both the trailing P/E and P/S are positive and below their
+    implausibility floors at once (see :data:`_PE_IMPLAUSIBLE_FLOOR` /
+    :data:`_PS_IMPLAUSIBLE_FLOOR`) -- the signature of a uniformly-downscaled
+    price feed. Never raises; a missing (``None``) multiple simply can't
+    trigger the flag.
+    """
+    if pe is None or ps is None:
+        return None
+    if 0 < pe < _PE_IMPLAUSIBLE_FLOOR and 0 < ps < _PS_IMPLAUSIBLE_FLOOR:
+        return (
+            f"Fiyat güvenilmez olabilir: ima edilen F/K {pe:.2f} ve F/S {ps:.2f} "
+            "aynı anda olağandışı düşük (muhtemelen bozuk fiyat verisi); "
+            "fiyat bağımlı oranlar dikkatle yorumlanmalı."
+        )
+    return None
+
 
 def _round_or_none(value: Optional[float], ndigits: int) -> Optional[float]:
     """Round ``value`` to ``ndigits``, passing ``None`` through unchanged."""
@@ -124,7 +157,9 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
         ``revenue_cagr_3y``, ``revenue_cagr_5y``, ``sbc_revenue``,
         ``shares_yoy``, ``buyback_latest``, ``dividends_latest``,
         ``rnd_revenue``, ``fcf``, ``fcf_per_share``, ``latest_fy``,
-        ``latest_fundamental_fy``. Every value is ``None``-safe; ratios/growth
+        ``latest_fundamental_fy``, ``price_reliable`` (bool), and
+        ``price_reliability_note`` (str or ``None`` -- see
+        :func:`_assess_price_reliability`). Every value is ``None``-safe; ratios/growth
         rates are rounded to 4 decimal places, price/per-share dollar figures
         to 2, and raw USD amounts (``market_cap``, ``total_debt``,
         ``net_debt``, ``buyback_latest``, ``dividends_latest``, ``fcf``) are
@@ -175,6 +210,7 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
             "buyback_latest": None, "dividends_latest": None,
             "rnd_revenue": None, "fcf": None, "fcf_per_share": None,
             "latest_fy": None, "latest_fundamental_fy": None,
+            "price_reliable": True, "price_reliability_note": None,
         }
 
     latest_fy = max(fiscal_years)
@@ -267,6 +303,15 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
         result[field] = _round_or_none(result[field], 4)
     for field in _PER_SHARE_FIELDS:
         result[field] = _round_or_none(result[field], 2)
+
+    # Price-plausibility cross-check against SEC per-share fundamentals (the
+    # only price-independent reference available): a corrupt market-data feed
+    # collapses P/E and P/S together (see _assess_price_reliability). Additive,
+    # never suppresses any existing metric -- downstream consumers decide what
+    # to do with an unreliable price (e.g. the calibration ratio skips it).
+    price_reliability_note = _assess_price_reliability(result["pe"], result["ps"])
+    result["price_reliable"] = price_reliability_note is None
+    result["price_reliability_note"] = price_reliability_note
 
     logger.debug(
         "compute_metrics: %s (CIK %s) latest_fy=%s pe=%s ps=%s pfcf=%s",

@@ -115,6 +115,8 @@ def render_report_html(
     price: Optional[float] = None,
     as_of: Optional[str] = None,
     entity_name: Optional[str] = None,
+    analyst: Optional[dict] = None,
+    analysis_as_of: Optional[str] = None,
 ) -> str:
     """Build the standalone verdict-card report HTML as a string.
 
@@ -151,6 +153,15 @@ def render_report_html(
         entity_name: The filer's resolved company name (e.g. ``"Apple
             Inc."``), or ``None`` if unavailable -- shown beside the ticker
             in the header when present, omitted otherwise.
+        analyst: The dict returned by
+            :func:`sec_analyzer.fetch.analyst.get_analyst_targets`, or
+            ``None`` if unavailable. Display-only consensus analyst-target
+            cross-check -- never feeds the valuation engine.
+        analysis_as_of: The point-in-time cutoff (``"YYYY-MM-DD"``) this
+            analysis was run against in as-of mode, or ``None`` for a live
+            run. Distinct from ``as_of`` (which is the latest *price* bar
+            date); surfaced as a report banner so a backtest run is never
+            mistaken for a live one.
 
     Returns:
         The complete, self-contained report HTML as a string.
@@ -167,7 +178,9 @@ def render_report_html(
         "ticker": ticker_upper,
         "horizon": horizon,
         "price": price,
+        "analyst": analyst,
         "as_of": as_of,
+        "analysis_as_of": analysis_as_of,
         "generated_on": generated_on,
         "result": result or {},
         "metrics": metrics or {},
@@ -227,6 +240,46 @@ def render_search_page(
     return _inject_payload(payload)
 
 
+def render_history_page(
+    ticker: str,
+    rows: List[dict],
+    current_price: Optional[dict] = None,
+) -> str:
+    """Build the verdict-history screen HTML for one ticker.
+
+    The ``GET /history`` counterpart to :func:`render_report_html` /
+    :func:`render_search_page`: loads the same ``template.html`` shell but
+    injects a ``mode: "history"`` payload the client-side ``renderHistoryMode``
+    renders as a table of past verdicts.
+
+    Args:
+        ticker: Stock ticker symbol (upper-cased for display).
+        rows: The list returned by
+            :func:`sec_analyzer.store.database.load_verdicts` (scalar
+            verdict-history columns, newest first). May be empty -- the
+            template renders an empty-state message.
+        current_price: The dict from
+            :func:`sec_analyzer.store.database.load_latest_stored_price`
+            (``{"date","close"}``), or ``None`` -- used for the
+            price-vs-latest-verdict delta caption.
+
+    Returns:
+        The complete, self-contained history-page HTML as a string.
+
+    Raises:
+        ValueError: If ``template.html`` is missing the ``__DATA_JSON__``
+            placeholder (a packaging error).
+    """
+    payload = {
+        "mode": "history",
+        "ticker": str(ticker).strip().upper(),
+        "rows": rows or [],
+        "current_price": current_price,
+        "generated_on": date.today().isoformat(),
+    }
+    return _inject_payload(payload)
+
+
 def generate_report(
     ticker: str,
     horizon: str,
@@ -238,6 +291,8 @@ def generate_report(
     as_of: Optional[str] = None,
     out_dir: Optional[str] = None,
     entity_name: Optional[str] = None,
+    analyst: Optional[dict] = None,
+    analysis_as_of: Optional[str] = None,
 ) -> str:
     """Render and save the HTML verdict-card report for one ticker/horizon.
 
@@ -270,6 +325,13 @@ def generate_report(
             ``Config.REPORTS_DIR``; created if it doesn't already exist.
         entity_name: The filer's resolved company name, or ``None`` if
             unavailable -- see :func:`render_report_html`.
+        analyst: The dict returned by
+            :func:`sec_analyzer.fetch.analyst.get_analyst_targets`, or
+            ``None`` if unavailable -- see :func:`render_report_html`.
+        analysis_as_of: Point-in-time cutoff (``"YYYY-MM-DD"``) for as-of
+            mode, or ``None`` -- see :func:`render_report_html`. When set,
+            an ``_asof-<date>`` segment is added to the saved filename so a
+            backtest report never overwrites the same-day live report.
 
     Returns:
         The path the report was saved to.
@@ -280,13 +342,14 @@ def generate_report(
     html = render_report_html(
         ticker, horizon, result,
         metrics=metrics, technical=technical, flags=flags, price=price, as_of=as_of,
-        entity_name=entity_name,
+        entity_name=entity_name, analyst=analyst, analysis_as_of=analysis_as_of,
     )
 
     target_dir = out_dir or Config.REPORTS_DIR
     os.makedirs(target_dir, exist_ok=True)
 
-    filename = f"{_safe_filename_component(ticker_upper)}_{generated_on}_{horizon}.html"
+    asof_segment = f"_asof-{_safe_filename_component(analysis_as_of)}" if analysis_as_of else ""
+    filename = f"{_safe_filename_component(ticker_upper)}_{generated_on}_{horizon}{asof_segment}.html"
     path = os.path.join(target_dir, filename)
 
     with open(path, "w", encoding="utf-8") as f:

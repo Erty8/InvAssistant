@@ -221,6 +221,10 @@ def _detect_events(
         filed = _parse_date(filing_dates[idx] if idx < len(filing_dates) else None)
         if filed is None:
             continue
+        if filed > today:
+            # Point-in-time guard: a filing dated after the reference date
+            # was not yet public. No-op when today == date.today().
+            continue
         if lookback_days > 0 and (today - filed).days > lookback_days:
             continue
 

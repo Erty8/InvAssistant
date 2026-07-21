@@ -200,14 +200,24 @@ sağlayıcı (LLM'ler dahil) bu alanları kendisi hesaplamaz. METODOLOJI.md
   bant kenarına % getiri: `{"bear": {"ret_lo_pct": sayı|null, "ret_hi_pct":
   sayı|null}, "base": {...}, "bull": {...}}` (1 ondalık; fiyat veya bant
   eksikse `null`).
-- **`entry_plan`** — 0-5 elemanlı, fiyata göre azalan sıralı kademeli giriş
-  listesi: `{"n": int, "trigger": str (Türkçe, sadece günlük kapanış),
-  "price_zone": {"lo": sayı, "hi": sayı}, "size_pct": sayı, "invalidation":
-  sayı, "target": sayı|null, "rr": sayı|null, "note": str|null}`. Tetik
-  seviyeleri tamamen mekaniktir (fair-value bandının bear.lo/base.lo/
-  base.hi/bull.hi'ı + teknik low_52w/sma50/sma200 + güncel fiyat); tek bir
-  paylaşılan invalidation/target sayesinde R:R fiyat düştükçe hiç azalmaz.
-  Fiyat eksik/negatifse veya güncel fiyatın altında hiçbir aday seviye yoksa
+- **`entry_plan`** — 0-5 elemanlı, fiyata göre azalan sıralı, İKİ YÖNLÜ tek
+  plan (toplam boyut ~%100): `{"n": int, "trigger": str (Türkçe, sadece
+  günlük kapanış), "price_zone": {"lo": sayı, "hi": sayı}, "size_pct": sayı,
+  "invalidation": sayı, "target": sayı|null, "rr": sayı|null, "note":
+  str|null (ör. tetik seviyesi model bull.hi hedefinin üzerindeyse "Model
+  üstü" işareti — bkz. `METODOLOJI.md` §1.5), "kind": "dip"|"breakout"}`.
+  **`kind="dip"`** tranche'ları
+  (seviye ≤ güncel fiyat) fair-value bandının bear.lo/base.lo/base.hi/
+  bull.hi'ından ve teknik low_52w/sma50/sma200'den gelir; hepsi TEK
+  paylaşılan yapısal invalidation'ı paylaşır, bu yüzden R:R fiyat düştükçe
+  hiç azalmaz. **`kind="breakout"`** tranche'ları (seviye > güncel fiyat)
+  teknik sma50/sma200 geri alımından, `resistance_levels` kırılımından ve
+  high_52w kırılımından gelir; her biri KENDİ başarısız-kırılım
+  invalidation'ını taşır (paylaşılan invalidation'a dahil değildir), bu
+  yüzden dip R:R'leriyle aynı ölçekte karşılaştırılmaz. Her iki yönde de
+  aday varsa en az birer tranche garanti edilir, kalan slotlar fiyata en
+  yakın seviyelerden doldurulur; sadece tek yönde aday varsa o yönden en
+  fazla 5 alınır. Fiyat eksik/negatifse veya hiçbir yönde aday seviye yoksa
   `[]`.
 - **`stop_adding`** — `[{"code": str, "message": str}, ...]` biçiminde,
   sabit sırayla kontrol edilen sinyaller: `BELOW_BEAR_FLOOR`,
@@ -216,11 +226,20 @@ sağlayıcı (LLM'ler dahil) bu alanları kendisi hesaplamaz. METODOLOJI.md
   (henüz bir `POZISYONLAR.md` pozisyon şeması yok — bkz. `ROADMAP.md`).
 - **`thesis_metric`** — tek çapa metrik: `{"name": str, "latest_value":
   str|null, "trend": "iyileşiyor"|"bozuluyor"|"yatay"|null, "rationale":
-  str}`. Metrik, sektör tipine göre seçilir (olgun → net kâr marjı/ROE,
-  kâr etmeyen büyüme → yıllık gelir büyümesi, finansal → ROE, GYO → FCF
-  marjı, döngüsel → brüt/net kâr marjı) ve `ratios`/`metrics`'ten okunur,
-  asla uydurulmaz; `rationale` her zaman METODOLOJI §7'nin "iki ardışık
-  çeyrek tezin aksini gösterirse tez geçersizdir" kuralını içerir.
+  str, "cycle": dict|null}`. Metrik, sektör tipine göre seçilir (olgun →
+  net kâr marjı/ROE, kâr etmeyen büyüme → yıllık gelir büyümesi, finansal →
+  ROE, GYO → FCF marjı, döngüsel → brüt/net kâr marjı) ve
+  `ratios`/`metrics`'ten okunur, asla uydurulmaz; `rationale` her zaman
+  METODOLOJI §7'nin "iki ardışık çeyrek tezin aksini gösterirse tez
+  geçersizdir" kuralını içerir. `cycle`, çapa metriğin güncel değerini kendi
+  çok yıllık dip→zirve aralığı içinde konumlandırır (raporda "döngü konumu"
+  çubuğu olarak çizilir): `{"low", "high", "current", "position" (0..1),
+  "low_fy", "high_fy", "current_fy", "n_years", "is_cyclical", "series"}`.
+  `series`, mali yıla göre artan sıralı tam yıllık seridir (`[{"fy",
+  "value"}, ...]`) ve konum çubuğunun yanında metriğin seyrini gösteren bir
+  sparkline çizgisi çizmek için kullanılır. En az iki farklı yıllık değer
+  yoksa, seri tamamen düzse veya metrik tek-noktalı `metrics` yedeğinden
+  geldiyse `null` olur.
 
 ### Damodaran sektör verisi kurulumu
 

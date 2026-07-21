@@ -66,6 +66,16 @@ _VERDICTS_EXTRA_COLUMNS: List[Tuple[str, str]] = [
     ("implied_growth", "REAL"),
     ("fair_value_json", "TEXT"),
     ("valuation_json", "TEXT"),
+    # Optional manual annotation: flags a verdict to KEEP (never overwrite in
+    # spirit -- the table is append-only anyway) as a deliberate forward test
+    # case, e.g. a model↔market divergence whose thesis a few quarters of data
+    # will referee. Defaults NULL; never written by save_verdict.
+    ("watch_note", "TEXT"),
+    # Point-in-time cutoff (ISO date) when the verdict was produced in as-of
+    # mode; NULL for ordinary live runs. Lets the verdict-history screen and
+    # backtests distinguish "analyzed today with today's data" from "analyzed
+    # as of a past date".
+    ("as_of", "TEXT"),
 ]
 
 
@@ -453,6 +463,7 @@ def save_verdict(
     db_path: Optional[str] = None,
     analyzed_at: Optional[str] = None,
     valuation: Optional[dict] = None,
+    as_of: Optional[str] = None,
 ) -> int:
     """Append one analysis result to the ``verdicts`` history table.
 
@@ -482,6 +493,8 @@ def save_verdict(
         db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
         analyzed_at: ISO-8601 timestamp to record. Defaults to
             ``datetime.now().isoformat(timespec="seconds")``.
+        as_of: Point-in-time cutoff (ISO ``"YYYY-MM-DD"``) when the analysis
+            was run in as-of mode, or ``None`` for an ordinary live run.
         valuation: The dict returned by
             :func:`sec_analyzer.valuation.engine.run_valuation` (typically
             ``result.get("valuation")``), or ``None``. When given, populates
@@ -531,6 +544,7 @@ def save_verdict(
         implied_growth,
         fair_value_json,
         valuation_json,
+        as_of,
     )
 
     init_db(db_path)
@@ -544,9 +558,9 @@ def save_verdict(
                     fundamental_verdict, technical_verdict, profile_fit,
                     fv_bear_lo, fv_bear_hi, fv_base_lo, fv_base_hi, fv_bull_lo, fv_bull_hi,
                     result_json, confidence, sector_type, implied_growth,
-                    fair_value_json, valuation_json
+                    fair_value_json, valuation_json, as_of
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 row,
             )
@@ -661,5 +675,89 @@ def load_financials(cik: str, db_path: Optional[str] = None) -> List[dict]:
             (cik_str,),
         )
         return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+#: Scalar columns returned by :func:`load_verdicts` -- deliberately excludes
+#: the large JSON blobs (``result_json``/``valuation_json``/``fair_value_json``)
+#: so the verdict-history screen stays a light query.
+_VERDICT_HISTORY_COLUMNS = (
+    "id, cik, ticker, analyzed_at, as_of, horizon, provider, price, "
+    "fundamental_verdict, technical_verdict, profile_fit, "
+    "fv_bear_lo, fv_bear_hi, fv_base_lo, fv_base_hi, fv_bull_lo, fv_bull_hi, "
+    "confidence, sector_type, implied_growth, watch_note"
+)
+
+
+def load_verdicts(ticker: str, db_path: Optional[str] = None, limit: int = 100) -> List[dict]:
+    """Read back the stored verdict history for a ticker, newest first.
+
+    Powers the web verdict-history screen. Runs :func:`init_db` first so the
+    ``as_of`` migration is applied even on a legacy database, then reads only
+    the scalar columns (no JSON blobs -- see :data:`_VERDICT_HISTORY_COLUMNS`).
+
+    Args:
+        ticker: Exchange ticker symbol; matched case-insensitively.
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+        limit: Maximum number of rows to return (most recent first).
+
+    Returns:
+        A list of plain ``dict`` rows ordered by ``analyzed_at`` descending.
+        Empty list if the ticker has no stored verdicts.
+    """
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        cursor = conn.execute(
+            f"""
+            SELECT {_VERDICT_HISTORY_COLUMNS}
+            FROM verdicts
+            WHERE ticker = ? COLLATE NOCASE
+            ORDER BY analyzed_at DESC
+            LIMIT ?
+            """,
+            (str(ticker), int(limit)),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def load_latest_stored_price(ticker: str, db_path: Optional[str] = None) -> Optional[dict]:
+    """Return the most recent stored ``prices`` row for a ticker, or ``None``.
+
+    Best-effort, network-free helper for the verdict-history screen's
+    "current price" delta column: it joins ``prices`` to ``companies`` by
+    ticker (case-insensitive) and returns the latest bar. Returns ``None`` if
+    the ticker is unknown or has no stored price rows. Never raises.
+
+    Returns:
+        ``{"date": "YYYY-MM-DD", "close": float}`` or ``None``.
+    """
+    try:
+        conn = get_connection(db_path)
+    except Exception:  # noqa: BLE001 - best-effort display helper
+        logger.warning("load_latest_stored_price: could not open DB", exc_info=True)
+        return None
+    try:
+        cursor = conn.execute(
+            """
+            SELECT p.date AS date, p.close AS close
+            FROM prices p
+            JOIN companies c ON c.cik = p.cik
+            WHERE c.ticker = ? COLLATE NOCASE
+            ORDER BY p.date DESC
+            LIMIT 1
+            """,
+            (str(ticker),),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return {"date": row["date"], "close": row["close"]}
+    except Exception:  # noqa: BLE001 - best-effort display helper
+        logger.warning("load_latest_stored_price failed for %s", ticker, exc_info=True)
+        return None
     finally:
         conn.close()
