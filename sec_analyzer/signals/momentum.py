@@ -81,6 +81,46 @@ def _classify_trend(values, deadband):
     return 0, diff
 
 
+def _classify_accel(values):
+    """Robust revenue-growth acceleration from a short ascending YoY series.
+
+    Quarterly YoY is noisy, so a bare half-mean comparison can be flipped by a
+    single quarter. This adds two guards on top of :func:`_classify_trend`:
+
+    1. **Latest-quarter agreement** -- an "accelerating" call requires the most
+       recent quarter's YoY to actually be higher than the prior quarter's
+       (mirrored for decelerating). This blocks a series whose mean drifted up
+       but whose latest print turned down (``[36, 48, 63.5, 35.7]``) from
+       reading as "hızlanıyor".
+    2. **Two-quarter confirmation** -- ``confirmed`` is ``True`` only when the
+       last *two* consecutive transitions agree with the direction; a move
+       resting on a single quarter is returned unconfirmed (the caller marks it
+       "teyit bekliyor" and weights it half).
+
+    Returns ``(sign, confirmed)`` where ``sign`` is ``+1``/``0``/``-1`` (or
+    ``None`` with too little data) and ``confirmed`` is a bool.
+    """
+    window = [v for v in values[-_TREND_WINDOW:] if v is not None]
+    if len(window) < 2:
+        return None, False
+    sign, _ = _classify_trend(window, _REV_ACCEL_DEADBAND_PP)
+    if not sign:  # None or 0
+        return sign, False
+    # Guard 1: the latest quarter must move in the claimed direction.
+    last_delta = window[-1] - window[-2]
+    if sign > 0 and last_delta <= 0:
+        return 0, False
+    if sign < 0 and last_delta >= 0:
+        return 0, False
+    # Guard 2: confirmed only if the last two transitions both agree.
+    confirmed = False
+    if len(window) >= 3:
+        d1 = window[-1] - window[-2]
+        d2 = window[-2] - window[-3]
+        confirmed = (d1 * sign > 0) and (d2 * sign > 0)
+    return sign, confirmed
+
+
 def _yoy_growth_series(quarters):
     """Year-over-year growth (%) for each quarter that has a ~1-year-earlier
     counterpart, ascending. ``quarters`` is the ascending
@@ -275,8 +315,10 @@ def compute_fundamental_momentum(normalized: dict, prior_verdict: "dict | None" 
         * ``s``: continuous score in ``[-1, 1]`` (the fundamental-momentum axis
           of the report's price x fundamental quadrant).
         * ``score``: ``0-100`` display score (``50`` == neutral).
-        * ``revenue_accel``: ``{"word", "latest_yoy_pct", "yoy_series"}`` or
-          ``None`` -- is quarterly YoY revenue growth speeding up or slowing?
+        * ``revenue_accel``: ``{"word", "confirmed", "latest_yoy_pct",
+          "yoy_series"}`` or ``None`` -- is quarterly YoY revenue growth
+          speeding up or slowing? ``confirmed`` is ``False`` for a
+          single-quarter move (weighted half, flagged "teyit bekliyor").
         * ``margin_trend``: ``{"gross", "fcf"}`` trend words (or ``None`` each).
         * ``model_surprise``: see :func:`_model_surprise`, or ``None``.
         * ``detail``: a one-line Turkish readout.
@@ -289,11 +331,13 @@ def compute_fundamental_momentum(normalized: dict, prior_verdict: "dict | None" 
 
     revenue_accel = None
     accel_sign = None
+    accel_confirmed = False
     if yoy_series:
         yoy_values = [y["yoy_pct"] for y in yoy_series]
-        accel_sign, _ = _classify_trend(yoy_values, _REV_ACCEL_DEADBAND_PP)
+        accel_sign, accel_confirmed = _classify_accel(yoy_values)
         revenue_accel = {
             "word": _accel_word(accel_sign),
+            "confirmed": accel_confirmed,
             "latest_yoy_pct": yoy_values[-1],
             "yoy_series": yoy_series[-_TREND_WINDOW:],
         }
@@ -316,7 +360,10 @@ def compute_fundamental_momentum(normalized: dict, prior_verdict: "dict | None" 
     # fundamental momentum quadrant, and a 0-100 display `score`.
     raw = 0
     if accel_sign is not None:
-        raw += 2 * accel_sign
+        # Acceleration is the headline signal (double weight) -- but only when
+        # confirmed by two consecutive quarters. A single-quarter move counts
+        # single-weight, so a noisy one-off can't drive the label on its own.
+        raw += (2 if accel_confirmed else 1) * accel_sign
     if gross_sign is not None:
         raw += gross_sign
     if fcf_sign is not None:
@@ -552,7 +599,15 @@ def _cross_signals(price_momentum, fundamental_momentum, price_tier, fundamental
 def _build_fundamental_detail(revenue_accel, margin_trend, model_surprise) -> str:
     parts = []
     if revenue_accel and revenue_accel.get("word"):
-        parts.append(f"Gelir büyümesi {revenue_accel['word']} (son YoY %{revenue_accel['latest_yoy_pct']:+.1f})")
+        # Explicitly "çeyreklik" (quarterly) so it never reads as contradicting
+        # the thesis card's *annual* "Yıllık Gelir Büyümesi (YoY)" -- the two
+        # legitimately differ (an annual rate can decelerate while the latest
+        # quarters reaccelerate). Momentum is deliberately the timelier read.
+        caveat = "" if revenue_accel.get("confirmed", True) else " — tek çeyrek, teyit bekliyor"
+        parts.append(
+            f"Çeyreklik gelir büyümesi {revenue_accel['word']} "
+            f"(son çeyrek YoY %{revenue_accel['latest_yoy_pct']:+.1f}{caveat})"
+        )
     gross = (margin_trend or {}).get("gross")
     if gross:
         parts.append(f"brüt marj {gross}")

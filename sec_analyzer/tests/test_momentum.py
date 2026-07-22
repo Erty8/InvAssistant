@@ -20,6 +20,7 @@ from sec_analyzer.signals.momentum import (
     compute_verdict_momentum,
     synthesize_momentum,
     _yoy_growth_series,
+    _classify_accel,
 )
 from sec_analyzer.interpret.planning import apply_stabilization_condition
 from sec_analyzer.store.database import (
@@ -170,10 +171,13 @@ def test_quarterly_series_empty_when_missing():
 # YoY growth + acceleration
 # --------------------------------------------------------------------------
 def _build_revenue(quarters_by_year):
+    # Per-quarter start dates (~90-day spans) so each row reads as quarter-only
+    # and to_quarterly_series takes the values as-is (no YTD differencing).
+    starts = {"03-31": "01-01", "06-30": "04-01", "09-30": "07-01", "12-31": "10-01"}
     rev = []
     for yr, vals in quarters_by_year.items():
         for m, v in zip(("03-31", "06-30", "09-30", "12-31"), vals):
-            rev.append(_q(f"{yr}-{m}", v, f"{yr}-01-01"))
+            rev.append(_q(f"{yr}-{m}", v, f"{yr}-{starts[m]}"))
     rev.sort(key=lambda x: x["period_end"])
     return rev
 
@@ -194,11 +198,39 @@ def test_yoy_and_acceleration_direction():
     # Continuous score exposed for the quadrant, consistent with the label.
     assert -1.0 <= m["s"] <= 1.0 and m["s"] > 0
     assert m["score"] == pytest.approx(50 + m["s"] * 50, abs=1.0)
+    # The detail must mark the growth read as QUARTERLY, so it never reads as
+    # contradicting the thesis card's annual "Yıllık Gelir Büyümesi (YoY)".
+    assert "Çeyreklik gelir büyümesi" in m["detail"]
+    assert "son çeyrek YoY" in m["detail"]
 
 
 def test_fundamental_none_when_sparse():
     assert compute_fundamental_momentum({"quarterly": {}, "annual": {}}) is None
     assert compute_fundamental_momentum(None) is None
+
+
+@pytest.mark.parametrize("series,expected", [
+    ([10.0, 13.0, 17.0, 20.0], (1, True)),      # clean accel -> confirmed
+    ([40.0, 30.0, 22.0, 15.0], (-1, True)),     # clean decel -> confirmed
+    ([36.0, 48.0, 35.7, 63.5], (1, False)),     # RKLB: up but single-quarter -> unconfirmed
+    ([36.0, 48.0, 63.5, 35.7], (0, False)),     # mean-up but latest crashed -> neutralized
+    ([20.0, 21.0, 20.0, 21.0], (0, False)),     # flat
+])
+def test_classify_accel_guards(series, expected):
+    assert _classify_accel(series) == expected
+
+
+def test_single_quarter_accel_is_flagged_and_half_weighted():
+    # A single-quarter acceleration (RKLB-shaped) is marked unconfirmed and
+    # carries half weight, so it can't alone push the label to POZİTİF.
+    rev = _build_revenue({
+        2023: [100, 100, 100, 100],
+        2024: [136, 148, 135, 163],   # noisy YoY, last quarter jumps
+    })
+    m = compute_fundamental_momentum({"quarterly": {"Revenue": rev}, "annual": {}})
+    assert m["revenue_accel"]["word"] == "hızlanıyor"
+    assert m["revenue_accel"]["confirmed"] is False
+    assert "teyit bekliyor" in m["detail"]
 
 
 # --------------------------------------------------------------------------

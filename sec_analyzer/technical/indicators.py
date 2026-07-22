@@ -963,6 +963,9 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         when there isn't enough history to compute it):
 
         * ``price``: last Close, 2dp float.
+        * ``change_1d_pct``: last session's percentage change vs. the prior
+          close (``(close[-1]/close[-2] - 1) * 100``), 2dp, or ``None`` with
+          fewer than two closes.
         * ``as_of``: last date, ``"YYYY-MM-DD"``.
         * ``rsi14``: Wilder's 14-period RSI, 1dp.
         * ``sma50`` / ``sma200``: simple moving averages of Close.
@@ -1050,6 +1053,13 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     as_of = df.index[-1]
     as_of_str = as_of.strftime("%Y-%m-%d") if hasattr(as_of, "strftime") else str(as_of)
 
+    change_1d_pct = None
+    if len(close) >= 2:
+        prev_close = close.iloc[-2]
+        last_close = close.iloc[-1]
+        if not pd.isna(prev_close) and not pd.isna(last_close) and prev_close != 0:
+            change_1d_pct = round((float(last_close) / float(prev_close) - 1) * 100, 2)
+
     rsi14 = _rsi14(close)
 
     sma50_series = _sma(close, _SMA_SHORT_WINDOW)
@@ -1121,6 +1131,7 @@ def compute_indicators(df: pd.DataFrame) -> dict:
 
     indicators = {
         "price": price,
+        "change_1d_pct": change_1d_pct,
         "as_of": as_of_str,
         "rsi14": rsi14,
         "sma50": sma50,
