@@ -29,6 +29,7 @@ with whatever subset of concepts *is* available.
 """
 
 import logging
+from collections import OrderedDict
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -574,6 +575,103 @@ def latest_annual_value(normalized: dict, concept: str) -> Optional[float]:
         if record.get("value") is not None:
             return record.get("value")
     return None
+
+
+#: A quarterly flow record whose span exceeds this (days) is a year-to-date
+#: cumulative figure (H1/9M), not a single quarter, and must be differenced.
+_QUARTER_MAX_SPAN_DAYS = 100
+
+
+def to_quarterly_series(normalized: dict, concept: str) -> List[dict]:
+    """Return a true *single-quarter* series for ``concept``, ascending.
+
+    The quarterly bucket in ``normalized`` can mix genuine quarter-only rows
+    (span ~90 days) with year-to-date cumulative rows (H1 ~180d, 9M ~270d),
+    because a 10-Q sometimes reports only the YTD figure for a flow item
+    (cash-flow lines especially). This reconstructs the per-quarter values:
+
+    * **Instant/balance concepts** (not in ``FLOW_CONCEPTS``) are point-in-time
+      and returned as-is.
+    * **Flow concepts** are grouped by fiscal year (calendar year of
+      ``period_end``, matching :func:`_fiscal_year`). Within each year, records
+      are walked ascending while a running sum tracks the cumulative total from
+      the fiscal-year start: a quarter-like row (span ``<=``
+      :data:`_QUARTER_MAX_SPAN_DAYS`, or an unknown span) is taken directly; a
+      YTD row is differenced against the running cumulative
+      (``quarter = ytd - running_sum``). When three quarters of a fiscal year
+      are present and an annual value exists, **Q4 is derived** as
+      ``annual - (Q1+Q2+Q3)``.
+
+    Each element is ``{"period_end": str, "value": float, "derived": bool}``
+    (``derived`` marks a value obtained by differencing/subtraction rather than
+    reported directly). Returns ``[]`` when the concept is missing or has no
+    usable quarterly rows. Pure and never raises.
+    """
+    records = (normalized.get("quarterly") or {}).get(concept)
+    if not records:
+        return []
+
+    rows: List[dict] = []
+    for r in records:
+        pe = r.get("period_end")
+        val = r.get("value")
+        if pe is None or val is None:
+            continue
+        try:
+            value = float(val)
+        except (TypeError, ValueError):
+            continue
+        fy = r.get("fy") if r.get("fy") is not None else _fiscal_year(pe)
+        rows.append({"period_end": pe, "value": value, "span": _span_days(r), "fy": fy})
+
+    if not rows:
+        return []
+    rows.sort(key=lambda x: x["period_end"])
+
+    if concept not in FLOW_CONCEPTS:
+        # Instant/balance concept: each row is already a point-in-time value.
+        return [{"period_end": r["period_end"], "value": r["value"], "derived": False} for r in rows]
+
+    # Annual values (keyed by fiscal year) for Q4 derivation.
+    annual = to_annual_series(normalized, concept)
+    annual_period_end: Dict[int, str] = {}
+    for rec in (normalized.get("annual") or {}).get(concept) or []:
+        fy = rec.get("fy")
+        pe = rec.get("period_end")
+        if fy is not None and pe is not None and fy not in annual_period_end:
+            annual_period_end[fy] = pe
+
+    groups: "OrderedDict[Optional[int], List[dict]]" = OrderedDict()
+    for r in rows:
+        groups.setdefault(r["fy"], []).append(r)
+
+    out: List[dict] = []
+    for fy, grp in groups.items():
+        grp.sort(key=lambda x: x["period_end"])
+        running_sum = 0.0
+        emitted = 0
+        for r in grp:
+            span = r["span"]
+            if span is None or span <= _QUARTER_MAX_SPAN_DAYS:
+                quarter = r["value"]
+                out.append({"period_end": r["period_end"], "value": quarter, "derived": False})
+                running_sum += quarter
+            else:
+                quarter = r["value"] - running_sum
+                out.append({"period_end": r["period_end"], "value": quarter, "derived": True})
+                running_sum = r["value"]
+            emitted += 1
+
+        # Derive Q4 = annual - sum(first three quarters) when a fiscal year has
+        # exactly its first three quarters reported and an annual value exists.
+        if fy is not None and emitted == 3 and fy in annual:
+            q4 = annual[fy] - running_sum
+            q4_pe = annual_period_end.get(fy)
+            if q4_pe is not None:
+                out.append({"period_end": q4_pe, "value": q4, "derived": True})
+
+    out.sort(key=lambda x: x["period_end"])
+    return out
 
 
 def format_table(normalized: dict) -> str:

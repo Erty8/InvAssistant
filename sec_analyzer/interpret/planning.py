@@ -408,6 +408,34 @@ def _resolve_invalidation(valuation: dict, technical: Optional[dict], lowest_kep
     return round(base_level * (1 - _INVALIDATION_BUFFER_PCT), 2)
 
 
+#: Stabilization precondition appended to dip tranches when momentum flags a
+#: falling knife (cheap fundamentals + negative price momentum). It gates the
+#: TIMING of a dip entry, not its price level -- the tranche's trigger/size are
+#: unchanged; the reader is told to wait for a momentum turn before acting.
+_STABILIZATION_NOTE = (
+    "Stabilizasyon koşulu: momentum negatif (düşen bıçak) — dip tetiği geldiğinde "
+    "hemen alma; RSI'nin 30 üstünü geri alması veya MACD yukarı kesişim teyidi beklenmeli."
+)
+
+
+def apply_stabilization_condition(entry_plan: Optional[list], active: bool) -> Optional[list]:
+    """Append the falling-knife stabilization precondition to every dip
+    tranche's ``note`` when ``active`` (a cheap + negative-momentum
+    cross-signal fired). Pure and defensive: returns ``entry_plan`` unchanged
+    when inactive, empty, or not a list, and never overwrites an existing note
+    (it appends). Only the timing note changes -- trigger levels, sizes and
+    targets are untouched.
+    """
+    if not active or not isinstance(entry_plan, list):
+        return entry_plan
+    for tranche in entry_plan:
+        if not isinstance(tranche, dict) or tranche.get("kind") != "dip":
+            continue
+        existing = tranche.get("note")
+        tranche["note"] = f"{existing} {_STABILIZATION_NOTE}" if existing else _STABILIZATION_NOTE
+    return entry_plan
+
+
 def compute_entry_plan(valuation: Optional[dict], technical: Optional[dict], price: Optional[float]) -> list:
     """Build the mechanical, tranche-based scale-in plan (METODOLOJI.md
     Sec.1 item 5, "Kademeli giriş planı") -- two directional tranche kinds,

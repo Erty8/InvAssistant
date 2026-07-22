@@ -25,6 +25,8 @@
    Seçim: her iki yönde de aday varsa en az birer tranche garanti edilir, kalan slotlar fiyata en yakın seviyelerden doldurulur (sadece tek yönde aday varsa o yönden en fazla 5 alınır). Boyutlandırma: en ucuz (en düşük fiyatlı) tranche en büyük payı alır. Her tranche için ortak hedef ve **per-tranche R:R** (kendi invalidation'ına göre) raporlanır. "Düşük fiyatlı tranche'lar daha yüksek R:R sunmalı" kuralı SADECE birikim (dip) merdiveninin ardışık tranche'ları arasında geçerlidir — bunlar ortak invalidation'ı paylaştığı için R:R fiyat düştükçe monoton artar. Breakout tranche'ları kendi dar/kendine-özgü invalidation'larıyla bu ölçekte karşılaştırılamaz; dolayısıyla mekanik "R:R ters" uyarısı yalnızca ardışık dip tranche'ları arasında uygulanır, breakout tranche'larına veya dip/breakout çiftlerine uygulanmaz.
 
    Kabul edilen tasarım tradeoff'u (Finding 1): boyutlandırma dip ve breakout tranche'larını ayrı ayrı değil, TEK ~%100'lük fiyata-göre-azalan sırada birleştirir (en ucuz tranche, yönü ne olursa olsun, en büyük payı alır). Bilinçli olarak kabul edilen iki sonucu var: (a) en derin dip tranche'ları TEK paylaşılan (uzak) yapısal stop'u taşıdığından, dar kendi-stop'lu breakout tranche'larından daha düşük R:R sunabilirler — bu yüzden "düşük fiyat → yüksek R:R" monotonluğu yukarıda belirtildiği gibi SADECE dip merdiveni içinde geçerlidir, dip/breakout karşılaştırması için değil; (b) gerçek bir fiyat hareketi tek yönlüdür (ya düşüş ya yükseliş), dolayısıyla gerçekleşen tek yol ~%100'ün yalnızca kendi tarafına düşen kısmını devreye sokar, tamamını değil.
+
+   Momentum bağlam katmanı (bkz. §8) dip tranche'larını doğrudan etkiler: fundamental UCUZ verdict'i negatif fiyat momentumuyla çakışırsa ("düşen bıçak"), dip merdivenine paylaşılan bir stabilizasyon ön-koşulu eklenir — tranche boyutlandırması ve invalidation mantığı yukarıdaki gibi kalır, yalnızca tetiğe bir ek koşul iliştirilir.
 6. **Stop-adding sinyalleri** — hangi koşullar gerçekleşirse yeni tranche AÇILMAZ (tez metriği bozulması, invalidation'a yaklaşma, konsantrasyon limiti).
 7. **Tez doğrulama metriği** — hisse başına TEK çapa metrik, ilk analizde tanımlanır, her çeyrek kontrol edilir. Örnekler: bellek üreticisi → gross margin; SaaS → NRR; banka → NIM; pre-profit story hissesi → revenue re-acceleration. Metrik iki ardışık çeyrek tezin aksini gösterirse tez GEÇERSİZ sayılır ve bu açıkça söylenir.
 8. **Özet** — 2-3 cümle, eyleme dönük, %'li ve R:R'lı.
@@ -107,3 +109,65 @@ metodolojisiyle aynı araç, farklı zaman noktalarında).
 
 Tam teknik sözleşme (fonksiyon imzaları, veri kaynağı önceliği, sınırlamalar):
 SPEC.md §18.
+
+## 8. Momentum bağlamı (context layer)
+
+> **Değişmez kural:** Momentum HİÇBİR ZAMAN fair value / valuation hesaplamasına
+> girmez. "Ne kadar eder" (fair value, VALUATION.md'nin işi) ve "ne zaman ve
+> nasıl girilir" (kademeli giriş, §1.5) ayrı tezlerdir; momentum yalnızca
+> İKİNCİ soruyu besler — value yakınsaması ve trend devamı farklı iddialardır
+> ve biri diğerini geçersiz kılmaz. Tamamen deterministiktir (LLM yok, wall-
+> clock bağımlılığı yok); üç alt katman da saf ve savunmalıdır (hata fırlatmaz,
+> eksik veride `None`'a düşer, kartta "—" görünür).
+
+Üç bağımsız alt katman, terminale/HTML rapora tek bir **MOMENTUM** satırı ve
+`verdicts` tablosuna bir `momentum_verdict` kolonu olarak yansır:
+
+1. **Fiyat momentumu** (`technical/momentum.py::compute_price_momentum`) — 0-100
+   bileşik skor: çok-ufuklu getiriler (3a/6a + klasik 12-1 momentum,
+   volatiliteye göre normalize), SPY'a ve sektör ETF'ine (SIC → ETF eşlemesi
+   aynı modülde) göre relatif güç, trend kalitesi (SMA50/200 eğimi, 52 haftalık
+   zirveye uzaklık) ve yukarı/aşağı hacim oranı; RSI/MACD yalnızca hafif bir
+   dürtme olarak katılır. 3 aylık ufuk anlatısı bu skorla açılır (§4); 5 yıllık
+   ufukta ise yalnızca bir zamanlama dipnotuna iner ve tez için belirleyici
+   sayılmaz (`technical/verdict.py`).
+2. **Fundamental momentum** (`signals/momentum.py::compute_fundamental_momentum`)
+   — işin *ikinci türevi*: çeyreklik YoY gelir büyümesi hızlanıyor mu/sabit mi/
+   yavaşlıyor mu, brüt ve FCF marjı trendi, ve bir "model bazlı sürpriz"
+   (gerçekleşen gelirin, önceki saklı analizin baz senaryosunun o ana kadar
+   öngördüğü seviyeye göre sapması). Çeyreklik + YTD-kümülatif XBRL satırları
+   karışık geldiğinde gerçek tek-çeyrek değerleri `normalize/normalizer.py::
+   to_quarterly_series` türetir (YTD farklama + üç çeyrek + yıllık varsa
+   Q4 = yıllık − Q1..Q3). Model-sürpriz sinyali hiper-grower senaryolarında
+   artık kalıcı hale getirilen `revenue_path`/`base_revenue`/
+   `steady_state_year` alanlarına dayanır (`valuation/engine.py`
+   `scenarios_detail`); bu alanları içermeyen eski saklı verdict'lerde
+   sessizce `None`'a düşer.
+3. **Verdict momentumu** (`signals/momentum.py::compute_verdict_momentum`) —
+   ardışık saklı LIVE analizlerde modelin KENDİ fair-value/fiyat oranının
+   yörüngesi: oran yükselirken fiyat düşüyorsa "yakınsama fırsatı" (model
+   ismi giderek daha ucuz buluyor); oran düşerken adil değer fiyata doğru
+   eriyorsa "zayıflayan tez". Ekstra veri toplamaya gerek yok — `verdicts`
+   tablosu doldukça kendiliğinden gelir.
+
+Üçü `signals/momentum.py::synthesize_momentum` içinde tek bir
+`result["momentum"]` verdict'inde birleşir (GÜÇLÜ+ / POZİTİF / NÖTR / NEGATİF)
+ve şu **çapraz sinyalleri** üretir:
+
+- **UCUZ + negatif fiyat momentumu → "düşen bıçak" uyarısı.** Kademeli giriş
+  planının dip tranche'larına ortak bir stabilizasyon ön-koşulu eklenir
+  (bkz. §1.5).
+- **PAHALI + GÜÇLÜ+ momentum → profil güvenlik uyarısı.** "Momentum cazibesi
+  yüksek, değerleme tetiği yok, plan dışı alım riski" olarak işaretlenir —
+  profil uyumu tarafına bir uyarı olarak akar (bkz. §3, PROFIL.md).
+- **UCUZ + pozitif fundamental momentum (özellikle model-beat ile) → en güçlü
+  kombinasyon.** Tranche planını öne çekmek için gerekçe sayılabilir.
+
+Katman `cli.py` / `web/app.py` içinde interpret adımından SONRA, olaylar
+(events) katmanıyla aynı desende bağlanır (bkz. `signals/events.py`) ve
+`--as-of` (backtest/otopsi) modunda verdict-momentumu ile model-sürpriz alt
+sinyalleri devre dışı kalır — yalnızca o ana kadarki fiyat momentumu
+kullanılır, böylece geçmişe dönük bir analiz gelecekteki saklı verdict'lere
+veya sonraki fiyat hareketine bakmaz (bkz. §7'deki point-in-time ilkesi).
+Backtest raporu ayrıca bir (verdict × momentum × vade) isabet-oranı tablosu
+ve hisse başına bir verdict-momentum bölümü taşır.

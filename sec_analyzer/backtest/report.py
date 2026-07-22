@@ -86,6 +86,34 @@ def build_report_data(db_path: Optional[str] = None) -> dict:
             "insufficient": n < _MIN_SAMPLE,
         })
 
+    # --- Momentum hit-rate: does the momentum label sharpen the value verdict? ---
+    # Groups binary-hit outcomes by (fundamental_verdict, momentum_verdict,
+    # horizon). Answers e.g. "is UCUZ + NEGATİF momentum really a falling knife
+    # (worse hit-rate), and UCUZ + POZİTİF the strongest combination?".
+    mom_buckets = defaultdict(lambda: {"hits": 0, "n": 0})
+    for o in outcomes:
+        if o.get("hit") is None:
+            continue
+        key = (
+            o.get("fundamental_verdict") or "—",
+            o.get("momentum_verdict") or "—",
+            o.get("horizon") or "—",
+        )
+        mom_buckets[key]["n"] += 1
+        mom_buckets[key]["hits"] += 1 if o.get("hit") else 0
+    hit_rate_momentum = []
+    for (verdict_type, momentum_verdict, horizon), agg in sorted(mom_buckets.items()):
+        n = agg["n"]
+        hit_rate_momentum.append({
+            "verdict_type": verdict_type,
+            "momentum_verdict": momentum_verdict,
+            "horizon": horizon,
+            "n": n,
+            "hits": agg["hits"],
+            "rate": (agg["hits"] / n) if n else None,
+            "insufficient": n < _MIN_SAMPLE,
+        })
+
     # --- Calibration time series: median FV_base_mid / ref_price per run date ---
     by_date = defaultdict(list)
     for v in verdicts:
@@ -99,6 +127,35 @@ def build_report_data(db_path: Optional[str] = None) -> dict:
         {"date": d, "median_ratio": statistics.median(ratios), "n": len(ratios)}
         for d, ratios in sorted(by_date.items())
     ]
+
+    # --- Per-ticker verdict-momentum: FV_base_mid/price trajectory across runs ---
+    # The per-ticker counterpart of the cross-sectional calibration series: does
+    # the model find a given name progressively cheaper (ratio rising) or is fair
+    # value eroding toward price (ratio falling) as more data arrives?
+    by_ticker = defaultdict(list)
+    for v in verdicts:
+        ref_date = _ref_date_of(v)
+        lo, hi, price = v.get("fv_base_lo"), v.get("fv_base_hi"), v.get("price")
+        ticker = v.get("ticker")
+        if not ticker or ref_date is None or lo is None or hi is None or not price:
+            continue
+        by_ticker[ticker].append({"date": ref_date, "ratio": round(((lo + hi) / 2.0) / price, 3)})
+    verdict_momentum = []
+    for ticker, pts in sorted(by_ticker.items()):
+        pts = sorted(pts, key=lambda p: p["date"])
+        if len(pts) < 2:
+            continue
+        first, last = pts[0]["ratio"], pts[-1]["ratio"]
+        change = (last / first - 1.0) if first else None
+        verdict_momentum.append({
+            "ticker": ticker,
+            "n": len(pts),
+            "first_date": pts[0]["date"],
+            "last_date": pts[-1]["date"],
+            "first_ratio": first,
+            "last_ratio": last,
+            "change": change,
+        })
 
     # --- Divergence / referee cases ---
     divergence = []
@@ -122,7 +179,9 @@ def build_report_data(db_path: Optional[str] = None) -> dict:
 
     return {
         "hit_rate": hit_rate,
+        "hit_rate_momentum": hit_rate_momentum,
         "calibration": calibration,
+        "verdict_momentum": verdict_momentum,
         "divergence": divergence,
         "disclaimer": BACKTEST_DISCLAIMER,
     }
@@ -153,6 +212,19 @@ def render_terminal(data: dict) -> str:
             f"{row['n']:>5}{_fmt_pct(row['rate']):>9}{flag}"
         )
 
+    lines.append("\n[Momentum hit-rate] verdict × momentum × vade")
+    lines.append(f"{'Tür':<20}{'Momentum':<12}{'Vade':<6}{'n':>5}{'İsabet':>9}")
+    lines.append("-" * 60)
+    mom_rows = data.get("hit_rate_momentum") or []
+    if not mom_rows:
+        lines.append("(momentum etiketli değerlendirilmiş verdict yok)")
+    for row in mom_rows:
+        flag = "  ⚠ yetersiz örneklem" if row["insufficient"] else ""
+        lines.append(
+            f"{row['verdict_type']:<20}{row['momentum_verdict']:<12}{row['horizon']:<6}"
+            f"{row['n']:>5}{_fmt_pct(row['rate']):>9}{flag}"
+        )
+
     lines.append("\n[Kalibrasyon] tarih başına medyan makul-değer/fiyat")
     lines.append(f"{'Tarih':<14}{'Medyan FV/Fiyat':>16}{'n':>5}")
     lines.append("-" * 36)
@@ -160,6 +232,18 @@ def render_terminal(data: dict) -> str:
         lines.append("(veri yok)")
     for row in data["calibration"]:
         lines.append(f"{row['date']:<14}{_fmt_ratio(row['median_ratio']):>16}{row['n']:>5}")
+
+    lines.append("\n[Verdict momentum] hisse başına FV/fiyat oranının seyri")
+    lines.append(f"{'Hisse':<8}{'n':>4}{'İlk':>9}{'Son':>9}{'Değişim':>10}")
+    lines.append("-" * 40)
+    vm_rows = data.get("verdict_momentum") or []
+    if not vm_rows:
+        lines.append("(≥2 çalıştırması olan hisse yok)")
+    for row in vm_rows:
+        lines.append(
+            f"{row['ticker']:<8}{row['n']:>4}{_fmt_ratio(row['first_ratio']):>9}"
+            f"{_fmt_ratio(row['last_ratio']):>9}{_fmt_pct(row['change']):>10}"
+        )
 
     lines.append("\n[Ayrışma vakaları] (MODEL-PİYASA AYRIŞMASI / YÜKSEK BEKLENTİ)")
     if not data["divergence"]:
@@ -194,6 +278,33 @@ def render_html(data: dict, generated_on: str) -> str:
                 f"<td class='num'>{_esc(_fmt_pct(r['rate']))}</td></tr>"
             )
         return "".join(out)
+
+    def mom_rows() -> str:
+        rows = data.get("hit_rate_momentum") or []
+        if not rows:
+            return '<tr><td colspan="5" class="empty">Momentum etiketli değerlendirilmiş verdict yok.</td></tr>'
+        out = []
+        for r in rows:
+            cls = ' class="insufficient"' if r["insufficient"] else ""
+            flag = ' <span class="warn">yetersiz örneklem</span>' if r["insufficient"] else ""
+            out.append(
+                f"<tr{cls}><td>{_esc(r['verdict_type'])}</td><td>{_esc(r['momentum_verdict'])}</td>"
+                f"<td>{_esc(r['horizon'])}</td><td class='num'>{r['n']}{flag}</td>"
+                f"<td class='num'>{_esc(_fmt_pct(r['rate']))}</td></tr>"
+            )
+        return "".join(out)
+
+    def vm_rows() -> str:
+        rows = data.get("verdict_momentum") or []
+        if not rows:
+            return '<tr><td colspan="5" class="empty">≥2 çalıştırması olan hisse yok.</td></tr>'
+        return "".join(
+            f"<tr><td>{_esc(r['ticker'])}</td><td class='num'>{r['n']}</td>"
+            f"<td class='num'>{_esc(_fmt_ratio(r['first_ratio']))}</td>"
+            f"<td class='num'>{_esc(_fmt_ratio(r['last_ratio']))}</td>"
+            f"<td class='num'>{_esc(_fmt_pct(r['change']))}</td></tr>"
+            for r in rows
+        )
 
     def calib_rows() -> str:
         if not data["calibration"]:
@@ -243,9 +354,18 @@ def render_html(data: dict, generated_on: str) -> str:
   <table><thead><tr><th>Tür</th><th>Vade</th><th>Route</th><th class="num">n</th>
     <th class="num">İsabet</th></tr></thead><tbody>{hit_rows()}</tbody></table>
 
+  <h2>Momentum hit-rate — verdict × momentum × vade</h2>
+  <table><thead><tr><th>Tür</th><th>Momentum</th><th>Vade</th><th class="num">n</th>
+    <th class="num">İsabet</th></tr></thead><tbody>{mom_rows()}</tbody></table>
+
   <h2>Kalibrasyon — tarih başına medyan makul-değer/fiyat</h2>
   <table><thead><tr><th>Tarih</th><th class="num">Medyan FV/Fiyat</th>
     <th class="num">n</th></tr></thead><tbody>{calib_rows()}</tbody></table>
+
+  <h2>Verdict momentum — hisse başına FV/fiyat oranının seyri</h2>
+  <table><thead><tr><th>Hisse</th><th class="num">n</th><th class="num">İlk oran</th>
+    <th class="num">Son oran</th><th class="num">Değişim</th></tr></thead>
+    <tbody>{vm_rows()}</tbody></table>
 
   <h2>Ayrışma vakaları</h2>
   <table><thead><tr><th>Hisse</th><th>Tarih</th><th>Verdict</th>

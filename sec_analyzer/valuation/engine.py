@@ -2201,6 +2201,13 @@ def _build_hyper_growth(
                 "start_growth": round(start_growth, 4), "target_fcf_margin": round(target, 4),
                 "terminal_growth": round(terminal_growth, 4),
                 "final_year_revenue": result["final_year_revenue"], "revenue_multiple": result["revenue_multiple"],
+                # Persisted so a later analysis can measure "model-based
+                # surprise" -- realized revenue vs. the revenue this scenario
+                # projected for the elapsed time. base_revenue is the year-0
+                # anchor (revenue_path[i] is the projected revenue for year i+1).
+                "base_revenue": round(float(latest_revenue), 2),
+                "steady_state_year": steady_state_year,
+                "revenue_path": [round(float(v), 2) for v in result["revenue_path"]],
             }
 
         base_cell = scenarios_detail.get("base")

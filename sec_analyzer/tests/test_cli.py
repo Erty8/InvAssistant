@@ -292,8 +292,8 @@ def test_print_verdict_card_technical_enriched_with_momentum_and_sr(capsys):
 
     # Verdict line gains the detail suffix.
     assert "NÖTR (RSI 59, SMA50 +%14)" in out
-    # Momentum sub-line with returns + trend.
-    assert "Momentum:" in out
+    # Returns/trend sub-line (raw multi-horizon returns + trend).
+    assert "Getiriler:" in out
     assert "1a +%4" in out and "3a +%12" in out and "6a -%3" in out
     assert "Trend: yükseliş (GC)" in out
     # MACD + volume sub-line.

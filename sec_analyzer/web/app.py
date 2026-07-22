@@ -38,6 +38,7 @@ from sec_analyzer.fetch.fred import get_risk_free_asof
 from sec_analyzer.fetch.prices import PriceDataError, get_price_history, latest_price, slice_asof
 from sec_analyzer.fetch.tickers import resolve_cik
 from sec_analyzer.http_client import SecHttpClient
+from sec_analyzer.cli import _attach_momentum, _enrich_sector_momentum
 from sec_analyzer.interpret.analyzer import interpret
 from sec_analyzer.normalize.metrics import compute_metrics
 from sec_analyzer.normalize.normalizer import normalize_facts
@@ -420,6 +421,9 @@ def _run_full_pipeline(
     submissions = _fetch_submissions(cik, ticker, no_cache)
     catalyst = _fetch_catalyst(submissions, ticker, as_of)
     fred_rate = get_risk_free_asof(as_of, no_cache=no_cache) if as_of is not None else None
+    # Fold sector-relative strength into `technical` and recompute the composite
+    # momentum score now that the SIC is known (mirrors the CLI).
+    _enrich_sector_momentum(ticker, technical, price_df, submissions, no_cache, as_of)
 
     # In as-of mode the sliced price frame is a historical subset; don't
     # persist it over the current-view prices table (mirrors the CLI).
@@ -655,7 +659,8 @@ def api_analyze():
     if isinstance(analysis, dict) and as_of is not None:
         analysis["as_of"] = as_of.isoformat()
 
-    if "error" not in analysis:
+    if isinstance(analysis, dict) and "error" not in analysis:
+        _attach_momentum(analysis, ticker, normalized, technical, as_of)
         try:
             save_verdict(
                 ticker, cik, horizon, provider or Config.ANALYZER_PROVIDER, price, analysis,
@@ -825,7 +830,8 @@ def report():
     if isinstance(analysis, dict) and as_of is not None:
         analysis["as_of"] = as_of.isoformat()
 
-    if "error" not in analysis:
+    if isinstance(analysis, dict) and "error" not in analysis:
+        _attach_momentum(analysis, ticker, normalized, technical, as_of)
         try:
             save_verdict(
                 ticker, cik, horizon, resolved_provider, price, analysis,

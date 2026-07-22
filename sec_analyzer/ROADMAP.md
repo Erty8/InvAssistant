@@ -52,6 +52,22 @@ değildir:
   vekilinden ayrı türetildiği için steady-state'te bakım-CapEx yine fiyatlanıyor. Eski
   bastırma (suppression) guardrail'i, düzeltilmiş marjla bile baz senaryo ≤ $0 çıkarsa
   devreye giren bir backstop olarak kalıyor. Bkz. SPEC.md §3.6, VALUATION.md §4a.
+- [TAMAMLANDI] Momentum bağlam katmanı — fiyat momentumu (`technical/momentum.py`,
+  çok-ufuklu getiri + relatif güç + trend kalitesi + hacim bileşik skoru), fundamental
+  momentum (`signals/momentum.py`, çeyreklik büyüme ivmesi + marj trendi + model-bazlı
+  sürpriz) ve verdict momentumu (`signals/momentum.py`, ardışık saklı analizlerde FV/fiyat
+  oranının yörüngesi) tek bir MOMENTUM satırında birleşti; UCUZ/PAHALI verdict'iyle
+  çapraz okunarak düşen-bıçak uyarısı, profil güvenlik uyarısı ve UCUZ+ivmeli-büyüme
+  "en güçlü kombinasyon" sinyallerini üretiyor. Tamamen deterministik (LLM yok, wall-clock
+  bağımlılığı yok); fair value hesaplamasına GİRMİYOR, yalnızca giriş zamanlaması /
+  kademeli giriş tarafını besliyor. Bkz. METODOLOJI.md §8, §1.5.
+  - **Ertelendi (kapsam dışı bırakıldı, bilinçli):** Filing momentumu — ardışık 10-Q'ların
+    MD&A/guidance bölümlerinin ton analizi (iyimserlik/temkinlilik değişimi) — bu üçlüye
+    dahil EDİLMEDİ. Bu tür bir metin-tonu analizi doğası gereği bir LLM okuması gerektirir;
+    CLAUDE.md'nin "LLM usage belongs in offline ETL steps that write to a structured cache;
+    the runtime analysis/valuation path stays deterministic and LLM-free" kuralı gereği,
+    yapılacaksa ayrı bir offline ETL adımı (LLM → yapılandırılmış önbellek, `signals/events.py`
+    ile aynı desen) olarak ele alınmalı — runtime momentum katmanına doğrudan eklenmedi.
 
 ## Değerleme motoru — katmanlı-ceza normalizasyonu (2026-07-16/17)
 

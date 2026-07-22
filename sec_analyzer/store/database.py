@@ -76,6 +76,10 @@ _VERDICTS_EXTRA_COLUMNS: List[Tuple[str, str]] = [
     # backtests distinguish "analyzed today with today's data" from "analyzed
     # as of a past date".
     ("as_of", "TEXT"),
+    # Composite momentum label ("GÜÇLÜ+" / "POZİTİF" / "NÖTR" / "NEGATİF")
+    # from result["momentum"]["verdict"]; the full momentum dict lives in
+    # result_json. Context layer only -- never feeds the fair value.
+    ("momentum_verdict", "TEXT"),
 ]
 
 
@@ -543,6 +547,8 @@ def save_verdict(
     implied_growth = ((valuation or {}).get("reverse_dcf") or {}).get("implied_growth")
     fair_value_json = json.dumps(valuation.get("fair_value_range"), ensure_ascii=False) if valuation else None
     valuation_json = json.dumps(valuation, ensure_ascii=False) if valuation else None
+    momentum = result.get("momentum") or {}
+    momentum_verdict = momentum.get("verdict") if isinstance(momentum, dict) else None
 
     row = (
         cik_str,
@@ -567,6 +573,7 @@ def save_verdict(
         fair_value_json,
         valuation_json,
         as_of,
+        momentum_verdict,
     )
 
     init_db(db_path)
@@ -580,9 +587,9 @@ def save_verdict(
                     fundamental_verdict, technical_verdict, profile_fit,
                     fv_bear_lo, fv_bear_hi, fv_base_lo, fv_base_hi, fv_bull_lo, fv_bull_hi,
                     result_json, confidence, sector_type, implied_growth,
-                    fair_value_json, valuation_json, as_of
+                    fair_value_json, valuation_json, as_of, momentum_verdict
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 row,
             )
@@ -706,23 +713,30 @@ def load_financials(cik: str, db_path: Optional[str] = None) -> List[dict]:
 #: so the verdict-history screen stays a light query.
 _VERDICT_HISTORY_COLUMNS = (
     "id, cik, ticker, analyzed_at, as_of, horizon, provider, price, "
-    "fundamental_verdict, technical_verdict, profile_fit, "
+    "fundamental_verdict, technical_verdict, profile_fit, momentum_verdict, "
     "fv_bear_lo, fv_bear_hi, fv_base_lo, fv_base_hi, fv_bull_lo, fv_bull_hi, "
     "confidence, sector_type, implied_growth, watch_note"
 )
 
 
-def load_verdicts(ticker: str, db_path: Optional[str] = None, limit: int = 100) -> List[dict]:
+def load_verdicts(
+    ticker: str, db_path: Optional[str] = None, limit: int = 100, live_only: bool = False
+) -> List[dict]:
     """Read back the stored verdict history for a ticker, newest first.
 
-    Powers the web verdict-history screen. Runs :func:`init_db` first so the
-    ``as_of`` migration is applied even on a legacy database, then reads only
-    the scalar columns (no JSON blobs -- see :data:`_VERDICT_HISTORY_COLUMNS`).
+    Powers the web verdict-history screen and the verdict-momentum signal.
+    Runs :func:`init_db` first so the ``as_of``/``momentum_verdict`` migrations
+    are applied even on a legacy database, then reads only the scalar columns
+    (no JSON blobs -- see :data:`_VERDICT_HISTORY_COLUMNS`).
 
     Args:
         ticker: Exchange ticker symbol; matched case-insensitively.
         db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
         limit: Maximum number of rows to return (most recent first).
+        live_only: When ``True``, exclude point-in-time (as-of / backtest)
+            runs -- only ordinary live analyses (``as_of IS NULL``) are
+            returned. Used by the verdict-momentum signal so a backtest grid
+            can't pollute the live FV/price trajectory.
 
     Returns:
         A list of plain ``dict`` rows ordered by ``analyzed_at`` descending.
@@ -731,17 +745,78 @@ def load_verdicts(ticker: str, db_path: Optional[str] = None, limit: int = 100) 
     init_db(db_path)
     conn = get_connection(db_path)
     try:
+        where = "WHERE ticker = ? COLLATE NOCASE"
+        if live_only:
+            where += " AND as_of IS NULL"
         cursor = conn.execute(
             f"""
             SELECT {_VERDICT_HISTORY_COLUMNS}
             FROM verdicts
-            WHERE ticker = ? COLLATE NOCASE
+            {where}
             ORDER BY analyzed_at DESC
             LIMIT ?
             """,
             (str(ticker), int(limit)),
         )
         return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def load_prior_live_verdict(
+    ticker: str, before: Optional[str] = None, db_path: Optional[str] = None
+) -> Optional[dict]:
+    """Return the most recent prior *live* verdict for a ticker, with its
+    parsed ``valuation`` blob, for the model-based-surprise signal.
+
+    "Live" means ``as_of IS NULL`` (excludes backtest/point-in-time runs).
+    When ``before`` (an ISO timestamp) is given, only verdicts strictly older
+    than it are considered, so the current run doesn't compare against itself.
+    Best-effort: returns ``None`` on any error or when no prior verdict exists.
+
+    Returns:
+        ``{"analyzed_at": str, "price": float|None, "valuation": dict|None}``
+        or ``None``.
+    """
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+    except Exception:  # noqa: BLE001 - best-effort context helper
+        logger.warning("load_prior_live_verdict: could not open DB", exc_info=True)
+        return None
+    try:
+        params: List = [str(ticker)]
+        where = "WHERE ticker = ? COLLATE NOCASE AND as_of IS NULL"
+        if before:
+            where += " AND analyzed_at < ?"
+            params.append(str(before))
+        cursor = conn.execute(
+            f"""
+            SELECT analyzed_at, price, valuation_json
+            FROM verdicts
+            {where}
+            ORDER BY analyzed_at DESC
+            LIMIT 1
+            """,
+            params,
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        valuation = None
+        if row["valuation_json"]:
+            try:
+                valuation = json.loads(row["valuation_json"])
+            except (ValueError, TypeError):
+                valuation = None
+        return {
+            "analyzed_at": row["analyzed_at"],
+            "price": row["price"],
+            "valuation": valuation,
+        }
+    except Exception:  # noqa: BLE001 - best-effort context helper
+        logger.warning("load_prior_live_verdict failed for %s", ticker, exc_info=True)
+        return None
     finally:
         conn.close()
 
@@ -881,8 +956,8 @@ def load_outcomes(db_path: Optional[str] = None) -> List[dict]:
     Returns:
         One dict per stored outcome, carrying the outcome columns plus the
         parent verdict's ``ticker``, ``as_of``, ``analyzed_at``,
-        ``fundamental_verdict``, ``sector_type``, and ``valuation_json``.
-        Ordered by ``ref_date`` then ``ticker``.
+        ``fundamental_verdict``, ``sector_type``, ``valuation_json``, and
+        ``momentum_verdict``. Ordered by ``ref_date`` then ``ticker``.
     """
     init_db(db_path)
     conn = get_connection(db_path)
@@ -893,7 +968,7 @@ def load_outcomes(db_path: Optional[str] = None) -> List[dict]:
                    o.fwd_price, o.abs_return, o.rel_return, o.hit, o.referee_note,
                    o.evaluated_at,
                    v.ticker, v.as_of, v.analyzed_at, v.fundamental_verdict,
-                   v.sector_type, v.valuation_json
+                   v.sector_type, v.valuation_json, v.momentum_verdict
             FROM verdict_outcomes o
             JOIN verdicts v ON v.id = o.verdict_id
             ORDER BY o.ref_date, v.ticker
