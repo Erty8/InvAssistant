@@ -1,0 +1,7 @@
+# Backtest izleme listesi (bir ticker/satır; '#' yorum satırı).
+# backtest run --tickers-file data/backtest/watchlist.txt --dates ...
+MU
+AAPL
+KO
+AMD
+NVDA

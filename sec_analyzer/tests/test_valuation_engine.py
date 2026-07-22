@@ -2521,9 +2521,10 @@ def test_run_valuation_without_as_of_never_carries_macro_asof_key(tmp_path):
 def test_run_valuation_as_of_copies_macro_asof_and_appends_notes(tmp_path):
     """as_of set + a resolvable macro (via fred_rate, even with an otherwise
     empty Damodaran directory) must copy `macro_asof` verbatim into the
-    top-level result and append both documented Turkish notes: one naming
-    the as-of macro sources ("Geçmiş tarih"), one caveating that sector
-    multiples/betas stay a static current snapshot."""
+    top-level result and append the documented Turkish provenance note naming
+    the as-of macro sources ("Geçmiş tarih"). With an empty directory no
+    anachronism warnings fire (nothing current to substitute), so only the
+    single provenance note is present."""
     damodaran_dir = tmp_path / "damodaran"
     damodaran_dir.mkdir()  # exists but has no CSVs -- fred_rate alone must be enough
 
@@ -2544,12 +2545,15 @@ def test_run_valuation_as_of_copies_macro_asof_and_appends_notes(tmp_path):
         "as_of": "2022-06-30",
         "erp_source": "erp.csv (güncel değer)",
         "risk_free_source": "DGS10 (2022-06-29)",
+        "multiples_source": "multiples.csv (güncel snapshot — anakronik)",
     }
-    assert any("Geçmiş tarih" in n and "2022-06-30" in n for n in result["notes"])
+    # Single provenance note naming all three macro sources; no warnings key
+    # (empty dir -> nothing current substituted for a missing historical file).
     assert any(
-        "Sektör çarpanları ve betaları güncel Damodaran anlık görüntüsüdür" in n
+        "Geçmiş tarih" in n and "2022-06-30" in n and "çarpan/beta kaynağı" in n
         for n in result["notes"]
     )
+    assert "warnings" not in result["macro_asof"]
 
 
 def test_run_valuation_hyper_grower_terminal_growth_anchor_uses_as_of_fred_rate(tmp_path):

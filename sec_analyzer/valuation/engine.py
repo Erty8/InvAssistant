@@ -3612,12 +3612,13 @@ def _run_valuation(
         notes.append(
             f"Geçmiş tarih (as-of) modu: {macro_asof['as_of']} itibarıyla — "
             f"ERP kaynağı: {macro_asof['erp_source']}; risksiz faiz kaynağı: "
-            f"{macro_asof['risk_free_source']}."
+            f"{macro_asof['risk_free_source']}; çarpan/beta kaynağı: "
+            f"{macro_asof.get('multiples_source', 'multiples.csv')}."
         )
-        notes.append(
-            "Sektör çarpanları ve betaları güncel Damodaran anlık görüntüsüdür; "
-            "tarihe göre arşivlenmemiştir (yalnızca ERP ve risksiz faiz geçmişe göre alınır)."
-        )
+        # Surface any anachronism warnings (current snapshot substituted for a
+        # missing historical one) directly in the valuation notes.
+        for warning in macro_asof.get("warnings") or []:
+            notes.append(warning)
     if _is_number(risk_free_pct):
         terminal_growth_anchor = min(risk_free_pct / 100.0, sanity._TERMINAL_GROWTH_MAX)
     else:

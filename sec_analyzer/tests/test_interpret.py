@@ -11,6 +11,7 @@ provider-agnostic phase-2 post-processing (`technical_verdict`/`confidence`/
 """
 
 import json
+from datetime import date
 
 import pytest
 
@@ -851,3 +852,81 @@ def test_interpret_never_raises_on_unexpected_internal_error(monkeypatch):
 
     assert result["error"] == "boom"
     assert result["_provider"] == "script"
+
+
+# ---------------------------------------------------------------------------
+# as-of / hindsight-leak restriction (backtest subsystem):
+# _build_phase2_system_prompt's point-in-time instruction, and
+# interpret_results()'s "hindsight_leak_risk" flag on the LLM path only.
+# ---------------------------------------------------------------------------
+
+
+def test_build_phase2_system_prompt_includes_asof_instruction_when_set():
+    prompt = analyzer._build_phase2_system_prompt("1y", as_of=date(2022, 6, 30))
+
+    assert "ANALİZ TARİHİ: 2022-06-30" in prompt
+    assert "SONRA" in prompt
+
+
+def test_build_phase2_system_prompt_omits_asof_instruction_when_none():
+    prompt = analyzer._build_phase2_system_prompt("1y", as_of=None)
+
+    assert "ANALİZ TARİHİ" not in prompt
+
+
+def test_interpret_results_ollama_sets_hindsight_leak_risk_when_as_of_given(monkeypatch):
+    monkeypatch.setattr(analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json())
+    valuation = _valuation_fixture()
+
+    result = analyzer.interpret_results(
+        _normalized(), [], {}, None, None, None, valuation, provider="ollama",
+        as_of=date(2022, 6, 30),
+    )
+
+    assert "hindsight_leak_risk" in result
+    assert result["hindsight_leak_risk"] == analyzer._HINDSIGHT_LEAK_LABEL
+
+
+def test_interpret_results_anthropic_sets_hindsight_leak_risk_when_as_of_given(monkeypatch):
+    # `_dispatch_llm_call` short-circuits to a RuntimeError if the optional
+    # `anthropic` package isn't importable (it isn't in this test env) --
+    # patch the module-level flag so this test exercises the hindsight-leak
+    # wiring itself rather than that unrelated, pre-existing environment gap
+    # (see test_interpret_dispatches_to_anthropic).
+    monkeypatch.setattr(analyzer, "anthropic", object())
+    monkeypatch.setattr(
+        analyzer, "_call_anthropic", lambda system, user, model, api_key: _commentary_json()
+    )
+    monkeypatch.setattr(analyzer.Config, "require_anthropic_key", classmethod(lambda cls: "fake-key"))
+    valuation = _valuation_fixture()
+
+    result = analyzer.interpret_results(
+        _normalized(), [], {}, None, None, None, valuation, provider="anthropic",
+        as_of=date(2022, 6, 30),
+    )
+
+    assert "hindsight_leak_risk" in result
+
+
+def test_interpret_results_llm_path_omits_hindsight_leak_risk_when_as_of_none(monkeypatch):
+    monkeypatch.setattr(analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json())
+    valuation = _valuation_fixture()
+
+    result = analyzer.interpret_results(
+        _normalized(), [], {}, None, None, None, valuation, provider="ollama", as_of=None,
+    )
+
+    assert "hindsight_leak_risk" not in result
+
+
+def test_interpret_results_script_provider_never_sets_hindsight_leak_risk_even_with_as_of():
+    """The deterministic "script" path returns before the as-of/LLM check
+    (there's no LLM training-data leak to warn about), regardless of as_of."""
+    valuation = _valuation_fixture()
+
+    result = analyzer.interpret_results(
+        _normalized(), [], {}, None, None, None, valuation, provider="script",
+        as_of=date(2022, 6, 30),
+    )
+
+    assert "hindsight_leak_risk" not in result

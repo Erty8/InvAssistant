@@ -229,6 +229,28 @@ def init_db(db_path: Optional[str] = None) -> None:
                 )
                 """
             )
+            # Backtest outcome evaluations: one row per (verdict, horizon)
+            # measuring realized return vs. SPY and a "hit" flag. Append-only
+            # per (verdict_id, horizon) via UPSERT so re-evaluation is
+            # idempotent. See sec_analyzer.backtest.outcomes.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS verdict_outcomes (
+                    verdict_id   INTEGER,
+                    horizon      TEXT,
+                    ref_date     TEXT,
+                    ref_price    REAL,
+                    fwd_date     TEXT,
+                    fwd_price    REAL,
+                    abs_return   REAL,
+                    rel_return   REAL,
+                    hit          INTEGER,
+                    referee_note TEXT,
+                    evaluated_at TEXT,
+                    PRIMARY KEY (verdict_id, horizon)
+                )
+                """
+            )
 
             # Migrate pre-existing database files (created by an older
             # version of this module) to the current column set. No-op on
@@ -759,5 +781,124 @@ def load_latest_stored_price(ticker: str, db_path: Optional[str] = None) -> Opti
     except Exception:  # noqa: BLE001 - best-effort display helper
         logger.warning("load_latest_stored_price failed for %s", ticker, exc_info=True)
         return None
+    finally:
+        conn.close()
+
+
+#: Columns the backtest outcome layer needs off each verdict, including the
+#: ``valuation_json`` blob (for method/route classification) that the light
+#: ``load_verdicts`` history query deliberately omits.
+_VERDICT_OUTCOME_COLUMNS = (
+    "id, cik, ticker, analyzed_at, as_of, horizon, provider, price, "
+    "fundamental_verdict, sector_type, fv_base_lo, fv_base_hi, valuation_json"
+)
+
+
+def load_verdicts_for_outcomes(db_path: Optional[str] = None) -> List[dict]:
+    """Load every verdict with the fields the backtest outcome layer needs.
+
+    Unlike :func:`load_verdicts` (light, per-ticker, no blobs), this returns
+    ALL verdicts including ``valuation_json`` (for method/route classification).
+    Runs :func:`init_db` first so the schema/migrations are present.
+
+    Returns:
+        A list of plain ``dict`` rows ordered by ``id``.
+    """
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        cursor = conn.execute(
+            f"SELECT {_VERDICT_OUTCOME_COLUMNS} FROM verdicts ORDER BY id"
+        )
+        return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def save_outcome(
+    verdict_id: int,
+    horizon: str,
+    ref_date: Optional[str],
+    ref_price: Optional[float],
+    fwd_date: Optional[str],
+    fwd_price: Optional[float],
+    abs_return: Optional[float],
+    rel_return: Optional[float],
+    hit: Optional[bool],
+    evaluated_at: str,
+    referee_note: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> None:
+    """Insert or replace one backtest outcome row (idempotent per verdict+horizon).
+
+    ``hit`` is stored as 1/0/NULL (True/False/None -- None for verdicts whose
+    correctness isn't a binary claim, e.g. MAKUL or a model-market divergence).
+    A previously written ``referee_note`` is preserved when this re-evaluation
+    passes ``referee_note=None`` (manual annotations aren't clobbered by a
+    recompute).
+    """
+    init_db(db_path)
+    hit_int = None if hit is None else (1 if hit else 0)
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            # Preserve an existing manual referee_note when the caller doesn't
+            # supply one (recompute of the numeric fields only).
+            note_to_write = referee_note
+            if note_to_write is None:
+                existing = conn.execute(
+                    "SELECT referee_note FROM verdict_outcomes WHERE verdict_id = ? AND horizon = ?",
+                    (verdict_id, horizon),
+                ).fetchone()
+                if existing is not None:
+                    note_to_write = existing["referee_note"]
+            conn.execute(
+                """
+                INSERT INTO verdict_outcomes (
+                    verdict_id, horizon, ref_date, ref_price, fwd_date, fwd_price,
+                    abs_return, rel_return, hit, referee_note, evaluated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(verdict_id, horizon) DO UPDATE SET
+                    ref_date=excluded.ref_date, ref_price=excluded.ref_price,
+                    fwd_date=excluded.fwd_date, fwd_price=excluded.fwd_price,
+                    abs_return=excluded.abs_return, rel_return=excluded.rel_return,
+                    hit=excluded.hit, referee_note=excluded.referee_note,
+                    evaluated_at=excluded.evaluated_at
+                """,
+                (
+                    verdict_id, horizon, ref_date, ref_price, fwd_date, fwd_price,
+                    abs_return, rel_return, hit_int, note_to_write, evaluated_at,
+                ),
+            )
+    finally:
+        conn.close()
+
+
+def load_outcomes(db_path: Optional[str] = None) -> List[dict]:
+    """Join ``verdict_outcomes`` back to ``verdicts`` for the backtest report.
+
+    Returns:
+        One dict per stored outcome, carrying the outcome columns plus the
+        parent verdict's ``ticker``, ``as_of``, ``analyzed_at``,
+        ``fundamental_verdict``, ``sector_type``, and ``valuation_json``.
+        Ordered by ``ref_date`` then ``ticker``.
+    """
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        cursor = conn.execute(
+            """
+            SELECT o.verdict_id, o.horizon, o.ref_date, o.ref_price, o.fwd_date,
+                   o.fwd_price, o.abs_return, o.rel_return, o.hit, o.referee_note,
+                   o.evaluated_at,
+                   v.ticker, v.as_of, v.analyzed_at, v.fundamental_verdict,
+                   v.sector_type, v.valuation_json
+            FROM verdict_outcomes o
+            JOIN verdicts v ON v.id = o.verdict_id
+            ORDER BY o.ref_date, v.ticker
+            """
+        )
+        return [dict(row) for row in cursor.fetchall()]
     finally:
         conn.close()

@@ -747,6 +747,10 @@
     font-size: 0.68rem; line-height: 1.4; color: var(--muted);
     margin-bottom: 8px; font-style: italic;
   }
+  .rev-tune {
+    margin-top: 8px; font-size: 0.66rem; line-height: 1.4; color: var(--muted);
+    border-top: 1px dashed var(--outline); padding-top: 6px;
+  }
   .rev-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   .rev-row { display: flex; align-items: flex-start; gap: 7px; font-size: 0.75rem; line-height: 1.35; color: var(--outline); }
   .rev-icon { flex: none; width: 1em; font-weight: 700; text-align: center; }
@@ -2481,8 +2485,23 @@
   // reading is a ✗. The count of ✓ drives a one-line readiness verdict, and a
   // watch line maps the nearest S/R zone to the trigger/invalidation level.
   var _REV_VOLUME_MIN = 1.5; // rel_volume at/above which the turn has real participation
-  function computeReversal(t, momentum) {
+  // Horizon-aware swing tuning: a short (3m) swing wants to react fast and
+  // keep a tight stop; a long (5y) hold tolerates more noise (wider stop) but
+  // demands stronger confirmation before calling a turn. The 1y row is the
+  // historical default (volMin 1.5, 2-of-N confirm, 12% wide-stop line), so a
+  // 1y report is unchanged. Only timing/stop-acceptability shifts — the price
+  // TARGET stays the fair-value anchor and is never horizon-scaled.
+  function swingHorizonTuning(horizon) {
+    if (horizon === "3m") return { volMin: 1.3, strongConfirm: 1, wideStopPct: 8,
+      note: "Zamanlama ufku 3 ay: hızlı teyit (1 sinyal), dar stop (>%8 geniş sayılır)." };
+    if (horizon === "5y") return { volMin: 1.8, strongConfirm: 3, wideStopPct: 18,
+      note: "Zamanlama ufku 5 yıl: güçlü teyit (3 sinyal) beklenir, geniş stop toleransı (>%18)." };
+    return { volMin: 1.5, strongConfirm: 2, wideStopPct: 12,
+      note: "Zamanlama ufku 1 yıl: dengeli teyit (2 sinyal), orta stop (>%12 geniş sayılır)." };
+  }
+  function computeReversal(t, momentum, horizon) {
     if (!momentum || (momentum.dirKind !== "up" && momentum.dirKind !== "down")) return null;
+    var tuning = swingHorizonTuning(horizon);
     var bull = momentum.dirKind === "down"; // downtrend -> watch for a bullish turn
     var rows = [];
     function row(state, text) { rows.push({ state: state, text: text }); }
@@ -2514,7 +2533,7 @@
     // trade; direction-neutral, so it reads the same for a bullish/bearish turn.
     var rv = isNum(t.rel_volume) ? Number(t.rel_volume) : null;
     if (rv !== null) {
-      if (rv >= _REV_VOLUME_MIN) row("ok", "Hacim ortalamanın belirgin üstünde (" + rv.toFixed(1) + "×) — dönüşe katılım var");
+      if (rv >= tuning.volMin) row("ok", "Hacim ortalamanın belirgin üstünde (" + rv.toFixed(1) + "×) — dönüşe katılım var");
       else row("none", "Hacim sıradan (" + rv.toFixed(1) + "×) — dönüşe güçlü katılım yok");
     }
 
@@ -2537,7 +2556,7 @@
     var total = rows.length;
     var verdict, vcls;
     if (confirmed === 0) { verdict = (bull ? "Dönüş teyidi yok — düşen trend sürüyor" : "Dönüş teyidi yok — yükseliş sürüyor"); vcls = "rev-none"; }
-    else if (confirmed < 2) { verdict = "Erken dönüş sinyali — teyit zayıf, bekle"; vcls = "rev-early"; }
+    else if (confirmed < tuning.strongConfirm) { verdict = "Erken dönüş sinyali — teyit zayıf, bekle"; vcls = "rev-early"; }
     else { verdict = (bull ? "Dönüş teyitleniyor — boğa tarafı güçleniyor" : "Dönüş teyitleniyor — ayı tarafı güçleniyor"); vcls = "rev-strong"; }
 
     // Watch line: nearest resistance is the trigger to reclaim for a bullish
@@ -2562,7 +2581,7 @@
       var stopDist = Math.abs(px - Number(inval));
       var riskPct = stopDist / px * 100;
       var atrMult = stopDist / atr;
-      var wide = riskPct > 12; // a stop this far implies an oversized swing risk
+      var wide = riskPct > tuning.wideStopPct; // horizon-scaled: tighter for a short swing, wider for a long hold
       riskHtml = '<div class="rev-risk' + (wide ? " rev-risk-wide" : "") + '">' +
         '<span class="rev-watch-label">Risk</span>' +
         escapeHtml("Stop $" + Number(inval).toFixed(2) + " ≈ girişten %" + riskPct.toFixed(1) +
@@ -2570,7 +2589,9 @@
           (wide ? " — geniş stop, pozisyonu küçült" : "")) + '.</div>';
     }
 
-    return { bull: bull, rows: rows, confirmed: confirmed, total: total, verdict: verdict, vcls: vcls, watchHtml: watchHtml + riskHtml };
+    var tuneHtml = '<div class="rev-tune">' + escapeHtml(tuning.note) + '</div>';
+
+    return { bull: bull, rows: rows, confirmed: confirmed, total: total, verdict: verdict, vcls: vcls, watchHtml: watchHtml + riskHtml + tuneHtml };
   }
 
   // Compact badge marker: only once the turn has ≥2 confirmations, so the
@@ -2636,7 +2657,7 @@
     var t = technical || {};
     var valuation = result.valuation || null;
     var momentum = computeMomentum(t);
-    var reversal = computeReversal(t, momentum);
+    var reversal = computeReversal(t, momentum, payload.horizon);
     if (!valuation && !reversal) return "";
 
     var parts = [], score = 0, maxScore = 0;
@@ -2745,7 +2766,7 @@
     return full || "Momentum için yeterli veri yok.";
   }
 
-  function technicalCardHtml(technical, verdictText) {
+  function technicalCardHtml(technical, verdictText, horizon) {
     var t = technical || {};
     // No usable indicators at all -> fall back to the plain verdict card.
     if (!isNum(t.rsi14) && !isNum(t.price)) {
@@ -2950,7 +2971,7 @@
     // sentence. When no signal at all is available, show the empty state
     // instead of badge/meter/sentence but still render the rest of the card.
     var momentum = computeMomentum(t);
-    var reversal = computeReversal(t, momentum);
+    var reversal = computeReversal(t, momentum, horizon);
     var momSynthesisHtml;
     if (momentum) {
       // Plain .toUpperCase() mis-cases Turkish "i" (no dot) -> "SABIT" instead
@@ -3390,7 +3411,7 @@
       fanChartCardHtml(result, payload.price) +
       (valuation ? triangulationRowHtml(valuation, result.confidence) : "") +
       verdictCardHtml("Fundamental", result.fundamental_verdict, result.horizon_note) +
-      technicalCardHtml(technical, result.technical_verdict || technical.verdict) +
+      technicalCardHtml(technical, result.technical_verdict || technical.verdict, payload.horizon) +
       // Profile Fit card intentionally removed from the UI for now (still
       // computed in the payload; just not rendered).
       (valuation ? sensitivityTableHtml(valuation.sensitivity) : "") +

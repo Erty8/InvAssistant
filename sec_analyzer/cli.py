@@ -868,15 +868,19 @@ def _print_verdict_card(
     print("─" * len(header))
     if as_of is not None:
         print(
-            f"Geçmiş tarih modu: {as_of.isoformat()} — yalnızca bu tarihte "
-            "bilinen veriler (analist konsensüsü gösterilmiyor)"
+            f"AS-OF {as_of.isoformat()} — geçmiş veri, hindsight içermez "
+            "(analist konsensüsü gösterilmiyor)"
         )
         macro_asof = (result.get("valuation") or {}).get("macro_asof") if isinstance(result, dict) else None
         if macro_asof:
             print(
                 f"  Makro: ERP {macro_asof.get('erp_source')} · risksiz faiz "
-                f"{macro_asof.get('risk_free_source')}"
+                f"{macro_asof.get('risk_free_source')} · çarpan/beta "
+                f"{macro_asof.get('multiples_source', 'multiples.csv')}"
             )
+        leak = result.get("hindsight_leak_risk") if isinstance(result, dict) else None
+        if leak:
+            print(f"  ⚠ {leak}")
     print(f"Fiyat: {_fmt_money(metrics.get('price'))}")
 
     if "error" in result:
@@ -965,7 +969,21 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     as_of = getattr(args, "as_of", None)
     cik, _name, normalized, ratios = _fetch_normalize_store(args)
 
-    provider = getattr(args, "provider", None) or Config.ANALYZER_PROVIDER
+    # As-of default is no-AI: an LLM's training data can carry post-as_of
+    # knowledge, so unless the user *explicitly* asks for an AI provider,
+    # historical runs use the deterministic script engine. An explicit
+    # --provider still works but the result carries a hindsight-leak label.
+    explicit_provider = getattr(args, "provider", None)
+    if as_of is not None and explicit_provider is None:
+        provider = "script"
+    else:
+        provider = explicit_provider or Config.ANALYZER_PROVIDER
+    if as_of is not None and provider != "script":
+        print(
+            f"\nUYARI: as-of modunda AI sağlayıcı ({provider}) kullanılıyor — "
+            "sonuç 'hindsight sızıntısı riski' etiketi taşıyacak.",
+            file=sys.stderr,
+        )
     print(f"\nRunning {provider} analysis (horizon={horizon})...")
 
     # Point-in-time no-data guard: if the as-of cutoff predates every filed
@@ -1102,6 +1120,80 @@ def cmd_calibrate(args: argparse.Namespace) -> None:
         print(f"\nSaved calibration snapshot to: {path}")
     else:
         print("\nWARNING: failed to save calibration snapshot.", file=sys.stderr)
+
+
+def cmd_backtest(args: argparse.Namespace) -> None:
+    """Handle the ``backtest`` subcommand group: ``run``/``evaluate``/``report``.
+
+    ``run`` executes the (ticker x date) as-of grid (deterministic, no-AI),
+    persists verdicts, and evaluates forward outcomes. ``evaluate`` (re)computes
+    outcomes for all stored verdicts. ``report`` prints the hit-rate /
+    calibration / divergence tables and writes an HTML report. Each carries the
+    backtest sample disclaimer.
+    """
+    from sec_analyzer.backtest import BACKTEST_DISCLAIMER
+    from sec_analyzer.backtest.outcomes import evaluate_outcomes
+    from sec_analyzer.backtest.report import (
+        build_report_data,
+        render_terminal,
+        write_html_report,
+    )
+    from sec_analyzer.backtest.runner import parse_dates, read_tickers_file, run_backtest
+
+    action = getattr(args, "backtest_action", None)
+
+    if action == "run":
+        tickers = read_tickers_file(args.tickers_file)
+        if not tickers:
+            print(f"No tickers found in {args.tickers_file}.", file=sys.stderr)
+            return
+        try:
+            dates = parse_dates(args.dates)
+        except ValueError as exc:
+            print(f"Invalid --dates: {exc}", file=sys.stderr)
+            return
+        if not dates:
+            print("No dates given to --dates.", file=sys.stderr)
+            return
+        print(
+            f"Backtest grid: {len(tickers)} ticker × {len(dates)} tarih "
+            f"= {len(tickers) * len(dates)} hücre (no-AI, script)."
+        )
+        tally = run_backtest(
+            tickers, dates, years=args.years, no_cache=args.no_cache, db_path=Config.DB_PATH
+        )
+        print(
+            f"\nBitti: {tally['ok']} ok, {tally['no_data']} veri-yok, "
+            f"{tally['error']} hata (of {tally['cells']} hücre)."
+        )
+        if tally.get("outcomes"):
+            o = tally["outcomes"]
+            print(
+                f"Outcomes: {o['evaluated']} değerlendirildi, "
+                f"{o['skipped_immature']} vadesi dolmadı, {o['skipped_no_data']} veri-yok."
+            )
+        print(f"\n{BACKTEST_DISCLAIMER}")
+        return
+
+    if action == "evaluate":
+        summary = evaluate_outcomes(db_path=Config.DB_PATH, no_cache=args.no_cache)
+        print(
+            f"Outcomes: {summary['evaluated']} değerlendirildi, "
+            f"{summary['skipped_immature']} vadesi dolmadı, "
+            f"{summary['skipped_no_data']} veri-yok (of {summary['verdicts_seen']} verdict)."
+        )
+        print(f"\n{BACKTEST_DISCLAIMER}")
+        return
+
+    if action == "report":
+        data = build_report_data(db_path=Config.DB_PATH)
+        print(render_terminal(data))
+        generated_on = date.today().isoformat()
+        path = write_html_report(data, generated_on)
+        print(f"\nHTML backtest raporu: {path}")
+        return
+
+    print("Usage: backtest {run|evaluate|report} ...", file=sys.stderr)
 
 
 def _parse_as_of(value: str) -> date:
@@ -1258,6 +1350,46 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     calibrate_parser.set_defaults(func=cmd_calibrate)
+
+    # --- backtest {run|evaluate|report} ---
+    backtest_parser = subparsers.add_parser(
+        "backtest",
+        help=(
+            "Evaluation (not optimization) tool: run an as-of grid, evaluate "
+            "forward outcomes, and report hit-rate/calibration/divergence. "
+            "See ROADMAP.md 'Backtest — tasarım ilkesi'."
+        ),
+    )
+    backtest_sub = backtest_parser.add_subparsers(dest="backtest_action", required=True)
+
+    bt_run = backtest_sub.add_parser(
+        "run", help="Run the (ticker x date) as-of grid, persist verdicts, evaluate outcomes."
+    )
+    bt_run.add_argument(
+        "--tickers-file", required=True,
+        help="Path to a watchlist file (one ticker per line; '#' comments allowed).",
+    )
+    bt_run.add_argument(
+        "--dates", required=True,
+        help="Comma-separated as-of dates, e.g. '2020-06-30,2022-06-30,2023-12-31'.",
+    )
+    bt_run.add_argument("--years", type=int, default=5, help="Fiscal-year window (default 5).")
+    bt_run.add_argument(
+        "--no-cache", action="store_true", help="Bypass raw JSON/price caches and re-fetch.",
+    )
+
+    bt_eval = backtest_sub.add_parser(
+        "evaluate", help="(Re)evaluate forward outcomes for all stored verdicts (idempotent).",
+    )
+    bt_eval.add_argument(
+        "--no-cache", action="store_true", help="Bypass the price cache and re-fetch.",
+    )
+
+    backtest_sub.add_parser(
+        "report", help="Print hit-rate/calibration/divergence tables and write an HTML report.",
+    )
+
+    backtest_parser.set_defaults(func=cmd_backtest)
 
     return parser
 

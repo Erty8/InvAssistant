@@ -153,6 +153,32 @@ def _load_erp_history(path: str) -> Optional[Dict[int, dict]]:
     return history or None
 
 
+def _find_year_subdir(dir_path: str, as_of_year: int) -> Tuple[Optional[int], Optional[str]]:
+    """Find the nearest past-year ``data/damodaran/{YEAR}/`` snapshot subfolder.
+
+    Scans ``dir_path`` for subdirectories whose name is a 4-digit year and
+    returns ``(year, path)`` for the largest such year ``<= as_of_year`` (the
+    vintage that was current as of that date). Returns ``(None, None)`` when no
+    qualifying subfolder exists. Never raises.
+    """
+    try:
+        entries = os.listdir(dir_path)
+    except OSError:
+        return None, None
+    best_year: Optional[int] = None
+    for name in entries:
+        if len(name) != 4 or not name.isdigit():
+            continue
+        if not os.path.isdir(os.path.join(dir_path, name)):
+            continue
+        year = int(name)
+        if year <= as_of_year and (best_year is None or year > best_year):
+            best_year = year
+    if best_year is None:
+        return None, None
+    return best_year, os.path.join(dir_path, str(best_year))
+
+
 def load_sector_data(
     dir_path: Optional[str],
     as_of=None,
@@ -165,15 +191,20 @@ def load_sector_data(
             ``erp.csv`` (typically ``Config.DAMODARAN_DIR``).
         as_of: Optional point-in-time date (``datetime.date`` or ISO string).
             When ``None`` (the default) this returns the exact current-value
-            dict, bit-for-bit unchanged. When set, ERP is sourced from
-            ``erp_history.csv`` (row for ``as_of.year``, falling back to the
-            current ``erp.csv`` value if that year is absent), and a
-            ``"macro_asof"`` provenance block is added.
+            dict, bit-for-bit unchanged. When set, a ``"macro_asof"``
+            provenance block is added and historical sources are preferred:
+            * Multiples/betas: a ``data/damodaran/{YEAR}/multiples.csv`` snapshot
+              subfolder (nearest year on/before ``as_of``) if present, else the
+              current ``multiples.csv`` with an "anakronik çarpan/beta" warning.
+            * ERP: per-year snapshot ``erp.csv`` -> ``erp_history.csv`` row for
+              ``as_of.year`` -> current ``erp.csv`` (with an anachronism warning
+              on the last fallback).
         fred_rate: Optional ``{"value_pct": float, ...}`` dict (from
             :func:`sec_analyzer.fetch.fred.get_risk_free_asof`) supplying the
             historical risk-free rate. Only consulted when ``as_of`` is set.
-            Risk-free precedence when ``as_of`` is set: ``fred_rate`` ->
-            ``erp_history.csv`` row's ``risk_free`` -> current ``erp.csv``.
+            Risk-free precedence: ``fred_rate`` -> per-year snapshot
+            ``erp.csv`` -> ``erp_history.csv`` row's ``risk_free`` -> current
+            ``erp.csv`` (with an anachronism warning on the last fallback).
 
     Returns:
         ``{"multiples": [...] or None, "erp": float or None, "risk_free":
@@ -183,10 +214,10 @@ def load_sector_data(
         present per-row only when that row's CSV data carried a usable Cap
         Ex/Sales value (see :func:`_parse_multiples_rows`). When ``as_of`` is
         set the dict also carries ``"macro_asof": {"as_of","erp_source",
-        "risk_free_source"}`` (Turkish source strings, surfaced in the report/
-        notes). Sector multiples and betas are NOT date-keyed -- they remain
-        the current static snapshot regardless of ``as_of`` (documented
-        limitation). Never raises; every missing piece is logged.
+        "risk_free_source","multiples_source"[,"warnings"]}`` (Turkish source
+        strings, surfaced in the report/notes; ``warnings`` lists anachronism
+        notes when a current snapshot had to substitute for a missing
+        historical one). Never raises; every missing piece is logged.
     """
     if not dir_path or not os.path.isdir(dir_path):
         logger.info("damodaran: directory %r not found; sector medians unavailable.", dir_path)
@@ -216,44 +247,108 @@ def load_sector_data(
     # --- Point-in-time (as-of) macro resolution ---
     as_of_year = as_of.year if hasattr(as_of, "year") else int(str(as_of)[:4])
     as_of_iso = as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of)
+    warnings: List[str] = []
+
+    # Per-year snapshot subfolder (data/damodaran/{YEAR}/): the nearest vintage
+    # on/before as_of. When present it supplies the historical multiples/betas
+    # AND (via its own erp.csv) an ERP/risk-free source, so sector multiples
+    # can be point-in-time instead of the current static snapshot.
+    hist_year, hist_dir = _find_year_subdir(dir_path, as_of_year)
+    hist_multiples = None
+    hist_erp = hist_rf = None
+    if hist_dir is not None:
+        hist_multiples_rows = _read_csv_rows(os.path.join(hist_dir, _MULTIPLES_FILENAME))
+        hist_multiples = (
+            _parse_multiples_rows(hist_multiples_rows) if hist_multiples_rows is not None else None
+        )
+        hist_erp_rows = _read_csv_rows(os.path.join(hist_dir, _ERP_FILENAME))
+        if hist_erp_rows is not None:
+            hist_erp = _parse_erp(hist_erp_rows)
+            hist_rf = _parse_risk_free(hist_erp_rows)
 
     history = _load_erp_history(os.path.join(dir_path, _ERP_HISTORY_FILENAME))
     hist_row = history.get(as_of_year) if history else None
 
-    # ERP: history year row -> current erp.csv.
-    if hist_row is not None and hist_row.get("erp") is not None:
+    # Multiples/betas: per-year snapshot -> current top-level (anachronistic).
+    if hist_multiples:
+        used_multiples = hist_multiples
+        multiples_source = f"data/damodaran/{hist_year}/multiples.csv"
+    else:
+        used_multiples = parsed_multiples
+        multiples_source = "multiples.csv (güncel snapshot — anakronik)"
+        if parsed_multiples:
+            warnings.append(
+                f"Anakronik çarpan/beta: {as_of_year} için tarihsel Damodaran "
+                "snapshot'ı yok; güncel multiples.csv kullanıldı."
+            )
+            logger.warning(
+                "damodaran: no per-year snapshot for as_of year %s; using current "
+                "multiples.csv (anachronistic sector multiples/betas).", as_of_year,
+            )
+
+    # ERP: per-year snapshot erp.csv -> erp_history.csv row -> current erp.csv.
+    if hist_erp is not None:
+        erp_value = hist_erp
+        erp_source = f"data/damodaran/{hist_year}/erp.csv"
+    elif hist_row is not None and hist_row.get("erp") is not None:
         erp_value = hist_row["erp"]
         erp_source = f"erp_history.csv ({as_of_year})"
     else:
         erp_value = current_erp
         erp_source = "erp.csv (güncel değer)"
+        if current_erp is not None:
+            warnings.append(
+                f"Anakronik ERP: {as_of_year} için tarihsel ERP yok; güncel "
+                "erp.csv değeri kullanıldı."
+            )
+            logger.warning(
+                "damodaran: no historical ERP for as_of year %s; using current "
+                "erp.csv value (anachronistic ERP).", as_of_year,
+            )
 
-    # Risk-free: FRED -> history row -> current erp.csv.
+    # Risk-free: FRED -> per-year snapshot erp.csv -> erp_history row -> current erp.csv.
     fred_value = fred_rate.get("value_pct") if isinstance(fred_rate, dict) else None
     if fred_value is not None:
         risk_free_value = fred_value
         rf_date = fred_rate.get("date")
         rf_series = fred_rate.get("series") or "FRED"
         risk_free_source = f"{rf_series} ({rf_date})" if rf_date else str(rf_series)
+    elif hist_rf is not None:
+        risk_free_value = hist_rf
+        risk_free_source = f"data/damodaran/{hist_year}/erp.csv"
     elif hist_row is not None and hist_row.get("risk_free") is not None:
         risk_free_value = hist_row["risk_free"]
         risk_free_source = f"erp_history.csv ({as_of_year})"
     else:
         risk_free_value = current_risk_free
         risk_free_source = "erp.csv (güncel değer)"
+        if current_risk_free is not None:
+            warnings.append(
+                "Anakronik risk-free: FRED DGS10 alınamadı ve tarihsel değer yok; "
+                "güncel erp.csv risk-free değeri kullanıldı."
+            )
+            logger.warning(
+                "damodaran: no historical/FRED risk-free for as_of %s; using current "
+                "erp.csv value (anachronistic risk-free).", as_of_iso,
+            )
 
-    if not parsed_multiples and erp_value is None and risk_free_value is None:
+    if not used_multiples and erp_value is None and risk_free_value is None:
         return None
 
+    macro_asof = {
+        "as_of": as_of_iso,
+        "erp_source": erp_source,
+        "risk_free_source": risk_free_source,
+        "multiples_source": multiples_source,
+    }
+    if warnings:
+        macro_asof["warnings"] = warnings
+
     return {
-        "multiples": parsed_multiples or None,
+        "multiples": used_multiples or None,
         "erp": erp_value,
         "risk_free": risk_free_value,
-        "macro_asof": {
-            "as_of": as_of_iso,
-            "erp_source": erp_source,
-            "risk_free_source": risk_free_source,
-        },
+        "macro_asof": macro_asof,
     }
 
 

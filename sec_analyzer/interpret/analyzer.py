@@ -534,17 +534,43 @@ def _build_phase1_system_prompt() -> str:
     return "\n\n".join(sections)
 
 
-def _build_phase2_system_prompt(horizon: str = "1y") -> str:
+#: Label attached to an LLM-provider result produced in as-of mode. An LLM's
+#: training data can carry knowledge of what happened AFTER the as-of date, so
+#: even with the point-in-time system-prompt instruction below, a hindsight
+#: leak can't be fully prevented -- callers surface this so an AI-assisted
+#: backtest verdict is never trusted like the deterministic one.
+_HINDSIGHT_LEAK_LABEL = (
+    "Hindsight sızıntısı riski: yapay zeka sağlayıcısı, analiz tarihinden "
+    "sonrasına dair eğitim verisi taşıyabilir; bu as-of analizi tam "
+    "point-in-time garanti etmez."
+)
+
+
+def _build_asof_instruction(as_of) -> str:
+    """Point-in-time instruction injected into the phase-2 system prompt so an
+    LLM provider is told to ignore everything after the as-of date."""
+    as_of_str = as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of)
+    return (
+        f"ANALİZ TARİHİ: {as_of_str}. Bu bir geçmiş-tarih (point-in-time) "
+        "analizidir. Bu tarihten SONRAsına dair hiçbir bilgi, olay, haber, "
+        "fiyat hareketi veya sonuç kullanma; yalnızca bu tarihte bilinebilir "
+        "olan veriyle yorum yap."
+    )
+
+
+def _build_phase2_system_prompt(horizon: str = "1y", as_of=None) -> str:
     """Assemble the phase-2 (commentary) system prompt, in a fixed order:
     methodology -> valuation rules -> investor profile -> horizon
-    instruction -> the phase-2 JSON output contract."""
+    instruction -> [as-of instruction] -> the phase-2 JSON output contract."""
     sections = [
         load_methodology(),
         load_valuation_rules(),
         _load_profile(),
         _build_horizon_instruction(horizon),
-        _PHASE2_OUTPUT_CONTRACT,
     ]
+    if as_of is not None:
+        sections.append(_build_asof_instruction(as_of))
+    sections.append(_PHASE2_OUTPUT_CONTRACT)
     return "\n\n".join(sections)
 
 
@@ -1333,6 +1359,7 @@ def interpret_results(
     api_key: Optional[str] = None,
     host: Optional[str] = None,
     horizon: str = "1y",
+    as_of=None,
 ) -> dict:
     """Phase 2 of the two-phase valuation flow: comment on an
     already-computed ``valuation`` (SPEC.md Sec.12).
@@ -1410,7 +1437,7 @@ def interpret_results(
             ratios=ratios, red_flags=red_flags, metrics=metrics,
         )
 
-    system_prompt = _build_phase2_system_prompt(horizon)
+    system_prompt = _build_phase2_system_prompt(horizon, as_of=as_of)
     user_payload = _build_phase2_user_payload(normalized, ratios, metrics, technical, red_flags, catalyst, valuation)
 
     try:
@@ -1446,10 +1473,16 @@ def interpret_results(
         }
 
     result = _parse_model_json(raw_text)
-    return _postprocess_phase2_result(
+    processed = _postprocess_phase2_result(
         result, _canonical_provider(resolved_provider), resolved_model, horizon, technical, catalyst, valuation,
         ratios=ratios, red_flags=red_flags, metrics=metrics,
     )
+    # As-of + an LLM provider: the model's training data may leak post-as_of
+    # knowledge, so flag the result. Only reached on the LLM path (the
+    # deterministic "script" path returned above and needs no such warning).
+    if as_of is not None and isinstance(processed, dict) and "error" not in processed:
+        processed["hindsight_leak_risk"] = _HINDSIGHT_LEAK_LABEL
+    return processed
 
 
 def interpret(
@@ -1548,6 +1581,7 @@ def interpret(
             return interpret_results(
                 normalized, ratios, metrics, technical, red_flags, catalyst, valuation,
                 provider=provider, model=model, api_key=api_key, host=host, horizon=horizon,
+                as_of=as_of,
             )
 
         sic = (submissions or {}).get("sic")
@@ -1600,6 +1634,7 @@ def interpret(
         return interpret_results(
             normalized, ratios, metrics, technical, red_flags, catalyst, valuation_result,
             provider=provider, model=model, api_key=api_key, host=host, horizon=horizon,
+            as_of=as_of,
         )
     except Exception as exc:  # noqa: BLE001 - interpret() must never raise
         logger.exception("Unexpected error during interpret()")
