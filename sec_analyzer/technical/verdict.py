@@ -40,15 +40,37 @@ def _verdict_detail(indicators: dict, verdict: str) -> str:
     return ", ".join(parts)
 
 
+def _momentum_sentence(indicators: dict) -> "str | None":
+    """One-line Turkish momentum lead built from the composite score
+    (``indicators['momentum']``, attached by the CLI/web layer), or ``None``
+    if the score isn't available. Keeps the narrative in sync with the report's
+    MOMENTUM row without re-deriving the score here."""
+    momentum = indicators.get("momentum")
+    if not isinstance(momentum, dict):
+        return None
+    label = momentum.get("label")
+    score = momentum.get("score")
+    if not label or score is None:
+        return None
+    accel = momentum.get("accel")
+    tail = f", momentum {accel}" if accel else ""
+    return f"Bileşik momentum {score}/100 ({label.lower()}){tail}."
+
+
 def _horizon_summary_3m(indicators: dict) -> str:
-    """Momentum-framed narrative for a 3-month horizon: RSI, SMA50
-    distance, 20d volatility, and 52w range position."""
+    """Momentum-framed narrative for a 3-month horizon: the composite momentum
+    score leads (when available), followed by RSI, SMA50 distance, 20d
+    volatility, and 52w range position."""
     rsi14 = indicators.get("rsi14")
     dist_sma50_pct = indicators.get("dist_sma50_pct")
     volatility_20d = indicators.get("volatility_20d")
     range_position_pct = indicators.get("range_position_pct")
 
     sentences = []
+
+    momentum_lead = _momentum_sentence(indicators)
+    if momentum_lead:
+        sentences.append(momentum_lead)
 
     if rsi14 is None:
         sentences.append("RSI için yeterli fiyat geçmişi bulunmuyor, bu nedenle kısa vadeli momentum sinyali üretilemiyor.")
@@ -115,6 +137,10 @@ def _horizon_summary_5y(indicators: dict) -> str:
     sentences = [
         "5 yıllık ufukta RSI gibi kısa vadeli momentum göstergeleri karar açısından belirleyici değildir."
     ]
+
+    momentum_note = _momentum_sentence(indicators)
+    if momentum_note:
+        sentences.append(momentum_note + " Bu, uzun vadeli tez için yalnızca bir zamanlama dipnotudur.")
 
     if dist_sma200_pct is not None:
         yon = "üzerinde" if dist_sma200_pct >= 0 else "altında"

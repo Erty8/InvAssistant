@@ -292,8 +292,8 @@ def test_print_verdict_card_technical_enriched_with_momentum_and_sr(capsys):
 
     # Verdict line gains the detail suffix.
     assert "NÖTR (RSI 59, SMA50 +%14)" in out
-    # Momentum sub-line with returns + trend.
-    assert "Momentum:" in out
+    # Returns/trend sub-line (raw multi-horizon returns + trend).
+    assert "Getiriler:" in out
     assert "1a +%4" in out and "3a +%12" in out and "6a -%3" in out
     assert "Trend: yükseliş (GC)" in out
     # MACD + volume sub-line.
@@ -460,3 +460,115 @@ def test_build_parser_calibrate_accepts_as_of_too():
     parser = build_parser()
     args = parser.parse_args(["calibrate", "--as-of", "2022-06-30"])
     assert args.as_of == date(2022, 6, 30)
+
+
+# ---------------------------------------------------------------------------
+# cmd_analyze -- as-of default is no-AI (SPEC's --no-ai / hindsight contract):
+# with --as-of set and no explicit --provider, cmd_analyze must force
+# provider="script" when calling interpret(), never falling back to
+# Config.ANALYZER_PROVIDER (which could be "ollama"/"anthropic").
+# ---------------------------------------------------------------------------
+
+
+def _stub_offline_analyze_pipeline(monkeypatch, captured):
+    """Stub every network/LLM boundary cmd_analyze touches with a cheap,
+    offline substitute, and capture the ``provider`` kwarg interpret() is
+    actually called with."""
+    import sec_analyzer.cli as cli_module
+
+    def _fake_fetch_normalize_store(args):
+        normalized = {
+            "annual": {"Revenue": [{"fy": 2020, "period_end": "2020-12-31", "value": 100.0}]},
+            "quarterly": {},
+            "missing": [],
+        }
+        return "723125", "Micron Technology, Inc.", normalized, [{"fy": 2020}]
+
+    def _fake_fetch_price_and_technical(ticker, horizon, no_cache, as_of):
+        return 100.0, as_of, None, None
+
+    def _fake_fetch_risk_free_asof(as_of, no_cache):
+        return None
+
+    def _fake_fetch_submissions(cik, ticker, no_cache):
+        return None
+
+    def _fake_fetch_catalyst(submissions, ticker, as_of=None):
+        return None
+
+    def _fake_detect_filing_events(submissions, as_of=None):
+        return []
+
+    def _fake_fetch_analyst_targets(ticker, no_cache):
+        # Only reached on a LIVE (as_of=None) run -- stubbed so that path
+        # can't hit the network either.
+        return None
+
+    def _fake_interpret(*args, **kwargs):
+        captured["provider"] = kwargs.get("provider")
+        return {
+            "fundamental_verdict": "MAKUL",
+            "fair_value_range": {"bear": {}, "base": {}, "bull": {}},
+            "technical_verdict": "VERİ YOK (fiyat verisi alınamadı)",
+            "profile_fit": {"verdict": "KISMEN", "reason": "test"},
+            "red_flags_comment": "yok",
+            "catalyst": "bilinmiyor",
+            "summary": "test",
+        }
+
+    monkeypatch.setattr(cli_module, "_fetch_normalize_store", _fake_fetch_normalize_store)
+    monkeypatch.setattr(cli_module, "_fetch_price_and_technical", _fake_fetch_price_and_technical)
+    monkeypatch.setattr(cli_module, "_fetch_risk_free_asof", _fake_fetch_risk_free_asof)
+    monkeypatch.setattr(cli_module, "_fetch_submissions", _fake_fetch_submissions)
+    monkeypatch.setattr(cli_module, "_fetch_catalyst", _fake_fetch_catalyst)
+    monkeypatch.setattr(cli_module, "_detect_filing_events", _fake_detect_filing_events)
+    monkeypatch.setattr(cli_module, "_fetch_analyst_targets", _fake_fetch_analyst_targets)
+    monkeypatch.setattr(cli_module, "interpret", _fake_interpret)
+
+
+def test_cmd_analyze_forces_script_provider_when_as_of_set_and_no_explicit_provider(tmp_path, monkeypatch):
+    from sec_analyzer.config import Config
+
+    monkeypatch.setattr(Config, "DB_PATH", str(tmp_path / "test.sqlite3"))
+    captured = {}
+    _stub_offline_analyze_pipeline(monkeypatch, captured)
+
+    parser = build_parser()
+    args = parser.parse_args(["analyze", "MU", "--as-of", "2022-06-30"])
+    args.func(args)
+
+    assert captured["provider"] == "script"
+
+
+def test_cmd_analyze_respects_explicit_provider_even_with_as_of_set(tmp_path, monkeypatch):
+    """An explicit --provider is honored (with a stderr warning printed by
+    cmd_analyze) -- only the *default* (no --provider given) is forced to
+    "script" in as-of mode."""
+    from sec_analyzer.config import Config
+
+    monkeypatch.setattr(Config, "DB_PATH", str(tmp_path / "test.sqlite3"))
+    captured = {}
+    _stub_offline_analyze_pipeline(monkeypatch, captured)
+
+    parser = build_parser()
+    args = parser.parse_args(["analyze", "MU", "--as-of", "2022-06-30", "--provider", "anthropic"])
+    args.func(args)
+
+    assert captured["provider"] == "anthropic"
+
+
+def test_cmd_analyze_without_as_of_does_not_force_script_provider(tmp_path, monkeypatch):
+    """A live (non as-of) run with no explicit --provider falls back to
+    Config.ANALYZER_PROVIDER, not "script" -- the forcing is as-of-specific."""
+    from sec_analyzer.config import Config
+
+    monkeypatch.setattr(Config, "DB_PATH", str(tmp_path / "test.sqlite3"))
+    monkeypatch.setattr(Config, "ANALYZER_PROVIDER", "script")
+    captured = {}
+    _stub_offline_analyze_pipeline(monkeypatch, captured)
+
+    parser = build_parser()
+    args = parser.parse_args(["analyze", "MU"])
+    args.func(args)
+
+    assert captured["provider"] == "script"

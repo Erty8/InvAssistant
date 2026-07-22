@@ -10,8 +10,11 @@ returns) rather than depending on the real CSVs in ``data/damodaran/``, so
 they stay correct regardless of what an operator has dropped in that folder.
 """
 
+from datetime import date
+
 import pytest
 
+from sec_analyzer.valuation import damodaran
 from sec_analyzer.valuation.damodaran import load_sector_data, sector_medians
 
 # ---------------------------------------------------------------------------
@@ -393,3 +396,113 @@ def test_load_sector_data_as_of_accepts_a_date_object(tmp_path):
     result = load_sector_data(dir_path, as_of=date(2022, 6, 30))
     assert result["macro_asof"]["as_of"] == "2022-06-30"
     assert result["erp"] == pytest.approx(4.24)
+
+
+# ---------------------------------------------------------------------------
+# _find_year_subdir -- nearest past-year data/damodaran/{YEAR}/ snapshot lookup.
+# ---------------------------------------------------------------------------
+
+
+def test_find_year_subdir_picks_nearest_past_year_leq_as_of(tmp_path):
+    (tmp_path / "2019").mkdir()
+    (tmp_path / "2021").mkdir()
+    (tmp_path / "not_a_year").mkdir()  # 9-char name -- ignored regardless of digits
+
+    year, path = damodaran._find_year_subdir(str(tmp_path), 2022)
+
+    assert year == 2021
+    assert path == str(tmp_path / "2021")
+
+
+def test_find_year_subdir_returns_none_when_as_of_year_precedes_every_subfolder(tmp_path):
+    (tmp_path / "2019").mkdir()
+    (tmp_path / "2021").mkdir()
+
+    assert damodaran._find_year_subdir(str(tmp_path), 2018) == (None, None)
+
+
+def test_find_year_subdir_ignores_non_year_named_and_non_directory_entries(tmp_path):
+    (tmp_path / "notyear").mkdir()
+    (tmp_path / "2021").mkdir()
+    # A 4-digit NAME that is a FILE, not a directory -- must not be picked.
+    (tmp_path / "2023").write_text("not a directory", encoding="utf-8")
+
+    year, path = damodaran._find_year_subdir(str(tmp_path), 2025)
+
+    assert year == 2021
+
+
+def test_find_year_subdir_returns_none_for_missing_directory(tmp_path):
+    missing = tmp_path / "does_not_exist"
+    assert damodaran._find_year_subdir(str(missing), 2022) == (None, None)
+
+
+# ---------------------------------------------------------------------------
+# load_sector_data -- per-year data/damodaran/{YEAR}/ subfolder (as-of mode).
+# ---------------------------------------------------------------------------
+
+
+def test_load_sector_data_as_of_uses_per_year_subfolder_when_present(tmp_path):
+    """A data/damodaran/{YEAR}/ snapshot subfolder, when present, supplies
+    BOTH the historical multiples/betas and (via its own erp.csv) the
+    ERP/risk-free -- and since a genuine historical snapshot was found, NO
+    anachronism warning is added to macro_asof."""
+    year_dir = tmp_path / "2021"
+    year_dir.mkdir()
+    (year_dir / "multiples.csv").write_text(
+        "industry,pe,ps,pfcf\nSemiconductor,20.0,4.0,18.0\n", encoding="utf-8",
+    )
+    (year_dir / "erp.csv").write_text(
+        "region,erp,risk_free\nUS,5.0,2.0\n", encoding="utf-8",
+    )
+    # Top-level (current) files must NOT be the ones actually used.
+    (tmp_path / "multiples.csv").write_text(
+        "industry,pe,ps,pfcf\nSemiconductor,99.0,9.0,99.0\n", encoding="utf-8",
+    )
+    (tmp_path / "erp.csv").write_text(
+        "region,erp,risk_free\nUS,9.9,9.9\n", encoding="utf-8",
+    )
+
+    result = load_sector_data(str(tmp_path), as_of=date(2022, 6, 30))
+
+    assert result["macro_asof"]["multiples_source"] == "data/damodaran/2021/multiples.csv"
+    assert result["macro_asof"]["erp_source"] == "data/damodaran/2021/erp.csv"
+    assert result["macro_asof"]["risk_free_source"] == "data/damodaran/2021/erp.csv"
+    assert result["multiples"][0]["pe"] == pytest.approx(20.0)
+    assert result["erp"] == pytest.approx(5.0)
+    assert result["risk_free"] == pytest.approx(2.0)
+    assert "warnings" not in result["macro_asof"]
+
+
+def test_load_sector_data_as_of_no_subfolder_falls_back_to_current_multiples_with_warning(tmp_path):
+    """No data/damodaran/{YEAR}/ subfolder at all -> multiples/betas fall
+    back to the current top-level multiples.csv, flagged anachronistic."""
+    (tmp_path / "multiples.csv").write_text(
+        "industry,pe,ps,pfcf\nSemiconductor,28.4,6.1,24.7\n", encoding="utf-8",
+    )
+    (tmp_path / "erp.csv").write_text("region,erp\nUS,4.6\n", encoding="utf-8")
+
+    result = load_sector_data(str(tmp_path), as_of=date(2022, 6, 30))
+
+    assert result["macro_asof"]["multiples_source"] == "multiples.csv (güncel snapshot — anakronik)"
+    assert "warnings" in result["macro_asof"]
+    assert any("Anakronik çarpan/beta" in w for w in result["macro_asof"]["warnings"])
+
+
+def test_load_sector_data_as_of_no_history_or_subfolder_risk_free_falls_back_with_warning(tmp_path):
+    """Anachronic risk-free: as_of set, no fred_rate, no erp_history.csv, no
+    per-year subfolder -- the current erp.csv's risk_free is used, and
+    because current_risk_free IS available (the only condition that fires
+    this warning), an "Anakronik risk-free" warning is added."""
+    (tmp_path / "multiples.csv").write_text(
+        "industry,pe,ps,pfcf\nSemiconductor,28.4,6.1,24.7\n", encoding="utf-8",
+    )
+    (tmp_path / "erp.csv").write_text(
+        "region,erp,risk_free\nUS,4.6,4.20\n", encoding="utf-8",
+    )
+
+    result = load_sector_data(str(tmp_path), as_of=date(2022, 6, 30), fred_rate=None)
+
+    assert result["risk_free"] == pytest.approx(4.20)
+    assert result["macro_asof"]["risk_free_source"] == "erp.csv (güncel değer)"
+    assert any("Anakronik risk-free" in w for w in result["macro_asof"]["warnings"])

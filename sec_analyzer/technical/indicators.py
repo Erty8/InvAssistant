@@ -48,8 +48,31 @@ _CROSS_LOOKBACK_DAYS = 60
 #: Trading days per year, used to annualize daily return volatility.
 _TRADING_DAYS_PER_YEAR = 252
 
-#: Momentum-return lookback windows (trading days), roughly 1/3/6 months.
-_RETURN_WINDOWS = {"return_1m_pct": 21, "return_3m_pct": 63, "return_6m_pct": 126}
+#: Momentum-return lookback windows (trading days), roughly 1/3/6/12 months.
+_RETURN_WINDOWS = {
+    "return_1m_pct": 21,
+    "return_3m_pct": 63,
+    "return_6m_pct": 126,
+    "return_12m_pct": 252,
+}
+
+#: Classic 12-1 momentum: total return from ~12 months ago (252 trading days)
+#: to ~1 month ago (21 trading days), i.e. the 12-month window with the most
+#: recent month skipped. The skip removes the well-documented short-term
+#: mean-reversion that pollutes a raw 12-month return, and is the canonical
+#: cross-sectional momentum factor in the academic literature.
+_MOM_12_1_LONG = 252
+_MOM_12_1_SKIP = 21
+
+#: Lookback (trading days) for a moving-average *slope*: whether the average
+#: itself is rising/falling (trend quality), independent of where price sits
+#: relative to it. ~1 month back keeps it responsive without being noisy.
+_SMA_SLOPE_LOOKBACK = 21
+
+#: Window (trading days, ~3 months) for the up/down volume ratio: sum of
+#: volume on up-closes divided by sum of volume on down-closes. >1 means
+#: accumulation (buyers show up on green days), <1 distribution.
+_UPDOWN_VOLUME_WINDOW = 63
 
 #: ATR (Average True Range) smoothing period (Wilder), for volatility-scaled
 #: swing stop distance.
@@ -584,6 +607,59 @@ def _return_pct(close: pd.Series, window: int) -> "float | None":
     return round((float(last) / float(past) - 1) * 100, 1)
 
 
+def _mom_12_1_pct(close: pd.Series) -> "float | None":
+    """Classic 12-1 momentum in percent, 1dp: total return from
+    :data:`_MOM_12_1_LONG` days ago to :data:`_MOM_12_1_SKIP` days ago (12
+    months with the most recent month excluded), or ``None`` if history is too
+    short / a reference price is missing or non-positive."""
+    if len(close) <= _MOM_12_1_LONG:
+        return None
+    past = close.iloc[-1 - _MOM_12_1_LONG]
+    recent = close.iloc[-1 - _MOM_12_1_SKIP]
+    if pd.isna(past) or pd.isna(recent) or past <= 0:
+        return None
+    return round((float(recent) / float(past) - 1) * 100, 1)
+
+
+def _sma_slope_pct(sma: pd.Series, lookback: int) -> "float | None":
+    """Percent change of a moving-average series over ``lookback`` bars, 1dp:
+    ``(sma_now / sma_lookback_ago - 1) * 100`` -- i.e. whether the average
+    *itself* is rising or falling (trend quality). ``None`` if the series is
+    too short or either endpoint is missing / non-positive."""
+    if sma is None or len(sma) <= lookback:
+        return None
+    now = sma.iloc[-1]
+    past = sma.iloc[-1 - lookback]
+    if pd.isna(now) or pd.isna(past) or past <= 0:
+        return None
+    return round((float(now) / float(past) - 1) * 100, 1)
+
+
+def _updown_volume_ratio(df: pd.DataFrame) -> "float | None":
+    """Up/down volume ratio over the last :data:`_UPDOWN_VOLUME_WINDOW` bars:
+    sum of volume on up-closes divided by sum of volume on down-closes, 2dp.
+
+    >1 means buyers show up on green days (accumulation), <1 distribution.
+    Returns ``None`` when ``Volume`` is absent/all-zero, history is too short,
+    or there were no down-closes in the window (no denominator)."""
+    if "Volume" not in df.columns:
+        return None
+    volume = pd.to_numeric(df["Volume"], errors="coerce")
+    close = pd.to_numeric(df["Close"], errors="coerce")
+    if len(close) <= _UPDOWN_VOLUME_WINDOW:
+        return None
+    if volume.dropna().empty or float(volume.fillna(0).sum()) <= 0:
+        return None
+    direction = close.diff()
+    vol_tail = volume.tail(_UPDOWN_VOLUME_WINDOW).fillna(0.0)
+    dir_tail = direction.tail(_UPDOWN_VOLUME_WINDOW)
+    up_vol = float(vol_tail[dir_tail > 0].sum())
+    down_vol = float(vol_tail[dir_tail < 0].sum())
+    if down_vol <= 0:
+        return None
+    return round(up_vol / down_vol, 2)
+
+
 def _date_str(timestamp) -> "str | None":
     """``Timestamp`` -> ``"YYYY-MM-DD"`` (or ``None``)."""
     if timestamp is None:
@@ -887,6 +963,9 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         when there isn't enough history to compute it):
 
         * ``price``: last Close, 2dp float.
+        * ``change_1d_pct``: last session's percentage change vs. the prior
+          close (``(close[-1]/close[-2] - 1) * 100``), 2dp, or ``None`` with
+          fewer than two closes.
         * ``as_of``: last date, ``"YYYY-MM-DD"``.
         * ``rsi14``: Wilder's 14-period RSI, 1dp.
         * ``sma50`` / ``sma200``: simple moving averages of Close.
@@ -897,6 +976,9 @@ def compute_indicators(df: pd.DataFrame) -> dict:
           present -- there simply isn't a full 52-week window yet).
         * ``range_position_pct``: ``(price - low) / (high - low) * 100``,
           1dp; ``None`` if ``high_52w == low_52w`` (would divide by zero).
+        * ``dist_52w_high_pct``: ``(price / high_52w - 1) * 100``, 1dp -- open
+          distance to the 52-week high (0 at the high, negative below);
+          proximity to the high is a momentum-continuation signal.
         * ``volatility_20d``: standard deviation of daily percentage
           returns over the last 20 trading days, annualized by multiplying
           by ``sqrt(252)`` and expressed as a decimal fraction (e.g.
@@ -908,9 +990,20 @@ def compute_indicators(df: pd.DataFrame) -> dict:
           SMA200 now and 60 trading days ago).
         * ``sma50_above_sma200``: current state (``sma50 > sma200``) as a
           bool, or ``None`` if either SMA is unavailable.
-        * ``return_1m_pct`` / ``return_3m_pct`` / ``return_6m_pct``: Close
-          percentage change over the last 21 / 63 / 126 trading days, 1dp
-          (momentum), or ``None`` if history is shorter than the window.
+        * ``sma50_slope_pct`` / ``sma200_slope_pct``: percent change of each
+          SMA over the last :data:`_SMA_SLOPE_LOOKBACK` bars, 1dp -- whether
+          the average itself is rising/falling (trend quality), independent of
+          price's position relative to it; ``None`` if history is too short.
+        * ``return_1m_pct`` / ``return_3m_pct`` / ``return_6m_pct`` /
+          ``return_12m_pct``: Close percentage change over the last 21 / 63 /
+          126 / 252 trading days, 1dp (momentum), or ``None`` if history is
+          shorter than the window.
+        * ``mom_12_1_pct``: classic 12-1 momentum -- return from ~12 months
+          ago to ~1 month ago (recent month skipped), 1dp, or ``None`` (see
+          :func:`_mom_12_1_pct`).
+        * ``updown_volume_ratio``: up-close volume / down-close volume over
+          the last ~3 months, 2dp (>1 accumulation, <1 distribution), or
+          ``None`` (see :func:`_updown_volume_ratio`).
         * ``macd`` / ``macd_signal`` / ``macd_hist``: classic 12/26/9 MACD
           line, signal line, and histogram (3dp), or ``None`` if history is
           too short (see :func:`_macd`).
@@ -960,6 +1053,13 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     as_of = df.index[-1]
     as_of_str = as_of.strftime("%Y-%m-%d") if hasattr(as_of, "strftime") else str(as_of)
 
+    change_1d_pct = None
+    if len(close) >= 2:
+        prev_close = close.iloc[-2]
+        last_close = close.iloc[-1]
+        if not pd.isna(prev_close) and not pd.isna(last_close) and prev_close != 0:
+            change_1d_pct = round((float(last_close) / float(prev_close) - 1) * 100, 2)
+
     rsi14 = _rsi14(close)
 
     sma50_series = _sma(close, _SMA_SHORT_WINDOW)
@@ -982,6 +1082,13 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     range_position_pct = None
     if high_52w is not None and low_52w is not None and high_52w != low_52w and price is not None:
         range_position_pct = round((price - low_52w) / (high_52w - low_52w) * 100, 1)
+
+    # Open distance to the 52-week high (0 == at the high, negative == below).
+    # Proximity to the high is a documented momentum-continuation signal, and
+    # is distinct from range_position_pct (which also depends on the low).
+    dist_52w_high_pct = None
+    if high_52w is not None and high_52w > 0 and price is not None:
+        dist_52w_high_pct = round((price / high_52w - 1) * 100, 1)
 
     returns = close.pct_change().dropna()
     volatility_20d = None
@@ -1009,6 +1116,10 @@ def compute_indicators(df: pd.DataFrame) -> dict:
             death_cross = bool(past_diff >= 0 and now_diff < 0)
 
     returns_pct = {key: _return_pct(close, window) for key, window in _RETURN_WINDOWS.items()}
+    mom_12_1_pct = _mom_12_1_pct(close)
+    sma50_slope_pct = _sma_slope_pct(sma50_series, _SMA_SLOPE_LOOKBACK)
+    sma200_slope_pct = _sma_slope_pct(sma200_series, _SMA_SLOPE_LOOKBACK)
+    updown_volume_ratio = _updown_volume_ratio(df)
 
     macd, macd_signal, macd_hist, macd_cross = _macd(close)
     rel_volume, obv_trend = _volume_signals(df)
@@ -1020,6 +1131,7 @@ def compute_indicators(df: pd.DataFrame) -> dict:
 
     indicators = {
         "price": price,
+        "change_1d_pct": change_1d_pct,
         "as_of": as_of_str,
         "rsi14": rsi14,
         "sma50": sma50,
@@ -1029,13 +1141,19 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         "high_52w": high_52w,
         "low_52w": low_52w,
         "range_position_pct": range_position_pct,
+        "dist_52w_high_pct": dist_52w_high_pct,
         "volatility_20d": volatility_20d,
         "golden_cross": golden_cross,
         "death_cross": death_cross,
         "sma50_above_sma200": sma50_above_sma200,
+        "sma50_slope_pct": sma50_slope_pct,
+        "sma200_slope_pct": sma200_slope_pct,
         "return_1m_pct": returns_pct["return_1m_pct"],
         "return_3m_pct": returns_pct["return_3m_pct"],
         "return_6m_pct": returns_pct["return_6m_pct"],
+        "return_12m_pct": returns_pct["return_12m_pct"],
+        "mom_12_1_pct": mom_12_1_pct,
+        "updown_volume_ratio": updown_volume_ratio,
         "macd": macd,
         "macd_signal": macd_signal,
         "macd_hist": macd_hist,

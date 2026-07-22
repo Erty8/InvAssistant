@@ -278,8 +278,19 @@
     font-family: var(--mono);
     font-size: 1.5rem;
     font-weight: 700;
-    margin-bottom: 8px;
   }
+  /* Daily change chip next to the header price. */
+  .price-change {
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-left: 8px;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+  .price-change.chg-up { color: var(--green); }
+  .price-change.chg-down { color: var(--red); }
+  .price-change.chg-flat { color: var(--muted); }
 
   /* ---- Analyst consensus reference row (display-only cross-check, NOT the
      model's own fair value -- kept visually subordinate to the header
@@ -747,6 +758,10 @@
     font-size: 0.68rem; line-height: 1.4; color: var(--muted);
     margin-bottom: 8px; font-style: italic;
   }
+  .rev-tune {
+    margin-top: 8px; font-size: 0.66rem; line-height: 1.4; color: var(--muted);
+    border-top: 1px dashed var(--outline); padding-top: 6px;
+  }
   .rev-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   .rev-row { display: flex; align-items: flex-start; gap: 7px; font-size: 0.75rem; line-height: 1.35; color: var(--outline); }
   .rev-icon { flex: none; width: 1em; font-weight: 700; text-align: center; }
@@ -779,6 +794,93 @@
     color: var(--outline);
   }
   .rev-risk.rev-risk-wide { background: rgba(255, 185, 83, 0.10); border-color: rgba(255, 185, 83, 0.4); }
+  /* ---- MOMENTUM card (result.momentum three-layer synthesis) ------------- */
+  .mom-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+  .mom-sub-rows { display: flex; flex-direction: column; gap: 8px; }
+  .mom-sub-row {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 8px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border);
+  }
+  .mom-sub-label {
+    flex: none; width: 78px; padding-top: 2px;
+    font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700;
+  }
+  .mom-sub-body { flex: 1; min-width: 0; font-size: 0.8rem; line-height: 1.4; color: var(--outline); }
+  .mom-sub-score { font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .mom-mini-spark-wrap { margin-top: 6px; width: 140px; max-width: 100%; }
+  .mom-mini-spark { width: 100%; height: 28px; display: block; overflow: visible; }
+  .mom-cross-title {
+    font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700;
+    margin: 10px 0 8px;
+  }
+  .mom-cross-list { display: flex; flex-direction: column; gap: 6px; }
+  .mom-chip { font-size: 0.75rem; line-height: 1.4; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); color: var(--outline); }
+  .mom-chip-warn { background: rgba(255, 185, 83, 0.10); border-color: rgba(255, 185, 83, 0.4); }
+  .mom-chip-good { background: rgba(77, 224, 130, 0.10); border-color: rgba(77, 224, 130, 0.4); }
+  .mom-chip-info { background: var(--bg); }
+  /* Synthesis sentence -- the one-line "why" the composite verdict is what it
+     is, built in JS from the three layers. */
+  .mom-synth { font-size: 0.82rem; line-height: 1.45; color: var(--outline); margin-bottom: 12px; }
+  /* Closing disclaimer -- momentum is timing context, never a fair-value input. */
+  .mom-help { font-size: 0.68rem; line-height: 1.4; color: var(--muted); font-style: italic; margin-top: 10px; }
+  /* ---- Price x Fundamental momentum quadrant (the "combine" element) ----- */
+  .mom-quad-wrap { margin: 4px 0 10px; }
+  .mom-quad-yaxis-row { display: flex; align-items: stretch; gap: 6px; }
+  .mom-quad-ylabel {
+    flex: none; writing-mode: vertical-rl; transform: rotate(180deg);
+    font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
+    font-weight: 700; text-align: center; padding: 4px 0;
+  }
+  .mom-quad-box { flex: 1; min-width: 0; }
+  .mom-quad-svg { width: 100%; height: auto; display: block; overflow: visible; max-width: 100%; }
+  .mom-quad-zone { opacity: 0.9; }
+  .mom-quad-zone-confirmed { fill: rgba(77, 224, 130, 0.12); }
+  .mom-quad-zone-opportunity { fill: rgba(45, 212, 191, 0.12); }
+  .mom-quad-zone-trap { fill: rgba(255, 185, 83, 0.12); }
+  .mom-quad-zone-weak { fill: rgba(255, 180, 171, 0.10); }
+  .mom-quad-axis { stroke: var(--border); stroke-width: 1.2; }
+  .mom-quad-label { font-size: 7.5px; font-weight: 700; letter-spacing: 0.01em; }
+  .mom-quad-label-confirmed { fill: var(--green); }
+  .mom-quad-label-opportunity { fill: #2dd4bf; }
+  .mom-quad-label-trap { fill: var(--amber); }
+  .mom-quad-label-weak { fill: var(--muted); }
+  .mom-quad-dot { stroke: var(--text); stroke-width: 1.2; }
+  .mom-quad-dot-confirmed { fill: var(--green); }
+  .mom-quad-dot-opportunity { fill: #2dd4bf; }
+  .mom-quad-dot-trap { fill: var(--amber); }
+  .mom-quad-dot-weak { fill: var(--red); }
+  .mom-quad-axis-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
+  .mom-quad-end { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); white-space: nowrap; }
+  .mom-quad-axis-caption { font-size: 0.66rem; color: var(--muted); flex: 1; text-align: center; }
+  .mom-quad-legend { font-size: 0.62rem; color: var(--muted); text-align: center; margin-top: 6px; line-height: 1.4; }
+  /* ---- Değer seyri (verdict-momentum) context strip ----------------------- */
+  .mom-vt-strip { margin-top: 10px; padding: 9px 11px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); }
+  .mom-vt-title { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; margin-bottom: 6px; }
+  .mom-vt-body { font-size: 0.8rem; line-height: 1.4; color: var(--outline); }
+  .mom-spark-caption { font-size: 0.66rem; color: var(--muted); margin-top: 2px; }
+  /* ---- Score breakdown: what each score is made of ----------------------- */
+  .mom-breakdown { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 4px 0 2px; }
+  .mom-bd-col { flex: 1 1 260px; min-width: 0; }
+  .mom-bd-title { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; margin-bottom: 6px; }
+  .mom-bd-title b { color: var(--text); font-weight: 700; }
+  .mom-bd-row { display: grid; grid-template-columns: 1fr 74px 34px; align-items: center; gap: 8px; padding: 2.5px 0; font-size: 0.74rem; }
+  .mom-bd-label { color: var(--outline); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Signed bar: a fixed track with a center line; the fill grows left (neg)
+     or right (pos) from the middle, so contributions are comparable at a glance. */
+  .mom-bd-bar-track { position: relative; height: 8px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+  .mom-bd-bar-track::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--border); }
+  .mom-bd-bar { position: absolute; top: 1px; bottom: 1px; border-radius: 2px; }
+  .mom-bd-bar-pos { background: var(--green); left: 50%; }
+  .mom-bd-bar-neg { background: var(--red); right: 50%; }
+  .mom-bd-val { font-variant-numeric: tabular-nums; text-align: right; font-size: 0.7rem; }
+  .mom-bd-val-pos { color: var(--green); }
+  .mom-bd-val-neg { color: var(--red); }
+  .mom-bd-val-zero { color: var(--muted); }
+  .mom-bd-sig { display: grid; grid-template-columns: 16px 1fr; align-items: baseline; gap: 6px; padding: 2.5px 0; font-size: 0.74rem; color: var(--outline); }
+  .mom-bd-icon { font-weight: 700; text-align: center; }
+  .mom-bd-icon-ok { color: var(--green); }
+  .mom-bd-icon-bad { color: var(--red); }
+  .mom-bd-icon-neutral { color: var(--muted); }
   .tech-stat-sub { color: var(--muted); font-size: 0.72rem; font-weight: 400; }
   /* ---- Swing setup grade card -------------------------------------------- */
   .setup-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
@@ -1511,6 +1613,18 @@
     );
   }
 
+  // Daily price change chip shown next to the header price. Reads the
+  // first-class `change_1d_pct` off the technical payload; renders "" when
+  // absent (older payloads / no price history) so nothing breaks.
+  function dailyChangeHtml(payload) {
+    var t = payload && payload.technical;
+    if (!t || !isNum(t.change_1d_pct)) return "";
+    var pct = Number(t.change_1d_pct);
+    var cls = pct > 0 ? "chg-up" : (pct < 0 ? "chg-down" : "chg-flat");
+    var arrow = pct > 0 ? "▲" : (pct < 0 ? "▼" : "•");
+    return '<span class="price-change ' + cls + '">' + arrow + ' ' + fmtSignedPct(pct) + '</span>';
+  }
+
   // ---- Header card ------------------------------------------------------
   function headerCardHtml(payload) {
     var priceText = fmtMoney(payload.price);
@@ -1538,8 +1652,7 @@
             '<div class="source-note">' + sourceNote + '</div>' +
           '</div>' +
           '<div class="header-right">' +
-            '<div class="price-value">' + priceText + '</div>' +
-            horizonToggleHtml(["3m", "1y", "5y"], payload.horizon, false) +
+            '<div class="price-value">' + priceText + dailyChangeHtml(payload) + '</div>' +
           '</div>' +
         '</div>' +
         analystRowHtml(payload) +
@@ -2408,15 +2521,20 @@
     return "düşüş hızlanır";
   }
 
-  // ---- Momentum synthesis: composite direction/strength score + wording ----
-  // Combines 3M return, RSI14 and MACD into one [-1,1] score S so the card can
-  // state a single direction instead of leaving the reader to eyeball a grid
-  // of unrelated tiles. Acceleration compares the most recent month's pace
-  // against the pace implied by months 2-3 to say whether that move is
-  // speeding up or cooling off. All inputs are None-safe; returns null only
-  // when none of r3/rsi/macd are available (nothing to synthesize).
+  // ---- Momentum synthesis: adapter over the Python-computed composite ------
+  // The composite direction/strength score (weighting, thresholds,
+  // acceleration) is now computed server-side in
+  // sec_analyzer/technical/momentum.py::compute_price_momentum and delivered
+  // as t.momentum (see SPEC's payload.technical.momentum shape). This
+  // function no longer re-derives S from raw indicators -- it only MAPS the
+  // Python payload onto the internal field shape the rest of this file
+  // (computeReversal, momentumSentence, the badge/meter render) already
+  // consumes, so none of those call sites had to change. r1/r3/r6/rsi/mh/mc
+  // are still read from the raw technical indicators (not from t.momentum)
+  // because momentumSentence's prose is built from those, not from the score.
   function computeMomentum(t) {
-    function clamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
+    if (!t || !t.momentum) return null;
+    var m = t.momentum;
     var r1 = isNum(t.return_1m_pct) ? Number(t.return_1m_pct) : null;
     var r3 = isNum(t.return_3m_pct) ? Number(t.return_3m_pct) : null;
     var r6 = isNum(t.return_6m_pct) ? Number(t.return_6m_pct) : null;
@@ -2424,49 +2542,19 @@
     var mh = isNum(t.macd_hist) ? Number(t.macd_hist) : null;
     var mc = (t.macd_cross === "bullish" || t.macd_cross === "bearish") ? t.macd_cross : null;
 
-    // Returns-dominant weighting: 3M/6M returns carry most of the direction
-    // call (0.45 + 0.25); RSI and MACD only nudge it (0.15 each) rather than
-    // being able to drag a large multi-month move down to "flat" on their own
-    // (e.g. a bearish MACD cross after a huge run should not read as neutral).
-    var num = 0, sumW = 0, any = false;
-    if (r3 !== null) { num += clamp(r3 / 40, -1, 1) * 0.45; sumW += 0.45; any = true; }
-    if (r6 !== null) { num += clamp(r6 / 60, -1, 1) * 0.25; sumW += 0.25; any = true; }
-    if (rsi !== null) { num += clamp((rsi - 50) / 40, -1, 1) * 0.15; sumW += 0.15; any = true; }
-    if (mc !== null || mh !== null) {
-      var macdSig = mc === "bullish" ? 1 : (mc === "bearish" ? -1 : (mh > 0 ? 0.6 : (mh < 0 ? -0.6 : 0)));
-      num += macdSig * 0.15; sumW += 0.15; any = true;
-    }
-    if (!any) return null;
+    var dirKind = m.direction === "up" || m.direction === "down" ? m.direction : "flat";
+    var dirCls = dirKind === "up" ? "mom-badge-up" : (dirKind === "down" ? "mom-badge-down" : "mom-badge-flat");
 
-    var S = num / sumW;
-    var meterPos = Math.max(0, Math.min(100, Math.round(50 + S * 50)));
-
-    var dirLabel, dirCls, arrow, dirKind;
-    if (S >= 0.5) { dirLabel = "GÜÇLÜ YUKARI MOMENTUM"; dirCls = "mom-badge-up"; arrow = "↑"; dirKind = "up"; }
-    else if (S >= 0.15) { dirLabel = "YUKARI MOMENTUM"; dirCls = "mom-badge-up"; arrow = "↑"; dirKind = "up"; }
-    else if (S >= -0.15) { dirLabel = "YATAY MOMENTUM"; dirCls = "mom-badge-flat"; arrow = "→"; dirKind = "flat"; }
-    else if (S > -0.5) { dirLabel = "AŞAĞI MOMENTUM"; dirCls = "mom-badge-down"; arrow = "↓"; dirKind = "down"; }
-    else { dirLabel = "GÜÇLÜ AŞAĞI MOMENTUM"; dirCls = "mom-badge-down"; arrow = "↓"; dirKind = "down"; }
-
-    // Acceleration needs both the latest month and the 3-month window (to
-    // back out the pace of the two months before it); TH is a deadband so
-    // noise around a flat pace reads as "steady" rather than flip-flopping.
-    // Every dirKind (including "flat") gets its own up/down/steady mapping --
-    // a strong accel diff must never collapse to "sabit" just because the
-    // direction band itself happens to be flat.
-    var accelWord = null;
-    if (r1 !== null && r3 !== null) {
-      var paceEarlier = (r3 - r1) / 2;
-      var diff = r1 - paceEarlier;
-      var TH = 3;
-      var accel = diff > TH ? "up" : (diff < -TH ? "down" : "steady");
-      if (dirKind === "up") accelWord = accel === "up" ? "hızlanıyor" : (accel === "down" ? "yavaşlıyor" : "sabit");
-      else if (dirKind === "down") accelWord = accel === "down" ? "hızlanıyor" : (accel === "up" ? "yavaşlıyor" : "sabit");
-      else accelWord = accel === "up" ? "hızlanıyor" : (accel === "down" ? "yavaşlıyor" : "sabit");
-    }
-
-    return { S: S, meterPos: meterPos, dirLabel: dirLabel, dirCls: dirCls, arrow: arrow, accelWord: accelWord,
-      dirKind: dirKind, r1: r1, r3: r3, r6: r6, rsi: rsi, mh: mh, mc: mc };
+    return {
+      S: isNum(m.s) ? Number(m.s) : null,
+      meterPos: isNum(m.meter_pos) ? Number(m.meter_pos) : 50,
+      dirLabel: m.label || "—",
+      dirCls: dirCls,
+      arrow: m.arrow || "→",
+      accelWord: m.accel || null,
+      dirKind: dirKind,
+      r1: r1, r3: r3, r6: r6, rsi: rsi, mh: mh, mc: mc
+    };
   }
 
   // ---- Swing reversal-confirmation checklist ------------------------------
@@ -2481,8 +2569,23 @@
   // reading is a ✗. The count of ✓ drives a one-line readiness verdict, and a
   // watch line maps the nearest S/R zone to the trigger/invalidation level.
   var _REV_VOLUME_MIN = 1.5; // rel_volume at/above which the turn has real participation
-  function computeReversal(t, momentum) {
+  // Horizon-aware swing tuning: a short (3m) swing wants to react fast and
+  // keep a tight stop; a long (5y) hold tolerates more noise (wider stop) but
+  // demands stronger confirmation before calling a turn. The 1y row is the
+  // historical default (volMin 1.5, 2-of-N confirm, 12% wide-stop line), so a
+  // 1y report is unchanged. Only timing/stop-acceptability shifts — the price
+  // TARGET stays the fair-value anchor and is never horizon-scaled.
+  function swingHorizonTuning(horizon) {
+    if (horizon === "3m") return { volMin: 1.3, strongConfirm: 1, wideStopPct: 8,
+      note: "Zamanlama ufku 3 ay: hızlı teyit (1 sinyal), dar stop (>%8 geniş sayılır)." };
+    if (horizon === "5y") return { volMin: 1.8, strongConfirm: 3, wideStopPct: 18,
+      note: "Zamanlama ufku 5 yıl: güçlü teyit (3 sinyal) beklenir, geniş stop toleransı (>%18)." };
+    return { volMin: 1.5, strongConfirm: 2, wideStopPct: 12,
+      note: "Zamanlama ufku 1 yıl: dengeli teyit (2 sinyal), orta stop (>%12 geniş sayılır)." };
+  }
+  function computeReversal(t, momentum, horizon) {
     if (!momentum || (momentum.dirKind !== "up" && momentum.dirKind !== "down")) return null;
+    var tuning = swingHorizonTuning(horizon);
     var bull = momentum.dirKind === "down"; // downtrend -> watch for a bullish turn
     var rows = [];
     function row(state, text) { rows.push({ state: state, text: text }); }
@@ -2514,7 +2617,7 @@
     // trade; direction-neutral, so it reads the same for a bullish/bearish turn.
     var rv = isNum(t.rel_volume) ? Number(t.rel_volume) : null;
     if (rv !== null) {
-      if (rv >= _REV_VOLUME_MIN) row("ok", "Hacim ortalamanın belirgin üstünde (" + rv.toFixed(1) + "×) — dönüşe katılım var");
+      if (rv >= tuning.volMin) row("ok", "Hacim ortalamanın belirgin üstünde (" + rv.toFixed(1) + "×) — dönüşe katılım var");
       else row("none", "Hacim sıradan (" + rv.toFixed(1) + "×) — dönüşe güçlü katılım yok");
     }
 
@@ -2537,7 +2640,7 @@
     var total = rows.length;
     var verdict, vcls;
     if (confirmed === 0) { verdict = (bull ? "Dönüş teyidi yok — düşen trend sürüyor" : "Dönüş teyidi yok — yükseliş sürüyor"); vcls = "rev-none"; }
-    else if (confirmed < 2) { verdict = "Erken dönüş sinyali — teyit zayıf, bekle"; vcls = "rev-early"; }
+    else if (confirmed < tuning.strongConfirm) { verdict = "Erken dönüş sinyali — teyit zayıf, bekle"; vcls = "rev-early"; }
     else { verdict = (bull ? "Dönüş teyitleniyor — boğa tarafı güçleniyor" : "Dönüş teyitleniyor — ayı tarafı güçleniyor"); vcls = "rev-strong"; }
 
     // Watch line: nearest resistance is the trigger to reclaim for a bullish
@@ -2562,7 +2665,7 @@
       var stopDist = Math.abs(px - Number(inval));
       var riskPct = stopDist / px * 100;
       var atrMult = stopDist / atr;
-      var wide = riskPct > 12; // a stop this far implies an oversized swing risk
+      var wide = riskPct > tuning.wideStopPct; // horizon-scaled: tighter for a short swing, wider for a long hold
       riskHtml = '<div class="rev-risk' + (wide ? " rev-risk-wide" : "") + '">' +
         '<span class="rev-watch-label">Risk</span>' +
         escapeHtml("Stop $" + Number(inval).toFixed(2) + " ≈ girişten %" + riskPct.toFixed(1) +
@@ -2570,7 +2673,9 @@
           (wide ? " — geniş stop, pozisyonu küçült" : "")) + '.</div>';
     }
 
-    return { bull: bull, rows: rows, confirmed: confirmed, total: total, verdict: verdict, vcls: vcls, watchHtml: watchHtml + riskHtml };
+    var tuneHtml = '<div class="rev-tune">' + escapeHtml(tuning.note) + '</div>';
+
+    return { bull: bull, rows: rows, confirmed: confirmed, total: total, verdict: verdict, vcls: vcls, watchHtml: watchHtml + riskHtml + tuneHtml };
   }
 
   // Compact badge marker: only once the turn has ≥2 confirmations, so the
@@ -2636,7 +2741,7 @@
     var t = technical || {};
     var valuation = result.valuation || null;
     var momentum = computeMomentum(t);
-    var reversal = computeReversal(t, momentum);
+    var reversal = computeReversal(t, momentum, payload.horizon);
     if (!valuation && !reversal) return "";
 
     var parts = [], score = 0, maxScore = 0;
@@ -2745,7 +2850,378 @@
     return full || "Momentum için yeterli veri yok.";
   }
 
-  function technicalCardHtml(technical, verdictText) {
+  // ---- MOMENTUM card: three-layer synthesis (result.momentum) -------------
+  // Renders the Python-side synthesis of price momentum (t.momentum),
+  // fundamental momentum (revenue acceleration / margin trend / model
+  // surprise) and verdict momentum (the model's own FV/price trajectory
+  // across stored analyses) into one card, plus the cross-signal readings
+  // that intersect momentum with the fundamental (value) verdict. Renders
+  // "" (card omitted) when result.momentum is entirely absent (older runs /
+  // no data); each of the three sub-layers renders "—" independently when
+  // its own layer is missing, so a partial payload never crashes the card.
+  function momentumVerdictColor(v) {
+    if (v === "GÜÇLÜ+" || v === "POZİTİF") return "green";
+    if (v === "NEGATİF") return "red";
+    if (v === "NÖTR") return "amber";
+    return "muted";
+  }
+
+  // Small inline-SVG line, reusing the same .spark-line/.spark-dot visual
+  // language as thesisSparklineHtml but sized for a compact sub-row (no axis
+  // labels). Returns "" when fewer than two plottable points are given.
+  function miniSparkSvg(values) {
+    var vals = (values || []).filter(isNum).map(Number);
+    if (vals.length < 2) return "";
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    var W = 140, H = 28, pad = 3;
+    var innerW = W - pad * 2, innerH = H - pad * 2;
+    var n = vals.length;
+    function xAt(i) { return pad + (innerW * i) / (n - 1); }
+    function yAt(v) { return hi <= lo ? H / 2 : pad + innerH * (1 - (v - lo) / (hi - lo)); }
+    var path = vals.map(function (v, i) { return (i ? "L" : "M") + xAt(i).toFixed(1) + " " + yAt(v).toFixed(1); }).join(" ");
+    var lastDot = '<circle cx="' + xAt(n - 1).toFixed(1) + '" cy="' + yAt(vals[n - 1]).toFixed(1) +
+      '" r="2.6" class="spark-dot spark-dot-last"/>';
+    return '<svg class="mom-mini-spark" viewBox="0 0 ' + W + ' ' + H +
+      '" preserveAspectRatio="none" role="img" aria-hidden="true"><path d="' + path + '" class="spark-line"/>' + lastDot + '</svg>';
+  }
+
+  function momentumSubRowHtml(label, bodyHtml) {
+    return (
+      '<div class="mom-sub-row">' +
+        '<div class="mom-sub-label">' + escapeHtml(label) + '</div>' +
+        '<div class="mom-sub-body">' + bodyHtml + '</div>' +
+      '</div>'
+    );
+  }
+
+  function momentumCrossSignalHtml(sig) {
+    if (!sig) return "";
+    var sevCls = sig.severity === "warn" ? "mom-chip-warn" : (sig.severity === "good" ? "mom-chip-good" : "mom-chip-info");
+    return '<div class="mom-chip ' + sevCls + '">' + escapeHtml(sig.text || "—") + '</div>';
+  }
+
+  // Which quadrant a (price.s, fundamental.s) pair falls in -- the same
+  // classification drives the SVG zone the dot lands in, the dot's color,
+  // and the middle clause of the synthesis sentence. >= 0 counts as the
+  // "positive" half of each axis (matches the quadrant SVG's xAt/yAt, which
+  // map s=0 to the center line).
+  function momentumQuadrantZone(priceS, fundS) {
+    var priceUp = priceS >= 0, fundUp = fundS >= 0;
+    if (priceUp && fundUp) return { key: "confirmed", label: "TEYİTLİ İVME" };
+    if (!priceUp && fundUp) return { key: "opportunity", label: "FIRSAT BÖLGESİ" };
+    if (priceUp && !fundUp) return { key: "trap", label: "MOMENTUM TUZAĞI" };
+    return { key: "weak", label: "ZAYIF" };
+  }
+
+  // The price x fundamental momentum quadrant -- self-contained inline SVG.
+  // X = price.s (-1..+1, left->right), Y = fundamental.s (-1..+1, bottom->top).
+  // Four background-tinted zones with a short Turkish label each, crosshair
+  // axes through the center, and one dot for the security's current reading
+  // (clamped into the box so an out-of-range s never draws outside it).
+  function momentumQuadrantSvg(priceS, fundS, zoneKey) {
+    var W = 240, H = 190, pad = 6;
+    var innerW = W - pad * 2, innerH = H - pad * 2;
+    var cx = pad + innerW / 2, cy = pad + innerH / 2;
+    var halfW = innerW / 2, halfH = innerH / 2;
+    function clamp(v) { return Math.max(-1, Math.min(1, v)); }
+    function xAt(s) { return pad + innerW * (clamp(s) + 1) / 2; }
+    function yAt(s) { return pad + innerH * (1 - (clamp(s) + 1) / 2); }
+    var dotX = xAt(priceS), dotY = yAt(fundS);
+
+    var zones =
+      '<rect x="' + cx + '" y="' + pad + '" width="' + halfW + '" height="' + halfH + '" class="mom-quad-zone mom-quad-zone-confirmed"/>' +
+      '<rect x="' + pad + '" y="' + pad + '" width="' + halfW + '" height="' + halfH + '" class="mom-quad-zone mom-quad-zone-opportunity"/>' +
+      '<rect x="' + cx + '" y="' + cy + '" width="' + halfW + '" height="' + halfH + '" class="mom-quad-zone mom-quad-zone-trap"/>' +
+      '<rect x="' + pad + '" y="' + cy + '" width="' + halfW + '" height="' + halfH + '" class="mom-quad-zone mom-quad-zone-weak"/>';
+
+    var axes =
+      '<line x1="' + pad + '" y1="' + cy + '" x2="' + (W - pad) + '" y2="' + cy + '" class="mom-quad-axis"/>' +
+      '<line x1="' + cx + '" y1="' + pad + '" x2="' + cx + '" y2="' + (H - pad) + '" class="mom-quad-axis"/>';
+
+    function zoneLabel(x, y, cls, text) {
+      return '<text x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" text-anchor="middle" class="mom-quad-label ' + cls + '">' + text + '</text>';
+    }
+    var labels =
+      zoneLabel(cx + halfW / 2, pad + halfH / 2, "mom-quad-label-confirmed", "TEYİTLİ İVME") +
+      zoneLabel(pad + halfW / 2, pad + halfH / 2, "mom-quad-label-opportunity", "FIRSAT BÖLGESİ") +
+      zoneLabel(cx + halfW / 2, cy + halfH / 2 + 3, "mom-quad-label-trap", "MOMENTUM TUZAĞI") +
+      zoneLabel(pad + halfW / 2, cy + halfH / 2 + 3, "mom-quad-label-weak", "ZAYIF");
+
+    var dot = '<circle cx="' + dotX.toFixed(1) + '" cy="' + dotY.toFixed(1) + '" r="5.5" class="mom-quad-dot mom-quad-dot-' + (zoneKey || "weak") + '"/>';
+
+    return '<svg class="mom-quad-svg" viewBox="0 0 ' + W + ' ' + H +
+      '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Fiyat ve fundamental momentum dörtgeni">' +
+      zones + axes + labels + dot + '</svg>';
+  }
+
+  // Wraps the quadrant SVG with its axis captions ("← Fiyat momentumu →" /
+  // "Fundamental ↑") and a legend line carrying the raw 0-100 scores (50 =
+  // nötr) plus the zone the dot landed in.
+  function momentumQuadrantBlockHtml(price, fund, zone) {
+    var svg = momentumQuadrantSvg(Number(price.s), Number(fund.s), zone.key);
+    var pScore = isNum(price.score) ? Math.round(Number(price.score)) + "/100" : "—";
+    var fScore = isNum(fund.score) ? Math.round(Number(fund.score)) + "/100" : "—";
+    return (
+      '<div class="mom-quad-wrap">' +
+        '<div class="mom-quad-yaxis-row">' +
+          '<div class="mom-quad-ylabel">Fundamental ↑</div>' +
+          '<div class="mom-quad-box">' + svg + '</div>' +
+        '</div>' +
+        '<div class="mom-quad-axis-row">' +
+          '<span class="mom-quad-end">zayıf</span>' +
+          '<span class="mom-quad-axis-caption">← Fiyat momentumu →</span>' +
+          '<span class="mom-quad-end">güçlü</span>' +
+        '</div>' +
+        '<div class="mom-quad-legend">Fiyat ' + escapeHtml(pScore) + ' · Fundamental ' + escapeHtml(fScore) +
+          ' · 0-100 ölçek, 50 = nötr · ● mevcut konum (' + escapeHtml(zone.label) + ')</div>' +
+      '</div>'
+    );
+  }
+
+  // Fallback "Fiyat" sub-row body (used only when the quadrant can't be
+  // drawn because fundamental.s is missing -- e.g. quarterly fundamentals
+  // too sparse). Same content the quadrant's legend would otherwise carry.
+  function momentumPriceBodyHtml(price) {
+    if (!price) return '<span class="muted">—</span>';
+    var scoreTxt = isNum(price.score) ? Math.round(Number(price.score)) + "/100 (50=nötr)" : "—";
+    var accelTxt = price.accel ? " · " + escapeHtml(price.accel) : "";
+    var pCls = price.direction === "up" ? "mom-badge-up" : (price.direction === "down" ? "mom-badge-down" : "mom-badge-flat");
+    return '<span class="mom-badge ' + pCls + '">' + escapeHtml(price.arrow || "") + ' ' + escapeHtml(price.label || "—") + '</span> ' +
+      '<span class="mom-sub-score">' + scoreTxt + accelTxt + '</span>';
+  }
+
+  // Fallback "Fundamental" sub-row body (used only when the quadrant can't
+  // be drawn because price.s is missing -- e.g. no price history at all).
+  // Labels its YoY sparkline explicitly (first->last), per the "explanatory"
+  // requirement -- a bare sparkline with no caption reads as decoration.
+  function momentumFundamentalBodyHtml(fund) {
+    if (!fund) return '<span class="muted">—</span>';
+    var scoreTxt = isNum(fund.score) ? Math.round(Number(fund.score)) + "/100 (50=nötr)" : "";
+    var scoreHtml = scoreTxt ? ' <span class="mom-sub-score">(' + scoreTxt + ')</span>' : "";
+    var yoy = fund.revenue_accel && fund.revenue_accel.yoy_series;
+    var sparkHtml = "";
+    if (Array.isArray(yoy) && yoy.length >= 2) {
+      var vals = yoy.map(function (y) { return y.yoy_pct; }).filter(isNum);
+      if (vals.length >= 2) {
+        var caption = "YoY büyüme: " + fmtSignedPct(vals[0]) + "→" + fmtSignedPct(vals[vals.length - 1]);
+        sparkHtml = '<div class="mom-mini-spark-wrap">' + miniSparkSvg(vals) +
+          '<div class="mom-spark-caption">' + escapeHtml(caption) + '</div></div>';
+      }
+    }
+    return escapeHtml(fund.detail || "—") + scoreHtml + sparkHtml;
+  }
+
+  // Değer seyri (verdict momentum) -- the model's OWN fair-value/price
+  // trajectory across stored analyses. A different axis from the security's
+  // own price/fundamental momentum above, so it's rendered as a separate
+  // context strip below the quadrant rather than folded into it. Labels its
+  // sparkline with the first->last FV/price ratio, per the "explanatory"
+  // requirement.
+  function momentumVerdictTrendHtml(vt) {
+    var body;
+    if (vt) {
+      var sparkHtml = "";
+      var series = vt.series;
+      if (Array.isArray(series) && series.length >= 2) {
+        var ratios = series.map(function (p) { return p.ratio; }).filter(isNum);
+        if (ratios.length >= 2) {
+          var caption = "FV/fiyat: " + ratios[0].toFixed(2) + "→" + ratios[ratios.length - 1].toFixed(2);
+          sparkHtml = '<div class="mom-mini-spark-wrap">' + miniSparkSvg(ratios) +
+            '<div class="mom-spark-caption">' + escapeHtml(caption) + '</div></div>';
+        }
+      }
+      body = escapeHtml(vt.detail || "—") + sparkHtml;
+    } else {
+      body = '<span class="muted">—</span>';
+    }
+    return (
+      '<div class="mom-vt-strip">' +
+        '<div class="mom-vt-title">Değer seyri</div>' +
+        '<div class="mom-vt-body">' + body + '</div>' +
+      '</div>'
+    );
+  }
+
+  // One muted line explaining WHY the composite verdict is what it is:
+  // leads with the price/fundamental labels (+ raw scores), a middle clause
+  // derived from the quadrant zone (only when both s values are available),
+  // and closes with the verdict-momentum's own detail sentence. Fully
+  // None-safe -- degrades to a shorter sentence, never "None"/"undefined",
+  // and falls back to a placeholder when nothing at all is available.
+  function momentumSynthesisSentence(mo) {
+    var price = mo.price, fund = mo.fundamental, vt = mo.verdict_trend;
+    var leadParts = [];
+    if (price && price.label) {
+      var pScore = isNum(price.score) ? Math.round(Number(price.score)) : null;
+      leadParts.push("Fiyat momentumu " + price.label + (pScore !== null ? " (" + pScore + "/100)" : ""));
+    }
+    if (fund && fund.label) {
+      var fScore = isNum(fund.score) ? Math.round(Number(fund.score)) : null;
+      leadParts.push("fundamental momentum " + fund.label + (fScore !== null ? " (" + fScore + "/100)" : ""));
+    }
+    var lead = leadParts.join(", ");
+
+    var zoneClause = "";
+    if (price && isNum(price.s) && fund && isNum(fund.s)) {
+      var zone = momentumQuadrantZone(Number(price.s), Number(fund.s));
+      if (zone.key === "confirmed") zoneClause = "fiyat ve iş performansı aynı yönde: trend teyitli";
+      else if (zone.key === "opportunity") zoneClause = "iş hızlanıyor ama fiyat henüz teyit etmedi";
+      else if (zone.key === "trap") zoneClause = "fiyat yükseliyor ama iş yavaşlıyor — momentum tuzağı riski";
+      else zoneClause = "fiyat ve iş performansı ikisi de zayıf";
+    }
+
+    var sentence1 = lead;
+    if (zoneClause) sentence1 += (lead ? "; " : "") + zoneClause;
+    if (sentence1) sentence1 += ".";
+
+    var sentence2 = (vt && vt.detail) ? vt.detail : "";
+
+    var full = [sentence1, sentence2].filter(function (s) { return s; }).join(" ");
+    return full || "Momentum sentezi için yeterli veri yok.";
+  }
+
+  // Price-score breakdown: one signed bar per component (the same
+  // {key,label,points} objects Python's compute_price_momentum emits), so the
+  // reader sees WHY the 0-100 score is what it is -- which levers pushed it up
+  // (getiri/trend...) and which dragged it down. Bars are scaled to the
+  // largest absolute contribution in the set. Returns "" if no components.
+  function momentumPriceBreakdownHtml(price) {
+    if (!price || !Array.isArray(price.components) || !price.components.length) return "";
+    var comps = price.components.filter(function (c) { return c && isNum(c.points); });
+    if (!comps.length) return "";
+    var maxAbs = comps.reduce(function (m, c) { return Math.max(m, Math.abs(Number(c.points))); }, 0) || 1;
+    var scoreTxt = isNum(price.score) ? Math.round(Number(price.score)) : "—";
+    var rows = comps.map(function (c) {
+      var pts = Number(c.points);
+      var w = Math.min(50, Math.abs(pts) / maxAbs * 50);   // % of half-track
+      var barCls = pts > 0 ? "mom-bd-bar-pos" : "mom-bd-bar-neg";
+      var valCls = pts > 0.05 ? "mom-bd-val-pos" : (pts < -0.05 ? "mom-bd-val-neg" : "mom-bd-val-zero");
+      var bar = Math.abs(pts) < 0.05 ? "" :
+        '<span class="mom-bd-bar ' + barCls + '" style="width:' + w.toFixed(1) + '%;"></span>';
+      return (
+        '<div class="mom-bd-row">' +
+          '<span class="mom-bd-label">' + escapeHtml(c.label || c.key || "—") + '</span>' +
+          '<span class="mom-bd-bar-track">' + bar + '</span>' +
+          '<span class="mom-bd-val ' + valCls + '">' + (pts >= 0 ? "+" : "") + pts.toFixed(1) + '</span>' +
+        '</div>'
+      );
+    }).join("");
+    return (
+      '<div class="mom-bd-col">' +
+        '<div class="mom-bd-title">FİYAT <b>' + escapeHtml(String(scoreTxt)) + '/100</b> · katkılar</div>' +
+        rows +
+      '</div>'
+    );
+  }
+
+  // Fundamental-signal breakdown: the sub-signals behind the fundamental score
+  // as ✓/◦/✗ rows (revenue-growth acceleration, gross & FCF margin trend,
+  // model-based surprise). Icon reflects each signal's direction. "" if no
+  // fundamental layer.
+  function momentumFundamentalBreakdownHtml(fund) {
+    if (!fund) return "";
+    function icon(kind) {
+      var g = kind === "ok" ? "mom-bd-icon-ok" : (kind === "bad" ? "mom-bd-icon-bad" : "mom-bd-icon-neutral");
+      var ch = kind === "ok" ? "✓" : (kind === "bad" ? "✗" : "◦");
+      return '<span class="mom-bd-icon ' + g + '">' + ch + '</span>';
+    }
+    function trendKind(word) {
+      if (word === "hızlanıyor" || word === "iyileşiyor") return "ok";
+      if (word === "yavaşlıyor" || word === "bozuluyor") return "bad";
+      return "neutral";
+    }
+    function sig(kind, text) { return '<div class="mom-bd-sig">' + icon(kind) + '<span>' + escapeHtml(text) + '</span></div>'; }
+
+    var rows = [];
+    var ra = fund.revenue_accel;
+    if (ra && ra.word) {
+      // "Çeyreklik" is explicit so this never looks like it contradicts the
+      // thesis card's *annual* growth metric -- they measure different periods.
+      // An unconfirmed (single-quarter) move is flagged and shown neutral, not
+      // as a full ✓/✗, matching the reduced weight it carries in the score.
+      var unconfirmed = ra.confirmed === false;
+      var yoyTxt = isNum(ra.latest_yoy_pct) ? " (son çeyrek YoY " + fmtSignedPct(ra.latest_yoy_pct) + ")" : "";
+      var caveat = unconfirmed ? " — tek çeyrek, teyit bekliyor" : "";
+      var kind = unconfirmed ? "neutral" : trendKind(ra.word);
+      rows.push(sig(kind, "Çeyreklik gelir büyümesi " + ra.word + yoyTxt + caveat));
+    }
+    var mt = fund.margin_trend || {};
+    if (mt.gross) rows.push(sig(trendKind(mt.gross), "Brüt marj " + mt.gross));
+    if (mt.fcf) rows.push(sig(trendKind(mt.fcf), "FCF marjı " + mt.fcf));
+    var ms = fund.model_surprise;
+    if (ms && ms.direction) {
+      var msKind = ms.direction === "beat" ? "ok" : (ms.direction === "miss" ? "bad" : "neutral");
+      var msWord = ms.direction === "beat" ? "modeli aştı" : (ms.direction === "miss" ? "modelin altında" : "modelle uyumlu");
+      var msPct = isNum(ms.surprise_pct) ? " (" + fmtSignedPct(ms.surprise_pct) + ")" : "";
+      rows.push(sig(msKind, "Gerçekleşen gelir " + msWord + msPct));
+    } else {
+      rows.push(sig("neutral", "Model-sürpriz: veri yok"));
+    }
+    if (!rows.length) return "";
+    var scoreTxt = isNum(fund.score) ? Math.round(Number(fund.score)) : "—";
+    return (
+      '<div class="mom-bd-col">' +
+        '<div class="mom-bd-title">FUNDAMENTAL <b>' + escapeHtml(String(scoreTxt)) + '/100</b> · sinyaller</div>' +
+        rows.join("") +
+      '</div>'
+    );
+  }
+
+  function momentumCardHtml(result) {
+    var mo = result && result.momentum;
+    if (!mo) return "";
+
+    var vColor = momentumVerdictColor(mo.verdict);
+    var price = mo.price;
+    var fund = mo.fundamental;
+    var vt = mo.verdict_trend;
+
+    // The quadrant is the headline visual whenever BOTH axes have a
+    // continuous score; otherwise fall back to the old labeled sub-rows so
+    // whichever single layer exists is never lost.
+    var hasQuadrant = !!(price && isNum(price.s) && fund && isNum(fund.s));
+    var bodyHtml;
+    if (hasQuadrant) {
+      var zone = momentumQuadrantZone(Number(price.s), Number(fund.s));
+      bodyHtml = momentumQuadrantBlockHtml(price, fund, zone);
+    } else {
+      bodyHtml =
+        '<div class="mom-sub-rows">' +
+          momentumSubRowHtml("Fiyat", momentumPriceBodyHtml(price)) +
+          momentumSubRowHtml("Fundamental", momentumFundamentalBodyHtml(fund)) +
+        '</div>';
+    }
+
+    // Score breakdown: what each 0-100 score is actually made of (price
+    // component contributions + fundamental sub-signals). Shown whenever the
+    // underlying data exists, in either the quadrant or the fallback layout.
+    var breakdownCols = momentumPriceBreakdownHtml(price) + momentumFundamentalBreakdownHtml(fund);
+    var breakdownHtml = breakdownCols ? '<div class="mom-breakdown">' + breakdownCols + '</div>' : "";
+
+    var crossHtml = "";
+    if (Array.isArray(mo.cross_signals) && mo.cross_signals.length) {
+      crossHtml =
+        '<div class="mom-cross-title">Çapraz Sinyaller</div>' +
+        '<div class="mom-cross-list">' + mo.cross_signals.map(momentumCrossSignalHtml).join("") + '</div>';
+    }
+
+    return (
+      '<div class="card mom-card">' +
+        '<div class="mom-card-head">' +
+          '<div class="card-title" style="margin:0;">MOMENTUM</div>' +
+          '<span class="badge badge-' + vColor + '">' + escapeHtml(mo.verdict || "—") + '</span>' +
+        '</div>' +
+        '<div class="mom-synth">' + escapeHtml(momentumSynthesisSentence(mo)) + '</div>' +
+        bodyHtml +
+        breakdownHtml +
+        momentumVerdictTrendHtml(vt) +
+        crossHtml +
+        '<div class="mom-help">Momentum, giriş zamanlaması bağlamıdır — adil değer hesaplamasına asla girmez.</div>' +
+      '</div>'
+    );
+  }
+
+  function technicalCardHtml(technical, verdictText, horizon) {
     var t = technical || {};
     // No usable indicators at all -> fall back to the plain verdict card.
     if (!isNum(t.rsi14) && !isNum(t.price)) {
@@ -2950,7 +3426,7 @@
     // sentence. When no signal at all is available, show the empty state
     // instead of badge/meter/sentence but still render the rest of the card.
     var momentum = computeMomentum(t);
-    var reversal = computeReversal(t, momentum);
+    var reversal = computeReversal(t, momentum, horizon);
     var momSynthesisHtml;
     if (momentum) {
       // Plain .toUpperCase() mis-cases Turkish "i" (no dot) -> "SABIT" instead
@@ -3390,7 +3866,8 @@
       fanChartCardHtml(result, payload.price) +
       (valuation ? triangulationRowHtml(valuation, result.confidence) : "") +
       verdictCardHtml("Fundamental", result.fundamental_verdict, result.horizon_note) +
-      technicalCardHtml(technical, result.technical_verdict || technical.verdict) +
+      momentumCardHtml(result) +
+      technicalCardHtml(technical, result.technical_verdict || technical.verdict, payload.horizon) +
       // Profile Fit card intentionally removed from the UI for now (still
       // computed in the payload; just not rendered).
       (valuation ? sensitivityTableHtml(valuation.sensitivity) : "") +

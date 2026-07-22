@@ -503,3 +503,184 @@ def test_save_verdict_handles_missing_band_values_none_safely(tmp_path):
     assert row["price"] is None
     assert row["fv_bear_lo"] is None
     assert row["fv_base_hi"] is None
+
+
+# ---------------------------------------------------------------------------
+# verdict_outcomes table / save_outcome / load_verdicts_for_outcomes /
+# load_outcomes -- the backtest subsystem's persistence layer
+# (sec_analyzer.backtest.outcomes).
+# ---------------------------------------------------------------------------
+
+
+def _outcome_kwargs(verdict_id, horizon="1y", hit=True, referee_note=None,
+                     abs_return=0.1, rel_return=0.05, evaluated_at="2021-07-01"):
+    return dict(
+        verdict_id=verdict_id, horizon=horizon,
+        ref_date="2020-06-30", ref_price=100.0,
+        fwd_date="2021-06-30", fwd_price=110.0,
+        abs_return=abs_return, rel_return=rel_return, hit=hit,
+        evaluated_at=evaluated_at, referee_note=referee_note,
+    )
+
+
+def test_init_db_creates_verdict_outcomes_table_with_expected_columns(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    database.init_db(db_path)
+
+    conn = database.get_connection(db_path)
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(verdict_outcomes)").fetchall()}
+    finally:
+        conn.close()
+
+    for expected in (
+        "verdict_id", "horizon", "ref_date", "ref_price", "fwd_date", "fwd_price",
+        "abs_return", "rel_return", "hit", "referee_note", "evaluated_at",
+    ):
+        assert expected in columns
+
+
+def test_init_db_creating_verdict_outcomes_table_is_migration_safe(tmp_path):
+    """Calling init_db twice against the same file (mirroring a pre-existing
+    database being reopened by a newer version of this module) must not raise
+    -- CREATE TABLE IF NOT EXISTS is idempotent."""
+    db_path = str(tmp_path / "test.sqlite3")
+    database.init_db(db_path)
+    database.init_db(db_path)  # must not raise
+
+    conn = database.get_connection(db_path)
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(verdict_outcomes)").fetchall()}
+    finally:
+        conn.close()
+    assert "verdict_id" in columns
+
+
+def test_save_outcome_upsert_is_idempotent_per_verdict_and_horizon(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    result = _sample_result()
+    verdict_id = database.save_verdict("AAPL", "320193", "1y", "script", 100.0, result, db_path=db_path)
+
+    database.save_outcome(**_outcome_kwargs(verdict_id, abs_return=0.10, rel_return=0.05), db_path=db_path)
+    # Re-evaluation with updated numeric fields -- must overwrite in place,
+    # not duplicate the (verdict_id, horizon) row.
+    database.save_outcome(**_outcome_kwargs(verdict_id, abs_return=0.30, rel_return=0.20), db_path=db_path)
+
+    conn = database.get_connection(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM verdict_outcomes").fetchall()
+    finally:
+        conn.close()
+    assert len(rows) == 1
+    assert rows[0]["abs_return"] == pytest.approx(0.30)
+    assert rows[0]["rel_return"] == pytest.approx(0.20)
+
+
+def test_save_outcome_stores_hit_as_1_0_or_null(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    result = _sample_result()
+    verdict_id = database.save_verdict("AAPL", "320193", "1y", "script", 100.0, result, db_path=db_path)
+
+    database.save_outcome(**_outcome_kwargs(verdict_id, horizon="1y", hit=True), db_path=db_path)
+    database.save_outcome(**_outcome_kwargs(verdict_id, horizon="3y", hit=False), db_path=db_path)
+    database.save_outcome(**_outcome_kwargs(verdict_id, horizon="5y", hit=None), db_path=db_path)
+
+    conn = database.get_connection(db_path)
+    try:
+        rows = {
+            row["horizon"]: row["hit"]
+            for row in conn.execute("SELECT horizon, hit FROM verdict_outcomes").fetchall()
+        }
+    finally:
+        conn.close()
+    assert rows["1y"] == 1
+    assert rows["3y"] == 0
+    assert rows["5y"] is None
+
+
+def test_save_outcome_preserves_existing_referee_note_when_recompute_passes_none(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    result = _sample_result()
+    verdict_id = database.save_verdict("AAPL", "320193", "1y", "script", 100.0, result, db_path=db_path)
+
+    database.save_outcome(**_outcome_kwargs(verdict_id, referee_note="hakem: tez doğrulandı"), db_path=db_path)
+    # A later recompute (e.g. re-running evaluate_outcomes) supplies no note --
+    # the manual annotation must survive, not be clobbered to NULL.
+    database.save_outcome(
+        **_outcome_kwargs(verdict_id, referee_note=None, abs_return=0.33), db_path=db_path,
+    )
+
+    conn = database.get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT referee_note, abs_return FROM verdict_outcomes WHERE verdict_id = ? AND horizon = ?",
+            (verdict_id, "1y"),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row["referee_note"] == "hakem: tez doğrulandı"
+    assert row["abs_return"] == pytest.approx(0.33)  # the numeric recompute itself still applied
+
+
+def test_save_outcome_overwrites_referee_note_when_explicitly_given(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    result = _sample_result()
+    verdict_id = database.save_verdict("AAPL", "320193", "1y", "script", 100.0, result, db_path=db_path)
+
+    database.save_outcome(**_outcome_kwargs(verdict_id, referee_note="ilk not"), db_path=db_path)
+    database.save_outcome(**_outcome_kwargs(verdict_id, referee_note="güncellenmiş not"), db_path=db_path)
+
+    conn = database.get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT referee_note FROM verdict_outcomes WHERE verdict_id = ? AND horizon = ?",
+            (verdict_id, "1y"),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row["referee_note"] == "güncellenmiş not"
+
+
+def test_load_verdicts_for_outcomes_returns_all_verdicts_including_valuation_json(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    result = _sample_result()
+    valuation = _sample_valuation()
+    database.save_verdict("AAPL", "320193", "1y", "script", 100.0, result, db_path=db_path, valuation=valuation)
+    database.save_verdict("MSFT", "789019", "1y", "script", 200.0, result, db_path=db_path)
+
+    rows = database.load_verdicts_for_outcomes(db_path)
+
+    assert len(rows) == 2
+    assert [r["ticker"] for r in rows] == ["AAPL", "MSFT"]  # ordered by id
+    assert json.loads(rows[0]["valuation_json"]) == valuation
+    assert rows[1]["valuation_json"] is None
+
+
+def test_load_outcomes_joins_outcome_rows_back_to_their_parent_verdict(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    result = _sample_result()
+    valuation = _sample_valuation()
+    verdict_id = database.save_verdict(
+        "AAPL", "320193", "1y", "script", 100.0, result, db_path=db_path,
+        as_of="2020-06-30", valuation=valuation,
+    )
+    database.save_outcome(**_outcome_kwargs(verdict_id, hit=True), db_path=db_path)
+
+    rows = database.load_outcomes(db_path)
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["verdict_id"] == verdict_id
+    assert row["ticker"] == "AAPL"
+    assert row["as_of"] == "2020-06-30"
+    assert row["fundamental_verdict"] == "MAKUL"  # from _sample_result()
+    assert json.loads(row["valuation_json"]) == valuation
+    assert row["horizon"] == "1y"
+    assert row["hit"] == 1
+
+
+def test_load_outcomes_returns_empty_list_when_no_outcomes_saved(tmp_path):
+    db_path = str(tmp_path / "test.sqlite3")
+    database.save_verdict("AAPL", "320193", "1y", "script", 100.0, _sample_result(), db_path=db_path)
+
+    assert database.load_outcomes(db_path) == []

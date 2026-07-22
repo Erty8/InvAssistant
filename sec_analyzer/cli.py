@@ -56,9 +56,22 @@ from sec_analyzer.normalize.normalizer import format_table, normalize_facts
 from sec_analyzer.normalize.ratios import compute_ratios
 from sec_analyzer.normalize.red_flags import detect_red_flags
 from sec_analyzer.report.generator import generate_report
+from sec_analyzer.interpret import planning
 from sec_analyzer.signals.events import detect_events, summarize_events
-from sec_analyzer.store.database import save_normalized, save_prices, save_verdict
+from sec_analyzer.signals.momentum import (
+    compute_fundamental_momentum,
+    compute_verdict_momentum,
+    synthesize_momentum,
+)
+from sec_analyzer.store.database import (
+    load_prior_live_verdict,
+    load_verdicts,
+    save_normalized,
+    save_prices,
+    save_verdict,
+)
 from sec_analyzer.technical.indicators import compute_indicators, relative_strength
+from sec_analyzer.technical.momentum import compute_price_momentum, sector_etf_for_sic
 from sec_analyzer.technical.verdict import technical_verdict
 
 logger = logging.getLogger(__name__)
@@ -191,9 +204,15 @@ def _fetch_price_and_technical(
                 return None, None, None, None
         price, as_of_date = latest_price(price_df)
         indicators = compute_indicators(price_df)
+        # Relative strength (vs. SPY) is attached BEFORE the momentum synthesis
+        # so it feeds the composite score; the momentum dict is then attached
+        # BEFORE technical_verdict so the horizon narrative can lead with it.
+        # Sector-relative strength (which needs the SIC from submissions) is
+        # folded in later by the caller, which then recomputes momentum.
+        indicators["relative_strength"] = _fetch_relative_strength(ticker, price_df, no_cache, as_of)
+        indicators["momentum"] = compute_price_momentum(indicators)
         verdict_result = technical_verdict(indicators, horizon)
         technical = {**indicators, **verdict_result}
-        technical["relative_strength"] = _fetch_relative_strength(ticker, price_df, no_cache, as_of)
         logger.info(
             "Price data for %s from %s: %.2f as of %s", ticker, source, price, as_of_date
         )
@@ -207,9 +226,11 @@ def _fetch_price_and_technical(
 _RS_BENCHMARK = "SPY"
 
 
-def _fetch_relative_strength(ticker: str, price_df, no_cache: bool, as_of=None) -> Optional[dict]:
-    """Best-effort price relative strength vs. the :data:`_RS_BENCHMARK`
-    benchmark; never raises.
+def _fetch_relative_strength(
+    ticker: str, price_df, no_cache: bool, as_of=None, benchmark: str = _RS_BENCHMARK
+) -> Optional[dict]:
+    """Best-effort price relative strength vs. ``benchmark`` (default
+    :data:`_RS_BENCHMARK`); never raises.
 
     Fetches the benchmark's (cached) price history and compares returns via
     :func:`sec_analyzer.technical.indicators.relative_strength`. Returns
@@ -218,16 +239,74 @@ def _fetch_relative_strength(ticker: str, price_df, no_cache: bool, as_of=None) 
     rest of ``analyze``. When ``as_of`` is set the benchmark frame is sliced
     to the same cutoff so the comparison stays point-in-time.
     """
-    if str(ticker).strip().upper() == _RS_BENCHMARK:
+    if str(ticker).strip().upper() == benchmark:
         return None
     try:
-        bench_df, _ = get_price_history(_RS_BENCHMARK, no_cache=no_cache)
+        bench_df, _ = get_price_history(benchmark, no_cache=no_cache)
         if as_of is not None:
             bench_df = slice_asof(bench_df, as_of)
-        return relative_strength(price_df["Close"], bench_df["Close"], benchmark=_RS_BENCHMARK)
+        return relative_strength(price_df["Close"], bench_df["Close"], benchmark=benchmark)
     except Exception:  # noqa: BLE001 - display-only cross-check, never fatal
-        logger.warning("Could not compute relative strength for %s", ticker, exc_info=True)
+        logger.warning("Could not compute relative strength for %s vs %s", ticker, benchmark, exc_info=True)
         return None
+
+
+def _attach_momentum(result, ticker, normalized, technical, as_of):
+    """Compute and attach the three-layer momentum *context* to ``result``.
+
+    Combines the composite price momentum (already on ``technical``), the
+    fundamental momentum (quarterly growth acceleration + margin trend + model-
+    based surprise), and the verdict momentum (FV/price trajectory across prior
+    stored live analyses) into ``result["momentum"]``, and applies the falling-
+    knife stabilization note to the dip tranches when the cross-signal fires.
+
+    Deterministic and never fatal (best-effort context, like events). In as-of /
+    backtest mode the verdict-momentum and model-surprise sub-signals are
+    skipped -- only the point-in-time price momentum is used -- so a historical
+    run cannot borrow forward information from later stored verdicts.
+    """
+    try:
+        prior = None
+        verdict_hist = None
+        if as_of is None:
+            prior_v = load_prior_live_verdict(ticker, db_path=Config.DB_PATH)
+            if prior_v:
+                prior = {"valuation": prior_v.get("valuation"), "ref_date": prior_v.get("analyzed_at")}
+            verdict_hist = load_verdicts(ticker, db_path=Config.DB_PATH, live_only=True)
+        fundamental_m = compute_fundamental_momentum(normalized, prior)
+        verdict_m = compute_verdict_momentum(verdict_hist)
+        price_m = (technical or {}).get("momentum")
+        momentum = synthesize_momentum(price_m, fundamental_m, verdict_m, result.get("fundamental_verdict"))
+        if momentum is not None:
+            result["momentum"] = momentum
+            planning.apply_stabilization_condition(result.get("entry_plan"), momentum.get("falling_knife"))
+    except Exception:  # noqa: BLE001 - momentum is display-only context, never fatal
+        logger.warning("Could not attach momentum context for %s", ticker, exc_info=True)
+
+
+def _enrich_sector_momentum(ticker, technical, price_df, submissions, no_cache, as_of):
+    """Fold sector-relative strength into ``technical`` and recompute the
+    composite momentum score with it.
+
+    Sector-relative strength needs the ticker's SIC code, which only becomes
+    available once ``submissions`` are fetched (after the initial technical
+    pass), so this runs as a second enrichment step. Best-effort and never
+    fatal: a missing/unmapped SIC, missing price frame, or any failure just
+    leaves the SPY-only momentum already on ``technical`` in place.
+    """
+    if not isinstance(technical, dict) or price_df is None:
+        return
+    try:
+        sic = submissions.get("sic") if isinstance(submissions, dict) else None
+        etf = sector_etf_for_sic(sic)
+        if etf and str(ticker).strip().upper() != etf:
+            sector_rs = _fetch_relative_strength(ticker, price_df, no_cache, as_of, benchmark=etf)
+            if sector_rs is not None:
+                technical["relative_strength_sector"] = sector_rs
+        # Recompute momentum so the sector-relative component is included.
+        technical["momentum"] = compute_price_momentum(technical)
+    except Exception:  # noqa: BLE001 - display-only enrichment, never fatal
+        logger.warning("Could not enrich sector momentum for %s", ticker, exc_info=True)
 
 
 def _fetch_analyst_targets(ticker: str, no_cache: bool) -> Optional[dict]:
@@ -691,9 +770,10 @@ def _signed_pct_tr(value) -> str:
 
 
 def _momentum_line(technical: dict) -> Optional[str]:
-    """Compact momentum sub-line for the technical card, e.g.
-    ``"Momentum:  1a +%4 · 3a +%13 · 6a -%3 · Trend: yükseliş (GC) · 52h %68"``.
-    ``None`` when no momentum figure is available."""
+    """Compact returns/trend sub-line for the technical card, e.g.
+    ``"Getiriler:  1a +%4 · 3a +%13 · 6a -%3 · Trend: yükseliş (GC) · 52h %68"``.
+    ``None`` when no figure is available. (The composite momentum synthesis is
+    a separate top-level ``Momentum:`` row -- see :func:`_momentum_synthesis_text`.)"""
     parts: List[str] = []
     for label, key in (("1a", "return_1m_pct"), ("3a", "return_3m_pct"), ("6a", "return_6m_pct")):
         value = technical.get(key)
@@ -712,7 +792,33 @@ def _momentum_line(technical: dict) -> Optional[str]:
 
     if not parts:
         return None
-    return "Momentum:  " + " · ".join(parts)
+    return "Getiriler:  " + " · ".join(parts)
+
+
+#: Severity -> glyph for the momentum cross-signal sub-lines.
+_CROSS_ICON = {"warn": "⚠", "good": "✓", "info": "•"}
+
+
+def _momentum_synthesis_text(momentum: dict) -> str:
+    """Top-level ``Momentum:`` row text from ``result["momentum"]``: the
+    composite verdict followed by the price / fundamental / verdict-trend
+    sub-reads, e.g. ``"POZİTİF · fiyat: YUKARI MOMENTUM (68/100, hızlanıyor) ·
+    fundamental: POZİTİF · verdict: yakınsama"``."""
+    parts: List[str] = []
+    price = momentum.get("price")
+    if isinstance(price, dict) and price.get("label"):
+        seg = f"fiyat: {price['label']} ({price.get('score')}/100"
+        seg += f", {price['accel']}" if price.get("accel") else ""
+        seg += ")"
+        parts.append(seg)
+    fundamental = momentum.get("fundamental")
+    if isinstance(fundamental, dict) and fundamental.get("label"):
+        parts.append(f"fundamental: {fundamental['label']}")
+    verdict_trend = momentum.get("verdict_trend")
+    if isinstance(verdict_trend, dict) and verdict_trend.get("label"):
+        parts.append(f"verdict: {verdict_trend['label']}")
+    head = momentum.get("verdict") or _DASH
+    return f"{head} · " + " · ".join(parts) if parts else head
 
 
 def _rsi_divergence_line(technical: dict) -> Optional[str]:
@@ -868,15 +974,19 @@ def _print_verdict_card(
     print("─" * len(header))
     if as_of is not None:
         print(
-            f"Geçmiş tarih modu: {as_of.isoformat()} — yalnızca bu tarihte "
-            "bilinen veriler (analist konsensüsü gösterilmiyor)"
+            f"AS-OF {as_of.isoformat()} — geçmiş veri, hindsight içermez "
+            "(analist konsensüsü gösterilmiyor)"
         )
         macro_asof = (result.get("valuation") or {}).get("macro_asof") if isinstance(result, dict) else None
         if macro_asof:
             print(
                 f"  Makro: ERP {macro_asof.get('erp_source')} · risksiz faiz "
-                f"{macro_asof.get('risk_free_source')}"
+                f"{macro_asof.get('risk_free_source')} · çarpan/beta "
+                f"{macro_asof.get('multiples_source', 'multiples.csv')}"
             )
+        leak = result.get("hindsight_leak_risk") if isinstance(result, dict) else None
+        if leak:
+            print(f"  ⚠ {leak}")
     print(f"Fiyat: {_fmt_money(metrics.get('price'))}")
 
     if "error" in result:
@@ -933,6 +1043,15 @@ def _print_verdict_card(
     if sr_line:
         print(f"  {sr_line}")
 
+    # Top-level momentum synthesis row (price + fundamental + verdict momentum)
+    # with any value x momentum cross-signals as indented sub-lines.
+    momentum = result.get("momentum")
+    if isinstance(momentum, dict):
+        print(f"{'Momentum:'.ljust(_CARD_LABEL_WIDTH)}{_momentum_synthesis_text(momentum)}")
+        for cross in momentum.get("cross_signals") or []:
+            icon = _CROSS_ICON.get(cross.get("severity"), "•")
+            print(f"  {icon} {cross.get('text', '')}")
+
     profile = result.get("profile_fit") or {}
     profile_verdict = profile.get("verdict") or _DASH
     profile_reason = profile.get("reason")
@@ -965,7 +1084,21 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     as_of = getattr(args, "as_of", None)
     cik, _name, normalized, ratios = _fetch_normalize_store(args)
 
-    provider = getattr(args, "provider", None) or Config.ANALYZER_PROVIDER
+    # As-of default is no-AI: an LLM's training data can carry post-as_of
+    # knowledge, so unless the user *explicitly* asks for an AI provider,
+    # historical runs use the deterministic script engine. An explicit
+    # --provider still works but the result carries a hindsight-leak label.
+    explicit_provider = getattr(args, "provider", None)
+    if as_of is not None and explicit_provider is None:
+        provider = "script"
+    else:
+        provider = explicit_provider or Config.ANALYZER_PROVIDER
+    if as_of is not None and provider != "script":
+        print(
+            f"\nUYARI: as-of modunda AI sağlayıcı ({provider}) kullanılıyor — "
+            "sonuç 'hindsight sızıntısı riski' etiketi taşıyacak.",
+            file=sys.stderr,
+        )
     print(f"\nRunning {provider} analysis (horizon={horizon})...")
 
     # Point-in-time no-data guard: if the as-of cutoff predates every filed
@@ -996,6 +1129,9 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     submissions = _fetch_submissions(cik, args.ticker, args.no_cache)
     catalyst = _fetch_catalyst(submissions, args.ticker, as_of)
     events = _detect_filing_events(submissions, as_of)
+    # Now that the SIC is known, fold in sector-relative strength and recompute
+    # the composite momentum score with it (SPY-only momentum is already set).
+    _enrich_sector_momentum(args.ticker, technical, price_df, submissions, args.no_cache, as_of)
 
     if price_df is not None and as_of is None:
         _save_price_rows(cik, price_df)
@@ -1024,6 +1160,12 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         result["events"] = events
         if as_of is not None:
             result["as_of"] = as_of.isoformat()
+        # Momentum context layer (price + fundamental + verdict momentum),
+        # attached post-interpret like events -- never routed through the LLM
+        # and never part of the fair-value computation. Computed before
+        # save_verdict so the persisted verdict carries the momentum label.
+        if "error" not in result:
+            _attach_momentum(result, args.ticker, normalized, technical, as_of)
 
     if "error" in result:
         print(
@@ -1102,6 +1244,80 @@ def cmd_calibrate(args: argparse.Namespace) -> None:
         print(f"\nSaved calibration snapshot to: {path}")
     else:
         print("\nWARNING: failed to save calibration snapshot.", file=sys.stderr)
+
+
+def cmd_backtest(args: argparse.Namespace) -> None:
+    """Handle the ``backtest`` subcommand group: ``run``/``evaluate``/``report``.
+
+    ``run`` executes the (ticker x date) as-of grid (deterministic, no-AI),
+    persists verdicts, and evaluates forward outcomes. ``evaluate`` (re)computes
+    outcomes for all stored verdicts. ``report`` prints the hit-rate /
+    calibration / divergence tables and writes an HTML report. Each carries the
+    backtest sample disclaimer.
+    """
+    from sec_analyzer.backtest import BACKTEST_DISCLAIMER
+    from sec_analyzer.backtest.outcomes import evaluate_outcomes
+    from sec_analyzer.backtest.report import (
+        build_report_data,
+        render_terminal,
+        write_html_report,
+    )
+    from sec_analyzer.backtest.runner import parse_dates, read_tickers_file, run_backtest
+
+    action = getattr(args, "backtest_action", None)
+
+    if action == "run":
+        tickers = read_tickers_file(args.tickers_file)
+        if not tickers:
+            print(f"No tickers found in {args.tickers_file}.", file=sys.stderr)
+            return
+        try:
+            dates = parse_dates(args.dates)
+        except ValueError as exc:
+            print(f"Invalid --dates: {exc}", file=sys.stderr)
+            return
+        if not dates:
+            print("No dates given to --dates.", file=sys.stderr)
+            return
+        print(
+            f"Backtest grid: {len(tickers)} ticker × {len(dates)} tarih "
+            f"= {len(tickers) * len(dates)} hücre (no-AI, script)."
+        )
+        tally = run_backtest(
+            tickers, dates, years=args.years, no_cache=args.no_cache, db_path=Config.DB_PATH
+        )
+        print(
+            f"\nBitti: {tally['ok']} ok, {tally['no_data']} veri-yok, "
+            f"{tally['error']} hata (of {tally['cells']} hücre)."
+        )
+        if tally.get("outcomes"):
+            o = tally["outcomes"]
+            print(
+                f"Outcomes: {o['evaluated']} değerlendirildi, "
+                f"{o['skipped_immature']} vadesi dolmadı, {o['skipped_no_data']} veri-yok."
+            )
+        print(f"\n{BACKTEST_DISCLAIMER}")
+        return
+
+    if action == "evaluate":
+        summary = evaluate_outcomes(db_path=Config.DB_PATH, no_cache=args.no_cache)
+        print(
+            f"Outcomes: {summary['evaluated']} değerlendirildi, "
+            f"{summary['skipped_immature']} vadesi dolmadı, "
+            f"{summary['skipped_no_data']} veri-yok (of {summary['verdicts_seen']} verdict)."
+        )
+        print(f"\n{BACKTEST_DISCLAIMER}")
+        return
+
+    if action == "report":
+        data = build_report_data(db_path=Config.DB_PATH)
+        print(render_terminal(data))
+        generated_on = date.today().isoformat()
+        path = write_html_report(data, generated_on)
+        print(f"\nHTML backtest raporu: {path}")
+        return
+
+    print("Usage: backtest {run|evaluate|report} ...", file=sys.stderr)
 
 
 def _parse_as_of(value: str) -> date:
@@ -1258,6 +1474,46 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     calibrate_parser.set_defaults(func=cmd_calibrate)
+
+    # --- backtest {run|evaluate|report} ---
+    backtest_parser = subparsers.add_parser(
+        "backtest",
+        help=(
+            "Evaluation (not optimization) tool: run an as-of grid, evaluate "
+            "forward outcomes, and report hit-rate/calibration/divergence. "
+            "See ROADMAP.md 'Backtest — tasarım ilkesi'."
+        ),
+    )
+    backtest_sub = backtest_parser.add_subparsers(dest="backtest_action", required=True)
+
+    bt_run = backtest_sub.add_parser(
+        "run", help="Run the (ticker x date) as-of grid, persist verdicts, evaluate outcomes."
+    )
+    bt_run.add_argument(
+        "--tickers-file", required=True,
+        help="Path to a watchlist file (one ticker per line; '#' comments allowed).",
+    )
+    bt_run.add_argument(
+        "--dates", required=True,
+        help="Comma-separated as-of dates, e.g. '2020-06-30,2022-06-30,2023-12-31'.",
+    )
+    bt_run.add_argument("--years", type=int, default=5, help="Fiscal-year window (default 5).")
+    bt_run.add_argument(
+        "--no-cache", action="store_true", help="Bypass raw JSON/price caches and re-fetch.",
+    )
+
+    bt_eval = backtest_sub.add_parser(
+        "evaluate", help="(Re)evaluate forward outcomes for all stored verdicts (idempotent).",
+    )
+    bt_eval.add_argument(
+        "--no-cache", action="store_true", help="Bypass the price cache and re-fetch.",
+    )
+
+    backtest_sub.add_parser(
+        "report", help="Print hit-rate/calibration/divergence tables and write an HTML report.",
+    )
+
+    backtest_parser.set_defaults(func=cmd_backtest)
 
     return parser
 

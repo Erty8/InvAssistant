@@ -1,5 +1,40 @@
 # Roadmap
 
+## Backtest — tasarım ilkesi
+
+Bu sistemde backtest bir **DEĞERLENDİRME** aracıdır, **OPTİMİZASYON** aracı
+değildir:
+
+- Motor parametreleri (iskonto oranı tabanları, marj tavanları, eşikler)
+  backtest sonuçlarını iyileştirmek için **AYARLANMAZ**. Düzeltmeler yalnızca
+  kavramsal/muhasebesel gerekçeyle yapılır; backtest, düzeltme sonrasında
+  "tutarlılığı artırdı mı" diye doğrulama için kullanılır — hedef fonksiyonu
+  olarak değil.
+- Point-in-time analiz (`analyze --as-of`, `backtest run`) yalnızca o tarihte
+  bilinebilir veriyle çalışır; forward sonuç (`backtest evaluate`) ise UCUZ/
+  PAHALI iddialarının SPY'a göre isabetini ölçer. MAKUL nötr sayılır; MODEL-
+  PİYASA AYRIŞMASI / YÜKSEK BEKLENTİ ikili değil, `referee_note` ile elle
+  değerlendirilir.
+- Tüm backtest çıktıları şu dipnotu otomatik taşır: *"Küçük ve hayatta-kalan
+  yanlılığı olan örneklem; parametre seçim aracı değildir."*
+  (`sec_analyzer.backtest.BACKTEST_DISCLAIMER`).
+
+## Yapılmayacaklar (kapsam dışı)
+
+- **Getiri optimizasyonu** (Sharpe oranı, equity curve, parametre taraması,
+  otomatik eşik/katsayı arama) bu sistemin kapsamı DIŞINDADIR. Gerekçe:
+  - **Küçük evren:** ~20-30 isimlik bir izleme listesi istatistiksel güç
+    sağlamaz; birkaç ismin sonucu medyanı savurur.
+  - **Survivorship bias:** delisted/iflas etmiş şirketler ücretsiz fiyat
+    kaynaklarında (Stooq) yok; sepet otomatik olarak hayatta kalanlara kayar,
+    bu da hit-rate'i yukarı yanlı gösterir.
+  - **Tek rejim:** elde birkaç as-of tarihi var; bir parametreyi bu küçük,
+    yanlı, tek-rejim örneğine göre ayarlamak gürültüye overfit olmak demektir —
+    ölçülen "iyileşme" örneklem dışında genellemez.
+- Bu yüzden `backtest report` isabet oranını gösterir ama hiçbir parametreyi
+  otomatik değiştirmez; n < 10 olan hücreler "yetersiz örneklem" olarak
+  işaretlenir.
+
 ## Faz 2
 
 - Watchlist + verdict değişim bildirimi
@@ -7,7 +42,9 @@
 - Portfolio review (POZISYONLAR.md entegrasyonu)
 - Peer comparison
 - Risk faktörü diff'i (ardışık 10-K/10-Q Risk Factors karşılaştırması)
-- Verdict backtest raporu (verdicts tablosu şimdiden bunun için kuruldu)
+- [TAMAMLANDI] Verdict backtest raporu (as-of modu + `backtest run/evaluate/report`
+  komutları + `verdict_outcomes` tablosu). Bkz. "Backtest — tasarım ilkesi" ve
+  "Yapılmayacaklar" bölümleri aşağıda; SPEC.md as-of modu bölümü.
 - [TAMAMLANDI] CapEx-yoğun hiper-grower'lar (ör. APLD gibi veri merkezi yatırımcıları) için
   revenue-first DCF'te büyüme CapEx'ini bakım CapEx'inden ayırma. Motor artık amortismanı
   (D&A) standart bakım-CapEx vekili olarak kullanıp başlangıç FCF marjını büyüme CapEx'i
@@ -15,6 +52,22 @@
   vekilinden ayrı türetildiği için steady-state'te bakım-CapEx yine fiyatlanıyor. Eski
   bastırma (suppression) guardrail'i, düzeltilmiş marjla bile baz senaryo ≤ $0 çıkarsa
   devreye giren bir backstop olarak kalıyor. Bkz. SPEC.md §3.6, VALUATION.md §4a.
+- [TAMAMLANDI] Momentum bağlam katmanı — fiyat momentumu (`technical/momentum.py`,
+  çok-ufuklu getiri + relatif güç + trend kalitesi + hacim bileşik skoru), fundamental
+  momentum (`signals/momentum.py`, çeyreklik büyüme ivmesi + marj trendi + model-bazlı
+  sürpriz) ve verdict momentumu (`signals/momentum.py`, ardışık saklı analizlerde FV/fiyat
+  oranının yörüngesi) tek bir MOMENTUM satırında birleşti; UCUZ/PAHALI verdict'iyle
+  çapraz okunarak düşen-bıçak uyarısı, profil güvenlik uyarısı ve UCUZ+ivmeli-büyüme
+  "en güçlü kombinasyon" sinyallerini üretiyor. Tamamen deterministik (LLM yok, wall-clock
+  bağımlılığı yok); fair value hesaplamasına GİRMİYOR, yalnızca giriş zamanlaması /
+  kademeli giriş tarafını besliyor. Bkz. METODOLOJI.md §8, §1.5.
+  - **Ertelendi (kapsam dışı bırakıldı, bilinçli):** Filing momentumu — ardışık 10-Q'ların
+    MD&A/guidance bölümlerinin ton analizi (iyimserlik/temkinlilik değişimi) — bu üçlüye
+    dahil EDİLMEDİ. Bu tür bir metin-tonu analizi doğası gereği bir LLM okuması gerektirir;
+    CLAUDE.md'nin "LLM usage belongs in offline ETL steps that write to a structured cache;
+    the runtime analysis/valuation path stays deterministic and LLM-free" kuralı gereği,
+    yapılacaksa ayrı bir offline ETL adımı (LLM → yapılandırılmış önbellek, `signals/events.py`
+    ile aynı desen) olarak ele alınmalı — runtime momentum katmanına doğrudan eklenmedi.
 
 ## Değerleme motoru — katmanlı-ceza normalizasyonu (2026-07-16/17)
 
