@@ -363,11 +363,18 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
         },
         "multiples": {
             "history": [],
-            "current": {"pe": None, "ps": None, "pfcf": None, "pffo": None},
+            "current": {
+                "pe": None, "ps": None, "pfcf": None, "pffo": None,
+                "ev_ebit": None, "ev_ebitda": None,
+            },
             "pe_percentile": None,
             "ps_percentile": None,
             "pfcf_percentile": None,
             "pffo_percentile": None,
+            "ev_ebit_percentile": None,
+            "ev_ebitda_percentile": None,
+            "net_debt_to_ebitda": None,
+            "leveraged": False,
             "history_years": 0,
             "sector": {
                 "available": False, "industry": None,
@@ -3015,7 +3022,7 @@ def _build_midgrowth_revenue_dcf(
 
 #: Turkish labels for the current-multiple fallback notes, keyed by which
 #: multiple was derived.
-_MULTIPLE_LABELS = {"pe": "F/K", "ps": "F/S", "pfcf": "F/FCF"}
+_MULTIPLE_LABELS = {"pe": "F/K", "ps": "F/S", "pfcf": "F/FCF", "ev_ebit": "FD/FVÖK", "ev_ebitda": "FD/FAVÖK"}
 
 
 def _derive_current_multiples(
@@ -3041,7 +3048,10 @@ def _derive_current_multiples(
     already-computed value. Never raises; returns ``(current, notes)``
     where ``notes`` describes which fiscal year each derived multiple used.
     """
-    current = {"pe": metrics.get("pe"), "ps": metrics.get("ps"), "pfcf": metrics.get("pfcf")}
+    current = {
+        "pe": metrics.get("pe"), "ps": metrics.get("ps"), "pfcf": metrics.get("pfcf"),
+        "ev_ebit": metrics.get("ev_ebit"), "ev_ebitda": metrics.get("ev_ebitda"),
+    }
     notes: List[str] = []
     if price is None:
         return current, notes
@@ -3085,6 +3095,33 @@ def _derive_current_multiples(
                 if fcf is not None and fcf > 0:
                     current["pfcf"] = round(price * shares / fcf, 4)
                     _note("pfcf", fy)
+                    break
+
+    # EV/EBIT and EV/EBITDA fy-mismatch fallback: metrics already anchors these
+    # to latest_fundamental_fy, so a cover-page mismatch doesn't zero them the
+    # way it can pe/ps/pfcf; this only recovers the case where that anchor year
+    # has a non-positive/missing EBIT(DA), by scanning back to the latest fy
+    # with a positive denominator. EV = current market cap + net debt
+    # (metrics["ev"], already computed the same way).
+    ev = metrics.get("ev")
+    if ev is not None:
+        if current["ev_ebit"] is None:
+            oi_series = to_annual_series(normalized, "OperatingIncome")
+            for fy in sorted(oi_series, reverse=True):
+                oi = oi_series.get(fy)
+                if oi is not None and oi > 0:
+                    current["ev_ebit"] = round(ev / oi, 4)
+                    _note("ev_ebit", fy)
+                    break
+
+        if current["ev_ebitda"] is None:
+            oi_series = to_annual_series(normalized, "OperatingIncome")
+            dep_series = to_annual_series(normalized, "Depreciation")
+            for fy in sorted(set(oi_series) & set(dep_series), reverse=True):
+                oi, dep = oi_series.get(fy), dep_series.get(fy)
+                if oi is not None and dep is not None and oi + dep > 0:
+                    current["ev_ebitda"] = round(ev / (oi + dep), 4)
+                    _note("ev_ebitda", fy)
                     break
 
     return current, notes
@@ -4119,6 +4156,8 @@ def _run_valuation(
     pe_pct = multiples.percentile_position([h["pe"] for h in history], current["pe"])
     ps_pct = multiples.percentile_position([h["ps"] for h in history], current["ps"])
     pfcf_pct = multiples.percentile_position([h["pfcf"] for h in history], current["pfcf"])
+    ev_ebit_pct = multiples.percentile_position([h.get("ev_ebit") for h in history], current.get("ev_ebit"))
+    ev_ebitda_pct = multiples.percentile_position([h.get("ev_ebitda") for h in history], current.get("ev_ebitda"))
 
     # Current P/FFO (Sec.8/FFO Step 5): price / ffo_per_share, using the same
     # latest-usable FFO as the reit anchor (_select_latest_ffo) -- computed
@@ -4155,6 +4194,19 @@ def _run_valuation(
     # no comparison (axis disabled, own-history behavior preserved). The
     # `comparison` block is surfaced in the report so the sector standing is
     # explicit, not hidden behind a bare "karisik" signal.
+    # Leverage gate (VALUATION.md Sec.2/Sec.7): net debt / EBITDA, both current
+    # (from metrics). A filer at/above triangulate._LEVERAGE_EBITDA_RATIO uses
+    # EV/EBITDA as its PRIMARY own-history multiple instead of P/E. Net cash
+    # (net_debt <= 0) or unusable/non-positive EBITDA -> None (not leveraged).
+    _net_debt = metrics.get("net_debt")
+    _ebitda = metrics.get("ebitda")
+    net_debt_to_ebitda = (
+        _net_debt / _ebitda
+        if _is_number(_net_debt) and _is_number(_ebitda) and _net_debt > 0 and _ebitda > 0
+        else None
+    )
+    leveraged = net_debt_to_ebitda is not None and net_debt_to_ebitda >= triangulate._LEVERAGE_EBITDA_RATIO
+
     if sector_type == "growth_unprofitable":
         _ratio_candidates = (
             (ps_pct, "P/S", current.get("ps"), sector_info["ps_median"]),
@@ -4165,6 +4217,17 @@ def _run_valuation(
         _ratio_candidates = (
             (pffo_pct, "P/FFO", current.get("pffo"), None),
             (ps_pct, "P/S", current.get("ps"), sector_info["ps_median"]),
+        )
+    elif leveraged:
+        # EV/EBITDA is primary; no Damodaran EV/EBITDA median exists, so its
+        # sector axis-b is disabled (median None) -- mirrors reit's P/FFO. The
+        # P/E fallbacks stay in the list only so a filer with no usable
+        # EV/EBITDA history still resolves a primary further down.
+        _ratio_candidates = (
+            (ev_ebitda_pct, "FD/FAVÖK", current.get("ev_ebitda"), None),
+            (pe_pct, "P/E", current.get("pe"), sector_info["pe_median"]),
+            (ps_pct, "P/S", current.get("ps"), sector_info["ps_median"]),
+            (pfcf_pct, "P/FCF", current.get("pfcf"), sector_info["pfcf_median"]),
         )
     else:
         _ratio_candidates = (
@@ -4213,6 +4276,10 @@ def _run_valuation(
         "ps_percentile": ps_pct,
         "pfcf_percentile": pfcf_pct,
         "pffo_percentile": pffo_pct,
+        "ev_ebit_percentile": ev_ebit_pct,
+        "ev_ebitda_percentile": ev_ebitda_pct,
+        "net_debt_to_ebitda": (round(net_debt_to_ebitda, 2) if net_debt_to_ebitda is not None else None),
+        "leveraged": leveraged,
         "history_years": len(history),
         "sector": sector_info,
         "growth_adjusted": growth_adjusted,
@@ -4307,6 +4374,7 @@ def _run_valuation(
         raw_growth_pair_pct=ga_raw_pct, growth_adj_pct=ga_pct, earnings_power_headline=epv_headline,
         mature_revenue_headline=mature_revenue_headline, midgrowth_revenue_headline=midgrowth_revenue_headline,
         pffo_pct=pffo_pct, cyclical_fcfe_headline=cyclical_fcfe_headline, sector_ratio=sector_ratio,
+        ev_ebitda_pct=ev_ebitda_pct, net_debt_to_ebitda=net_debt_to_ebitda,
     )
 
     return {

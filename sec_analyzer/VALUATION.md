@@ -506,6 +506,17 @@ Koddan gelen "fiyatın ima ettiği growth" değeri şöyle yorumlanır:
 - Kendi tarihine göre pahalı + sektöre göre pahalı → net sinyal. Karışık → nedenini açıkla
   (ör. iş modeli değişti, margin yapısı kalıcı iyileşti — "bu sefer farklı" iddiası ancak kanıtla).
 - EV bazlı çarpanları (EV/EBITDA) borçlu şirketlerde P/E'ye tercih et.
+  **Kodda:** motor `net borç / FAVÖK ≥ 1.0` olan (`financial`/`reit`/
+  `growth_unprofitable` hariç her sektörde) bir filer'ı "borçlu" sayar ve
+  triangülasyonun birincil kendi-tarihi çarpanını P/E yerine **EV/EBITDA**
+  (FD/FAVÖK) yapar — EV/EBIT(DA) sermaye-yapısı-nötrdür (pay net borcu ekler,
+  payda faiz öncesidir), dolayısıyla kaldıraçlı bir şirketi P/E'nin taşıdığı
+  kaldıraç çarpıtması olmadan sıralar. EV/EBITDA tarihçesi yoksa eski
+  P/E→P/S→P/FCF sırasına düşer. Borçlu filer'da P/E-tabanlı PEG ekseni
+  atlanır (P/E'nin güvenilmez sayıldığı yerde bir P/E-vs-PEG ayrışması
+  EV/EBITDA okumasını bastırmamalı); Damodaran EV/EBITDA medyanı olmadığı
+  için sektör-göreli eksen-b de devre dışı kalır (REIT'in P/FFO'su gibi).
+  EV/EBIT her zaman yalnızca bilgi amaçlıdır (hiçbir zaman sinyal değil).
 
 ### Growth-ayarlı çarpanlar (PEG katmanı)
 

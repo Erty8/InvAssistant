@@ -551,10 +551,10 @@ def test_cmd_analyze_respects_explicit_provider_even_with_as_of_set(tmp_path, mo
     _stub_offline_analyze_pipeline(monkeypatch, captured)
 
     parser = build_parser()
-    args = parser.parse_args(["analyze", "MU", "--as-of", "2022-06-30", "--provider", "anthropic"])
+    args = parser.parse_args(["analyze", "MU", "--as-of", "2022-06-30", "--provider", "ollama"])
     args.func(args)
 
-    assert captured["provider"] == "anthropic"
+    assert captured["provider"] == "ollama"
 
 
 def test_cmd_analyze_without_as_of_does_not_force_script_provider(tmp_path, monkeypatch):

@@ -154,7 +154,10 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
     Returns:
         A dict with keys ``price``, ``shares``, ``eps``, ``market_cap``,
         ``total_debt``, ``net_debt``, ``pe``, ``ps``, ``pfcf``,
-        ``revenue_cagr_3y``, ``revenue_cagr_5y``, ``sbc_revenue``,
+        ``operating_income`` (EBIT), ``ebitda`` (EBIT + D&A), ``ev``
+        (market cap + net debt), ``ev_ebit``, ``ev_ebitda`` (enterprise-value
+        earnings multiples, ``None`` unless the denominator is strictly
+        positive), ``revenue_cagr_3y``, ``revenue_cagr_5y``, ``sbc_revenue``,
         ``shares_yoy``, ``buyback_latest``, ``dividends_latest``,
         ``rnd_revenue``, ``fcf``, ``fcf_per_share``, ``latest_fy``,
         ``latest_fundamental_fy``, ``price_reliable`` (bool), and
@@ -184,6 +187,12 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
     dividends_series = to_annual_series(normalized, "DividendsPaid")
     ocf_series = to_annual_series(normalized, "OperatingCashFlow")
     capex_series = to_annual_series(normalized, "CapEx")
+    # EBIT / EBITDA inputs for the enterprise-value earnings multiples. NOT
+    # folded into the fiscal-year union sets below (latest_fy /
+    # latest_fundamental_fy anchoring is intentionally left unchanged) -- the
+    # EV multiples are additive and simply read at latest_fundamental_fy.
+    operating_income_series = to_annual_series(normalized, "OperatingIncome")
+    depreciation_series = to_annual_series(normalized, "Depreciation")
 
     all_series = (
         shares_series, eps_series, ltd_series, ltdc_series, cash_series,
@@ -205,6 +214,8 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
             "shares": None, "eps": None, "market_cap": None,
             "total_debt": None, "net_debt": None,
             "pe": None, "ps": None, "pfcf": None,
+            "operating_income": None, "ebitda": None, "ev": None,
+            "ev_ebit": None, "ev_ebitda": None,
             "revenue_cagr_3y": None, "revenue_cagr_5y": None,
             "sbc_revenue": None, "shares_yoy": None,
             "buyback_latest": None, "dividends_latest": None,
@@ -263,6 +274,26 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
         fcf = _safe_sub(ocf_series.get(latest_fundamental_fy), capex_series.get(latest_fundamental_fy))
     pfcf = None if price is None else _safe_div(market_cap, fcf)
 
+    # Enterprise-value earnings multiples (EV/EBIT, EV/EBITDA). EV = market cap
+    # + net debt (net debt treated as 0.0 -> unlevered EV = market cap when it
+    # can't be derived, mirroring multiples_history's ev_sales degradation).
+    # EBIT = OperatingIncome; EBITDA = EBIT + D&A (both concepts required, no
+    # zero-fill). Multiples only defined for a strictly positive denominator.
+    operating_income = operating_income_series.get(latest_fundamental_fy)
+    depreciation = depreciation_series.get(latest_fundamental_fy)
+    ebitda = (
+        None
+        if operating_income is None or depreciation is None
+        else operating_income + depreciation
+    )
+    ev = None if market_cap is None else market_cap + (net_debt or 0.0)
+    ev_ebit = (
+        _safe_div(ev, operating_income)
+        if operating_income is not None and operating_income > 0
+        else None
+    )
+    ev_ebitda = _safe_div(ev, ebitda) if ebitda is not None and ebitda > 0 else None
+
     revenue_cagr_3y = _cagr(revenue_series, latest_fundamental_fy, _CAGR_WINDOWS["revenue_cagr_3y"])
     revenue_cagr_5y = _cagr(revenue_series, latest_fundamental_fy, _CAGR_WINDOWS["revenue_cagr_5y"])
 
@@ -286,6 +317,11 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
         "pe": pe,
         "ps": ps,
         "pfcf": pfcf,
+        "operating_income": operating_income,
+        "ebitda": ebitda,
+        "ev": ev,
+        "ev_ebit": ev_ebit,
+        "ev_ebitda": ev_ebitda,
         "revenue_cagr_3y": revenue_cagr_3y,
         "revenue_cagr_5y": revenue_cagr_5y,
         "sbc_revenue": sbc_revenue,

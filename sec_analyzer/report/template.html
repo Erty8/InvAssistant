@@ -1297,6 +1297,25 @@
     color: var(--muted);
   }
 
+  /* ---- LLM Kullanım Raporu (result.llm_report) ---------------------------
+     Reuses .card/.card-title/.card-sub/.sensitivity-table/.sens-base/
+     .uncertainty-tag/.verdict-note/.mom-chip/.alert-box/.tech-section-title
+     wholesale; only the table's left-aligned row-label column and the small
+     provenance line after the fallback/cached chip need dedicated rules. */
+  .llm-report-table th:first-child,
+  .llm-report-table td:first-child {
+    text-align: left;
+    color: var(--muted);
+  }
+  .llm-report-table + .verdict-note {
+    margin-top: 8px;
+  }
+  .llm-report-source {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+
   /* ---- Footer analysis (catalyst + summary) -------------------------------*/
   .catalyst-line {
     font-family: var(--mono);
@@ -2047,6 +2066,32 @@
     );
   }
 
+  // Informational EV/EBITDA (FD/FAVÖK) + EV/EBIT (FD/FVÖK) line under the
+  // MULTIPLES method (SPEC.md Sec.6): capital-structure-neutral earnings
+  // multiples reported alongside P/E. Verdict/triangulation still keys off
+  // P/E; this is context, not a signal. Empty string when neither is present.
+  function evMultiplesLineHtml(valuation) {
+    var m = (valuation || {}).multiples || {};
+    var cur = m.current || {};
+    var specs = [
+      { label: "FD/FAVÖK", value: cur.ev_ebitda, pct: m.ev_ebitda_percentile },
+      { label: "FD/FVÖK", value: cur.ev_ebit, pct: m.ev_ebit_percentile },
+    ];
+    var frags = [];
+    specs.forEach(function (s) {
+      if (!isNum(s.value)) return;
+      var txt = escapeHtml(s.label) + " " + Number(s.value).toFixed(1) + "×";
+      if (isNum(s.pct)) txt += " (" + Math.round(Number(s.pct)) + "p)";
+      frags.push(txt);
+    });
+    if (!frags.length) return "";
+    return (
+      '<div class="tri-sector sector-cmp-muted">' +
+        '<span class="tri-sector-label">FD</span>' + frags.join(" · ") +
+      '</div>'
+    );
+  }
+
   function triangulationRowHtml(valuation, confidenceOverride) {
     var tri = (valuation || {}).triangulation;
     if (!tri) return "";
@@ -2096,7 +2141,8 @@
       var sig = signals[m.key];
       var kind = triAgreementKind(sig, direction);
       var reason = rationale[m.key];
-      var extra = (m.key === "multiples") ? sectorComparisonLineHtml(valuation) : "";
+      var extra = (m.key === "multiples")
+        ? (sectorComparisonLineHtml(valuation) + evMultiplesLineHtml(valuation)) : "";
       return (
         '<div class="tri-method">' +
           '<div class="tri-method-head">' +
@@ -3795,6 +3841,114 @@
     );
   }
 
+  // ---- LLM Kullanım Raporu (result.llm_report) ------------------------------
+  // Shows *how* an LLM backend (if one ran) derived the valuation assumptions
+  // and how they diverge from the deterministic script baseline -- purely
+  // additive UI, absent on every pure no-AI (script) run. Every sub-field is
+  // guarded independently so a partial/malformed payload degrades to the
+  // existing "—" placeholder instead of throwing or printing
+  // "None"/"NaN"/"undefined".
+  var LLM_SCENARIO_ORDER = ["bear", "base", "bull"];
+  var LLM_SCENARIO_LABEL = { bear: "Ayı", base: "Baz", bull: "Boğa" };
+  var LLM_FIELD_ORDER = ["growth_5y", "terminal_growth", "discount_rate"];
+  var LLM_FIELD_LABEL = {
+    growth_5y: "Büyüme (5y)",
+    terminal_growth: "Terminal büyüme",
+    discount_rate: "İskonto oranı"
+  };
+
+  // Signed "+1.5 pp" / "-2.0 pp" formatting for delta_vs_baseline_pp, which
+  // arrives already in percentage points (not a decimal fraction) -- distinct
+  // from fmtSignedPctTr's "%+X.X" convention used for the history screen.
+  function fmtDeltaPp(v) {
+    if (!isNum(v)) return "—";
+    var num = Number(v);
+    var sign = num < 0 ? "-" : "+";
+    return sign + Math.abs(num).toFixed(1) + " pp";
+  }
+
+  // One compact table (LLM önerisi / Script tabanı / Kullanılan / Δ pp) plus
+  // the scenario's rationale sentence -- reuses .sensitivity-table/.sens-base
+  // exactly like the sensitivity/entry-plan cards do.
+  function llmScenarioTableHtml(scenarioKey, scenario) {
+    var fields = (scenario && scenario.fields) || {};
+    var rows = LLM_FIELD_ORDER.map(function (fieldKey) {
+      var f = fields[fieldKey] || {};
+      var usedText = isNum(f.used) ? fmtPctTr(f.used) : "—";
+      var clampBadge = f.clamped ? ' <span class="uncertainty-tag">sınırlandı</span>' : "";
+      return (
+        '<tr>' +
+          '<th class="sens-row-h">' + escapeHtml(LLM_FIELD_LABEL[fieldKey]) + '</th>' +
+          '<td>' + (isNum(f.llm) ? fmtPctTr(f.llm) : "—") + '</td>' +
+          '<td>' + (isNum(f.baseline) ? fmtPctTr(f.baseline) : "—") + '</td>' +
+          '<td class="sens-base">' + usedText + clampBadge + '</td>' +
+          '<td>' + fmtDeltaPp(f.delta_vs_baseline_pp) + '</td>' +
+        '</tr>'
+      );
+    }).join("");
+
+    var storyHtml = scenario && scenario.story
+      ? '<div class="verdict-note">Gerekçe: ' + escapeHtml(scenario.story) + '</div>'
+      : "";
+
+    return (
+      '<div class="tech-section-title">' + escapeHtml(LLM_SCENARIO_LABEL[scenarioKey] || scenarioKey) + '</div>' +
+      '<table class="sensitivity-table llm-report-table">' +
+        '<thead><tr><th></th><th>LLM önerisi</th><th>Script tabanı</th><th>Kullanılan</th><th>Δ (pp)</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table>' +
+      storyHtml
+    );
+  }
+
+  function llmReportCardHtml(result) {
+    var llm = result && result.llm_report;
+    if (!llm) return "";
+
+    var bodyHtml;
+    if (llm.used_llm === false) {
+      // Variant 2: an LLM backend was requested but failed/unavailable; the
+      // run fell back to deterministic rule-based assumptions. No scenario
+      // tables in this variant -- there's nothing the LLM actually produced.
+      bodyHtml =
+        '<div class="mom-chip mom-chip-warn">Bu analizde LLM kullanılamadı; kural bazlı varsayımlar kullanıldı.</div>' +
+        '<p class="verdict-note">Neden: ' + escapeHtml(safeText(llm.fallback)) + '</p>';
+    } else if (llm.cached) {
+      // Variant 3: assumptions came from a frozen/cached set -- the frozen
+      // set's own detail lives elsewhere, so just show the provenance note.
+      bodyHtml =
+        '<div class="mom-chip mom-chip-info">' + escapeHtml(safeText(llm.note)) + '</div>' +
+        '<p class="llm-report-source">Kaynak: ' + escapeHtml(safeText(llm.provider)) + '</p>';
+    } else {
+      // Variant 1: the LLM actually produced the valuation assumptions --
+      // provider/sector line, then one table + rationale per scenario.
+      var providerLine = "Kaynak: " + escapeHtml(safeText(llm.provider)) +
+        (llm.model ? " · " + escapeHtml(String(llm.model)) : "");
+      var sectorLine = llm.sector_type ? "Sektör: " + escapeHtml(String(llm.sector_type)) : "";
+      var headHtml =
+        '<p class="card-sub">' + providerLine + (sectorLine ? " · " + sectorLine : "") + '</p>' +
+        '<p class="verdict-note">Bu bölüm, LLM’in değerleme varsayımlarını nasıl belirlediğini ve ' +
+          'deterministik (script) tabana göre neyi değiştirdiğini gösterir.</p>';
+
+      var scenarios = llm.scenarios || {};
+      var scenariosHtml = LLM_SCENARIO_ORDER.map(function (key) {
+        return scenarios[key] ? llmScenarioTableHtml(key, scenarios[key]) : "";
+      }).join("");
+
+      var notes = Array.isArray(llm.clamp_notes) ? llm.clamp_notes.filter(Boolean) : [];
+      var notesHtml = notes.length
+        ? '<div class="tech-section-title">Sınırlamalar</div>' +
+          '<div class="alert-box"><ul>' +
+            notes.map(function (n) { return '<li>' + escapeHtml(String(n)) + '</li>'; }).join("") +
+          '</ul></div>'
+        : "";
+
+      bodyHtml = headHtml + scenariosHtml + notesHtml;
+    }
+
+    return '<div class="card"><div class="card-title">LLM Kullanım Raporu</div>' + bodyHtml + '</div>';
+  }
+
   // ---- Footer analysis (catalyst + summary) --------------------------------
   // No fabricated "Recommendation: ..." line -- only the real catalyst/
   // summary fields the pipeline actually produced.
@@ -3877,6 +4031,7 @@
       scenarioReturnsListHtml(result.scenario_returns) +
       flagsCardHtml(payload.red_flags) +
       eventsCardHtml(result.events) +
+      llmReportCardHtml(result) +
       footerAnalysisHtml(result) +
       globalFooterHtml();
 

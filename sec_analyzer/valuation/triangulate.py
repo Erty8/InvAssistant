@@ -43,6 +43,16 @@ _REVERSE_DCF_MARGIN = 0.03
 _PERCENTILE_EXPENSIVE = 70
 _PERCENTILE_CHEAP = 30
 
+#: Leverage gate (VALUATION.md Sec.2/Sec.7): a non-financial/non-reit filer is
+#: treated as "leveraged" -- EV/EBITDA becomes the PRIMARY own-history multiple
+#: ahead of P/E -- when its net-debt-to-EBITDA ratio is at or above this. 1.0x
+#: means more net debt than a full year of EBITDA. EV/EBIT(DA) is
+#: capital-structure-neutral (numerator adds net debt, denominator is
+#: pre-interest), so it ranks a leveraged filer against its own history without
+#: the leverage distortion P/E carries; below this ratio the P/E-primary path
+#: is preserved unchanged.
+_LEVERAGE_EBITDA_RATIO = 1.0
+
 #: Sector-relative multiple band (VALUATION.md Sec.7 axis-b). The current
 #: primary multiple divided by its Damodaran sector median: above the
 #: expensive bound reads as "expensive vs sector", below the (reciprocal)
@@ -320,6 +330,8 @@ def _raw_multiples_signal(
     pfcf_pct: Optional[float],
     sector_type: Optional[str],
     pffo_pct: Optional[float] = None,
+    ev_ebitda_pct: Optional[float] = None,
+    leveraged: bool = False,
 ) -> str:
     """Raw multiples signal: uses the primary percentile (P/E, falling back
     to P/S then P/FCF; for growth_unprofitable filers P/S is primary since
@@ -327,11 +339,21 @@ def _raw_multiples_signal(
     back to P/S -- P/E is meaningless for REITs since GAAP depreciation
     depresses net income, see SPEC.md Sec.8/FFO). This is the
     pre-growth-adjustment signal -- :func:`_multiples_signal` layers the
-    growth-adjusted (PEG / EV-Sales) divergence check on top of it."""
+    growth-adjusted (PEG / EV-Sales) divergence check on top of it.
+
+    For a ``leveraged`` mature/cyclical filer (net debt / EBITDA at or above
+    :data:`_LEVERAGE_EBITDA_RATIO`), EV/EBITDA becomes the PRIMARY multiple
+    ahead of P/E (VALUATION.md Sec.2/Sec.7) -- capital-structure-neutral, so
+    it isn't distorted by the leverage that inflates/deflates P/E. Falls back
+    to the P/E-primary order when ``ev_ebitda_pct`` is ``None`` (no usable EV
+    history). ``leveraged`` is ignored for growth_unprofitable/reit (their
+    primary is unchanged)."""
     if sector_type == "growth_unprofitable":
         candidates = (ps_pct, pe_pct, pfcf_pct)
     elif sector_type == "reit":
         candidates = (pffo_pct, ps_pct)
+    elif leveraged:
+        candidates = (ev_ebitda_pct, pe_pct, ps_pct, pfcf_pct)
     else:
         candidates = (pe_pct, ps_pct, pfcf_pct)
 
@@ -348,14 +370,18 @@ def _multiples_signal(
     growth_adj_pct: Optional[float] = None,
     pffo_pct: Optional[float] = None,
     sector_ratio: Optional[float] = None,
+    ev_ebitda_pct: Optional[float] = None,
+    leveraged: bool = False,
 ) -> str:
     """Multiples signal, positioned on TWO axes (VALUATION.md Sec.7).
 
     Starts from the raw primary-percentile signal (see
     :func:`_raw_multiples_signal`; for reit, P/FFO is primary rather than
-    P/E, see SPEC.md Sec.8/FFO) -- the company's position against its OWN
-    multiple history. Two independent divergence checks can override the raw
-    signal to :data:`SIGNAL_MIXED`, in precedence order:
+    P/E, see SPEC.md Sec.8/FFO; for a ``leveraged`` filer, EV/EBITDA is
+    primary rather than P/E, see :data:`_LEVERAGE_EBITDA_RATIO`) -- the
+    company's position against its OWN multiple history. Two independent
+    divergence checks can override the raw signal to :data:`SIGNAL_MIXED`, in
+    precedence order:
 
     1. **Growth-adjusted (axis-a refinement, highest precedence):** when BOTH
        the raw multiple's own percentile (``raw_growth_pair_pct`` -- P/E in
@@ -374,12 +400,20 @@ def _multiples_signal(
     that pass neither the growth-adjusted pair nor a sector ratio keep the
     exact pre-existing behavior.
     """
-    raw = _raw_multiples_signal(pe_pct, ps_pct, pfcf_pct, sector_type, pffo_pct)
+    raw = _raw_multiples_signal(pe_pct, ps_pct, pfcf_pct, sector_type, pffo_pct, ev_ebitda_pct, leveraged)
     if raw == SIGNAL_NO_DATA:
         return raw
+    # When EV/EBITDA is the primary (leveraged filer), the P/E-based PEG
+    # divergence axis is deliberately skipped -- we've decided P/E is
+    # unreliable for this filer, so a P/E-vs-PEG disagreement shouldn't
+    # override the EV/EBITDA own-history read. (The sector axis-b is naturally
+    # off too: no Damodaran EV/EBITDA median exists, so the engine passes
+    # sector_ratio=None here.)
+    ev_primary = leveraged and ev_ebitda_pct is not None
     # 1. Growth-adjusted divergence takes precedence (most informative).
     if (
-        raw_growth_pair_pct is not None
+        not ev_primary
+        and raw_growth_pair_pct is not None
         and growth_adj_pct is not None
         and _percentile_bucket(raw_growth_pair_pct) != _percentile_bucket(growth_adj_pct)
     ):
@@ -400,14 +434,19 @@ def _multiples_rationale(
     growth_adj_pct: Optional[float] = None,
     pffo_pct: Optional[float] = None,
     sector_ratio: Optional[float] = None,
+    ev_ebitda_pct: Optional[float] = None,
+    leveraged: bool = False,
 ) -> str:
     """Turkish display sentence explaining the multiples signal, mirroring
     :func:`_multiples_signal`'s branches exactly (same inputs, thresholds,
     precedence)."""
+    ev_primary = leveraged and ev_ebitda_pct is not None
     if sector_type == "growth_unprofitable":
         candidates = ((ps_pct, "P/S"), (pe_pct, "P/E"), (pfcf_pct, "P/FCF"))
     elif sector_type == "reit":
         candidates = ((pffo_pct, "P/FFO"), (ps_pct, "P/S"))
+    elif leveraged:
+        candidates = ((ev_ebitda_pct, "FD/FAVÖK"), (pe_pct, "P/E"), (ps_pct, "P/S"), (pfcf_pct, "P/FCF"))
     else:
         candidates = ((pe_pct, "P/E"), (ps_pct, "P/S"), (pfcf_pct, "P/FCF"))
 
@@ -416,9 +455,11 @@ def _multiples_rationale(
         return "Çarpan persentili hesaplanamadı."
 
     # 1. Growth-adjusted divergence takes precedence over the plain sentence,
-    # matching _multiples_signal's first SIGNAL_MIXED branch.
+    # matching _multiples_signal's first SIGNAL_MIXED branch (skipped when
+    # EV/EBITDA is primary -- see _multiples_signal for why).
     if (
-        raw_growth_pair_pct is not None
+        not ev_primary
+        and raw_growth_pair_pct is not None
         and growth_adj_pct is not None
         and _percentile_bucket(raw_growth_pair_pct) != _percentile_bucket(growth_adj_pct)
     ):
@@ -476,6 +517,8 @@ def triangulate(
     pffo_pct: Optional[float] = None,
     cyclical_fcfe_headline: bool = False,
     sector_ratio: Optional[float] = None,
+    ev_ebitda_pct: Optional[float] = None,
+    net_debt_to_ebitda: Optional[float] = None,
 ) -> dict:
     """Combine the three method signals into one confidence + direction view.
 
@@ -589,6 +632,18 @@ def triangulate(
             growth-adjusted check). ``None`` (the default) -- no usable
             sector median -- disables the axis and preserves the pure
             own-history behavior.
+        ev_ebitda_pct: The current EV/EBITDA's historical percentile (see
+            ``multiples.percentile_position`` over ``multiples_history``'s
+            ``ev_ebitda`` column). Becomes the PRIMARY own-history multiple
+            (ahead of P/E) when ``net_debt_to_ebitda`` marks the filer as
+            leveraged and this is not ``None`` (VALUATION.md Sec.2/Sec.7);
+            ignored for growth_unprofitable/reit and for non-leveraged filers.
+            ``None`` (the default) preserves P/E-primary behavior.
+        net_debt_to_ebitda: The filer's current net-debt-to-EBITDA ratio, or
+            ``None`` when it can't be derived (missing/non-positive EBITDA or
+            net debt). ``>= _LEVERAGE_EBITDA_RATIO`` (1.0) flips the multiples
+            primary to EV/EBITDA per above. ``None`` (the default) -- not
+            leveraged / unknown -- preserves P/E-primary behavior.
 
     Returns:
         ``{"signals": {"dcf", "reverse_dcf", "multiples"}, "confidence":
@@ -610,7 +665,7 @@ def triangulate(
             price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
             hyper_growth, bull_band, reverse_dcf_status, raw_growth_pair_pct, growth_adj_pct,
             earnings_power_headline, mature_revenue_headline, midgrowth_revenue_headline, pffo_pct,
-            cyclical_fcfe_headline, sector_ratio,
+            cyclical_fcfe_headline, sector_ratio, ev_ebitda_pct, net_debt_to_ebitda,
         )
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("triangulate() failed unexpectedly; returning a no-data result.")
@@ -632,14 +687,15 @@ def _triangulate(
     price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
     hyper_growth=False, bull_band=None, reverse_dcf_status=None, raw_growth_pair_pct=None, growth_adj_pct=None,
     earnings_power_headline=False, mature_revenue_headline=False, midgrowth_revenue_headline=False, pffo_pct=None,
-    cyclical_fcfe_headline=False, sector_ratio=None,
+    cyclical_fcfe_headline=False, sector_ratio=None, ev_ebitda_pct=None, net_debt_to_ebitda=None,
 ) -> dict:
+    leveraged = net_debt_to_ebitda is not None and net_debt_to_ebitda >= _LEVERAGE_EBITDA_RATIO
     signals = {
         "dcf": _dcf_signal(price, dcf_base_band, hyper_growth, bull_band),
         "reverse_dcf": _reverse_dcf_signal(implied_growth, realized_cagr, base_growth, reverse_dcf_status),
         "multiples": _multiples_signal(
             pe_pct, ps_pct, pfcf_pct, sector_type, raw_growth_pair_pct, growth_adj_pct, pffo_pct,
-            sector_ratio=sector_ratio,
+            sector_ratio=sector_ratio, ev_ebitda_pct=ev_ebitda_pct, leveraged=leveraged,
         ),
     }
     rationale = {
@@ -647,7 +703,7 @@ def _triangulate(
         "reverse_dcf": _reverse_dcf_rationale(implied_growth, realized_cagr, base_growth, reverse_dcf_status),
         "multiples": _multiples_rationale(
             pe_pct, ps_pct, pfcf_pct, sector_type, raw_growth_pair_pct, growth_adj_pct, pffo_pct,
-            sector_ratio=sector_ratio,
+            sector_ratio=sector_ratio, ev_ebitda_pct=ev_ebitda_pct, leveraged=leveraged,
         ),
     }
 

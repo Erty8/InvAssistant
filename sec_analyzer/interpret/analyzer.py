@@ -80,27 +80,29 @@ Three backends are supported, selected via ``Config.ANALYZER_PROVIDER`` (or
 the ``provider`` argument to :func:`interpret`/:func:`propose_assumptions`/
 :func:`interpret_results`):
 
-* ``"ollama"`` (**default**) -- a local Gemma model served by Ollama. Free,
-  private, and requires no API key, but does require Ollama to be running
-  locally with the model already pulled (see
-  :mod:`sec_analyzer.interpret.ollama_client`).
-* ``"anthropic"`` -- the hosted Claude API. Requires ``ANTHROPIC_API_KEY``.
+* ``"claude_code"`` (**default**) -- the local Claude Code CLI driven as a
+  ``claude -p`` subprocess, billed to your Claude *subscription*. Requires
+  ``claude`` installed and logged in, and ``ANTHROPIC_API_KEY`` UNSET (see
+  :mod:`sec_analyzer.interpret.backends.claude_code`).
+* ``"ollama"`` -- a local Gemma model served by Ollama. Free, private, and
+  requires no API key, but does require Ollama running locally with the model
+  pulled (see :mod:`sec_analyzer.interpret.ollama_client`).
 * ``"script"`` -- deterministic, script-based (no-AI) phase 1/phase 2
   computed entirely with plain arithmetic and templates; no network access,
   no API key, and no LLM involved at all (see
   :mod:`sec_analyzer.interpret.rule_based`).
 
+(The hosted HTTP API backend has been removed; a legacy ``"anthropic"``/
+``"api"`` selection is transparently routed to ``"claude_code"``.)
+
 Design goals:
 
-* **Never crash the CLI.** Every failure mode -- a missing API key, Ollama
-  not running, a network error, an API error, or a response that isn't valid
-  JSON -- is caught and turned into a small error dict with a human-readable
-  ``summary`` instead of propagating an exception.
-* **Import-safe without optional dependencies.** The ``anthropic`` package is
-  an optional extra; if it isn't installed, importing this module still
-  succeeds, and every public function returns a friendly error dict
-  instructing the user to install it (only when the Anthropic backend is
-  actually selected).
+* **Never crash the CLI.** Every failure mode -- Ollama not running, the
+  ``claude`` CLI missing or refusing (API-key guard), a subprocess timeout, a
+  network error, or a response that isn't valid JSON -- is caught and turned
+  into a small error dict with a human-readable ``summary`` instead of
+  propagating an exception. The ``claude_code`` backend additionally degrades
+  to the deterministic rule-based path on failure (see :func:`interpret`).
 * **Configurable methodology.** The system prompt is built from
   ``METODOLOJI.md`` (:func:`load_methodology`) and ``VALUATION.md``
   (:func:`load_valuation_rules`) so the analysis philosophy and the
@@ -109,8 +111,9 @@ Design goals:
 * **Shared prompt/parsing, swappable transport.** Building the system/user
   prompts and parsing the model's JSON reply is identical regardless of
   backend; only the raw "send this, get text back" call
-  (:func:`_call_anthropic` / :func:`_call_ollama`, dispatched via
-  :func:`_dispatch_llm_call`) differs per provider.
+  (:func:`call_claude_code <sec_analyzer.interpret.backends.claude_code.call_claude_code>`
+  / :func:`_call_ollama`, dispatched via :func:`_dispatch_llm_call`) differs
+  per provider.
 """
 
 import json
@@ -119,24 +122,17 @@ import os
 import re
 from typing import List, Optional, Tuple
 
-from sec_analyzer.config import Config, ConfigError
+from sec_analyzer.config import Config
 from sec_analyzer.interpret import planning, rule_based
+from sec_analyzer.interpret.backends.claude_code import ClaudeCodeError, call_claude_code
 from sec_analyzer.interpret.ollama_client import OllamaError, chat_json
 from sec_analyzer.normalize.normalizer import to_annual_series
 from sec_analyzer.valuation import damodaran, run_valuation, validate_assumptions
+from sec_analyzer.valuation.sanity import clamp_assumptions
 from sec_analyzer.valuation.capm import compute_cost_of_equity
 from sec_analyzer.valuation.sector import classify_sector
 
-try:
-    import anthropic
-except ImportError:  # pragma: no cover - exercised only when the optional
-    # dependency is genuinely absent.
-    anthropic = None
-
 logger = logging.getLogger(__name__)
-
-#: Maximum tokens requested from Claude for a single interpretation call.
-_MAX_TOKENS = 2000
 
 #: Provider aliases that select the deterministic, no-AI "script" backend
 #: for both phases.
@@ -767,41 +763,6 @@ def _parse_model_json(text: str) -> dict:
         }
 
 
-def _call_anthropic(system: str, user: str, model: str, api_key: str) -> str:
-    """Send one request to the Anthropic API and return the raw reply text.
-
-    Args:
-        system: System prompt (methodology + valuation rules + output-
-            format instructions, phase-dependent).
-        user: User message (the compact JSON payload for the current phase).
-        model: Anthropic model ID, e.g. ``"claude-opus-4-8"``.
-        api_key: Anthropic API key.
-
-    Returns:
-        The concatenated text of the response's text content blocks.
-
-    Raises:
-        anthropic.APIError: On any API-level failure.
-        RuntimeError: If the ``anthropic`` package is not installed.
-    """
-    if anthropic is None:
-        raise RuntimeError(
-            "The 'anthropic' package is not installed. Run "
-            "'pip install anthropic' to use the anthropic analyzer provider."
-        )
-    client = anthropic.Anthropic(api_key=api_key)
-    logger.info("Requesting Anthropic analysis using model %s", model)
-    response = client.messages.create(
-        model=model,
-        max_tokens=_MAX_TOKENS,
-        system=system,
-        messages=[{"role": "user", "content": user}],
-    )
-    return "".join(
-        block.text for block in response.content if getattr(block, "type", None) == "text"
-    )
-
-
 def _call_ollama(system: str, user: str, model: str, host: str) -> str:
     """Send one request to a local Ollama server and return the raw reply text.
 
@@ -833,6 +794,7 @@ def _dispatch_llm_call(
     model: Optional[str],
     api_key: Optional[str],
     host: Optional[str],
+    phase: str = "commentary",
 ) -> Tuple[str, str]:
     """Call the resolved LLM provider and return ``(raw_text, resolved_model)``.
 
@@ -842,16 +804,23 @@ def _dispatch_llm_call(
     this provider" does not.
 
     Args:
-        resolved_provider: ``"ollama"``, ``"gemma"`` (an ollama alias), or
-            ``"anthropic"``. The ``"script"`` provider never reaches this
-            function -- callers branch to the rule-based path before
-            building a system/user prompt at all.
+        resolved_provider: ``"claude_code"``, ``"ollama"``, or ``"gemma"`` (an
+            ollama alias). A legacy ``"anthropic"``/``"api"`` value is routed
+            to ``"claude_code"``. The ``"script"`` provider never reaches this
+            function -- callers branch to the rule-based path before building
+            a system/user prompt at all.
         system: System prompt for the current phase.
         user: User payload for the current phase.
         model: Model override, or ``None`` to use the provider's configured
             default.
-        api_key: Anthropic API key override (anthropic provider only).
+        api_key: Unused (kept for signature stability). No hosted-API backend
+            remains.
         host: Ollama host override (ollama provider only).
+        phase: Which dispatch phase this is -- ``"assumptions"`` (phase 1) or
+            ``"commentary"`` (phase 2, default). Only the ``claude_code``
+            backend uses it, to pick its per-phase default model (Opus for
+            assumptions, Sonnet for commentary) when ``model`` is ``None``;
+            every other provider ignores it.
 
     Returns:
         ``(raw_text, resolved_model)``.
@@ -859,31 +828,37 @@ def _dispatch_llm_call(
     Raises:
         OllamaError: Ollama transport failure (server unreachable, timeout,
             model not pulled, malformed response).
-        ConfigError: Anthropic API key not configured.
-        RuntimeError: The ``anthropic`` package is not installed.
+        ClaudeCodeError: claude_code failure (API-key guard, `claude` missing,
+            timeout, unparseable envelope).
         ValueError: ``resolved_provider`` is none of the above.
-        Exception: Any other provider-level failure (e.g.
-            ``anthropic.APIError``) propagates as-is for the caller to
-            catch.
+        Exception: Any other provider-level failure propagates as-is for the
+            caller to catch.
     """
+    # The hosted HTTP API backend has been removed; a legacy "anthropic"/"api"
+    # selection now routes to the local claude_code subprocess (the only LLM).
+    if resolved_provider in ("anthropic", "api"):
+        resolved_provider = "claude_code"
+
+    if resolved_provider == "claude_code":
+        # Local `claude -p` subprocess (subscription billing). The backend
+        # enforces its own API-key billing guard and raises ClaudeCodeError on
+        # any failure, which the caller catches and degrades to rule-based.
+        # An explicit `model` wins; otherwise use the per-phase default (Opus
+        # for phase-1 assumptions, Sonnet for phase-2 commentary).
+        resolved_model = model or Config.claude_code_model_for_phase(phase)
+        raw_text = call_claude_code(system, user, model=resolved_model)
+        return raw_text, resolved_model or "claude-code"
+
     if resolved_provider in ("ollama", "gemma"):
         resolved_model = model or Config.OLLAMA_MODEL
         resolved_host = host or Config.OLLAMA_HOST
         raw_text = _call_ollama(system, user, resolved_model, resolved_host)
         return raw_text, resolved_model
 
-    if resolved_provider == "anthropic":
-        if anthropic is None:
-            raise RuntimeError(
-                "The 'anthropic' package is not installed. Run "
-                "'pip install anthropic' to enable the anthropic analyzer provider."
-            )
-        resolved_key = api_key or Config.require_anthropic_key()
-        resolved_model = model or Config.ANTHROPIC_MODEL
-        raw_text = _call_anthropic(system, user, resolved_model, resolved_key)
-        return raw_text, resolved_model
-
-    raise ValueError(f"Unknown analyzer provider {resolved_provider!r}.")
+    raise ValueError(
+        f"Unknown analyzer provider {resolved_provider!r}. Expected one of "
+        "'claude_code', 'ollama', 'script'."
+    )
 
 
 def _extract_phase1_fields(parsed: dict) -> "Tuple[Optional[dict], Optional[str], Optional[dict]]":
@@ -992,14 +967,14 @@ def propose_assumptions(
             filer's SIC code is already known), passed to the LLM as
             context and used as the fallback ``sector_type`` if the LLM is
             unavailable or its own guess is unusable. ``None`` if unknown.
-        provider: Which backend to use: ``"ollama"``, ``"anthropic"``, or
+        provider: Which backend to use: ``"claude_code"``, ``"ollama"``, or
             ``"script"`` (deterministic, no-AI). Defaults to
             ``Config.ANALYZER_PROVIDER``. ``"gemma"`` aliases ``"ollama"``;
             ``"rule"``, ``"rules"``, ``"none"``, ``"noai"``, ``"no-ai"``
             alias ``"script"``.
         model: Model ID/name to use. Defaults to ``Config.OLLAMA_MODEL`` for
-            the ollama provider or ``Config.ANTHROPIC_MODEL`` for anthropic.
-        api_key: Anthropic API key to use (anthropic provider only).
+            the ollama provider; claude_code uses its per-phase default model.
+        api_key: Unused (no hosted-API backend remains); kept for signature stability.
         host: Base URL of the Ollama server (ollama provider only).
         horizon: Investment horizon, included in the user payload as
             context only -- phase 1 does not weight assumptions by horizon.
@@ -1058,7 +1033,9 @@ def _propose_assumptions(
     user_payload = _build_phase1_user_payload(normalized, ratios, metrics, sector_hint, horizon)
 
     try:
-        raw_text, resolved_model = _dispatch_llm_call(resolved_provider, system_prompt, user_payload, model, api_key, host)
+        raw_text, resolved_model = _dispatch_llm_call(
+            resolved_provider, system_prompt, user_payload, model, api_key, host, phase="assumptions"
+        )
     except Exception as exc:  # noqa: BLE001 - any transport/config failure -> deterministic fallback
         logger.warning(
             "Phase-1 assumption proposal via %s failed (%s); using deterministic defaults.",
@@ -1087,7 +1064,8 @@ def _propose_assumptions(
         revision_user_payload = _build_phase1_revision_payload(user_payload, violations)
         try:
             raw_text, _ = _dispatch_llm_call(
-                resolved_provider, system_prompt, revision_user_payload, resolved_model, api_key, host
+                resolved_provider, system_prompt, revision_user_payload, resolved_model, api_key, host,
+                phase="assumptions",
             )
         except Exception as exc:  # noqa: BLE001 - revision call failed -> deterministic fallback
             logger.warning(
@@ -1374,7 +1352,7 @@ def interpret_results(
     stamping -- none of which any provider can override).
 
     This function is designed to never raise: any failure (unknown
-    provider, missing ``anthropic`` package, missing API key, Ollama not
+    provider, the `claude` CLI missing or refusing, Ollama not
     running or missing the requested model, network/API error, or a
     response that isn't valid JSON) is caught and returned as
     ``{"error": ..., "summary": ...}`` so callers (in particular the CLI)
@@ -1401,12 +1379,12 @@ def interpret_results(
         valuation: The dict returned by
             :func:`sec_analyzer.valuation.engine.run_valuation`. Attached
             verbatim under the returned result's ``"valuation"`` key.
-        provider: Which backend to use: ``"ollama"``, ``"anthropic"``, or
+        provider: Which backend to use: ``"claude_code"``, ``"ollama"``, or
             ``"script"`` (deterministic, no-AI -- uses
             :func:`sec_analyzer.interpret.rule_based.commentary`, fully
             offline). Defaults to ``Config.ANALYZER_PROVIDER``.
         model: Model ID/name to use.
-        api_key: Anthropic API key to use (anthropic provider only).
+        api_key: Unused (no hosted-API backend remains); kept for signature stability.
         host: Base URL of the Ollama server (ollama provider only).
         horizon: Investment horizon: ``"3m"``, ``"1y"``, or ``"5y"``.
 
@@ -1449,22 +1427,25 @@ def interpret_results(
             "summary": "Local Ollama analysis is unavailable; see error for details.",
             "_provider": "ollama",
         }
-    except ConfigError as exc:
-        logger.error("Cannot run Anthropic phase-2 interpretation: %s", exc)
+    except ClaudeCodeError as exc:
+        # Expected, fully-handled condition (API-key guard, `claude` missing,
+        # timeout, unparseable envelope): the caller degrades to rule-based.
+        # Log it concisely at INFO -- no ERROR-level stack trace, since nothing
+        # is actually broken; the fallback is the designed behavior.
+        logger.info("Claude Code phase-2 unavailable (%s); caller will fall back to rule-based.", exc)
         return {
             "error": str(exc),
-            "summary": "Anthropic API key is not configured; skipping analysis.",
-            "_provider": "anthropic",
+            "summary": "Claude Code kullanılamadı; kural bazlı yoruma geçilecek.",
+            "_provider": "claude_code",
         }
     except ValueError as exc:
         logger.error(str(exc))
         return {
             "error": str(exc),
-            "summary": "Set ANALYZER_PROVIDER to 'ollama', 'anthropic', or 'script'.",
+            "summary": "Set ANALYZER_PROVIDER to 'claude_code', 'ollama', or 'script'.",
             "_provider": resolved_provider,
         }
-    except Exception as exc:  # noqa: BLE001 - covers RuntimeError (anthropic not installed),
-        # anthropic.APIError, and anything else a provider transport can raise.
+    except Exception as exc:  # noqa: BLE001 - any other provider transport failure.
         logger.exception("Unexpected error during interpret_results() (%s)", resolved_provider)
         return {
             "error": str(exc),
@@ -1485,6 +1466,201 @@ def interpret_results(
     return processed
 
 
+def _interpret_results_with_fallback(
+    resolved_provider: str,
+    normalized: dict,
+    ratios: List[dict],
+    metrics: Optional[dict],
+    technical: Optional[dict],
+    red_flags: Optional[List[dict]],
+    catalyst: Optional[dict],
+    valuation: dict,
+    provider: Optional[str],
+    model: Optional[str],
+    api_key: Optional[str],
+    host: Optional[str],
+    horizon: str,
+    as_of,
+) -> Tuple[dict, Optional[str]]:
+    """Run phase 2, degrading a failed ``claude_code`` call to rule-based.
+
+    Returns ``(result, backend_note)``. Scoped to the ``claude_code`` backend
+    (ASSUMPTIONS_CACHE_SPEC's sibling patch, item 4): when the local
+    ``claude -p`` subprocess can't produce phase-2 commentary (API-key guard,
+    binary missing, timeout, unparseable envelope), ``interpret_results``
+    returns an error dict -- we retry once with the deterministic ``"script"``
+    provider so the engine still yields a result, and return a Turkish note
+    explaining the degradation. For every other provider the original result
+    (including its error dict) is returned unchanged, so ollama
+    behavior is untouched.
+    """
+    result = interpret_results(
+        normalized, ratios, metrics, technical, red_flags, catalyst, valuation,
+        provider=provider, model=model, api_key=api_key, host=host, horizon=horizon,
+        as_of=as_of,
+    )
+    if resolved_provider == "claude_code" and isinstance(result, dict) and "error" in result:
+        reason = result.get("error") or "bilinmeyen hata"
+        logger.warning("claude_code phase-2 failed (%s); falling back to rule-based commentary.", reason)
+        result = interpret_results(
+            normalized, ratios, metrics, technical, red_flags, catalyst, valuation,
+            provider="script", model=None, api_key=None, host=None, horizon=horizon,
+            as_of=as_of,
+        )
+        return result, f"AI backend (claude_code) kullanılamadı, kural bazlı çalışıldı: {reason}"
+    return result, None
+
+
+def _resolve_capm_inputs(
+    sic_description: Optional[str],
+    sector_hint: Optional[str],
+    metrics: dict,
+    as_of=None,
+    fred_rate: Optional[dict] = None,
+) -> Tuple[Optional[dict], Optional[float]]:
+    """Resolve the deterministic phase-1 base-rate inputs from Damodaran data.
+
+    Loads the Damodaran reference data once and derives ``(capm,
+    risk_free_pct)``: the firm-specific CAPM cost of equity (base discount
+    rate) and the global risk-free rate (terminal-growth anchor fallback).
+    Shared by :func:`interpret` (LLM/legacy path) and
+    :func:`build_script_phase1` (cache/fallback path) so the CAPM lookup lives
+    in exactly one place. Either element is ``None`` when unavailable.
+    """
+    sector_data = damodaran.load_sector_data(Config.DAMODARAN_DIR, as_of=as_of, fred_rate=fred_rate)
+    capm = compute_cost_of_equity(
+        sector_data, sic_description, metrics,
+        is_unprofitable=(sector_hint == "growth_unprofitable"),
+    )
+    risk_free_pct = sector_data.get("risk_free") if sector_data else None
+    return capm, risk_free_pct
+
+
+def build_script_phase1(
+    normalized: dict,
+    ratios: List[dict],
+    metrics: dict,
+    sector_hint: Optional[str],
+    sic_description: Optional[str],
+    as_of=None,
+    fred_rate: Optional[dict] = None,
+) -> dict:
+    """Build a fully deterministic (no-LLM) phase-1 result.
+
+    Same shape :func:`propose_assumptions` returns, forced through the
+    ``"script"`` provider with the same CAPM/risk-free inputs the LLM path
+    would use as its fallback base -- so the numbers match the legacy
+    ``--provider script`` path exactly. Used by the CLI to force deterministic
+    phase-1 assumptions (``analyze --assumptions script`` and the
+    ``auto``-mode fallback when no fresh frozen set exists,
+    ASSUMPTIONS_CACHE_SPEC.md Sec.4) while still allowing a separate phase-2
+    commentary provider. Never raises (delegates to
+    :func:`propose_assumptions`, which is itself never-raise).
+    """
+    capm, risk_free_pct = _resolve_capm_inputs(sic_description, sector_hint, metrics, as_of, fred_rate)
+    return propose_assumptions(
+        normalized, ratios, metrics, sector_hint=sector_hint,
+        provider="script", capm=capm, risk_free_pct=risk_free_pct,
+    )
+
+
+#: Numeric phase-1 fields compared in the LLM usage report.
+_LLM_REPORT_FIELDS = ("growth_5y", "terminal_growth", "discount_rate")
+
+
+def _build_llm_report(
+    phase1: dict,
+    requested_provider: str,
+    sector_type: str,
+    metrics: dict,
+    capm: Optional[dict],
+    risk_free_pct: Optional[float],
+    backend_note: Optional[str],
+) -> Optional[dict]:
+    """Build a "what the LLM changed, and why" report for the result dict.
+
+    Only meaningful on the live LLM path (phase 1 actually produced by an LLM).
+    Compares, per scenario and per numeric field, the LLM's raw proposal
+    against BOTH the value actually used (after ``clamp_assumptions``) and the
+    deterministic script baseline (``rule_based.default_assumptions`` with the
+    same CAPM/risk-free inputs) -- so the reader sees exactly how the LLM's
+    judgment moved each assumption relative to the no-AI default, plus the
+    LLM's per-scenario rationale (``story``, the "why") and any sanity clamps
+    that fired.
+
+    Returns:
+        * ``None`` for a pure deterministic run (no LLM requested) -- the
+          front end then shows no report.
+        * ``{"used_llm": False, "fallback": <reason>, ...}`` when an LLM WAS
+          requested but it failed and the run fell back to rule-based.
+        * ``{"used_llm": True, "scenarios": {...}, ...}`` when the LLM's
+          assumptions were used.
+    """
+    llm_provider = phase1.get("_provider")
+    used_llm = bool(llm_provider) and llm_provider != "script"
+    requested_llm = requested_provider not in _SCRIPT_PROVIDER_ALIASES
+
+    if not used_llm:
+        if requested_llm:
+            return {
+                "used_llm": False,
+                "requested_provider": requested_provider,
+                "fallback": backend_note
+                or "AI backend kullanılamadı; deterministik (kural bazlı) varsayımlar kullanıldı.",
+            }
+        return None  # pure script run -- nothing LLM-specific to report
+
+    raw = phase1.get("assumptions") or {}
+    is_unprofitable = sector_type == "growth_unprofitable"
+    clamped, clamp_notes = clamp_assumptions(raw, is_unprofitable=is_unprofitable)
+    baseline = rule_based.default_assumptions(
+        metrics, sector_type, capm=capm, risk_free_pct=risk_free_pct
+    )
+
+    scenarios = {}
+    for scen in ("bear", "base", "bull"):
+        r = raw.get(scen) or {}
+        u = clamped.get(scen) or {}
+        b = baseline.get(scen) or {}
+        fields = {}
+        for f in _LLM_REPORT_FIELDS:
+            lv, uv, bv = r.get(f), u.get(f), b.get(f)
+            delta = (
+                round((uv - bv) * 100, 2)
+                if isinstance(uv, (int, float)) and isinstance(bv, (int, float))
+                else None
+            )
+            clamped_flag = (
+                isinstance(lv, (int, float))
+                and isinstance(uv, (int, float))
+                and abs(lv - uv) > 1e-9
+            )
+            fields[f] = {
+                "llm": lv,
+                "used": uv,
+                "baseline": bv,
+                "delta_vs_baseline_pp": delta,
+                "clamped": clamped_flag,
+            }
+        scenarios[scen] = {"fields": fields, "story": r.get("story") or u.get("story")}
+
+    model = None
+    if llm_provider == "claude_code":
+        model = Config.claude_code_model_for_phase("assumptions")
+    elif llm_provider in ("ollama", "gemma"):
+        model = Config.OLLAMA_MODEL
+
+    return {
+        "used_llm": True,
+        "provider": llm_provider,
+        "model": model,
+        "sector_type": sector_type,
+        "scenarios": scenarios,
+        "clamp_notes": clamp_notes,
+        "fallback": None,
+    }
+
+
 def interpret(
     normalized: dict,
     ratios: List[dict],
@@ -1502,6 +1678,7 @@ def interpret(
     price_df=None,
     as_of=None,
     fred_rate: Optional[dict] = None,
+    phase1_override: Optional[dict] = None,
 ) -> dict:
     """Backward-compatible entry point orchestrating the full two-phase flow.
 
@@ -1536,11 +1713,11 @@ def interpret(
             :func:`sec_analyzer.normalize.normalizer.normalize_facts`.
         ratios: The list returned by
             :func:`sec_analyzer.normalize.ratios.compute_ratios`.
-        provider: Which backend to use: ``"ollama"``, ``"anthropic"``, or
+        provider: Which backend to use: ``"claude_code"``, ``"ollama"``, or
             ``"script"`` (deterministic, no-AI). Defaults to
             ``Config.ANALYZER_PROVIDER``. Used for both phases.
         model: Model ID/name to use for both phases.
-        api_key: Anthropic API key to use (anthropic provider only).
+        api_key: Unused (no hosted-API backend remains); kept for signature stability.
         host: Base URL of the Ollama server (ollama provider only).
         horizon: Investment horizon: ``"3m"``, ``"1y"``, or ``"5y"``.
         metrics: The dict returned by
@@ -1565,6 +1742,21 @@ def interpret(
             :func:`sec_analyzer.fetch.prices.get_price_history`, or
             ``None`` -- multiples history degrades gracefully without it.
             Ignored when ``valuation`` is already given.
+        phase1_override: A precomputed phase-1 result to use *instead of*
+            calling :func:`propose_assumptions` (ASSUMPTIONS_CACHE_SPEC.md
+            Sec.4). Same shape ``propose_assumptions`` returns --
+            ``{"assumptions": {...}, "sector_type": <str>,
+            "hyper_growth_extras": <dict|None>, "_provider": <str>,
+            "_assumption_set_id": <int|None>}``. When given, NO LLM is called
+            for phase 1 (so the fair-value NUMBERS are fully deterministic),
+            the deterministic CAPM/risk-free lookup that only feeds phase-1
+            fallback is skipped, and everything downstream (SIC-wins sector
+            resolution, ``run_valuation``, phase 2) is unchanged. Its
+            ``_assumption_set_id``/``_provider`` are stamped onto the returned
+            result (as ``_assumption_set_id``/``_phase1_provider``) so
+            ``save_verdict`` can persist provenance. Ignored when ``valuation``
+            is already supplied (that path is phase-2 only). Defaults to
+            ``None`` (ordinary phase-1 flow).
 
     Returns:
         On success, a dict matching this module's unified phase-2 output
@@ -1577,44 +1769,40 @@ def interpret(
         ratios = ratios or []
         metrics = metrics or {}
 
+        resolved_provider = (provider or Config.ANALYZER_PROVIDER or "ollama").lower()
+
         if valuation is not None:
-            return interpret_results(
-                normalized, ratios, metrics, technical, red_flags, catalyst, valuation,
-                provider=provider, model=model, api_key=api_key, host=host, horizon=horizon,
-                as_of=as_of,
+            result, backend_note = _interpret_results_with_fallback(
+                resolved_provider, normalized, ratios, metrics, technical, red_flags,
+                catalyst, valuation, provider, model, api_key, host, horizon, as_of,
             )
+            if backend_note and isinstance(result, dict) and "error" not in result:
+                result["backend_note"] = backend_note
+            return result
 
         sic = (submissions or {}).get("sic")
         sic_description = (submissions or {}).get("sicDescription")
         sector_hint = classify_sector(sic, normalized, metrics) if sic is not None else None
 
-        # Firm-specific CAPM cost of equity (rf + betaL x ERP) from the local
-        # Damodaran reference data, used as the deterministic base discount
-        # rate in place of the flat sector-agnostic default. None (missing
-        # beta/ERP/risk-free, or unmatched SIC) leaves the flat default in
-        # place; the LLM path uses this only as its fallback base. Loaded
-        # once into `sector_data` and reused for both the CAPM lookup and
-        # the global risk-free fallback below, rather than reading the CSVs
-        # twice.
-        sector_data = damodaran.load_sector_data(Config.DAMODARAN_DIR, as_of=as_of, fred_rate=fred_rate)
-        capm = compute_cost_of_equity(
-            sector_data,
-            sic_description,
-            metrics,
-            is_unprofitable=(sector_hint == "growth_unprofitable"),
-        )
-        # Global risk-free rate (erp.csv), independent of SIC/industry
-        # matching -- used by the phase-1 fallback's terminal-growth anchor
-        # when `capm` itself is None (e.g. the SIC didn't match any
-        # Damodaran industry) so terminal growth isn't ALSO flattened to the
-        # old constant on top of the flat discount rate.
-        risk_free_pct = sector_data.get("risk_free") if sector_data else None
-
-        phase1 = propose_assumptions(
-            normalized, ratios, metrics, sector_hint=sector_hint,
-            provider=provider, model=model, api_key=api_key, host=host, horizon=horizon,
-            capm=capm, risk_free_pct=risk_free_pct,
-        )
+        if phase1_override is not None:
+            # A frozen/cached assumption set stands in for phase 1
+            # (ASSUMPTIONS_CACHE_SPEC.md Sec.4): no LLM call, and the CAPM/
+            # risk-free lookup below is skipped because it only ever feeds the
+            # phase-1 fallback we are bypassing.
+            phase1 = phase1_override
+        else:
+            # Firm-specific CAPM cost of equity (base discount rate) and the
+            # global risk-free rate (terminal-growth anchor fallback) from the
+            # local Damodaran reference data; the LLM path uses these only as
+            # its deterministic fallback base. See _resolve_capm_inputs.
+            capm, risk_free_pct = _resolve_capm_inputs(
+                sic_description, sector_hint, metrics, as_of, fred_rate
+            )
+            phase1 = propose_assumptions(
+                normalized, ratios, metrics, sector_hint=sector_hint,
+                provider=provider, model=model, api_key=api_key, host=host, horizon=horizon,
+                capm=capm, risk_free_pct=risk_free_pct,
+            )
         assumptions = phase1["assumptions"]
         # If SIC is known, its deterministic classification (sector_hint)
         # always wins over the LLM's own guess (SPEC.md Sec.8); otherwise
@@ -1631,11 +1819,56 @@ def interpret(
             as_of=as_of, fred_rate=fred_rate,
         )
 
-        return interpret_results(
-            normalized, ratios, metrics, technical, red_flags, catalyst, valuation_result,
-            provider=provider, model=model, api_key=api_key, host=host, horizon=horizon,
-            as_of=as_of,
+        result, backend_note = _interpret_results_with_fallback(
+            resolved_provider, normalized, ratios, metrics, technical, red_flags,
+            catalyst, valuation_result, provider, model, api_key, host, horizon, as_of,
         )
+        # If phase 2 didn't fall back but phase 1 itself downgraded from
+        # claude_code to deterministic defaults (proposal unusable / backend
+        # unavailable), still tell the reader the numbers aren't LLM-derived.
+        if (
+            backend_note is None
+            and resolved_provider == "claude_code"
+            and phase1_override is None
+            and isinstance(phase1, dict)
+            and phase1.get("_provider") == "script"
+        ):
+            backend_note = (
+                "AI backend (claude_code) varsayım önerisi veremedi; "
+                "deterministik varsayımlar kullanıldı."
+            )
+
+        if isinstance(result, dict) and "error" not in result:
+            if backend_note:
+                result["backend_note"] = backend_note
+            # Carry cached-set provenance onto the result so save_verdict can
+            # persist it (Sec.4). Phase 2's own `_provider` (the commentary
+            # backend) is left intact; `_phase1_provider` records what produced
+            # the NUMBERS ("cached:ollama", etc.).
+            if phase1_override is not None:
+                result["_assumption_set_id"] = phase1_override.get("_assumption_set_id")
+                result["_phase1_provider"] = phase1_override.get("_provider")
+                # The numbers came from a frozen set an LLM produced at
+                # propose-time; surface that without the live comparison.
+                result["llm_report"] = {
+                    "used_llm": True,
+                    "cached": True,
+                    "provider": phase1_override.get("_provider"),
+                    "note": (
+                        "Varsayımlar dondurulmuş bir setten geldi "
+                        "(propose sırasında üretildi); ayrıntı için 'assumptions show'."
+                    ),
+                }
+            else:
+                # Live path: "what the LLM changed vs. the deterministic
+                # baseline, and why" (None for a pure no-AI run).
+                llm_report = _build_llm_report(
+                    phase1, resolved_provider, sector_type, metrics,
+                    capm, risk_free_pct, backend_note,
+                )
+                if llm_report is not None:
+                    result["llm_report"] = llm_report
+        return result
     except Exception as exc:  # noqa: BLE001 - interpret() must never raise
         logger.exception("Unexpected error during interpret()")
         return {

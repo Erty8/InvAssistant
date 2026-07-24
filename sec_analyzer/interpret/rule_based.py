@@ -12,7 +12,8 @@ output.
 Why this exists alongside the LLM providers:
 
 * **No dependency, no cost, no privacy concern.** It requires neither
-  Ollama nor an Anthropic API key, and never sends financial data anywhere.
+  Ollama nor the Claude Code CLI, needs no API key, and never sends financial
+  data anywhere.
 * **Fully auditable.** Every judgment it makes is expressed as an explicit,
   named check (see the ``score`` key) or an explicit formula with visible
   assumptions (see the scenario ``growth``/``discount_rate``/``note``
