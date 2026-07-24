@@ -27,8 +27,8 @@ class Config:
 
     All values are read once at import time from the environment. Use the
     provided classmethods to access values that require validation
-    (``get_user_agent``, ``require_anthropic_key``) or that have filesystem
-    side effects (``ensure_dirs``).
+    (``get_user_agent``) or that have filesystem side effects
+    (``ensure_dirs``).
     """
 
     # Directory of the sec_analyzer package itself.
@@ -45,28 +45,83 @@ class Config:
         "METODOLOJI_PATH", os.path.join(BASE_DIR, "METODOLOJI.md")
     )
 
-    # Anthropic API configuration.
-    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-    # Model is read from SEC_ANTHROPIC_MODEL (not the generic ANTHROPIC_MODEL)
-    # on purpose: this package may share a .env with other tools that set
-    # ANTHROPIC_MODEL to a different model, and we must not let that silently
-    # downgrade the required interpretation model. Defaults to claude-opus-4-8.
-    ANTHROPIC_MODEL = os.getenv("SEC_ANTHROPIC_MODEL", "claude-opus-4-8")
-
     # SEC EDGAR fair-access limit is 10 requests/sec. Default to 8 to stay
     # safely under that ceiling. Overridable via SEC_MAX_RPS.
     SEC_MAX_REQUESTS_PER_SEC = int(os.getenv("SEC_MAX_RPS", "8"))
 
-    # Analyzer backend selection. This chooses how the `interpret` layer
-    # produces the fundamental analysis:
-    #   * "script"    -- the deterministic, rule-based analyzer (DEFAULT; no
-    #                    AI, no API key, no external server, fully offline and
-    #                    reproducible).
-    #   * "ollama"    -- a local Gemma model served by Ollama (free, private,
-    #                    requires Ollama running locally).
-    #   * "anthropic" -- the hosted Claude API (requires ANTHROPIC_API_KEY).
-    # Overridable via ANALYZER_PROVIDER.
-    ANALYZER_PROVIDER = os.getenv("ANALYZER_PROVIDER", "script").lower()
+    # LLM backend selection (transport + WHO gets billed). This is the
+    # high-level knob for how an LLM-based interpretation runs:
+    #   * "claude_code" (DEFAULT) -- drive the local `claude` CLI (`claude -p`)
+    #     as a subprocess. Billed to your Claude *subscription*, not an API
+    #     account. Requires `claude` installed and logged in, and
+    #     ANTHROPIC_API_KEY UNSET -- a set key would silently redirect
+    #     `claude -p` to API billing, so the claude_code backend refuses to run
+    #     in that case (see interpret/backends/claude_code.py).
+    #   * "none" -- the deterministic, rule-based analyzer (no AI, no key, free,
+    #     fully offline and reproducible); maps to the "script" provider.
+    # The hosted HTTP API backend ("api"/"anthropic") has been REMOVED; any
+    # legacy "api"/"anthropic" value routes to "claude_code" below.
+    # Overridable via LLM_BACKEND.
+    LLM_BACKEND = os.getenv("LLM_BACKEND", "claude_code").lower()
+
+    #: Maps the billing-oriented LLM_BACKEND onto the low-level analyzer
+    #: provider the interpret layer dispatches on. Unknown/legacy backends
+    #: (including the removed "api") fall through to "claude_code".
+    _LLM_BACKEND_TO_PROVIDER = {
+        "claude_code": "claude_code",
+        "none": "script",
+    }
+
+    # Analyzer backend (low-level provider) the `interpret` layer dispatches on:
+    #   * "claude_code" -- local `claude -p` subprocess (subscription billing).
+    #   * "script"      -- deterministic, rule-based analyzer (no AI, offline).
+    #   * "ollama"      -- a local Gemma model served by Ollama.
+    # Resolution: an explicit ANALYZER_PROVIDER env var wins (advanced /
+    # backward-compatible override); otherwise it is derived from LLM_BACKEND
+    # (default provider "claude_code"). The hosted-API backend is gone, so a
+    # legacy "anthropic"/"api" selection (from either source) is remapped to
+    # "claude_code" rather than crashing.
+    _RAW_ANALYZER_PROVIDER = (
+        os.environ.get("ANALYZER_PROVIDER")
+        or _LLM_BACKEND_TO_PROVIDER.get(LLM_BACKEND, "claude_code")
+    ).lower()
+    ANALYZER_PROVIDER = (
+        "claude_code"
+        if _RAW_ANALYZER_PROVIDER in ("anthropic", "api")
+        else _RAW_ANALYZER_PROVIDER
+    )
+
+    # Claude Code CLI settings (used when the resolved provider is
+    # "claude_code"). CLAUDE_CODE_BIN is the CLI binary name/path (looked up on
+    # PATH via shutil.which); CLAUDE_CODE_TIMEOUT is the per-call subprocess
+    # timeout in seconds. Overridable via CLAUDE_CODE_BIN / CLAUDE_CODE_TIMEOUT.
+    CLAUDE_CODE_BIN = os.getenv("CLAUDE_CODE_BIN", "claude")
+    CLAUDE_CODE_TIMEOUT = int(os.getenv("CLAUDE_CODE_TIMEOUT", "120"))
+
+    # Per-phase model for the claude_code backend, passed to `claude --model`.
+    # The two phases have different needs, so they get different tiers:
+    #   * phase 1 (assumption proposal) -- the numeric/judgment step that drives
+    #     the fair-value numbers -- uses the STRONGER model (Opus).
+    #   * phase 2 (commentary) -- narrative synthesis that never touches the
+    #     numbers -- uses a cheaper/faster model (Sonnet).
+    # Values are Claude Code model *aliases* ("opus"/"sonnet"/"haiku"), which the
+    # CLI resolves to the current model of that tier on your subscription plan;
+    # a pinned full id (e.g. "claude-opus-4-8") also works. An explicit --model
+    # (e.g. `assumptions propose --model ...`) overrides these. Overridable via
+    # CLAUDE_CODE_MODEL_ASSUMPTIONS / CLAUDE_CODE_MODEL_COMMENTARY.
+    CLAUDE_CODE_MODEL_ASSUMPTIONS = os.getenv("CLAUDE_CODE_MODEL_ASSUMPTIONS", "opus")
+    CLAUDE_CODE_MODEL_COMMENTARY = os.getenv("CLAUDE_CODE_MODEL_COMMENTARY", "sonnet")
+
+    @classmethod
+    def claude_code_model_for_phase(cls, phase: str) -> str:
+        """Default claude_code model for a dispatch phase.
+
+        ``phase == "assumptions"`` -> the strong model (Opus); anything else
+        (commentary) -> the cheaper model (Sonnet).
+        """
+        if phase == "assumptions":
+            return cls.CLAUDE_CODE_MODEL_ASSUMPTIONS
+        return cls.CLAUDE_CODE_MODEL_COMMENTARY
 
     # Local Ollama settings (used when ANALYZER_PROVIDER == "ollama").
     # OLLAMA_HOST is the base URL of the Ollama server's REST API (the
@@ -160,16 +215,3 @@ class Config:
         """Create any directories required by sec_analyzer if missing."""
         os.makedirs(cls.RAW_DIR, exist_ok=True)
 
-    @classmethod
-    def require_anthropic_key(cls) -> str:
-        """Return the configured Anthropic API key.
-
-        Raises:
-            ConfigError: If ``ANTHROPIC_API_KEY`` is unset or blank.
-        """
-        if not cls.ANTHROPIC_API_KEY:
-            raise ConfigError(
-                "ANTHROPIC_API_KEY is not set. Set it in your environment or "
-                "in a .env file to use Anthropic-powered features."
-            )
-        return cls.ANTHROPIC_API_KEY

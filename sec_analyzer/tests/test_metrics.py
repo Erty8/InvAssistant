@@ -93,6 +93,43 @@ def test_full_metrics_with_price():
     assert metrics["fcf_per_share"] == round(180 / 100, 2)
 
 
+def test_current_ev_earnings_multiples():
+    # _full_normalized: shares=100, price=20 -> market cap 2000; net debt 270
+    # -> EV = 2270. Add OperatingIncome (EBIT) and Depreciation at fy 2023.
+    normalized = _full_normalized()
+    normalized["annual"]["OperatingIncome"] = [_record(2023, 250)]
+    normalized["annual"]["Depreciation"] = [_record(2023, 50)]
+
+    metrics = compute_metrics(normalized, _FULL_RATIOS, price=20.0)
+
+    # EBIT=250; EBITDA=250+50=300; EV=2270.
+    assert metrics["operating_income"] == 250
+    assert metrics["ebitda"] == 300
+    assert metrics["ev"] == pytest.approx(2270.0)
+    assert metrics["ev_ebit"] == pytest.approx(2270.0 / 250.0)    # 9.08
+    assert metrics["ev_ebitda"] == pytest.approx(2270.0 / 300.0)  # 7.5667
+
+
+def test_current_ev_earnings_none_when_ebit_missing_or_non_positive():
+    # No OperatingIncome/Depreciation series at all -> EV multiples None, EV
+    # itself still computed (market cap + net debt).
+    metrics = compute_metrics(_full_normalized(), _FULL_RATIOS, price=20.0)
+    assert metrics["operating_income"] is None
+    assert metrics["ebitda"] is None
+    assert metrics["ev"] == pytest.approx(2270.0)
+    assert metrics["ev_ebit"] is None
+    assert metrics["ev_ebitda"] is None
+
+    # Negative EBIT -> ev_ebit None; EBITDA still positive here (=-50+120) ->
+    # ev_ebitda computable, proving the two guards are independent.
+    normalized = _full_normalized()
+    normalized["annual"]["OperatingIncome"] = [_record(2023, -50)]
+    normalized["annual"]["Depreciation"] = [_record(2023, 120)]
+    metrics = compute_metrics(normalized, _FULL_RATIOS, price=20.0)
+    assert metrics["ev_ebit"] is None
+    assert metrics["ev_ebitda"] == pytest.approx(2270.0 / 70.0)  # EBITDA = -50+120 = 70
+
+
 def test_eps_non_positive_makes_pe_none_but_other_metrics_survive():
     normalized = _full_normalized()
     normalized["annual"]["EPS"] = [_record(2023, -1.0)]

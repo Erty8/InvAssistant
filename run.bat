@@ -130,6 +130,143 @@ echo Kaydedildi: .env dosyasina SEC_USER_AGENT yazildi.
 echo.
 :ua_ok
 
+rem === Yapay zeka arka ucu: Claude Code kullanilsin mi? ====================
+rem SEC_USER_AGENT gibi: SORU yalnizca daha once secilmediyse sorulur ve secim
+rem .env'e kaydedilir. ANCAK secim "claude_code" ise, soru sorulmasa bile
+rem kurulum/oturum dogrulamasi (npm install vb.) HER acilista calisir -- boylece
+rem "claude_code seciliydi ama claude kurulu degildi" durumu kendiliginden
+rem duzeltilir. "none" ise her sey atlanir. Secim web arayuzunun varsayilan
+rem saglayicisini da belirler.
+if defined LLM_BACKEND goto :llm_env_set
+findstr /i /c:"LLM_BACKEND=none" ".env" >nul 2>&1
+if not errorlevel 1 goto :llm_ok
+findstr /i /c:"LLM_BACKEND=claude_code" ".env" >nul 2>&1
+if not errorlevel 1 goto :cc_from_saved
+goto :llm_ask
+
+:llm_env_set
+rem Ortamda LLM_BACKEND tanimli: claude_code ise kurulumu dogrula, degilse atla.
+if /i not "%LLM_BACKEND%"=="claude_code" goto :llm_ok
+echo Ortam tercihi: Claude Code. Kurulum/oturum dogrulaniyor...
+goto :cc_setup
+
+:cc_from_saved
+echo Kayitli tercih (.env): Claude Code. Kurulum/oturum dogrulaniyor...
+goto :cc_setup
+
+:llm_ask
+echo ============================================
+echo    Yapay zeka yorumu (istege bagli)
+echo ============================================
+echo.
+echo Analiz yorumlarinda Claude Code kullanabilirsiniz: yerel "claude" komutu,
+echo Claude ABONELIGINIZLE faturalanir (API ucreti DEGIL). Alternatif: yapay
+echo zeka yok - deterministik, kural bazli, ucretsiz analiz.
+echo.
+echo Not: Degerleme SAYILARI her iki durumda da deterministik kod uretir;
+echo Claude Code yalnizca yorum metnini ve varsayim onerisini etkiler.
+echo.
+set "USE_CC="
+set /p "USE_CC=Claude Code kullanilsin mi? (E/H) [H]: "
+if /i "%USE_CC%"=="E" goto :cc_setup
+if /i "%USE_CC%"=="Y" goto :cc_setup
+
+rem --- Hayir / bos: yapay zeka kapali (kural bazli) ---
+>>".env" echo LLM_BACKEND=none
+set "LLM_BACKEND=none"
+echo.
+echo Secildi: yapay zeka KAPALI (kural bazli). Istediginizde .env icindeki
+echo LLM_BACKEND satirini claude_code yaparak acabilirsiniz.
+echo.
+goto :llm_ok
+
+:cc_setup
+set "JUST_INSTALLED="
+echo.
+echo Claude Code kontrol ediliyor...
+rem 1) "claude" komutu PATH'te mi? Yoksa npm ile otomatik kurmayi dene.
+where claude >nul 2>&1
+if not errorlevel 1 goto :cc_have_bin
+
+where npm >nul 2>&1
+if errorlevel 1 goto :cc_no_npm
+echo   "claude" bulunamadi -^> Claude Code CLI kuruluyor:
+echo     npm install -g @anthropic-ai/claude-code
+echo   ^(Ilk kurulum birkac dakika surebilir, lutfen bekleyin...^)
+echo.
+call npm install -g @anthropic-ai/claude-code
+set "JUST_INSTALLED=1"
+echo.
+where claude >nul 2>&1
+if not errorlevel 1 goto :cc_installed
+rem PATH'te hemen gorunmediyse npm global klasorunu dogrudan hedefle.
+set "NPM_PREFIX="
+for /f "delims=" %%P in ('npm prefix -g 2^>nul') do set "NPM_PREFIX=%%P"
+if not defined NPM_PREFIX goto :cc_install_unsure
+if not exist "%NPM_PREFIX%\claude.cmd" goto :cc_install_unsure
+set "CLAUDE_CODE_BIN=%NPM_PREFIX%\claude.cmd"
+echo   [OK] Kuruldu; CLAUDE_CODE_BIN = %NPM_PREFIX%\claude.cmd
+goto :cc_key
+:cc_installed
+echo   [OK] Claude Code CLI kuruldu.
+goto :cc_key
+:cc_install_unsure
+echo   [!] Kurulum tamamlandi ama "claude" hemen gorunmuyor. Yeni bir terminal
+echo       acip "claude --version" ile dogrulayin; gerekirse .env'e
+echo       CLAUDE_CODE_BIN=^<claude.cmd tam yolu^> ekleyin.
+goto :cc_key
+:cc_no_npm
+echo   [!] "claude" yok ve "npm" de bulunamadi; otomatik kurulum yapilamadi.
+echo       Once Node.js kurun ^(https://nodejs.org^), sonra sunu calistirin:
+echo         npm install -g @anthropic-ai/claude-code
+echo       Bu arada analiz kural bazli ^(yapay zeka olmadan^) calisir.
+goto :cc_key
+:cc_have_bin
+echo   [OK] "claude" bulundu.
+:cc_key
+rem 2) ANTHROPIC_API_KEY dolu mu? Dolu ise "claude -p" aboneligi DEGIL API'yi
+rem    faturalar; bu yuzden Claude Code arka ucu calismayi reddeder.
+set "KEY_FOUND="
+if defined ANTHROPIC_API_KEY set "KEY_FOUND=1"
+findstr /b /i "ANTHROPIC_API_KEY" ".env" >nul 2>&1
+if not errorlevel 1 set "KEY_FOUND=1"
+if defined KEY_FOUND goto :cc_key_warn
+echo   [OK] ANTHROPIC_API_KEY bos ^(abonelik faturalamasi icin gerekli^).
+goto :cc_login
+:cc_key_warn
+echo   [!] ANTHROPIC_API_KEY DOLU gorunuyor. Bu durumda "claude -p"
+echo       aboneliginizi DEGIL API hesabinizi faturalar; Claude Code arka ucu
+echo       bunu onlemek icin calismayi reddeder ve kural bazli moda duser.
+echo       Cozum: ANTHROPIC_API_KEY'i ortamdan ve .env dosyasindan kaldirin.
+:cc_login
+rem 3) CLI yeni kurulduysa oturum acmasi gerekir; opsiyonel olarak simdi sor.
+rem    (Zaten kuruluysa oturumu vardir varsayilir, sorulmaz.)
+if not defined JUST_INSTALLED goto :cc_save
+where claude >nul 2>&1
+if errorlevel 1 goto :cc_save
+echo.
+set "DO_LOGIN="
+set /p "DO_LOGIN=Claude'a simdi oturum acilsin mi? ('claude login' calisir) (E/H) [E]: "
+if /i "%DO_LOGIN%"=="H" goto :cc_save
+if /i "%DO_LOGIN%"=="N" goto :cc_save
+echo   Tarayici acilacak; oturum acmayi tamamladiktan sonra bu pencereye donun...
+call claude login
+:cc_save
+echo.
+echo   Aboneligi dogrulamak icin bir terminalde "claude" yazip ic komut
+echo   "/status" ile plani gorun ^(API kredisi degil, abonelik gorunmeli^).
+rem .env'e yalnizca satir yoksa yaz (tekrar acilislarda cift satir olusmasin).
+findstr /i /c:"LLM_BACKEND=claude_code" ".env" >nul 2>&1
+if not errorlevel 1 goto :cc_saved
+>>".env" echo LLM_BACKEND=claude_code
+echo Kaydedildi: .env'e LLM_BACKEND=claude_code yazildi.
+:cc_saved
+set "LLM_BACKEND=claude_code"
+echo.
+echo Aktif: Claude Code ^(abonelik faturalamasi^).
+echo.
+:llm_ok
+
 echo Sunucu baslatiliyor... tarayici birkac saniye icinde
 echo   http://127.0.0.1:5050  adresinde acilacak.
 echo.

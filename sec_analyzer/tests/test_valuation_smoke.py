@@ -241,6 +241,14 @@ def test_run_valuation_end_to_end_on_minimal_fixture():
     assert set(comparison) == {"label", "current", "median", "ratio", "bucket"}
     assert all(comparison[k] is None for k in comparison)
 
+    # EV/EBIT + EV/EBITDA (SPEC.md Sec.6): the informational EV multiples keys
+    # are always present in the output block and the current-multiples dict.
+    multiples = result["multiples"]
+    assert "ev_ebit_percentile" in multiples
+    assert "ev_ebitda_percentile" in multiples
+    assert "ev_ebit" in multiples["current"]
+    assert "ev_ebitda" in multiples["current"]
+
 
 def test_run_valuation_disables_dcf_for_financial_sector():
     normalized = _fake_normalized()

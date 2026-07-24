@@ -471,3 +471,104 @@ def test_multiples_history_pffo_unchanged_when_no_re_adjustment_tags():
     history = multiples_history(_pffo_normalized(), _mh_price_df())
     fy2021 = next(h for h in history if h["fy"] == 2021)
     assert fy2021["pffo"] == pytest.approx(10.0)
+
+
+# ---------------------------------------------------------------------------
+# 11. EV/EBIT + EV/EBITDA in multiples_history (SPEC.md Sec.6)
+# ---------------------------------------------------------------------------
+
+
+def _ev_earnings_normalized():
+    """FY2020-2022 with debt/cash + OperatingIncome (EBIT) + Depreciation, so
+    the enterprise-value earnings multiples are computable.
+
+    FY2021: shares 100, LongTermDebt 300, Cash 100 -> net debt 200; with
+    price 10 -> EV = 10*100 + 200 = 1200. OperatingIncome=120 -> EBIT=120;
+    Depreciation=30 -> EBITDA=150.
+      ev_ebit   = 1200 / 120 = 10.0
+      ev_ebitda = 1200 / 150 = 8.0
+    FY2022: OperatingIncome=-10 (negative EBIT), Depreciation=5 ->
+    EBITDA=-5 (<=0). Both EV multiples must be None that year.
+    """
+    def r(fy, v):
+        return _mh_record(fy, v, f"{fy}-12-31")
+
+    concepts = {
+        "Revenue": [r(2020, 900.0), r(2021, 1000.0), r(2022, 1100.0)],
+        "EPS": [r(2020, 0.8), r(2021, 1.0), r(2022, 1.2)],
+        "SharesOutstanding": [r(2020, 100.0), r(2021, 100.0), r(2022, 100.0)],
+        "OperatingCashFlow": [r(2020, 140.0), r(2021, 150.0), r(2022, 160.0)],
+        "CapEx": [r(2020, 50.0), r(2021, 50.0), r(2022, 60.0)],
+        "LongTermDebt": [r(2020, 300.0), r(2021, 300.0), r(2022, 300.0)],
+        "Cash": [r(2020, 100.0), r(2021, 100.0), r(2022, 100.0)],
+        "OperatingIncome": [r(2020, 100.0), r(2021, 120.0), r(2022, -10.0)],
+        "Depreciation": [r(2020, 25.0), r(2021, 30.0), r(2022, 5.0)],
+    }
+    return {"cik": 1, "entity_name": "EV Earnings Co", "currency": "USD", "annual": concepts, "quarterly": {}, "missing": [], "matched_tags": {}}
+
+
+def _ev_earnings_price_df():
+    dates = pd.to_datetime(["2020-12-31", "2021-12-31", "2022-12-31"])
+    df = pd.DataFrame({"Close": [8.0, 10.0, 12.0]}, index=dates)
+    df.index.name = "Date"
+    return df
+
+
+def test_multiples_history_computes_ev_ebit_and_ev_ebitda_with_net_debt():
+    history = multiples_history(_ev_earnings_normalized(), _ev_earnings_price_df())
+    fy2021 = next(h for h in history if h["fy"] == 2021)
+    # EV = 10*100 + (300 - 100) = 1200. EBIT=120, EBITDA=120+30=150.
+    assert fy2021["ev_ebit"] == pytest.approx(1200.0 / 120.0)   # 10.0
+    assert fy2021["ev_ebitda"] == pytest.approx(1200.0 / 150.0)  # 8.0
+    # EV/EBIT > EV/EBITDA always (EBITDA >= EBIT), a structural sanity check.
+    assert fy2021["ev_ebit"] > fy2021["ev_ebitda"]
+
+
+def test_multiples_history_ev_earnings_none_when_denominator_non_positive():
+    history = multiples_history(_ev_earnings_normalized(), _ev_earnings_price_df())
+    fy2022 = next(h for h in history if h["fy"] == 2022)
+    # EBIT = -10 (<=0) -> ev_ebit None; EBITDA = -10+5 = -5 (<=0) -> ev_ebitda None.
+    assert fy2022["ev_ebit"] is None
+    assert fy2022["ev_ebitda"] is None
+
+
+def test_multiples_history_ev_earnings_none_when_operating_income_missing():
+    # _ev_sales_normalized() carries debt/cash but NO OperatingIncome ->
+    # both EV earnings multiples are None, while ev_sales is unaffected.
+    dates = pd.to_datetime(["2020-12-31", "2021-12-31", "2022-12-31"])
+    df = pd.DataFrame({"Close": [8.0, 10.0, 12.0]}, index=dates)
+    df.index.name = "Date"
+    history = multiples_history(_ev_sales_normalized(), df)
+    fy2021 = next(h for h in history if h["fy"] == 2021)
+    assert fy2021["ev_ebit"] is None
+    assert fy2021["ev_ebitda"] is None
+    assert fy2021["ev_sales"] == pytest.approx(1.2)
+
+
+def test_multiples_history_ev_ebitda_none_when_depreciation_missing_but_ev_ebit_ok():
+    # Drop the Depreciation series -> EBITDA can't be built (no zero-fill), so
+    # ev_ebitda is None, but ev_ebit (needs only OperatingIncome) survives.
+    normalized = _ev_earnings_normalized()
+    del normalized["annual"]["Depreciation"]
+    history = multiples_history(normalized, _ev_earnings_price_df())
+    fy2021 = next(h for h in history if h["fy"] == 2021)
+    assert fy2021["ev_ebitda"] is None
+    assert fy2021["ev_ebit"] == pytest.approx(10.0)
+
+
+def test_multiples_history_ev_earnings_ev_equals_market_cap_when_no_debt_or_cash():
+    # No debt/cash concepts -> net debt 0 -> EV == market cap, so
+    # ev_ebit = market_cap / EBIT. Add OperatingIncome/Depreciation on top of
+    # _mh_normalized (which has neither debt nor cash).
+    normalized = _mh_normalized()
+    def r(fy, v):
+        return _mh_record(fy, v, f"{fy}-12-31")
+    normalized["annual"]["OperatingIncome"] = [r(2020, 90.0), r(2021, 100.0), r(2022, 110.0)]
+    normalized["annual"]["Depreciation"] = [r(2020, 20.0), r(2021, 25.0), r(2022, 30.0)]
+
+    history = multiples_history(normalized, _mh_price_df())
+    fy2021 = next(h for h in history if h["fy"] == 2021)
+    # market cap = 10*100 = 1000 = EV (no net debt). EBIT=100 -> ev_ebit=10.0;
+    # EBITDA=125 -> ev_ebitda = 1000/125 = 8.0.
+    assert fy2021["ev_ebit"] == pytest.approx(10.0)
+    assert fy2021["ev_ebitda"] == pytest.approx(8.0)

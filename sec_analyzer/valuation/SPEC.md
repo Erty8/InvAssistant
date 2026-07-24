@@ -340,16 +340,36 @@ cover it). Then:
   (LongTermDebtCurrent_fy or 0) - (Cash_fy or 0)`, treated as `0.0` (EV = market
   cap) when none of those three concepts is present for that fy. This is the
   sales multiple the hyper-grower growth-adjusted EV/Sales layer ranks against.
+- `ev_ebit = ev_fy / ebit_fy` (`ebit_fy > 0` and shares else None), where
+  `ev_fy = fy_price * shares_fy + net_debt_fy` (the SAME `net_debt_fy` as
+  `ev_sales`, same `0.0` degradation) and `ebit_fy = OperatingIncome_fy`.
+- `ev_ebitda = ev_fy / ebitda_fy` (`ebitda_fy > 0` and shares else None), where
+  `ebitda_fy = OperatingIncome_fy + Depreciation_fy` (BOTH concepts must be
+  present for the fy, else None — no zero-fill, unlike net debt). `Depreciation`
+  is the same D&A concept the REIT FFO proxy uses (`DepreciationDepletionAnd
+  Amortization` family). These two are EV/EBIT(DA) — enterprise-value earnings
+  multiples that, unlike P/E, are capital-structure-neutral (numerator adds net
+  debt, denominator is pre-interest), so they compare a leveraged filer against
+  its own history and against peers without the leverage distortion P/E carries
+  (VALUATION.md Sec.2/Sec.7). `ev_ebit` is informational (reported everywhere,
+  never a triangulation signal). `ev_ebitda` is informational for a
+  non-leveraged filer, but becomes the PRIMARY own-history multiples signal —
+  ahead of P/E — when the filer is leveraged (`net_debt / EBITDA >=
+  triangulate._LEVERAGE_EBITDA_RATIO`, `= 1.0`), for every sector except
+  `financial`/`reit`/`growth_unprofitable` (which keep their own primary). See
+  Sec.10 (`triangulate`) and VALUATION.md Sec.2/Sec.7 for the routing.
 
-Returns `[{"fy", "end", "price", "pe", "ps", "pfcf", "ev_sales"}, ...]` sorted
-by fy.
+Returns `[{"fy", "end", "price", "pe", "ps", "pfcf", "ev_sales", "ev_ebit",
+"ev_ebitda", "pffo"}, ...]` sorted by fy (`pffo` per Sec.8c).
 
 `multiples.percentile_position(history_values: list[float], current: float) ->
 Optional[float]` — percentage (0–100) of historical values strictly less than
 `current`, plus half of ties (midrank). Requires ≥5 non-None historical values,
 else `None`.
 
-Current multiples come from `metrics["pe"|"ps"|"pfcf"]`.
+Current multiples come from `metrics["pe"|"ps"|"pfcf"|"ev_ebit"|"ev_ebitda"]`
+(the current EV multiples use current market cap + `metrics["net_debt"]` over
+latest-fundamental-FY EBIT/EBITDA — see `metrics.compute_metrics`).
 
 ### Growth-adjusted multiples (PEG layer, VALUATION.md Sec.7)
 
@@ -1211,15 +1231,20 @@ Direction signal per method (`"ucuz" | "makul" | "pahali" | "veri_yok"`):
   original implied-vs-reference comparison.
 - **Multiples**: primary percentile = pe (fallback ps, then pfcf; for
   growth_unprofitable use ps first; for reit use pffo first, fallback ps --
-  Sec.8c -- never pe). pct > 70 → pahali; pct < 30 → ucuz; else
-  makul (position against the company's OWN multiple history — axis-a). **Two
-  divergence checks (VALUATION.md Sec.7) can flip the raw signal to `"karisik"`
-  (mixed), in this precedence order:**
+  Sec.8c -- never pe; **for a leveraged filer use ev_ebitda first**, see next
+  paragraph). pct > 70 → pahali; pct < 30 → ucuz; else makul (position against
+  the company's OWN multiple history — axis-a). **Two divergence checks
+  (VALUATION.md Sec.7) can flip the raw signal to `"karisik"` (mixed), in this
+  precedence order:**
   1. **Growth-adjusted (axis-a refinement, highest precedence):** when both
      `raw_growth_pair_pct` (the raw multiple's percentile — P/E in standard
      mode, EV/Sales in hyper-grower mode) and `growth_adj_pct` (the
      growth-adjusted multiple's percentile) are present AND fall in different
-     directional buckets.
+     directional buckets. **Skipped entirely when ev_ebitda is primary** (the
+     leveraged case): this axis is P/E-based, and a leveraged filer's P/E is
+     exactly the distorted read the ev_ebitda-primary routing exists to avoid,
+     so a P/E-vs-PEG disagreement must not override the ev_ebitda own-history
+     signal.
   2. **Sector-relative (axis-b):** `sector_ratio` = current primary multiple ÷
      its Damodaran sector median (SAME primary the axis-a percentile uses;
      picked with the identical candidate order + first-non-None-percentile
@@ -1230,6 +1255,24 @@ Direction signal per method (`"ucuz" | "makul" | "pahali" | "veri_yok"`):
      `sector_ratio is None` (missing median — e.g. reit whose primary is
      P/FFO, for which no Damodaran median exists) disables the axis and
      preserves the pure own-history signal.
+
+  **Leverage gate (ev_ebitda-primary routing, VALUATION.md Sec.2/Sec.7):**
+  `triangulate.triangulate` takes `ev_ebitda_pct` and `net_debt_to_ebitda`;
+  it computes `leveraged = net_debt_to_ebitda is not None and
+  net_debt_to_ebitda >= _LEVERAGE_EBITDA_RATIO` (`= 1.0`). For a leveraged
+  filer (any sector except the three with their own primary above —
+  `growth_unprofitable`/`reit`, plus `financial` whose DCF slot isn't a
+  multiples signal), the raw own-history primary becomes `ev_ebitda_pct`,
+  falling back to the usual pe→ps→pfcf order only when `ev_ebitda_pct` is
+  `None` (no usable EV/EBITDA history). Rationale: EV/EBIT(DA) is
+  capital-structure-neutral, so it ranks a leveraged filer cleanly where P/E
+  is distorted by leverage. The engine derives `net_debt_to_ebitda` from
+  current `metrics["net_debt"]/metrics["ebitda"]` (both > 0, else `None` =
+  net-cash/unusable = not leveraged) and mirrors the same candidate reorder
+  when picking the sector-axis primary — so a leveraged filer's axis-b is
+  disabled (no Damodaran EV/EBITDA median exists, exactly like reit's P/FFO)
+  rather than silently falling back to a P/E sector comparison. Surfaced at
+  `valuation["multiples"]["net_debt_to_ebitda"]` / `["leveraged"]` (Sec.11).
 
   When neither divergence fires (both agree, or the relevant inputs are
   `None`), the raw own-history signal stands unchanged. `karisik` is a
@@ -1366,9 +1409,13 @@ consumed by interpret phase 2, CLI card, HTML report, and store):
                   # implied start-growth (Sec.5/F6); bracket_status from
                   # reverse_dcf.implied_growth_with_status (standard mode) or
                   # a fixed "ok" (hyper-grower mode, see Sec.5).
-  "multiples": {"history": [...], "current": {"pe","ps","pfcf","pffo"},
+  "multiples": {"history": [...],
+                 "current": {"pe","ps","pfcf","pffo","ev_ebit","ev_ebitda"},
                  "pe_percentile", "ps_percentile", "pfcf_percentile",
                  "pffo_percentile",  # Sec.8c; reit's primary multiples signal input
+                 "ev_ebit_percentile", "ev_ebitda_percentile",  # Sec.6; informational EV multiples
+                 "net_debt_to_ebitda": float|None,  # current leverage ratio
+                 "leveraged": bool,  # net_debt/EBITDA >= 1.0 -> EV/EBITDA is the primary multiples signal
                  "history_years": int,
                  "sector": {"available": bool, "industry": str|None,
                              "pe_median","ps_median","pfcf_median"},

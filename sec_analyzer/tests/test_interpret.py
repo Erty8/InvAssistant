@@ -803,20 +803,6 @@ def test_interpret_unknown_provider_returns_error_without_raising():
     assert result["_provider"] == "not-a-real-provider"
 
 
-def test_interpret_dispatches_to_anthropic(monkeypatch):
-    monkeypatch.setattr(
-        analyzer, "_call_anthropic", lambda system, user, model, api_key: _commentary_json(summary="hosted")
-    )
-    # Avoid depending on a real ANTHROPIC_API_KEY being configured.
-    monkeypatch.setattr(analyzer.Config, "require_anthropic_key", classmethod(lambda cls: "fake-key"))
-
-    result = analyzer.interpret(_normalized(), [], provider="anthropic", valuation=_valuation_fixture())
-
-    assert result["summary"] == "hosted"
-    assert result["_provider"] == "anthropic"
-    assert result["_model"] == analyzer.Config.ANTHROPIC_MODEL
-
-
 def test_interpret_backward_compatible_defaults_to_configured_provider(monkeypatch):
     """Calling interpret(normalized, ratios) with no provider must still
     work, using Config.ANALYZER_PROVIDER."""
@@ -885,27 +871,6 @@ def test_interpret_results_ollama_sets_hindsight_leak_risk_when_as_of_given(monk
 
     assert "hindsight_leak_risk" in result
     assert result["hindsight_leak_risk"] == analyzer._HINDSIGHT_LEAK_LABEL
-
-
-def test_interpret_results_anthropic_sets_hindsight_leak_risk_when_as_of_given(monkeypatch):
-    # `_dispatch_llm_call` short-circuits to a RuntimeError if the optional
-    # `anthropic` package isn't importable (it isn't in this test env) --
-    # patch the module-level flag so this test exercises the hindsight-leak
-    # wiring itself rather than that unrelated, pre-existing environment gap
-    # (see test_interpret_dispatches_to_anthropic).
-    monkeypatch.setattr(analyzer, "anthropic", object())
-    monkeypatch.setattr(
-        analyzer, "_call_anthropic", lambda system, user, model, api_key: _commentary_json()
-    )
-    monkeypatch.setattr(analyzer.Config, "require_anthropic_key", classmethod(lambda cls: "fake-key"))
-    valuation = _valuation_fixture()
-
-    result = analyzer.interpret_results(
-        _normalized(), [], {}, None, None, None, valuation, provider="anthropic",
-        as_of=date(2022, 6, 30),
-    )
-
-    assert "hindsight_leak_risk" in result
 
 
 def test_interpret_results_llm_path_omits_hindsight_leak_risk_when_as_of_none(monkeypatch):

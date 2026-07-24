@@ -10,9 +10,10 @@ analyzer (see "Script-based analysis" below).
 
 **The only data source is SEC EDGAR.** There is no `yfinance`, no
 `openai`, and no other third-party market-data or LLM library anywhere in
-this package -- just `requests` against `data.sec.gov` / `www.sec.gov`, and
-the official `anthropic` SDK for the optional Claude-backed analysis step
-(not required for the `ollama` or `script` providers).
+this package -- just `requests` against `data.sec.gov` / `www.sec.gov`. The
+optional AI analysis runs through the locally-installed Claude Code CLI
+(`claude -p`, subscription-billed) or a local Ollama model -- no hosted-API
+SDK/key is used.
 
 ## What it does
 
@@ -27,8 +28,9 @@ the official `anthropic` SDK for the optional Claude-backed analysis step
 5. **Store** the ticker, CIK, normalized series, and ratios in a local
    SQLite database.
 6. **Interpret** (optional, `analyze` command): run the normalized figures
-   and ratios through a selectable backend -- Claude, a local Ollama/Gemma
-   model, or the deterministic script analyzer -- and get back a structured
+   and ratios through a selectable backend -- the local Claude Code CLI
+   (`claude -p`), a local Ollama/Gemma model, or the deterministic script
+   analyzer -- and get back a structured
    JSON verdict: a conservative fair-value range, a fundamental-quality
    verdict, cyclicality commentary, and a plain-language summary.
 
@@ -47,22 +49,26 @@ you run the CLI from, or anywhere `python-dotenv` will discover it) with:
 
 ```env
 SEC_USER_AGENT="Your Name your.email@example.com"
-ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-`SEC_USER_AGENT` is required for every command (`fetch` and `analyze`).
-`ANTHROPIC_API_KEY` is only required for `analyze`. There is no default for
-`SEC_USER_AGENT` on purpose -- the tool will raise a clear configuration
+`SEC_USER_AGENT` is required for every command (`fetch` and `analyze`). There
+is no default for it on purpose -- the tool will raise a clear configuration
 error rather than silently sending an anonymous-looking request that SEC
-might block.
+might block. The default AI backend (`claude_code`) needs **no** API key; on
+the contrary, `ANTHROPIC_API_KEY` must be **unset** for it (see "LLM backend &
+billing" below).
 
 ## Environment variables
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `SEC_USER_AGENT` | Yes (all commands) | *(none -- must be set)* | Identifies the requester to SEC EDGAR, e.g. `"Jane Doe jane.doe@example.com"`. |
-| `ANTHROPIC_API_KEY` | Yes (`analyze` only) | *(none -- must be set)* | Anthropic API key used by the `analyze` command. |
-| `SEC_ANTHROPIC_MODEL` | No | `claude-opus-4-8` | Anthropic model ID used for the Claude analysis. Deliberately *not* the generic `ANTHROPIC_MODEL`, so a shared `.env` can't silently downgrade the model. |
+| `LLM_BACKEND` | No | `claude_code` | How an LLM analysis runs / who is billed: `claude_code` (local `claude -p`, **subscription**) or `none` (deterministic, no AI). See "LLM backend & billing" below. |
+| `ANTHROPIC_API_KEY` | No (must be **unset** for claude_code) | *(none)* | The hosted-API backend has been removed, so this is not used to call any API. It is only *watched*: if it is set, the `claude_code` backend refuses to run (a set key would silently redirect `claude -p` to API billing). Leave it empty. |
+| `CLAUDE_CODE_BIN` | No | `claude` | Name/path of the Claude Code CLI binary (looked up on `PATH`). |
+| `CLAUDE_CODE_TIMEOUT` | No | `120` | Per-call timeout (seconds) for the `claude -p` subprocess. |
+| `CLAUDE_CODE_MODEL_ASSUMPTIONS` | No | `opus` | claude_code model for **phase 1** (assumption proposal — the numbers). Strong tier by default. |
+| `CLAUDE_CODE_MODEL_COMMENTARY` | No | `sonnet` | claude_code model for **phase 2** (commentary — narrative only). Cheaper tier by default. |
 | `SEC_DB_PATH` | No | `sec_analyzer/sec_data.sqlite3` | Path to the local SQLite database. |
 | `METODOLOJI_PATH` | No | `sec_analyzer/METODOLOJI.md` | Optional path to a custom analysis methodology (see below). |
 | `PROFIL_PATH` | No | `./PROFIL.md` | Optional path to your personal risk/style profile (see "Your investor profile (`PROFIL.md`)" below). |
@@ -118,6 +124,95 @@ crashes on an analysis failure.
 `analyze`'s default output is a compact, Turkish-language terminal **verdict
 card** (see "Investment horizon (`--horizon`)" below) rather than a raw JSON
 dump; pass `--verbose` if you want the full JSON result printed as well.
+
+## LLM backend & billing (`LLM_BACKEND`)
+
+The `interpret` layer can produce its commentary (and, in the `llm` assumption
+mode / `assumptions propose`, its phase-1 assumptions) two ways, selected by
+`LLM_BACKEND` — the choice is about **who gets billed**:
+
+| `LLM_BACKEND` | Provider | Billing | Needs |
+|---|---|---|---|
+| `claude_code` *(default)* | local `claude -p` subprocess | **Your Claude subscription** | `claude` installed + `claude login`; `ANTHROPIC_API_KEY` **unset** |
+| `none` | deterministic rule-based | **Free** (no AI) | nothing |
+
+The hosted HTTP API backend has been removed; a local Ollama model is also
+available via `--provider ollama`. `--no-ai` on `analyze` forces the
+deterministic path regardless of `LLM_BACKEND`/`--provider` (it wins over
+everything). You can also pick a backend per-run with
+`--provider {claude_code,ollama,script}`.
+
+### Using the Claude Code backend (subscription billing)
+
+Prerequisites:
+
+1. Install the Claude Code CLI and sign in to your subscription:
+   ```bash
+   claude login
+   ```
+2. Verify you're on a **subscription** (not API) plan:
+   ```bash
+   claude
+   # then, inside the session:
+   /status
+   ```
+   `/status` should show your subscription plan. If it shows API credits, or
+   if `ANTHROPIC_API_KEY` is set in your environment, `claude -p` will bill the
+   **API account** instead.
+3. **Make sure `ANTHROPIC_API_KEY` is empty/unset.** This is the one hard rule:
+   a set key silently switches `claude -p` to API billing. The claude_code
+   backend enforces this — it **refuses to run and errors** if the key is
+   present, telling you to unset it (then it falls back to the deterministic
+   rule-based path so the run still completes).
+   ```bash
+   # confirm it's unset before running
+   echo "$ANTHROPIC_API_KEY"   # should print an empty line
+   ```
+
+Then:
+```bash
+LLM_BACKEND=claude_code python -m sec_analyzer.cli analyze AAPL
+# or explicitly
+python -m sec_analyzer.cli analyze AAPL --provider claude_code
+```
+
+**First-run check (do this with a single ticker and small volume):** run one
+analysis, then confirm the usage landed on your **subscription** — via
+`/status` inside a `claude` session, or the console billing page — and *not*
+on API credits.
+
+If the backend can't run (API-key guard tripped, `claude` not found, timeout,
+or an unparseable reply), the analysis **automatically falls back to the
+deterministic rule-based path** and the result carries a Turkish
+`backend_note` explaining the degradation — the valuation engine never stops.
+
+### Per-phase models
+
+The claude_code backend uses **different models for the two phases**, matching
+each phase's needs and cost:
+
+- **Phase 1 — assumption proposal** (`CLAUDE_CODE_MODEL_ASSUMPTIONS`, default
+  `opus`): the numeric/judgment step that drives the fair-value numbers, so it
+  gets the stronger model.
+- **Phase 2 — commentary** (`CLAUDE_CODE_MODEL_COMMENTARY`, default `sonnet`):
+  narrative synthesis that never touches the numbers, so a cheaper/faster model
+  is enough.
+
+Values are Claude Code aliases (`opus`/`sonnet`/`haiku`) resolved against your
+subscription plan; a pinned full id (`claude-opus-4-8`) also works. The model
+must be available on your plan, or that call fails and degrades to rule-based.
+This split also means the cheaper phase-2 model has **zero effect on the
+fair-value numbers** — only on the wording of the commentary.
+
+### Reproducibility note
+
+`claude -p` doesn't expose temperature/seed as directly as the HTTP API, so the
+Claude Code backend does **not** guarantee identical fair-value numbers on
+every run. Reproducibility is provided instead by the **frozen assumption set**
+(`assumptions propose` → `freeze`, then `analyze --assumptions auto/frozen`):
+once frozen, the phase-1 assumptions — and therefore the fair-value numbers —
+are read from the cache deterministically, and the LLM backend only affects the
+narrative commentary. See `ASSUMPTIONS_CACHE_SPEC.md`.
 
 ## Investment horizon (`--horizon`)
 
@@ -192,7 +287,7 @@ promptuna enjekte edilir.
 `analyze`'ın sonuç sözlüğü, Faz 2 yorumunun yanında dört ek alan daha içerir.
 Bunlar `fair_value_range`/`confidence` gibi **her zaman kod tarafından**
 (`sec_analyzer/interpret/planning.py`) hesaplanır ve her sağlayıcı için
-(`ollama`, `anthropic`, `script`) aynı şekilde enjekte edilir — hiçbir
+(`claude_code`, `ollama`, `script`) aynı şekilde enjekte edilir — hiçbir
 sağlayıcı (LLM'ler dahil) bu alanları kendisi hesaplamaz. METODOLOJI.md
 §4-§7'yi uygular:
 
@@ -369,8 +464,8 @@ Tetik seviyesi beklemeden haber üzerine erken girme eğilimi var — verdict'te
 
 Two important caveats:
 
-* **How it's used differs by provider.** The LLM providers (`ollama`,
-  `anthropic`) receive the full text of `PROFIL.md` verbatim in the system
+* **How it's used differs by provider.** The LLM providers (`claude_code`,
+  `ollama`) receive the full text of `PROFIL.md` verbatim in the system
   prompt and can actually reason about it (e.g. flagging a position that
   would breach your stated sector limit). The deterministic `script`
   provider **cannot** interpret free text -- it only detects whether
@@ -461,12 +556,14 @@ analysis step:
 
 * **Script (no AI · deterministic)** -- the deterministic rule-based
   screen described above; no API key or local model required.
-* **Gemma (local · Ollama)** -- the default. Requires
+* **Gemma (local · Ollama)** -- requires
   [Ollama](https://ollama.com) running locally with the model pulled:
   ```powershell
   ollama pull gemma4:latest
   ```
-* **Claude (Anthropic)** -- requires `ANTHROPIC_API_KEY` to be set.
+* **Claude Code (subscription · claude -p)** -- the default. Requires the
+  `claude` CLI installed and logged in, with `ANTHROPIC_API_KEY` unset (see
+  "LLM backend & billing" above).
 
 Note the web UI does not currently offer the CLI's `--html` standalone
 report; use the CLI for that.

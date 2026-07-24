@@ -80,6 +80,10 @@ _VERDICTS_EXTRA_COLUMNS: List[Tuple[str, str]] = [
     # from result["momentum"]["verdict"]; the full momentum dict lives in
     # result_json. Context layer only -- never feeds the fair value.
     ("momentum_verdict", "TEXT"),
+    # Id of the frozen/cached assumption_sets row that supplied phase-1
+    # assumptions for this run (ASSUMPTIONS_CACHE_SPEC.md Sec.1); NULL for
+    # legacy rows and for live/script runs that did not use a cached set.
+    ("assumption_set_id", "INTEGER"),
 ]
 
 
@@ -263,6 +267,13 @@ def init_db(db_path: Optional[str] = None) -> None:
             _ensure_columns(conn, "financials", _FINANCIALS_EXTRA_COLUMNS)
             _ensure_columns(conn, "ratios", _RATIOS_EXTRA_COLUMNS)
             _ensure_columns(conn, "verdicts", _VERDICTS_EXTRA_COLUMNS)
+
+            # The frozen-assumption-set table (ASSUMPTIONS_CACHE_SPEC.md Sec.1)
+            # shares this database file. Its DDL lives in store.assumptions;
+            # importing lazily here keeps that module's top-level import of
+            # this one (get_connection/init_db) from being a cycle.
+            from sec_analyzer.store import assumptions as _assumptions
+            _assumptions.init_assumptions_table(conn)
         logger.debug("Schema ensured at %s", db_path or Config.DB_PATH)
     finally:
         conn.close()
@@ -505,7 +516,7 @@ def save_verdict(
             ``str(cik)``.
         horizon: Investment horizon used for this analysis, e.g. ``"1y"``.
         provider: Analyzer provider that produced ``result``, e.g.
-            ``"script"``, ``"ollama"``, or ``"anthropic"``.
+            ``"script"``, ``"ollama"``, ``"claude_code"``, or ``"cached:..."``.
         price: The current market price used for the analysis, or ``None``.
         result: The dict returned by
             :func:`sec_analyzer.interpret.analyzer.interpret` (or
@@ -549,6 +560,10 @@ def save_verdict(
     valuation_json = json.dumps(valuation, ensure_ascii=False) if valuation else None
     momentum = result.get("momentum") or {}
     momentum_verdict = momentum.get("verdict") if isinstance(momentum, dict) else None
+    # Provenance of the phase-1 assumptions: the CLI stamps the cached set's
+    # id into the result when a frozen/cached set was used (Sec.4); NULL
+    # otherwise (live/script runs, legacy callers).
+    assumption_set_id = result.get("_assumption_set_id")
 
     row = (
         cik_str,
@@ -574,6 +589,7 @@ def save_verdict(
         valuation_json,
         as_of,
         momentum_verdict,
+        assumption_set_id,
     )
 
     init_db(db_path)
@@ -587,9 +603,10 @@ def save_verdict(
                     fundamental_verdict, technical_verdict, profile_fit,
                     fv_bear_lo, fv_bear_hi, fv_base_lo, fv_base_hi, fv_bull_lo, fv_bull_hi,
                     result_json, confidence, sector_type, implied_growth,
-                    fair_value_json, valuation_json, as_of, momentum_verdict
+                    fair_value_json, valuation_json, as_of, momentum_verdict,
+                    assumption_set_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 row,
             )

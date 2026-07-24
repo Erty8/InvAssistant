@@ -84,13 +84,21 @@ def multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Lis
     * ``pfcf = fy_price * shares_fy / fcf_fy`` (``None`` unless
       ``fcf_fy > 0`` -- ``fcf_fy = OperatingCashFlow_fy - CapEx_fy`` -- and
       ``shares_fy`` is present)
-    * ``ev_sales = (fy_price * shares_fy + net_debt_fy) / revenue_fy``
-      (``None`` unless ``revenue_fy > 0`` and ``shares_fy`` is present),
-      where ``net_debt_fy = (LongTermDebt_fy or 0) + (LongTermDebtCurrent_fy
-      or 0) - (Cash_fy or 0)`` -- treated as ``0.0`` (i.e. an unlevered EV
-      equal to market cap) when none of those three concepts is present for
-      that fiscal year. This is the sales multiple the hyper-grower
-      growth-adjusted EV/Sales layer ranks against (VALUATION.md Sec.7).
+    * ``ev_sales = ev_fy / revenue_fy`` (``None`` unless ``revenue_fy > 0``
+      and ``shares_fy`` is present), where ``ev_fy = fy_price * shares_fy +
+      net_debt_fy`` and ``net_debt_fy = (LongTermDebt_fy or 0) +
+      (LongTermDebtCurrent_fy or 0) - (Cash_fy or 0)`` -- treated as ``0.0``
+      (i.e. an unlevered EV equal to market cap) when none of those three
+      concepts is present for that fiscal year. This is the sales multiple the
+      hyper-grower growth-adjusted EV/Sales layer ranks against (VALUATION.md
+      Sec.7).
+    * ``ev_ebit = ev_fy / operating_income_fy`` (``None`` unless
+      ``operating_income_fy > 0`` and ``shares_fy`` is present) and
+      ``ev_ebitda = ev_fy / ebitda_fy`` (``None`` unless ``ebitda_fy > 0`` and
+      ``shares_fy`` is present), where ``ebitda_fy = OperatingIncome_fy +
+      Depreciation_fy`` (both concepts required, no zero-fill). Enterprise-value
+      earnings multiples -- capital-structure-neutral, unlike ``pe`` (SPEC.md
+      Sec.6). Share the same ``ev_fy`` as ``ev_sales``.
     * ``pffo = fy_price * shares_fy / ffo_fy`` (``None`` unless
       ``ffo_fy > 0`` and ``shares_fy`` is present -- ``ffo_fy =
       net_income_fy + depreciation_fy - gain_on_sale_re_fy +
@@ -109,8 +117,9 @@ def multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Lis
 
     Returns:
         A list of ``{"fy", "end", "price", "pe", "ps", "pfcf", "ev_sales",
-        "pffo"}`` dicts sorted by ``fy`` ascending. Empty list if no fiscal
-        year has both a period-end date and price coverage. Never raises.
+        "ev_ebit", "ev_ebitda", "pffo"}`` dicts sorted by ``fy`` ascending.
+        Empty list if no fiscal year has both a period-end date and price
+        coverage. Never raises.
     """
     try:
         return _multiples_history(normalized or {}, price_df)
@@ -130,6 +139,7 @@ def _multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Li
     cash_series = to_annual_series(normalized, "Cash")
     net_income_series = to_annual_series(normalized, "NetIncome")
     depreciation_series = to_annual_series(normalized, "Depreciation")
+    operating_income_series = to_annual_series(normalized, "OperatingIncome")
     gain_re_series = to_annual_series(normalized, "GainOnSaleRealEstate")
     impair_re_series = to_annual_series(normalized, "RealEstateImpairment")
     end_by_fy = _period_end_by_fy(normalized)
@@ -146,6 +156,8 @@ def _multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Li
         shares = shares_series.get(fy)
         ocf = ocf_series.get(fy)
         capex = capex_series.get(fy)
+        operating_income = operating_income_series.get(fy)
+        depreciation = depreciation_series.get(fy)
         fcf = None if ocf is None or capex is None else ocf - capex
 
         pe = fy_price / eps if eps is not None and eps > 0 else None
@@ -160,11 +172,13 @@ def _multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Li
             else None
         )
 
-        # EV/Sales: net debt = long-term debt (noncurrent + current) minus
-        # cash; when NONE of those three concepts is present for this fiscal
-        # year, EV degrades to market cap (unlevered), so ev_sales == ps.
-        ev_sales = None
-        if revenue is not None and revenue > 0 and shares:
+        # Enterprise value = market cap + net debt, where net debt =
+        # long-term debt (noncurrent + current) minus cash; when NONE of those
+        # three concepts is present for this fiscal year, EV degrades to market
+        # cap (unlevered), so ev_sales == ps. Requires a share count (market
+        # cap). Computed once and shared by ev_sales / ev_ebit / ev_ebitda.
+        ev_fy = None
+        if shares:
             ltd = ltd_series.get(fy)
             ltdc = ltdc_series.get(fy)
             cash = cash_series.get(fy)
@@ -172,7 +186,33 @@ def _multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Li
                 net_debt = 0.0
             else:
                 net_debt = (ltd or 0.0) + (ltdc or 0.0) - (cash or 0.0)
-            ev_sales = (fy_price * shares + net_debt) / revenue
+            ev_fy = fy_price * shares + net_debt
+
+        ev_sales = (
+            ev_fy / revenue
+            if ev_fy is not None and revenue is not None and revenue > 0
+            else None
+        )
+
+        # EV/EBIT and EV/EBITDA (Sec.6): capital-structure-neutral earnings
+        # multiples. EBIT = OperatingIncome; EBITDA = EBIT + D&A (both concepts
+        # required, no zero-fill). Only defined for a strictly positive
+        # denominator (a negative/zero EBIT(DA) multiple isn't meaningful).
+        ev_ebit = (
+            ev_fy / operating_income
+            if ev_fy is not None and operating_income is not None and operating_income > 0
+            else None
+        )
+        ebitda = (
+            None
+            if operating_income is None or depreciation is None
+            else operating_income + depreciation
+        )
+        ev_ebitda = (
+            ev_fy / ebitda
+            if ev_fy is not None and ebitda is not None and ebitda > 0
+            else None
+        )
 
         # P/FFO (Sec.8/FFO): funds from operations = net income + D&A add-
         # back - RE-sale gains + RE impairments, the same REIT proxy the
@@ -180,7 +220,6 @@ def _multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Li
         # Gain/impairment default to 0.0 when untagged for this fiscal year
         # (backward compatible with fixtures/filers that never report them).
         net_income = net_income_series.get(fy)
-        depreciation = depreciation_series.get(fy)
         gain_re = gain_re_series.get(fy) or 0.0
         impair_re = impair_re_series.get(fy) or 0.0
         ffo = (
@@ -197,7 +236,7 @@ def _multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Li
         history.append(
             {
                 "fy": fy, "end": period_end, "price": fy_price, "pe": pe, "ps": ps, "pfcf": pfcf,
-                "ev_sales": ev_sales, "pffo": pffo,
+                "ev_sales": ev_sales, "ev_ebit": ev_ebit, "ev_ebitda": ev_ebitda, "pffo": pffo,
             }
         )
 

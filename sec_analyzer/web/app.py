@@ -2,9 +2,9 @@
 
 Serves a single-page, vanilla-JS front end that lets a user type a stock
 ticker, fetch its earnings/financials straight from SEC EDGAR, and
-optionally run a fundamental analysis using a selectable backend: a
-deterministic script-based (no-AI) analyzer (default), a local Ollama/Gemma
-model, or the hosted Anthropic Claude API.
+optionally run a fundamental analysis using a selectable backend: the local
+Claude Code CLI (`claude -p`, subscription billing), a local Ollama/Gemma
+model, or a deterministic script-based (no-AI) analyzer.
 
 This module is a thin HTTP wrapper around the existing fetch/normalize/
 store/interpret pipeline (see ``sec_analyzer.cli`` for the equivalent CLI
@@ -104,7 +104,7 @@ _QUARTERLY_LIMIT = 8
 _PROVIDERS = [
     ("script", "Script (no AI · deterministic)"),
     ("ollama", "Gemma (local · Ollama)"),
-    ("anthropic", "Claude (Anthropic)"),
+    ("claude_code", "Claude Code (subscription · claude -p)"),
 ]
 
 
@@ -560,7 +560,7 @@ def api_analyze():
         horizon: Investment horizon -- "3m", "1y", or "5y" (default "1y").
             Controls the fundamental/technical weighting and the framing of
             the verdict; see ``Config.HORIZON_WEIGHTS``.
-        provider: Analysis provider to use ("ollama", "anthropic", or
+        provider: Analysis provider to use ("claude_code", "ollama", or
             "script"); defaults to ``Config.ANALYZER_PROVIDER`` when
             omitted/None.
         no_cache: Bypass the on-disk raw JSON cache (default False).
@@ -751,7 +751,7 @@ def report():
     Query params:
         ticker: Stock ticker symbol (required).
         horizon: Investment horizon -- "3m", "1y", or "5y" (default "1y").
-        provider: Analysis provider -- "ollama", "anthropic", or "script";
+        provider: Analysis provider -- "claude_code", "ollama", or "script";
             defaults to ``Config.ANALYZER_PROVIDER`` when omitted/blank.
         years: Number of most-recent fiscal years to retain (default 12,
             wider than ``/api/financials``'/``/api/analyze``'s default 5 so

@@ -273,6 +273,68 @@ def test_triangulate_multiples_karisik_lowers_confidence_vs_agreement():
 
 
 # ---------------------------------------------------------------------------
+# 8c. triangulate -- leverage gate: EV/EBITDA is the PRIMARY multiple for a
+# leveraged filer, ahead of P/E (SPEC.md Sec.6/Sec.10, VALUATION.md Sec.7).
+# ---------------------------------------------------------------------------
+
+
+def test_triangulate_multiples_uses_ev_ebitda_first_when_leveraged():
+    # net_debt/EBITDA = 2.0 >= 1.0 -> leveraged. pe_pct=90 (would be "pahali"),
+    # but ev_ebitda_pct=15 (<30) must win -> "ucuz", and the rationale names
+    # FD/FAVÖK rather than P/E.
+    result = triangulate(
+        None, None, None, None, None, pe_pct=90, ps_pct=50, pfcf_pct=None,
+        sector_type="mature", ev_ebitda_pct=15, net_debt_to_ebitda=2.0,
+    )
+    assert result["signals"]["multiples"] == "ucuz"
+    assert "FD/FAVÖK" in result["rationale"]["multiples"]
+
+
+def test_triangulate_multiples_keeps_pe_when_not_leveraged():
+    # net_debt/EBITDA = 0.4 < 1.0 -> NOT leveraged. Even though ev_ebitda_pct
+    # is present, P/E (=90 -> "pahali") stays primary; EV/EBITDA is ignored.
+    result = triangulate(
+        None, None, None, None, None, pe_pct=90, ps_pct=50, pfcf_pct=None,
+        sector_type="mature", ev_ebitda_pct=15, net_debt_to_ebitda=0.4,
+    )
+    assert result["signals"]["multiples"] == "pahali"
+
+
+def test_triangulate_multiples_leveraged_falls_back_to_pe_when_no_ev_history():
+    # Leveraged but ev_ebitda_pct is None (no usable EV history) -> the P/E ->
+    # P/S -> P/FCF fallback order is used, so pe_pct=90 -> "pahali".
+    result = triangulate(
+        None, None, None, None, None, pe_pct=90, ps_pct=50, pfcf_pct=None,
+        sector_type="mature", ev_ebitda_pct=None, net_debt_to_ebitda=3.0,
+    )
+    assert result["signals"]["multiples"] == "pahali"
+
+
+def test_triangulate_leveraged_skips_pe_based_peg_divergence():
+    # A P/E-vs-PEG divergence (raw 88 vs growth-adj 45) would normally flip the
+    # signal to "karisik". But when EV/EBITDA is primary (leveraged), that
+    # P/E-based axis is skipped, so the EV/EBITDA own-history read (15 -> ucuz)
+    # stands instead of being masked as "karisik".
+    result = triangulate(
+        None, None, None, None, None, pe_pct=88, ps_pct=None, pfcf_pct=None,
+        sector_type="mature", ev_ebitda_pct=15, net_debt_to_ebitda=1.5,
+        raw_growth_pair_pct=88, growth_adj_pct=45,
+    )
+    assert result["signals"]["multiples"] == "ucuz"
+
+
+def test_triangulate_leverage_gate_ignored_for_reit():
+    # reit keeps P/FFO primary regardless of leverage: pffo_pct=10 -> "ucuz"
+    # wins over a present ev_ebitda_pct=90.
+    result = triangulate(
+        None, None, None, None, None, pe_pct=50, ps_pct=50, pfcf_pct=None,
+        sector_type="reit", pffo_pct=10, ev_ebitda_pct=90, net_debt_to_ebitda=5.0,
+    )
+    assert result["signals"]["multiples"] == "ucuz"
+    assert "P/FFO" in result["rationale"]["multiples"]
+
+
+# ---------------------------------------------------------------------------
 # 7b. triangulate -- sector-relative multiples axis (VALUATION.md Sec.7
 # axis-b): sector_ratio = current primary multiple / Damodaran sector median.
 # Band: > 1.25 expensive-vs-sector, < 0.80 cheap-vs-sector, else in line.
@@ -675,6 +737,41 @@ def test_run_valuation_financial_sector_disables_dcf_and_computes_pb_roe():
     # disabled.
     assert result["fair_value_range"]["base"]["lo"] == pytest.approx(15.0)
     assert result["fair_value_range"]["base"]["hi"] == pytest.approx(20.0)
+
+
+def test_run_valuation_leverage_flag_true_when_net_debt_to_ebitda_at_least_one():
+    # metrics carry net_debt=200 and ebitda=100 -> ratio 2.0 >= 1.0 ->
+    # leveraged. The multiples output surfaces both the ratio and the flag
+    # (SPEC.md Sec.11), independent of price history.
+    normalized = _normalized({"Revenue": [_rec(2023, 1000.0)], "EPS": [_rec(2023, 2.0)]})
+    metrics = {"shares": 100.0, "latest_fy": 2023, "fcf": 100.0, "net_debt": 200.0, "ebitda": 100.0}
+    result = run_valuation(
+        normalized, [{"fy": 2023, "fcf": 100.0}], metrics, price=20.0, price_df=None,
+        assumptions=_assumptions(), sector_type="mature",
+    )
+    assert result["multiples"]["net_debt_to_ebitda"] == pytest.approx(2.0)
+    assert result["multiples"]["leveraged"] is True
+
+
+def test_run_valuation_leverage_flag_false_for_net_cash_or_missing_ebitda():
+    # Net cash (negative net_debt) -> not leveraged, ratio None.
+    normalized = _normalized({"Revenue": [_rec(2023, 1000.0)], "EPS": [_rec(2023, 2.0)]})
+    metrics = {"shares": 100.0, "latest_fy": 2023, "fcf": 100.0, "net_debt": -50.0, "ebitda": 100.0}
+    result = run_valuation(
+        normalized, [{"fy": 2023, "fcf": 100.0}], metrics, price=20.0, price_df=None,
+        assumptions=_assumptions(), sector_type="mature",
+    )
+    assert result["multiples"]["net_debt_to_ebitda"] is None
+    assert result["multiples"]["leveraged"] is False
+
+    # Positive net debt but EBITDA missing -> ratio can't be formed -> False.
+    metrics_no_ebitda = {"shares": 100.0, "latest_fy": 2023, "fcf": 100.0, "net_debt": 200.0, "ebitda": None}
+    result2 = run_valuation(
+        normalized, [{"fy": 2023, "fcf": 100.0}], metrics_no_ebitda, price=20.0, price_df=None,
+        assumptions=_assumptions(), sector_type="mature",
+    )
+    assert result2["multiples"]["net_debt_to_ebitda"] is None
+    assert result2["multiples"]["leveraged"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -1455,7 +1552,9 @@ def test_run_valuation_current_multiples_left_none_without_price_or_shares():
         normalized, [], metrics, price=None, price_df=None,
         assumptions=assumptions, sector_type="mature",
     )
-    assert result["multiples"]["current"] == {"pe": None, "ps": None, "pfcf": None, "pffo": None}
+    assert result["multiples"]["current"] == {
+        "pe": None, "ps": None, "pfcf": None, "pffo": None, "ev_ebit": None, "ev_ebitda": None,
+    }
 
     # Price present but no shares at all -> ps/pfcf can't be derived
     # (no market-cap-style numerator to divide), but pe (price/eps, no

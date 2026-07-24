@@ -8,10 +8,11 @@ Two subcommands:
 * ``analyze TICKER`` -- everything ``fetch`` does, plus price/technical data,
   valuation metrics, red flags, an earnings-date estimate, and a full
   fundamental+technical interpretation (fair-value range, verdicts,
-  cyclicality, and a summary) from a selectable backend: a deterministic
-  script-based (no-AI) analyzer (default), a local Ollama/Gemma model, or the
-  hosted Anthropic Claude API. The result is printed as a compact Turkish-language
-  verdict card and, optionally, saved as a standalone HTML report.
+  cyclicality, and a summary) from a selectable backend: the local Claude Code
+  CLI (`claude -p`, subscription billing; default), a local Ollama/Gemma
+  model, or a deterministic script-based (no-AI) analyzer. The result is
+  printed as a compact Turkish-language verdict card and, optionally, saved as
+  a standalone HTML report.
 
 Usage::
 
@@ -20,13 +21,14 @@ Usage::
     python -m sec_analyzer.cli analyze AAPL --horizon 5y --provider script
     python -m sec_analyzer.cli analyze AAPL --html
 
-Only the official SEC EDGAR API and (for ``analyze`` with the ``ollama`` or
-``anthropic`` providers) an LLM API are used for financial statement data --
+Only the official SEC EDGAR API and (for ``analyze`` with the ``claude_code``
+or ``ollama`` providers) a local LLM are used for financial statement data --
 no third-party finance data libraries beyond the optional Stooq/yfinance
 price-history fetch used to power the technical-analysis layer.
 """
 
 import argparse
+import copy
 import json
 import logging
 import sys
@@ -50,14 +52,19 @@ from sec_analyzer.fetch.fred import get_risk_free_asof
 from sec_analyzer.fetch.prices import PriceDataError, get_price_history, latest_price, slice_asof
 from sec_analyzer.fetch.tickers import resolve_cik
 from sec_analyzer.http_client import SecHttpClient
-from sec_analyzer.interpret.analyzer import interpret
-from sec_analyzer.normalize.metrics import compute_metrics
+from sec_analyzer.interpret.analyzer import build_script_phase1, interpret, propose_assumptions
+from sec_analyzer.normalize.metrics import compute_metrics, resolve_fundamental_fy
 from sec_analyzer.normalize.normalizer import format_table, normalize_facts
 from sec_analyzer.normalize.ratios import compute_ratios
 from sec_analyzer.normalize.red_flags import detect_red_flags
 from sec_analyzer.report.generator import generate_report
-from sec_analyzer.interpret import planning
+from sec_analyzer.interpret import planning, rule_based
 from sec_analyzer.signals.events import detect_events, summarize_events
+from sec_analyzer.store import assumptions as assumptions_store
+from sec_analyzer.valuation import damodaran
+from sec_analyzer.valuation.capm import compute_cost_of_equity
+from sec_analyzer.valuation.sanity import clamp_assumptions, validate_assumptions
+from sec_analyzer.valuation.sector import classify_sector
 from sec_analyzer.signals.momentum import (
     compute_fundamental_momentum,
     compute_verdict_momentum,
@@ -661,17 +668,33 @@ def _multiples_line(valuation: dict) -> str:
     multiples = valuation.get("multiples") or {}
     history_years = multiples.get("history_years") or 0
     is_reit = valuation.get("sector_type") == "reit"
-    growth_adjusted = {} if is_reit else (multiples.get("growth_adjusted") or {})
     multiples_signal = ((valuation.get("triangulation") or {}).get("signals") or {}).get("multiples")
 
+    # Leverage-primary (SPEC.md Sec.6/Sec.10): a leveraged non-reit filer's
+    # primary own-history multiple is EV/EBITDA (FD/FAVÖK) ahead of P/E, and
+    # the P/E-based PEG line is suppressed -- mirrors triangulate's signal.
+    ev_primary = (
+        not is_reit
+        and bool(multiples.get("leveraged"))
+        and multiples.get("ev_ebitda_percentile") is not None
+    )
+    growth_adjusted = {} if (is_reit or ev_primary) else (multiples.get("growth_adjusted") or {})
+
     # Primary raw multiple. Reit uses P/FFO -> P/S only (P/E and P/FCF are
-    # meaningless for REITs); everything else keeps the P/E -> P/S -> P/FCF
-    # fallback order.
+    # meaningless for REITs); a leveraged filer leads with FD/FAVÖK; everything
+    # else keeps the P/E -> P/S -> P/FCF fallback order.
     primary = None
     if is_reit:
         primary_candidates = (
             ("P/FFO", multiples.get("pffo_percentile")),
             ("P/S", multiples.get("ps_percentile")),
+        )
+    elif ev_primary:
+        primary_candidates = (
+            ("FD/FAVÖK", multiples.get("ev_ebitda_percentile")),
+            ("P/E", multiples.get("pe_percentile")),
+            ("P/S", multiples.get("ps_percentile")),
+            ("P/FCF", multiples.get("pfcf_percentile")),
         )
     else:
         primary_candidates = (
@@ -713,6 +736,35 @@ def _multiples_line(valuation: dict) -> str:
         return f"{label}{name} kendi {history_years}y medyanının {percentile:.0f}. yüzdeliğinde"
 
     return f"{label}veri yetersiz"
+
+
+def _ev_multiples_line(valuation: dict) -> Optional[str]:
+    """Render the informational "EV çarpanları:" card line: current EV/EBITDA
+    (FD/FAVÖK) and EV/EBIT (FD/FVÖK), each with its own historical percentile
+    when enough price-backed history exists (SPEC.md Sec.6). These are
+    capital-structure-neutral earnings multiples reported alongside P/E; the
+    verdict/triangulation still keys off P/E. Returns ``None`` (line omitted)
+    when neither current EV multiple is available."""
+    multiples = valuation.get("multiples") or {}
+    current = multiples.get("current") or {}
+    fragments = []
+    for name, cur_key, pct_key in (
+        ("FD/FAVÖK", "ev_ebitda", "ev_ebitda_percentile"),
+        ("FD/FVÖK", "ev_ebit", "ev_ebit_percentile"),
+    ):
+        value = current.get(cur_key)
+        if value is None:
+            continue
+        pct = multiples.get(pct_key)
+        if pct is not None:
+            fragments.append(f"{name} {value:.1f}× ({pct:.0f}. pctile)")
+        else:
+            fragments.append(f"{name} {value:.1f}×")
+
+    if not fragments:
+        return None
+    label = "FD çarpanı:".ljust(_CARD_LABEL_WIDTH)
+    return f"{label}{' · '.join(fragments)}"
 
 
 def _triangulation_line(valuation: dict) -> str:
@@ -1017,6 +1069,9 @@ def _print_verdict_card(
     if valuation:
         print(_reverse_dcf_line(result, valuation))
         print(_multiples_line(valuation))
+        ev_multiples_line = _ev_multiples_line(valuation)
+        if ev_multiples_line:
+            print(ev_multiples_line)
         print(_triangulation_line(valuation))
         print(_sensitivity_line(valuation))
 
@@ -1089,7 +1144,10 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     # historical runs use the deterministic script engine. An explicit
     # --provider still works but the result carries a hindsight-leak label.
     explicit_provider = getattr(args, "provider", None)
-    if as_of is not None and explicit_provider is None:
+    if getattr(args, "no_ai", False):
+        # --no-ai wins over everything (explicit --provider, LLM_BACKEND, as-of).
+        provider = "script"
+    elif as_of is not None and explicit_provider is None:
         provider = "script"
     else:
         provider = explicit_provider or Config.ANALYZER_PROVIDER
@@ -1136,6 +1194,18 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     if price_df is not None and as_of is None:
         _save_price_rows(cik, price_df)
 
+    # Resolve where phase-1 assumptions come from (frozen cache / deterministic
+    # script / legacy live LLM) per --assumptions (ASSUMPTIONS_CACHE_SPEC.md).
+    override, assum_note, assum_stop, verdict_provider = _resolve_analyze_phase1(
+        args, cik, normalized, ratios, metrics, submissions, as_of, fred_rate
+    )
+    if assum_note:
+        print(assum_note)
+    if assum_stop:
+        result = {"error": "assumptions_frozen_unavailable", "summary": assum_note}
+        _print_verdict_card(args.ticker, horizon, result, metrics, flags, technical, as_of=as_of)
+        return
+
     result = interpret(
         normalized,
         ratios,
@@ -1149,6 +1219,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         price_df=price_df,
         as_of=as_of,
         fred_rate=fred_rate,
+        phase1_override=override,
     )
 
     # Recent 8-K events are deterministic filing-metadata facts, not model
@@ -1178,7 +1249,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     else:
         try:
             save_verdict(
-                args.ticker, cik, horizon, provider, price, result,
+                args.ticker, cik, horizon, verdict_provider or provider, price, result,
                 db_path=Config.DB_PATH, valuation=result.get("valuation"),
                 as_of=as_of.isoformat() if as_of is not None else None,
             )
@@ -1340,6 +1411,424 @@ def _parse_as_of(value: str) -> date:
     return parsed
 
 
+# --- assumptions {propose|show|edit|freeze} (ASSUMPTIONS_CACHE_SPEC.md) ---
+
+#: Scenario keys and numeric fields an `assumptions edit --set` path may target.
+_ASSUMPTION_SCENARIOS = ("bear", "base", "bull")
+_ASSUMPTION_NUMERIC_FIELDS = ("growth_5y", "terminal_growth", "discount_rate")
+_ASSUMPTION_FIELDS = _ASSUMPTION_NUMERIC_FIELDS + ("story",)
+
+
+def _default_model_for(provider: Optional[str]) -> Optional[str]:
+    """The configured default model name for an LLM provider (``None`` for script).
+
+    ``claude_code`` returns ``None`` here (its model is resolved per-phase in
+    the dispatcher, or by the CLI itself, not from a single default)."""
+    p = (provider or "").lower()
+    if p in ("ollama", "gemma"):
+        return Config.OLLAMA_MODEL
+    return None
+
+
+def _fmt_frac_pct(value) -> str:
+    """Format a decimal fraction (0.105) as a Turkish percent string ('%10.5')."""
+    if not isinstance(value, (int, float)):
+        return _DASH
+    return f"%{value * 100:.1f}"
+
+
+def _assumptions_resolve_inputs(args: argparse.Namespace):
+    """Shared fetch/normalize/metrics + CAPM resolution for `assumptions propose`.
+
+    Mirrors exactly what :func:`sec_analyzer.interpret.analyzer.interpret`
+    feeds phase 1 today (sector hint, CAPM cost of equity, global risk-free),
+    so a cached proposal is comparable to the legacy live path. Returns
+    ``(cik, name, normalized, ratios, metrics, sector_hint, capm,
+    risk_free_pct)``.
+    """
+    cik, name, normalized, ratios = _fetch_normalize_store(args)
+    metrics = compute_metrics(normalized, ratios, None)
+    submissions = _fetch_submissions(cik, args.ticker, args.no_cache)
+    sic = (submissions or {}).get("sic")
+    sic_description = (submissions or {}).get("sicDescription")
+    sector_hint = classify_sector(sic, normalized, metrics) if sic is not None else None
+    sector_data = damodaran.load_sector_data(Config.DAMODARAN_DIR)
+    capm = compute_cost_of_equity(
+        sector_data, sic_description, metrics,
+        is_unprofitable=(sector_hint == "growth_unprofitable"),
+    )
+    risk_free_pct = sector_data.get("risk_free") if sector_data else None
+    return cik, name, normalized, ratios, metrics, sector_hint, capm, risk_free_pct
+
+
+def _print_assumptions_review(
+    ticker: str,
+    set_id: Optional[int],
+    sector_type: str,
+    source_provider: str,
+    source_model: Optional[str],
+    clamped: dict,
+    script_baseline: Optional[dict],
+    sanity_notes: List[str],
+) -> None:
+    """Render the propose/edit review card: proposed vs. script baseline.
+
+    Shows each scenario's growth_5y / terminal_growth / discount_rate side by
+    side with the deterministic CAPM/CAGR baseline and the per-field delta (in
+    percentage points), then the base story and any clamp/sanity notes. Large
+    divergence is information, not an error.
+    """
+    model_str = f" ({source_model})" if source_model else ""
+    print(f"\n=== {ticker} — Varsayım Önerisi (taslak #{set_id}) ===")
+    print(f"Sektör tipi: {sector_type}   |   Kaynak: {source_provider}{model_str}")
+    print(f"\n{'Senaryo':<6} {'Alan':<16} {'Öneri':>9} {'Script':>9} {'Δ':>9}")
+    print("-" * 52)
+    field_labels = {
+        "growth_5y": "büyüme 5y",
+        "terminal_growth": "terminal",
+        "discount_rate": "iskonto",
+    }
+    for scenario in _ASSUMPTION_SCENARIOS:
+        prop = (clamped or {}).get(scenario) or {}
+        base = (script_baseline or {}).get(scenario) or {}
+        for field in _ASSUMPTION_NUMERIC_FIELDS:
+            pv = prop.get(field)
+            bv = base.get(field)
+            if isinstance(pv, (int, float)) and isinstance(bv, (int, float)):
+                delta = f"{(pv - bv) * 100:+.1f}pp"
+            else:
+                delta = _DASH
+            print(
+                f"{scenario:<6} {field_labels[field]:<16} "
+                f"{_fmt_frac_pct(pv):>9} {_fmt_frac_pct(bv):>9} {delta:>9}"
+            )
+    base_story = ((clamped or {}).get("base") or {}).get("story")
+    if base_story:
+        print(f"\nHikaye (base): {base_story}")
+    if sanity_notes:
+        print("\nClamp/sanity notları:")
+        for note in sanity_notes:
+            print(f"  - {note}")
+
+
+def _cmd_assumptions_propose(args: argparse.Namespace) -> None:
+    """`assumptions propose TICKER` — the only step that may call an LLM.
+
+    Proposes a phase-1 assumption set (via the chosen provider), clamps it,
+    builds the deterministic script baseline for side-by-side review, prints
+    the review card, and stores the result as a DRAFT (replacing any prior
+    unreviewed draft). Never freezes automatically.
+    """
+    provider = getattr(args, "provider", None) or Config.ANALYZER_PROVIDER
+    (
+        cik, _name, normalized, ratios, metrics, sector_hint, capm, risk_free_pct
+    ) = _assumptions_resolve_inputs(args)
+
+    print(f"\n'{provider}' ile varsayım önerisi hazırlanıyor (phase 1)...")
+    phase1 = propose_assumptions(
+        normalized, ratios, metrics, sector_hint=sector_hint,
+        provider=provider, model=getattr(args, "model", None),
+        capm=capm, risk_free_pct=risk_free_pct,
+    )
+    actual_provider = phase1.get("_provider") or provider
+    sector_type = sector_hint or phase1.get("sector_type") or "mature"
+    is_unprofitable = sector_type == "growth_unprofitable"
+
+    raw_assumptions = phase1["assumptions"]
+    clamped, clamp_notes = clamp_assumptions(raw_assumptions, is_unprofitable=is_unprofitable)
+    script_baseline = rule_based.default_assumptions(
+        metrics, sector_type, capm=capm, risk_free_pct=risk_free_pct
+    )
+
+    if actual_provider == "claude_code":
+        # propose is a phase-1 (assumptions) step -> the strong model.
+        source_model = getattr(args, "model", None) or Config.CLAUDE_CODE_MODEL_ASSUMPTIONS
+    elif actual_provider in ("ollama", "gemma"):
+        source_model = getattr(args, "model", None) or _default_model_for(actual_provider)
+    else:
+        source_model = None
+
+    payload = {
+        "fundamental_fy": resolve_fundamental_fy(metrics),
+        "facts_fingerprint": assumptions_store.fingerprint_annual(normalized),
+        "source_provider": actual_provider,
+        "source_model": source_model,
+        "sector_type": sector_type,
+        "assumptions": clamped,
+        "hyper_extras": phase1.get("hyper_growth_extras"),
+        "script_baseline": script_baseline,
+        "sanity_notes": clamp_notes,
+    }
+    set_id = assumptions_store.save_draft(cik, args.ticker, payload, db_path=Config.DB_PATH)
+
+    _print_assumptions_review(
+        args.ticker, set_id, sector_type, actual_provider, source_model,
+        clamped, script_baseline, clamp_notes,
+    )
+    if set_id is None:
+        print("\nUYARI: taslak veritabanına kaydedilemedi (log'a bakın).", file=sys.stderr)
+        return
+    print(
+        f"\nGözden geçir, sonra dondur:  assumptions freeze {args.ticker}"
+        f"\nDüzeltmek için:              assumptions edit {args.ticker} --set base.growth_5y=0.12"
+    )
+
+
+def _freshness_label(cik: str, row: Optional[dict], args: argparse.Namespace) -> str:
+    """Turkish freshness label for a stored set vs. the current fundamentals."""
+    if row is None:
+        return _DASH
+    try:
+        client = SecHttpClient()
+        facts = get_company_facts(cik, client, no_cache=args.no_cache)
+        normalized = normalize_facts(facts, years=args.years, as_of=None)
+        ratios = compute_ratios(normalized)
+        metrics = compute_metrics(normalized, ratios, None)
+    except Exception:  # noqa: BLE001 - freshness is best-effort; never crash `show`
+        logger.warning("Could not fetch current fundamentals for freshness check", exc_info=True)
+        return "bilinmiyor (finansallar getirilemedi)"
+    if assumptions_store.is_fresh(row, normalized, metrics):
+        return "GÜNCEL"
+    return "BAYAT — yeni dosyalama var; yeniden 'propose' önerilir"
+
+
+def _cmd_assumptions_show(args: argparse.Namespace) -> None:
+    """`assumptions show TICKER` — print the draft, frozen set, and history."""
+    client = SecHttpClient()
+    cik, _name = resolve_cik(args.ticker, client, no_cache=args.no_cache)
+    draft = assumptions_store.load_active(cik, assumptions_store.STATUS_DRAFT, db_path=Config.DB_PATH)
+    frozen = assumptions_store.load_active(cik, assumptions_store.STATUS_FROZEN, db_path=Config.DB_PATH)
+    history = assumptions_store.load_history(cik, db_path=Config.DB_PATH)
+
+    print(f"\n=== {args.ticker} — Varsayım Setleri ===")
+
+    if frozen is not None:
+        freshness = _freshness_label(cik, frozen, args)
+        model_str = f" ({frozen.get('source_model')})" if frozen.get("source_model") else ""
+        print(
+            f"\nDONDURULMUŞ (aktif) #{frozen['id']}  |  {freshness}"
+            f"\n  Kaynak: {frozen.get('source_provider')}{model_str}"
+            f"  |  önerilme: {frozen.get('proposed_at')}  |  dondurma: {frozen.get('frozen_at')}"
+            f"\n  Sektör: {frozen.get('sector_type')}  |  fundamental FY: {frozen.get('fundamental_fy')}"
+        )
+        if frozen.get("review_note"):
+            print(f"  Not: {frozen['review_note']}")
+        _print_assumptions_review(
+            args.ticker, frozen["id"], frozen.get("sector_type"),
+            frozen.get("source_provider"), frozen.get("source_model"),
+            frozen.get("assumptions"), frozen.get("script_baseline"),
+            frozen.get("sanity_notes") or [],
+        )
+    else:
+        print("\nDondurulmuş set yok.")
+
+    if draft is not None:
+        print(
+            f"\nTASLAK #{draft['id']} (henüz dondurulmadı)  |  "
+            f"kaynak: {draft.get('source_provider')}  |  önerilme: {draft.get('proposed_at')}"
+        )
+        print(f"  Dondurmak için: assumptions freeze {args.ticker}")
+
+    superseded = [r for r in history if r.get("status") == assumptions_store.STATUS_SUPERSEDED]
+    if superseded:
+        print("\nGeçmiş (supersede edilmiş):")
+        for r in superseded:
+            print(
+                f"  #{r['id']}  {r.get('source_provider')}  "
+                f"dondurma: {r.get('frozen_at')} → supersede: {r.get('superseded_at')}"
+            )
+
+
+def _cmd_assumptions_edit(args: argparse.Namespace) -> None:
+    """`assumptions edit TICKER --set PATH=VALUE ...` — edit the draft in place."""
+    client = SecHttpClient()
+    cik, _name = resolve_cik(args.ticker, client, no_cache=args.no_cache)
+    draft = assumptions_store.load_active(cik, assumptions_store.STATUS_DRAFT, db_path=Config.DB_PATH)
+    if draft is None:
+        print(
+            f"'{args.ticker}' için taslak yok. Önce: assumptions propose {args.ticker}",
+            file=sys.stderr,
+        )
+        return
+
+    assumptions = copy.deepcopy(draft.get("assumptions") or {})
+    for expr in args.set or []:
+        path, sep, raw_value = expr.partition("=")
+        if not sep:
+            print(f"Geçersiz --set '{expr}'; beklenen biçim PATH=VALUE.", file=sys.stderr)
+            return
+        scenario, _, field = path.strip().partition(".")
+        if scenario not in _ASSUMPTION_SCENARIOS or field not in _ASSUMPTION_FIELDS:
+            print(
+                f"Geçersiz yol '{path}'. Senaryo ∈ {_ASSUMPTION_SCENARIOS}, "
+                f"alan ∈ {_ASSUMPTION_FIELDS}.",
+                file=sys.stderr,
+            )
+            return
+        if field == "story":
+            value = raw_value
+        else:
+            try:
+                value = float(raw_value)
+            except ValueError:
+                print(f"'{path}' için sayısal değer beklendi (ondalık kesir), '{raw_value}' verildi.", file=sys.stderr)
+                return
+        assumptions.setdefault(scenario, {})[field] = value
+
+    updated = assumptions_store.update_draft(
+        cik, assumptions, sector_type=None, review_note=getattr(args, "note", None),
+        db_path=Config.DB_PATH,
+    )
+    if updated is None:
+        print("UYARI: taslak güncellenemedi (log'a bakın).", file=sys.stderr)
+        return
+    _print_assumptions_review(
+        args.ticker, updated["id"], updated.get("sector_type"),
+        updated.get("source_provider"), updated.get("source_model"),
+        updated.get("assumptions"), updated.get("script_baseline"),
+        updated.get("sanity_notes") or [],
+    )
+    print(f"\nDondurmak için: assumptions freeze {args.ticker}")
+
+
+def _cmd_assumptions_freeze(args: argparse.Namespace) -> None:
+    """`assumptions freeze TICKER` — promote the draft to the active frozen set."""
+    client = SecHttpClient()
+    cik, _name = resolve_cik(args.ticker, client, no_cache=args.no_cache)
+    draft = assumptions_store.load_active(cik, assumptions_store.STATUS_DRAFT, db_path=Config.DB_PATH)
+    if draft is None:
+        print(
+            f"'{args.ticker}' için dondurulacak taslak yok. Önce: assumptions propose {args.ticker}",
+            file=sys.stderr,
+        )
+        return
+
+    # Final defense-in-depth guard: the draft is already clamped (propose/edit),
+    # so this should pass -- but refuse to freeze a set that somehow violates
+    # the sanity bounds rather than persist a bad artifact.
+    violations = validate_assumptions(
+        draft.get("assumptions") or {},
+        is_unprofitable=(draft.get("sector_type") == "growth_unprofitable"),
+    )
+    if violations:
+        print("Dondurulamadı — sanity ihlalleri var:", file=sys.stderr)
+        for v in violations:
+            print(f"  - {v}", file=sys.stderr)
+        print(f"Düzeltin: assumptions edit {args.ticker} --set ...", file=sys.stderr)
+        return
+
+    frozen = assumptions_store.freeze_draft(cik, getattr(args, "note", None), db_path=Config.DB_PATH)
+    if frozen is None:
+        print("UYARI: dondurma başarısız (log'a bakın).", file=sys.stderr)
+        return
+    print(
+        f"\n{args.ticker} için varsayım seti donduruldu (#{frozen['id']}, "
+        f"{frozen.get('frozen_at')}).\n"
+        f"Artık 'analyze {args.ticker}' (varsayılan --assumptions auto) bu seti kullanır."
+    )
+
+
+def _resolve_analyze_phase1(
+    args: argparse.Namespace,
+    cik: str,
+    normalized: dict,
+    ratios: List[dict],
+    metrics: dict,
+    submissions: Optional[dict],
+    as_of,
+    fred_rate: Optional[dict],
+):
+    """Resolve the phase-1 assumption source for `analyze` (Sec.4 policy).
+
+    Returns ``(phase1_override, note, stop, verdict_provider)``:
+
+    * ``phase1_override``: a phase-1-result dict to pass to ``interpret``
+      (from a fresh frozen set, or a deterministic script build), or ``None``
+      to let ``interpret`` run its ordinary phase-1 (legacy ``llm`` mode, and
+      every as-of case).
+    * ``note``: a Turkish line to print explaining what happened, or ``None``.
+    * ``stop``: ``True`` only for strict ``--assumptions frozen`` when no fresh
+      frozen set exists -- the caller prints an error card and does not analyze.
+    * ``verdict_provider``: ``"cached:<src>"`` when a frozen set is used (so the
+      verdict's provider column shows cached provenance at a glance), else
+      ``None`` (use the phase-2 provider).
+    """
+    strategy = getattr(args, "assumptions", "auto") or "auto"
+    sic = (submissions or {}).get("sic")
+    sic_description = (submissions or {}).get("sicDescription")
+    sector_hint = classify_sector(sic, normalized, metrics) if sic is not None else None
+
+    # As-of mode never consults the cache: a set proposed today would leak
+    # post-cutoff knowledge into a point-in-time analysis. auto/frozen degrade
+    # to the deterministic path already forced upstream (provider -> script).
+    if as_of is not None:
+        note = None
+        if strategy in ("auto", "frozen"):
+            note = (
+                "as-of modunda dondurulmuş varsayım seti kullanılmaz (hindsight "
+                "riski); deterministik varsayımlarla devam edildi."
+            )
+        return None, note, False, None
+
+    if strategy == "llm":
+        return None, None, False, None
+
+    if strategy == "script":
+        override = build_script_phase1(
+            normalized, ratios, metrics, sector_hint, sic_description, fred_rate=fred_rate
+        )
+        return override, None, False, None
+
+    # auto / frozen: try the frozen set first.
+    frozen = assumptions_store.load_active(
+        cik, assumptions_store.STATUS_FROZEN, db_path=Config.DB_PATH
+    )
+    if frozen is not None and assumptions_store.is_fresh(frozen, normalized, metrics):
+        src = frozen.get("source_provider")
+        override = {
+            "assumptions": frozen.get("assumptions"),
+            "sector_type": frozen.get("sector_type"),
+            "hyper_growth_extras": frozen.get("hyper_extras"),
+            "_provider": f"cached:{src}",
+            "_assumption_set_id": frozen.get("id"),
+        }
+        note = f"Dondurulmuş varsayım seti #{frozen.get('id')} kullanıldı (kaynak: {src})."
+        return override, note, False, f"cached:{src}"
+
+    reason = "yok" if frozen is None else "bayat (yeni dosyalama var)"
+    if strategy == "frozen":
+        note = (
+            f"--assumptions frozen: kullanılabilir güncel dondurulmuş set {reason}; "
+            f"analiz durduruldu. Öneri: assumptions propose {args.ticker}"
+        )
+        return None, note, True, None
+
+    # auto fallback -> deterministic script assumptions.
+    override = build_script_phase1(
+        normalized, ratios, metrics, sector_hint, sic_description, fred_rate=fred_rate
+    )
+    note = (
+        f"Dondurulmuş varsayım seti {reason}; deterministik (script) varsayımlar "
+        f"kullanıldı. Öneri: assumptions propose {args.ticker}"
+    )
+    return override, note, False, None
+
+
+def cmd_assumptions(args: argparse.Namespace) -> None:
+    """Dispatch the ``assumptions`` subcommand group."""
+    action = getattr(args, "assumptions_action", None)
+    if action == "propose":
+        _cmd_assumptions_propose(args)
+    elif action == "show":
+        _cmd_assumptions_show(args)
+    elif action == "edit":
+        _cmd_assumptions_edit(args)
+    elif action == "freeze":
+        _cmd_assumptions_freeze(args)
+    else:
+        print("Usage: assumptions {propose|show|edit|freeze} TICKER ...", file=sys.stderr)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the top-level ``argparse`` parser with its subcommands."""
     parser = argparse.ArgumentParser(
@@ -1404,11 +1893,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyze_parser.add_argument(
         "--provider",
-        choices=["ollama", "gemma", "anthropic", "script"],
+        choices=["claude_code", "ollama", "gemma", "script"],
         default=None,
         help=(
-            "Analysis backend (default: ANALYZER_PROVIDER env, i.e. 'script'). "
-            "script = deterministic rule-based analysis, no AI/LLM required."
+            "Analysis backend (default: resolved from LLM_BACKEND/ANALYZER_PROVIDER "
+            "env). claude_code = local `claude -p` subprocess (subscription "
+            "billing); ollama = local Gemma; script = deterministic rule-based "
+            "(no AI). See --no-ai."
+        ),
+    )
+    analyze_parser.add_argument(
+        "--no-ai",
+        action="store_true",
+        dest="no_ai",
+        help=(
+            "Force the deterministic rule-based analyzer (no LLM). Takes "
+            "priority over --provider and LLM_BACKEND."
+        ),
+    )
+    analyze_parser.add_argument(
+        "--assumptions",
+        choices=["auto", "frozen", "script", "llm"],
+        default="auto",
+        help=(
+            "Phase-1 assumption source (ASSUMPTIONS_CACHE_SPEC.md). "
+            "auto (default): use the frozen set if fresh, else deterministic "
+            "script. frozen: require a fresh frozen set (else stop). script: "
+            "force deterministic assumptions. llm: legacy per-run LLM proposal. "
+            "In as-of mode the cache is never consulted."
         ),
     )
     analyze_parser.add_argument(
@@ -1514,6 +2026,58 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     backtest_parser.set_defaults(func=cmd_backtest)
+
+    # --- assumptions {propose|show|edit|freeze} ---
+    assumptions_parser = subparsers.add_parser(
+        "assumptions",
+        help=(
+            "Manage the per-filing frozen phase-1 assumption set used by "
+            "`analyze` (ASSUMPTIONS_CACHE_SPEC.md). propose (LLM, offline) → "
+            "review/edit → freeze; analyze then reads the frozen set with no "
+            "LLM call, so the fair value is reproducible."
+        ),
+    )
+    assumptions_sub = assumptions_parser.add_subparsers(dest="assumptions_action", required=True)
+
+    as_propose = assumptions_sub.add_parser(
+        "propose", parents=[common],
+        help="Propose a draft assumption set for TICKER via an LLM (the only LLM step).",
+    )
+    as_propose.add_argument(
+        "--provider", choices=["claude_code", "ollama", "gemma", "script"], default=None,
+        help="Phase-1 backend (default: resolved from LLM_BACKEND env). 'script' caches the deterministic baseline.",
+    )
+    as_propose.add_argument(
+        "--model", default=None,
+        help="Model ID/name override for the chosen provider (recorded as the set's source_model).",
+    )
+
+    assumptions_sub.add_parser(
+        "show", parents=[common],
+        help="Show TICKER's draft/frozen/superseded assumption sets and freshness.",
+    )
+
+    as_edit = assumptions_sub.add_parser(
+        "edit", parents=[common],
+        help="Edit TICKER's draft in place (re-validated/re-clamped, marked manual).",
+    )
+    as_edit.add_argument(
+        "--set", action="append", metavar="PATH=VALUE", dest="set",
+        help=(
+            "Override one field; repeatable. PATH is "
+            "{bear,base,bull}.{growth_5y,terminal_growth,discount_rate,story}. "
+            "Rates are decimal fractions, e.g. --set base.discount_rate=0.11."
+        ),
+    )
+    as_edit.add_argument("--note", default=None, help="Analyst note stored on the draft.")
+
+    as_freeze = assumptions_sub.add_parser(
+        "freeze", parents=[common],
+        help="Freeze TICKER's draft as the active set, superseding any prior frozen set.",
+    )
+    as_freeze.add_argument("--note", default=None, help="Analyst note stored on the frozen set.")
+
+    assumptions_parser.set_defaults(func=cmd_assumptions)
 
     return parser
 
