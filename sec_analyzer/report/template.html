@@ -1077,6 +1077,64 @@
     margin-top: 8px;
   }
 
+  /* ---- View tabs (Analiz / Bilanço) -------------------------------------*/
+  .view-tabs {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .view-tab {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    font-weight: 600;
+    padding: 8px 18px;
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    border-right: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .view-tab:last-child { border-right: none; }
+  .view-tab.active {
+    background: rgba(90, 167, 255, 0.18);
+    color: var(--primary-light);
+  }
+
+  /* ---- Balance-sheet tab (reuses .sensitivity-table) --------------------*/
+  .bs-table td.bs-label, .bs-table th.bs-label {
+    text-align: left;
+    color: var(--muted);
+    font-weight: 400;
+    white-space: nowrap;
+  }
+  .bs-table td.bs-num { font-variant-numeric: tabular-nums; }
+  .bs-pos { color: var(--green); }
+  .bs-neg { color: var(--red); }
+  .bs-warn { color: var(--amber); }
+  .bs-badge {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 1px 8px;
+    font-size: 0.64rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .bs-badge-pos {
+    background: rgba(77, 224, 130, 0.15);
+    color: var(--green);
+    border: 1px solid rgba(77, 224, 130, 0.4);
+  }
+  .bs-badge-neg {
+    background: rgba(255, 180, 171, 0.15);
+    color: var(--red);
+    border: 1px solid rgba(147, 0, 10, 0.55);
+  }
+  .beat-pos { color: var(--green); font-weight: 700; }
+  .beat-neg { color: var(--red); font-weight: 700; }
+
   /* ---- Entry plan table (reuses .sensitivity-table/.sens-base) -----------*/
   .entry-plan-table td.entry-trigger {
     text-align: left;
@@ -2101,9 +2159,17 @@
     var rationale = tri.rationale;
     var confColor = confidenceColor(confidence);
 
-    // For financial/reit sectors the DCF slot is really the P/B×ROE anchor
-    // (dcf.enabled === false in that case) -- label it accordingly.
-    var dcfLabel = (valuation.dcf && valuation.dcf.enabled === false) ? "P/B×ROE" : "DCF";
+    // For financial/reit sectors the DCF slot is really the FFO/RIM/P/B×ROE
+    // anchor (dcf.enabled === false in that case) -- label it accordingly,
+    // mirroring cli.py's _valuation_method_label FFO/RIM/P-B-ROE chain.
+    var dcfLabel = "P/B×ROE";
+    if (!(valuation.dcf && valuation.dcf.enabled === false)) {
+      dcfLabel = "DCF";
+    } else if (valuation.ffo && valuation.ffo.scenarios) {
+      dcfLabel = "FFO";
+    } else if (valuation.rim && valuation.rim.scenarios) {
+      dcfLabel = "RIM";
+    }
     var methods = [
       { key: "dcf", label: dcfLabel },
       { key: "reverse_dcf", label: "REVERSE DCF" },
@@ -3799,6 +3865,78 @@
   }
 
   // ---- Red flags card (only if flags exist) --------------------------------
+  // ---- Distress/quality screens card (SPEC.md Sec.8g/8j/8k) --------------
+  // Altman Z-score / Beneish M-score / Merton distance-to-default: all
+  // ADVISORY ONLY -- never affect fair_value_range or the triangulation
+  // confidence. One shared card (mirroring cli.py's _distress_flags_line)
+  // reads whichever of valuation.altman_z/beneish_m/merton_dtd are present,
+  // instead of one bespoke card per screen, so Beneish (Sec.8j) and Merton
+  // (Sec.8k) need no new card wiring when they land -- only new keys read
+  // here.
+  var ALTMAN_ZONE_LABEL_TR = { safe: "güvenli", grey: "gri", distress: "sıkıntı" };
+
+  function distressFlagsCardHtml(valuation) {
+    if (!valuation) return "";
+    var items = [];
+
+    var altman = valuation.altman_z;
+    if (altman && isNum(altman.z_score)) {
+      var zoneLabel = ALTMAN_ZONE_LABEL_TR[altman.zone] || altman.zone || "—";
+      items.push(
+        '<li>Altman Z-skoru: ' + Number(altman.z_score).toFixed(2) +
+          ' <span class="item-detail">(' + escapeHtml(zoneLabel) + ' bölge)</span></li>'
+      );
+    }
+
+    var beneish = valuation.beneish_m;
+    if (beneish && isNum(beneish.m_score)) {
+      var beneishDetail = (beneish.partial ? "kısmi skor" : "") +
+        (beneish.flag ? (beneish.partial ? "; " : "") + "olası manipülasyon sinyali" : "");
+      items.push(
+        '<li>Beneish M-skoru: ' + Number(beneish.m_score).toFixed(2) +
+          (beneishDetail ? ' <span class="item-detail">(' + escapeHtml(beneishDetail) + ')</span>' : '') +
+        '</li>'
+      );
+    }
+
+    var merton = valuation.merton_dtd;
+    if (merton && isNum(merton.distance_to_default)) {
+      var pdText = isNum(merton.probability_of_default)
+        ? "PD %" + (merton.probability_of_default * 100).toFixed(1) : "";
+      items.push(
+        '<li>Merton mesafe-temerrüt: ' + Number(merton.distance_to_default).toFixed(2) +
+          (pdText ? ' <span class="item-detail">(' + escapeHtml(pdText) + ')</span>' : '') +
+        '</li>'
+      );
+    }
+
+    if (items.length === 0) return "";
+    return (
+      '<div class="card"><div class="card-title">Risk Taramaları</div>' +
+        '<div class="alert-box"><ul>' + items.join("") + '</ul></div>' +
+      '</div>'
+    );
+  }
+
+  // ---- LBO-implied floor value (SPEC.md Sec.8h) ---------------------------
+  // ADVISORY ONLY: informational, never affects fair_value_range or the
+  // triangulation confidence -- the highest price a disciplined financial
+  // buyer could justify today from pure debt-paydown returns (no organic
+  // growth or multiple-expansion credit).
+  function lboFloorCardHtml(valuation) {
+    var detail = (valuation || {}).lbo_floor_detail;
+    if (!detail || !isNum(detail.per_share)) return "";
+    return (
+      '<div class="card"><div class="card-title">LBO Çapası</div>' +
+        '<div class="alert-box">' +
+          '<div>' + fmtMoney(detail.per_share) + ' <span class="item-detail">' +
+            '(bilgi amaçlı, manşete girmez -- disiplinli bir finansal alıcının bugün ' +
+            'ödeyebileceği en yüksek fiyat, salt borç-azaltma getirisiyle)</span></div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
   function flagsCardHtml(flags) {
     if (!flags || flags.length === 0) return "";
     var items = flags.map(function (f) {
@@ -3990,11 +4128,224 @@
   }
 
   // ===================================================================
+  // Balance-sheet ("Bilanço") tab
+  // -------------------------------------------------------------------
+  // Reads payload.financials (the serialized annual concept series +
+  // pre-computed ratios from the fetch/normalize pipeline) and the
+  // display-only payload.earnings (quarterly EPS beat/miss history). All
+  // derived ratios come straight from the Python-computed `ratios` list --
+  // nothing financial is recomputed client-side, so the tab stays a pure
+  // formatter. Every cell is None-safe (renders "—", never "NaN").
+  // ===================================================================
+
+  //: Balance-sheet line items shown (canonical concept key -> Turkish label),
+  //: in display order. Keys must match _ANNUAL_CONCEPTS in web/app.py.
+  var BS_ITEMS = [
+    { key: "TotalAssets", label: "Toplam Varlıklar" },
+    { key: "CurrentAssets", label: "Dönen Varlıklar" },
+    { key: "Cash", label: "Nakit ve Benzerleri" },
+    { key: "TotalLiabilities", label: "Toplam Yükümlülükler" },
+    { key: "CurrentLiabilities", label: "Kısa Vadeli Yükümlülükler" },
+    { key: "LongTermDebt", label: "Uzun Vadeli Borç" },
+    { key: "StockholdersEquity", label: "Özkaynak" },
+  ];
+
+  //: Number of most-recent fiscal years shown as columns in the tab's tables.
+  var BS_MAX_YEARS = 6;
+
+  // Year label for a record/ratio row: prefer the fiscal year, fall back to
+  // the period-end year, then "—".
+  function fyLabel(fy, periodEnd) {
+    if (isNum(fy)) return String(Math.round(Number(fy)));
+    if (periodEnd) return escapeHtml(String(periodEnd).slice(0, 4));
+    return "—";
+  }
+
+  // ---- Balance-sheet raw-figures card -----------------------------------
+  function balanceSheetCardHtml(annual) {
+    // Collect the union of period-ends across the balance-sheet concepts,
+    // newest first, capped at BS_MAX_YEARS. period_end is "YYYY-MM-DD", so a
+    // lexical sort is chronological.
+    var periodMeta = {};
+    BS_ITEMS.forEach(function (item) {
+      (annual[item.key] || []).forEach(function (rec) {
+        var pe = rec && rec.period_end;
+        if (pe && !(pe in periodMeta)) periodMeta[pe] = rec.fy;
+      });
+    });
+    var periods = Object.keys(periodMeta).sort().reverse().slice(0, BS_MAX_YEARS);
+    if (!periods.length) return "";
+
+    // Per-concept lookup: period_end -> value.
+    var byConcept = {};
+    BS_ITEMS.forEach(function (item) {
+      var map = {};
+      (annual[item.key] || []).forEach(function (rec) {
+        if (rec && rec.period_end) map[rec.period_end] = rec.value;
+      });
+      byConcept[item.key] = map;
+    });
+
+    var headCells = periods.map(function (pe) {
+      return '<th>' + fyLabel(periodMeta[pe], pe) + '</th>';
+    }).join("");
+
+    var rows = BS_ITEMS.map(function (item) {
+      var cells = periods.map(function (pe) {
+        return '<td class="bs-num">' + fmtCompactMoney(byConcept[item.key][pe]) + '</td>';
+      }).join("");
+      return '<tr><td class="bs-label">' + escapeHtml(item.label) + '</td>' + cells + '</tr>';
+    }).join("");
+
+    return (
+      '<div class="card">' +
+        '<div class="card-title">Bilanço — Ana Kalemler</div>' +
+        '<table class="sensitivity-table bs-table">' +
+          '<thead><tr><th class="bs-label">Kalem</th>' + headCells + '</tr></thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+        '<div class="sens-axis-note">Kaynak: SEC EDGAR companyfacts (yıllık, 10-K). Değerler kısaltılmıştır (B = milyar, M = milyon).</div>' +
+      '</div>'
+    );
+  }
+
+  // ---- Key-ratio trend card (all values pre-computed by compute_ratios) --
+  // One <tr> per ratio; `fmt` formats a cell value, `colorFn` (optional)
+  // returns a highlight class based on threshold breaches.
+  function ratioRowHtml(label, cols, key, fmt, colorFn) {
+    var cells = cols.map(function (r) {
+      var v = r ? r[key] : null;
+      var cls = (colorFn && isNum(v)) ? colorFn(Number(v)) : "";
+      return '<td class="bs-num ' + cls + '">' + fmt(v) + '</td>';
+    }).join("");
+    return '<tr><td class="bs-label">' + escapeHtml(label) + '</td>' + cells + '</tr>';
+  }
+
+  function ratioTrendCardHtml(ratios) {
+    var cols = (ratios || []).slice(0, BS_MAX_YEARS);
+    if (!cols.length) return "";
+
+    var headCells = cols.map(function (r) {
+      return '<th>' + fyLabel(r && r.fy, r && r.period_end) + '</th>';
+    }).join("");
+
+    // Raw multiples (not fractions): 2 decimals with a "×" suffix.
+    function fmtX(v) { return isNum(v) ? Number(v).toFixed(2) + "×" : "—"; }
+    // current_ratio: <1 is a liquidity concern (red), >=1.5 comfortable (green).
+    function curRatioColor(v) { return v < 1 ? "bs-neg" : (v >= 1.5 ? "bs-pos" : ""); }
+    // debt_to_equity: >2 leveraged (red), <1 conservative (green).
+    function deColor(v) { return v > 2 ? "bs-neg" : (v < 1 ? "bs-pos" : ""); }
+    // Signed fractions (margins/growth/returns): positive green, negative red.
+    function signColor(v) { return v > 0 ? "bs-pos" : (v < 0 ? "bs-neg" : ""); }
+
+    var rows =
+      ratioRowHtml("Cari Oran", cols, "current_ratio", fmtX, curRatioColor) +
+      ratioRowHtml("Borç / Özkaynak", cols, "debt_to_equity", fmtX, deColor) +
+      ratioRowHtml("Net Marj", cols, "net_margin", fmtPct, signColor) +
+      ratioRowHtml("Brüt Marj", cols, "gross_margin", fmtPct, signColor) +
+      ratioRowHtml("ROE", cols, "roe", fmtPct, signColor) +
+      ratioRowHtml("Gelir Büyüme (YoY)", cols, "yoy_revenue_growth", fmtPct, signColor) +
+      ratioRowHtml("FCF Marjı", cols, "fcf_margin", fmtPct, signColor);
+
+    return (
+      '<div class="card">' +
+        '<div class="card-title">Önemli Oranlar</div>' +
+        '<table class="sensitivity-table bs-table">' +
+          '<thead><tr><th class="bs-label">Oran</th>' + headCells + '</tr></thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+        '<div class="sens-axis-note">Cari oran &lt; 1 ve borç/özkaynak &gt; 2 kırmızı ile işaretlenir. Oranlar yıllık finansallardan hesaplanır.</div>' +
+      '</div>'
+    );
+  }
+
+  // ---- Expectations & earnings-beat card (display-only cross-check) ------
+  // Combines the consensus analyst target (payload.analyst) with the
+  // quarterly EPS beat/miss history (payload.earnings). Returns "" when
+  // neither is available so the tab can still show the financials above it.
+  function beatBadgeHtml(surprisePct) {
+    if (!isNum(surprisePct)) return "";
+    return Number(surprisePct) >= 0
+      ? ' <span class="bs-badge bs-badge-pos">Beat</span>'
+      : ' <span class="bs-badge bs-badge-neg">Miss</span>';
+  }
+
+  function earningsBeatTableHtml(earnings) {
+    var quarters = (earnings && earnings.quarters) || [];
+    if (!quarters.length) return "";
+
+    var beats = 0, scored = 0;
+    var rows = quarters.map(function (q) {
+      q = q || {};
+      var sp = q.surprise_pct;
+      if (isNum(sp)) { scored += 1; if (Number(sp) >= 0) beats += 1; }
+      var spCls = isNum(sp) ? (Number(sp) >= 0 ? "beat-pos" : "beat-neg") : "";
+      var spText = isNum(sp) ? fmtSignedPct(sp) : "—";
+      return (
+        '<tr>' +
+          '<td class="bs-label">' + escapeHtml(safeText(q.period)) + '</td>' +
+          '<td class="bs-num">' + fmtMoney(q.eps_estimate) + '</td>' +
+          '<td class="bs-num">' + fmtMoney(q.eps_actual) + '</td>' +
+          '<td class="bs-num ' + spCls + '">' + spText + beatBadgeHtml(sp) + '</td>' +
+        '</tr>'
+      );
+    }).join("");
+
+    var summary = scored
+      ? '<div class="card-sub">Son ' + scored + ' çeyreğin ' + beats +
+        ' tanesinde beklenti aşıldı.</div>'
+      : "";
+    var source = (earnings && earnings.source) ? escapeHtml(String(earnings.source)) : "yfinance";
+
+    return (
+      summary +
+      '<table class="sensitivity-table bs-table">' +
+        '<thead><tr>' +
+          '<th class="bs-label">Çeyrek</th><th>Beklenti EPS</th>' +
+          '<th>Gerçekleşen EPS</th><th>Sürpriz</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table>' +
+      '<div class="sens-axis-note">Dış kaynak: ' + source +
+        ' — konsensüs EPS beklentisi ile açıklanan EPS karşılaştırması. Değerleme motoruna girmez.</div>'
+    );
+  }
+
+  function expectationsCardHtml(payload) {
+    var analystHtml = analystRowHtml(payload);
+    var beatHtml = earningsBeatTableHtml(payload && payload.earnings);
+    if (!analystHtml && !beatHtml) return "";
+    return (
+      '<div class="card">' +
+        '<div class="card-title">Beklentiler ve Beat</div>' +
+        analystHtml +
+        beatHtml +
+      '</div>'
+    );
+  }
+
+  // ---- Balance-sheet tab assembler --------------------------------------
+  function financialsTabHtml(payload) {
+    var fin = (payload && payload.financials) || {};
+    var annual = fin.annual || {};
+    var ratios = fin.ratios || [];
+
+    var bsHtml = balanceSheetCardHtml(annual);
+    var ratioHtml = ratioTrendCardHtml(ratios);
+    var expHtml = expectationsCardHtml(payload);
+
+    if (!bsHtml && !ratioHtml && !expHtml) {
+      return '<div class="card"><div class="empty-state">Bu hisse için bilanço verisi bulunamadı.</div></div>';
+    }
+    return bsHtml + ratioHtml + expHtml;
+  }
+
+  // ===================================================================
   // renderBody -- the single body-rendering function shared by report
   // mode (called once, directly on `data`) and search mode (called again
   // on every successful /api/analyze fetch, on a reshaped payload).
   // `payload` shape: {ticker, horizon, price, as_of, result, metrics,
-  // technical, red_flags, entity_name}.
+  // technical, red_flags, entity_name, financials, earnings}.
   // ===================================================================
   function renderBody(payload) {
     var result = payload.result || {};
@@ -4012,8 +4363,9 @@
     // render in that case, degrading to the simpler pre-valuation card set.
     var valuation = result.valuation || null;
 
-    var html =
-      headerCardHtml(payload) +
+    // The "Analiz" tab holds every existing analysis card; the header card
+    // stays above the tab bar so it's visible in both tabs.
+    var analizHtml =
       swingSetupCardHtml(payload, result, technical) +
       weightBarHtml(result._weights) +
       priceChartCardHtml(technical, result, payload.horizon, payload.analyst) +
@@ -4029,16 +4381,51 @@
       stopAddingHtml(result.stop_adding) +
       thesisMetricHtml(result.thesis_metric) +
       scenarioReturnsListHtml(result.scenario_returns) +
+      (valuation ? distressFlagsCardHtml(valuation) : "") +
+      (valuation ? lboFloorCardHtml(valuation) : "") +
       flagsCardHtml(payload.red_flags) +
       eventsCardHtml(result.events) +
       llmReportCardHtml(result) +
-      footerAnalysisHtml(result) +
+      footerAnalysisHtml(result);
+
+    var html =
+      headerCardHtml(payload) +
+      '<div class="view-tabs" id="view-tabs">' +
+        '<button type="button" class="view-tab active" data-view="analiz">Analiz</button>' +
+        '<button type="button" class="view-tab" data-view="bilanco">Bilanço</button>' +
+      '</div>' +
+      '<div id="view-analiz">' + analizHtml + '</div>' +
+      '<div id="view-bilanco" style="display:none;">' + financialsTabHtml(payload) + '</div>' +
       globalFooterHtml();
 
     bodyEl.innerHTML = html;
     wireFanChart(fv, result.scenario_returns);
     wirePriceRange(technical, result, payload.analyst);
     wireTechnical();
+    wireViewTabs();
+  }
+
+  // ===================================================================
+  // View-tab wiring: toggles the "Analiz" / "Bilanço" panes. The analysis
+  // pane (with its charts) starts visible so the fan/price SVGs, wired
+  // above, measure a laid-out element; the balance-sheet pane is inert
+  // markup so it needs no wiring of its own.
+  // ===================================================================
+  function wireViewTabs() {
+    var tabs = document.getElementById("view-tabs");
+    if (!tabs) return;
+    var analizPane = document.getElementById("view-analiz");
+    var bilancoPane = document.getElementById("view-bilanco");
+    tabs.addEventListener("click", function (e) {
+      var btn = e.target.closest ? e.target.closest(".view-tab") : null;
+      if (!btn) return;
+      var view = btn.getAttribute("data-view");
+      tabs.querySelectorAll(".view-tab").forEach(function (t) {
+        t.classList.toggle("active", t === btn);
+      });
+      if (analizPane) analizPane.style.display = (view === "analiz") ? "" : "none";
+      if (bilancoPane) bilancoPane.style.display = (view === "bilanco") ? "" : "none";
+    });
   }
 
   // ===================================================================
@@ -4220,6 +4607,15 @@
             red_flags: json.red_flags || [],
             entity_name: json.name || null,
             analyst: json.analyst || null,
+            // Feed the "Bilanço" tab: the annual/quarterly concept series +
+            // ratios live at the top level of the /api/analyze response, and
+            // the display-only earnings beat/miss history under `earnings`.
+            financials: {
+              annual: json.annual || {},
+              quarterly: json.quarterly || {},
+              ratios: json.ratios || [],
+            },
+            earnings: json.earnings || null,
           };
           updateAsofBanner(reportPayload.analysis_as_of);
           renderBody(reportPayload);

@@ -128,6 +128,81 @@ def test_depreciation_concept_extracted_as_annual_flow_series():
     assert annual[0]["fy"] == 2022
 
 
+def test_distress_screen_concepts_classified_and_extracted_correctly():
+    """WP8 concepts (Altman Z-score / Beneish M-Score inputs) round-trip
+    through normalize_facts with the correct flow/stock classification:
+    RetainedEarningsAccumulatedDeficit and PropertyPlantAndEquipmentGross
+    are point-in-time balance-sheet snapshots ("stock"), while
+    SellingGeneralAndAdministrativeExpense is a period activity ("flow"),
+    exactly like the pre-existing Depreciation/TotalAssets concepts they
+    sit alongside.
+    """
+    from sec_analyzer.normalize.concepts import FLOW_CONCEPTS, STOCK_CONCEPTS
+
+    assert "SellingGeneralAndAdministrativeExpense" in FLOW_CONCEPTS
+    assert "RetainedEarningsAccumulatedDeficit" in STOCK_CONCEPTS
+    assert "PropertyPlantAndEquipmentGross" in STOCK_CONCEPTS
+
+    usgaap = {
+        "RetainedEarningsAccumulatedDeficit": _usd_tag(
+            [{"end": "2022-12-31", "val": 400_000, "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2023-02-01"}]
+        ),
+        "PropertyPlantAndEquipmentGross": _usd_tag(
+            [{"end": "2022-12-31", "val": 900_000, "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2023-02-01"}]
+        ),
+        "SellingGeneralAndAdministrativeExpense": _usd_tag(
+            [
+                {
+                    "start": "2022-01-01",
+                    "end": "2022-12-31",
+                    "val": 120_000,
+                    "fy": 2022,
+                    "fp": "FY",
+                    "form": "10-K",
+                    "filed": "2023-02-01",
+                }
+            ]
+        ),
+    }
+    result = normalize_facts(_make_facts(usgaap=usgaap))
+
+    assert result["matched_tags"]["RetainedEarningsAccumulatedDeficit"] == ["RetainedEarningsAccumulatedDeficit"]
+    assert result["matched_tags"]["PropertyPlantAndEquipmentGross"] == ["PropertyPlantAndEquipmentGross"]
+    assert result["matched_tags"]["SellingGeneralAndAdministrativeExpense"] == [
+        "SellingGeneralAndAdministrativeExpense"
+    ]
+    assert result["annual"]["RetainedEarningsAccumulatedDeficit"][0]["value"] == 400_000
+    assert result["annual"]["PropertyPlantAndEquipmentGross"][0]["value"] == 900_000
+    assert result["annual"]["SellingGeneralAndAdministrativeExpense"][0]["value"] == 120_000
+
+
+def test_sga_alternate_tag_fallback():
+    """The plural `SellingGeneralAndAdministrativeExpenses` tag (used by some
+    filers instead of the singular-form preferred tag) is a valid fallback.
+    """
+    usgaap = {
+        "SellingGeneralAndAdministrativeExpenses": _usd_tag(
+            [
+                {
+                    "start": "2022-01-01",
+                    "end": "2022-12-31",
+                    "val": 75_000,
+                    "fy": 2022,
+                    "fp": "FY",
+                    "form": "10-K",
+                    "filed": "2023-02-01",
+                }
+            ]
+        ),
+    }
+    result = normalize_facts(_make_facts(usgaap=usgaap))
+
+    assert result["matched_tags"]["SellingGeneralAndAdministrativeExpense"] == [
+        "SellingGeneralAndAdministrativeExpenses"
+    ]
+    assert result["annual"]["SellingGeneralAndAdministrativeExpense"][0]["value"] == 75_000
+
+
 def test_depreciation_concept_fallback_tag_priority():
     """`DepreciationDepletionAndAmortization` (the broadest combined tag) is
     tried first; when absent, the normalizer falls back to

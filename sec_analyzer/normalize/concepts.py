@@ -129,6 +129,16 @@ CONCEPTS: Dict[str, List[str]] = {
         "ImpairmentOfRealEstate",
         "RealEstateImpairment",
     ],
+    "RetainedEarningsAccumulatedDeficit": [
+        "RetainedEarningsAccumulatedDeficit",
+    ],
+    "PropertyPlantAndEquipmentGross": [
+        "PropertyPlantAndEquipmentGross",
+    ],
+    "SellingGeneralAndAdministrativeExpense": [
+        "SellingGeneralAndAdministrativeExpense",
+        "SellingGeneralAndAdministrativeExpenses",
+    ],
 }
 
 #: Concepts that describe an activity over a period (both ``start`` and
@@ -139,6 +149,7 @@ FLOW_CONCEPTS = {
     "GrossProfit", "OperatingIncome", "CapEx", "DividendsPaid",
     "EPS", "SharesOutstanding", "Buyback", "RnD", "SBC", "Depreciation",
     "GainOnSaleRealEstate", "RealEstateImpairment",
+    "SellingGeneralAndAdministrativeExpense",
 }
 
 #: Concepts that are a point-in-time snapshot (only ``end`` is meaningful).

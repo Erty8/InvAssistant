@@ -117,6 +117,8 @@ def render_report_html(
     entity_name: Optional[str] = None,
     analyst: Optional[dict] = None,
     analysis_as_of: Optional[str] = None,
+    financials: Optional[dict] = None,
+    earnings: Optional[dict] = None,
 ) -> str:
     """Build the standalone verdict-card report HTML as a string.
 
@@ -162,6 +164,15 @@ def render_report_html(
             run. Distinct from ``as_of`` (which is the latest *price* bar
             date); surfaced as a report banner so a backtest run is never
             mistaken for a live one.
+        financials: The serialized financials payload (annual/quarterly
+            concept series + ratios) produced by
+            :func:`sec_analyzer.report.financials.serialize_financials`, or
+            ``None``. Feeds the client-side "Bilanço" (balance-sheet) tab;
+            when absent that tab simply renders an empty state.
+        earnings: The dict returned by
+            :func:`sec_analyzer.fetch.earnings.get_earnings_history`, or
+            ``None``. Display-only quarterly EPS beat/miss history shown in
+            the balance-sheet tab -- never feeds the valuation engine.
 
     Returns:
         The complete, self-contained report HTML as a string.
@@ -187,6 +198,8 @@ def render_report_html(
         "technical": technical or {},
         "red_flags": flags or [],
         "entity_name": entity_name,
+        "financials": financials or {},
+        "earnings": earnings,
     }
 
     return _inject_payload(payload)
@@ -293,6 +306,8 @@ def generate_report(
     entity_name: Optional[str] = None,
     analyst: Optional[dict] = None,
     analysis_as_of: Optional[str] = None,
+    financials: Optional[dict] = None,
+    earnings: Optional[dict] = None,
 ) -> str:
     """Render and save the HTML verdict-card report for one ticker/horizon.
 
@@ -332,6 +347,11 @@ def generate_report(
             mode, or ``None`` -- see :func:`render_report_html`. When set,
             an ``_asof-<date>`` segment is added to the saved filename so a
             backtest report never overwrites the same-day live report.
+        financials: The serialized financials payload feeding the report's
+            "Bilanço" (balance-sheet) tab, or ``None`` -- see
+            :func:`render_report_html`.
+        earnings: Display-only quarterly EPS beat/miss history, or ``None``
+            -- see :func:`render_report_html`.
 
     Returns:
         The path the report was saved to.
@@ -343,6 +363,7 @@ def generate_report(
         ticker, horizon, result,
         metrics=metrics, technical=technical, flags=flags, price=price, as_of=as_of,
         entity_name=entity_name, analyst=analyst, analysis_as_of=analysis_as_of,
+        financials=financials, earnings=earnings,
     )
 
     target_dir = out_dir or Config.REPORTS_DIR

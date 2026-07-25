@@ -384,6 +384,75 @@ def test_generate_report_without_valuation_omits_it_from_the_payload(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Balance-sheet ("Bilanço") tab: generate_report (the CLI's --html path)
+# forwards `financials`/`earnings` into the embedded payload the template's
+# financialsTabHtml() renders. Same substring-on-HTML style as above.
+# ---------------------------------------------------------------------------
+
+
+def test_generate_report_embeds_financials_and_earnings_payload(tmp_path):
+    financials = {
+        "annual": {
+            "TotalAssets": [
+                {"fy": 2024, "period_end": "2024-09-30", "value": 364980000000.0}
+            ],
+            "StockholdersEquity": [
+                {"fy": 2024, "period_end": "2024-09-30", "value": 56950000000.0}
+            ],
+        },
+        "quarterly": {},
+        "ratios": [
+            {"fy": 2024, "period_end": "2024-09-30", "current_ratio": 0.87,
+             "debt_to_equity": 5.41, "net_margin": 0.24},
+        ],
+    }
+    earnings = {
+        "source": "yfinance",
+        "quarters": [
+            {"period": "2024-09-30", "eps_estimate": 1.60, "eps_actual": 1.64,
+             "surprise_pct": 2.5},
+        ],
+    }
+    path = generate_report(
+        "AAPL", "1y", _success_result(),
+        metrics=_metrics(), technical=_technical(), flags=_flags(),
+        price=128.40, as_of="2026-07-11", out_dir=str(tmp_path),
+        financials=financials, earnings=earnings,
+    )
+    content = open(path, "r", encoding="utf-8").read()
+
+    # The payload carries both new blocks through verbatim...
+    assert '"financials"' in content
+    assert '"earnings"' in content
+    assert '"surprise_pct"' in content
+    assert "364980000000" in content
+    # ...and the template's balance-sheet tab builders/markers are present so
+    # the data can actually render.
+    assert "financialsTabHtml" in content
+    assert "view-tabs" in content
+    assert "Bilanço" in content
+
+
+def test_generate_report_without_financials_defaults_to_empty_payload(tmp_path):
+    """A CLI report generated without ``financials`` (the pre-Bilanço-tab
+    call shape) still renders: the payload carries an empty financials object
+    and a null earnings, which the tab degrades to an empty state."""
+    path = generate_report(
+        "AAPL", "1y", _success_result(),
+        metrics=_metrics(), technical=_technical(), flags=_flags(),
+        price=128.40, as_of="2026-07-11", out_dir=str(tmp_path),
+    )
+    content = open(path, "r", encoding="utf-8").read()
+
+    assert "<!DOCTYPE html>" in content and "</html>" in content
+    # financials defaults to {} and earnings to null in the payload.
+    assert '"financials":{}' in content.replace(" ", "")
+    assert '"earnings":null' in content.replace(" ", "")
+    # The tab scaffolding is still shipped (it just shows an empty state).
+    assert "financialsTabHtml" in content
+
+
+# ---------------------------------------------------------------------------
 # Mechanical planning fields (sec_analyzer/interpret/planning.py, injected by
 # analyzer._postprocess_phase2_result for every provider): scenario_returns,
 # entry_plan, stop_adding, thesis_metric. These tests assert the embedded

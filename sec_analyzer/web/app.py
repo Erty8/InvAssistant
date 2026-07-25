@@ -33,6 +33,7 @@ from flask import Flask, jsonify, request
 from sec_analyzer.config import Config, ConfigError
 from sec_analyzer.fetch.analyst import get_analyst_targets
 from sec_analyzer.fetch.companyfacts import get_company_facts, get_submissions
+from sec_analyzer.fetch.earnings import get_earnings_history
 from sec_analyzer.fetch.filings import estimate_next_earnings
 from sec_analyzer.fetch.fred import get_risk_free_asof
 from sec_analyzer.fetch.prices import PriceDataError, get_price_history, latest_price, slice_asof
@@ -44,6 +45,7 @@ from sec_analyzer.normalize.metrics import compute_metrics
 from sec_analyzer.normalize.normalizer import normalize_facts
 from sec_analyzer.normalize.ratios import compute_ratios
 from sec_analyzer.normalize.red_flags import detect_red_flags
+from sec_analyzer.report.financials import serialize_financials
 from sec_analyzer.report.generator import (
     render_history_page,
     render_report_html,
@@ -70,36 +72,6 @@ _HORIZONS = [
 
 app = Flask(__name__)
 
-#: Canonical annual concept keys, in the order the front end should display
-#: them. Kept here (rather than only in the template) so the API and UI stay
-#: in sync with what ``normalize_facts`` actually produces.
-_ANNUAL_CONCEPTS = (
-    "Revenue",
-    "GrossProfit",
-    "OperatingIncome",
-    "NetIncome",
-    "TotalAssets",
-    "TotalLiabilities",
-    "StockholdersEquity",
-    "OperatingCashFlow",
-    "CapEx",
-    "Cash",
-    "CurrentAssets",
-    "CurrentLiabilities",
-    "LongTermDebt",
-    "DividendsPaid",
-    "EPS",
-    "SharesOutstanding",
-)
-
-#: Quarterly concepts surfaced to the front end (a narrower set than annual --
-#: quarterly balance-sheet figures are less commonly the point of interest
-#: here, and keeping the payload small matters for a page rendered client-side).
-_QUARTERLY_CONCEPTS = ("Revenue", "NetIncome")
-
-#: Number of most-recent quarterly periods to include per concept.
-_QUARTERLY_LIMIT = 8
-
 #: Selectable analysis providers shown in the UI, as (value, label) pairs.
 _PROVIDERS = [
     ("script", "Script (no AI · deterministic)"),
@@ -108,81 +80,12 @@ _PROVIDERS = [
 ]
 
 
-def _serialize_financials(normalized: dict, ratios: list) -> dict:
-    """Convert a normalized facts dict + ratios list into a JSON-friendly payload.
-
-    This trims each record down to just the fields the front end renders
-    (dropping ``tag``, ``form``, ``filed``, ``reported_fy``, ``start``, etc.),
-    so the API response stays small and stable regardless of internal
-    normalization details.
-
-    Args:
-        normalized: The dict returned by
-            :func:`sec_analyzer.normalize.normalizer.normalize_facts`.
-        ratios: The list returned by
-            :func:`sec_analyzer.normalize.ratios.compute_ratios`.
-
-    Returns:
-        A dict of the form::
-
-            {
-              "cik": ..., "entity_name": ..., "currency": "USD",
-              "annual": {"<concept>": [{"fy", "period_end", "value"}, ...]},
-              "quarterly": {"Revenue": [...], "NetIncome": [...]},
-              "ratios": [...],
-              "missing": [...],
-            }
-
-        Every concept key in ``annual``/``quarterly`` is always present, with
-        an empty list when there is no data, so the front end never has to
-        guard against a missing key.
-    """
-    annual_bucket = normalized.get("annual") or {}
-    quarterly_bucket = normalized.get("quarterly") or {}
-
-    annual_out = {}
-    for concept in _ANNUAL_CONCEPTS:
-        records = annual_bucket.get(concept) or []
-        # Records are already sorted by period_end descending by
-        # normalize_facts; re-sort defensively so the API contract doesn't
-        # silently depend on that upstream ordering.
-        sorted_records = sorted(
-            records, key=lambda r: r.get("period_end") or "", reverse=True
-        )
-        annual_out[concept] = [
-            {
-                "fy": record.get("fy"),
-                "period_end": record.get("period_end"),
-                "value": record.get("value"),
-            }
-            for record in sorted_records
-        ]
-
-    quarterly_out = {}
-    for concept in _QUARTERLY_CONCEPTS:
-        records = quarterly_bucket.get(concept) or []
-        sorted_records = sorted(
-            records, key=lambda r: r.get("period_end") or "", reverse=True
-        )
-        quarterly_out[concept] = [
-            {
-                "fy": record.get("fy"),
-                "fp": record.get("fp"),
-                "period_end": record.get("period_end"),
-                "value": record.get("value"),
-            }
-            for record in sorted_records[:_QUARTERLY_LIMIT]
-        ]
-
-    return {
-        "cik": normalized.get("cik"),
-        "entity_name": normalized.get("entity_name"),
-        "currency": normalized.get("currency", "USD"),
-        "annual": annual_out,
-        "quarterly": quarterly_out,
-        "ratios": ratios or [],
-        "missing": normalized.get("missing") or [],
-    }
+#: The financials-serialization contract (payload shape + concept ordering)
+#: now lives in :mod:`sec_analyzer.report.financials` so the CLI's
+#: ``analyze --html`` report and this web UI share one source of truth. Kept
+#: as a module-level alias here so the existing call sites (and the tests that
+#: patch/inspect them) read unchanged.
+_serialize_financials = serialize_financials
 
 
 def _run_pipeline(ticker: str, years: int, no_cache: bool, as_of=None) -> Tuple[str, str, dict, list]:
@@ -342,6 +245,25 @@ def _fetch_analyst_targets(ticker: str, no_cache: bool) -> Optional[dict]:
         return get_analyst_targets(ticker, no_cache=no_cache)
     except Exception:  # noqa: BLE001 - a display-only cross-check must never be fatal
         logger.warning("Could not fetch analyst targets for %s", ticker, exc_info=True)
+        return None
+
+
+def _fetch_earnings_history(ticker: str, no_cache: bool) -> Optional[dict]:
+    """Best-effort fetch of recent quarterly EPS beat/miss history; never raises.
+
+    Mirrors :func:`_fetch_analyst_targets`. Display-only cross-check (see
+    ``sec_analyzer.fetch.earnings``) -- never feeds the valuation engine, and a
+    failure here must never fail the request.
+
+    Returns:
+        The dict returned by
+        :func:`sec_analyzer.fetch.earnings.get_earnings_history`, or ``None``
+        if unavailable or the fetch fails for any reason.
+    """
+    try:
+        return get_earnings_history(ticker, no_cache=no_cache)
+    except Exception:  # noqa: BLE001 - a display-only cross-check must never be fatal
+        logger.warning("Could not fetch earnings history for %s", ticker, exc_info=True)
         return None
 
 
@@ -633,8 +555,11 @@ def api_analyze():
         ), 500
 
     # Analyst consensus (yfinance) is undated and cannot be point-in-time, so
-    # it is suppressed in as-of mode (mirrors the CLI's as-of contract).
+    # it is suppressed in as-of mode (mirrors the CLI's as-of contract). The
+    # earnings-surprise (beat/miss) history is likewise undated and display-only,
+    # so it is suppressed in as-of mode for the same reason.
     analyst = None if as_of is not None else _fetch_analyst_targets(ticker, no_cache)
+    earnings = None if as_of is not None else _fetch_earnings_history(ticker, no_cache)
 
     logger.info(
         "Running %s analysis for %s (horizon=%s%s)",
@@ -682,6 +607,7 @@ def api_analyze():
         "red_flags": flags,
         "catalyst": catalyst,
         "analyst": analyst,
+        "earnings": earnings,
         "as_of": as_of.isoformat() if as_of is not None else None,
     })
 
@@ -807,8 +733,10 @@ def report():
             "An unexpected server error occurred while generating the report."
         ), 500
 
-    # Analyst consensus is undated; suppress it in as-of mode (as-of contract).
+    # Analyst consensus and earnings-surprise history are both undated; suppress
+    # them in as-of mode (as-of contract).
     analyst = None if as_of is not None else _fetch_analyst_targets(ticker, no_cache)
+    earnings = None if as_of is not None else _fetch_earnings_history(ticker, no_cache)
 
     resolved_provider = provider or Config.ANALYZER_PROVIDER
     logger.info("Running %s analysis for %s report (horizon=%s)", resolved_provider, ticker, horizon)
@@ -847,6 +775,8 @@ def report():
         metrics=metrics, technical=technical, flags=flags, price=price, as_of=price_as_of,
         entity_name=name, analyst=analyst,
         analysis_as_of=as_of.isoformat() if as_of is not None else None,
+        financials=_serialize_financials(normalized, ratios),
+        earnings=earnings,
     )
     return html
 

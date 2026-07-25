@@ -87,7 +87,7 @@ def _method_slug(valuation: dict) -> str:
 
     Returns:
         One of ``"hyper"``, ``"cyclical-fcfe"``, ``"epv"``, ``"mature-rev"``,
-        ``"midgrowth-rev"``, ``"dcf"``, ``"ffo"``, or ``"pb-roe"``.
+        ``"midgrowth-rev"``, ``"dcf"``, ``"ffo"``, ``"rim"``, or ``"pb-roe"``.
     """
     valuation = valuation or {}
     detail = valuation.get("hyper_growth_detail") or {}
@@ -107,6 +107,9 @@ def _method_slug(valuation: dict) -> str:
     ffo = valuation.get("ffo")
     if isinstance(ffo, dict) and "scenarios" in ffo:
         return "ffo"
+    rim = valuation.get("rim")
+    if isinstance(rim, dict) and "scenarios" in rim:
+        return "rim"
     return "pb-roe"
 
 

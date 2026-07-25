@@ -340,7 +340,10 @@ no markdown code fences. The JSON object must match exactly this schema:
   "horizon_note": <string, one sentence on what the current horizon
     emphasizes for this filer, and, if valuation.sensitivity.high_uncertainty
     is true, an explicit note about that>,
-  "key_risks": [<string>, ...],
+  "key_risks": [<string>, ...  -- if valuation.altman_z is present and its
+    "zone" is "grey" or "distress", include one entry naming the Z-score and
+    zone (an ADVISORY bankruptcy-risk screen; it does not change the
+    fair-value figures, so do not treat it as a valuation input)>],
   "red_flags_comment": <string -- "yok" if no red flags were supplied,
     otherwise a short synthesis of them>,
   "catalyst": <string -- the upcoming catalyst label if one was supplied,

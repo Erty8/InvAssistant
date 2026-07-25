@@ -24,7 +24,8 @@ from sec_analyzer.config import Config
 from sec_analyzer.normalize.metrics import resolve_fundamental_fy
 from sec_analyzer.normalize.normalizer import to_annual_series
 from sec_analyzer.valuation import (
-    damodaran, dcf, multiples, reverse_dcf, revenue_dcf, sanity, sector, sensitivity, triangulate,
+    damodaran, dcf, distress, lbo, multiples, precedent_transactions, reverse_dcf, revenue_dcf,
+    sanity, sector, sensitivity, triangulate,
 )
 from sec_analyzer.valuation.dcf import dcf_per_share
 
@@ -354,6 +355,7 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
             "high_growth_flag": False,
         },
         "pb_roe": None,
+        "rim": None,
         "ffo": None,
         "earnings_power": None,
         "earnings_power_headline": False,
@@ -379,6 +381,7 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
             "sector": {
                 "available": False, "industry": None,
                 "pe_median": None, "ps_median": None, "pfcf_median": None,
+                "ev_ebitda_median": None, "precedent_transactions": None,
                 "comparison": {"label": None, "current": None, "median": None, "ratio": None, "bucket": None},
             },
             "growth_adjusted": _empty_growth_adjusted("peg", "PEG", "P/E", None),
@@ -398,6 +401,10 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
         "midgrowth_revenue_detail": None,
         "cyclical_fcfe_headline": False,
         "cyclical_fcfe_detail": None,
+        "altman_z": None,
+        "beneish_m": None,
+        "merton_dtd": None,
+        "lbo_floor_detail": None,
         "assumptions": assumptions or {},
         "notes": ["Değerleme motoru beklenmeyen bir hatayla karşılaştı; sonuçlar eksik olabilir."],
     }
@@ -929,6 +936,469 @@ def _pb_roe_scenario_band(
         lo, hi = _band(per_share)
         return lo, hi, True
     return round(min(cells), 2), round(max(cells), 2), False
+
+
+def _rim_scenario_band(
+    bve0: float,
+    ni0: float,
+    roe: float,
+    growth_5y: float,
+    terminal_growth: float,
+    discount_rate: float,
+    shares: float,
+    per_share: float,
+) -> "tuple[float, float, bool]":
+    """Derive one RIM scenario's band from ``discount_rate +/-
+    _DISCOUNT_RATE_STEP`` (Sec.8f), mirroring
+    :func:`_cyclical_fcfe_scenario_band`/:func:`_pb_roe_scenario_band`:
+    recompute :func:`dcf.rim_per_share` at each of the 3 nearby discount
+    rates (``growth_5y``/``terminal_growth`` held fixed at this scenario's
+    own values, ``terminal_roe=dr`` passed through for each nearby rate so
+    the terminal phase fades to that same nearby rate), and take the
+    min/max. Falls back to the flat +/-10% band (:func:`_band`) when fewer
+    than :data:`_MIN_GRID_CELLS_FOR_BAND` discount-rate points are usable (a
+    rate that doesn't clear ``r > terminal_growth``, or a failed call, is
+    excluded, not clamped).
+
+    Returns:
+        A ``(lo, hi, used_fallback)`` tuple.
+    """
+    cells: List[float] = []
+    for dr in (
+        discount_rate - sensitivity._DISCOUNT_RATE_STEP, discount_rate, discount_rate + sensitivity._DISCOUNT_RATE_STEP,
+    ):
+        if dr <= terminal_growth:
+            continue
+        try:
+            result = dcf.rim_per_share(
+                bve0, ni0, roe, growth_5y, terminal_growth, dr, shares, terminal_roe=dr
+            )
+        except ValueError:
+            continue
+        cells.append(round(result["per_share"], 2))
+
+    if len(cells) < _MIN_GRID_CELLS_FOR_BAND:
+        lo, hi = _band(per_share)
+        return lo, hi, True
+    return round(min(cells), 2), round(max(cells), 2), False
+
+
+def _build_rim(
+    assumptions: dict, normalized: dict, metrics: dict, ratios: list
+) -> "tuple[Optional[dict], List[str]]":
+    """Residual income model (RIM) anchor for the financial sector (SPEC.md
+    Sec.8f) -- a growth-fading, multi-period alternative to
+    :func:`_build_pb_roe`'s single-period justified-P/B heuristic
+    (``(ROE - g) / (r - g)`` applied as one static multiple to today's book
+    value forever). RIM instead compounds a 10-year residual-income path
+    (:func:`dcf.rim_per_share`, sharing the ``g_eff = min(g, roe)``
+    reinvestment cap and ``terminal_roe``-fade convention already used by
+    :func:`_build_cyclical_fcfe`), so growth and discount-rate assumptions
+    actually FADE over the projection instead of being baked into one
+    perpetual multiple.
+
+    This is the primary anchor for ``sector_type == "financial"``; the
+    caller (``_run_valuation``) falls back to :func:`_build_pb_roe` when
+    this returns ``None`` (e.g. a filer with too little equity/ROE/net-income
+    history), exactly mirroring the existing ``reit``-FFO-unavailable
+    fallback to P/B x ROE. ``reit`` is unaffected by this function -- it
+    keeps using FFO/Gordon-growth (and P/B x ROE as ITS fallback) since GAAP
+    real-estate depreciation already makes book value/net income unreliable
+    inputs for a REIT's own residual-income compounding.
+
+    Selects its fiscal year the same way :func:`_build_pb_roe` does: walks
+    the equity series from the newest fiscal year down and picks the first
+    one that ALSO has both a net-income figure (``normalized``) and a ROE
+    figure (``ratios``), independent of ``metrics["latest_fy"]`` (see
+    :func:`_build_pb_roe`'s docstring for the JPM-style edge case this
+    guards against). The share count still comes from ``metrics["shares"]``
+    (today's point-in-time count).
+
+    Args:
+        assumptions: The phase-1 bear/base/bull assumption dict; each
+            scenario's own ``growth_5y``/``terminal_growth``/
+            ``discount_rate`` drive its RIM projection (``discount_rate``
+            doubles as ``terminal_roe``, same convention as
+            :func:`_build_cyclical_fcfe`).
+        normalized: The dict returned by ``normalize_facts`` (reads
+            ``StockholdersEquity``/``NetIncome`` annual series).
+        metrics: Used for ``shares`` and to resolve the fiscal year via
+            ``resolve_fundamental_fy`` (for the "which FY was used" note
+            only -- FY SELECTION itself walks ``normalized``/``ratios``
+            independently, see above).
+        ratios: Supplies the per-fiscal-year ``roe`` figure.
+
+    Returns:
+        A ``(result, notes)`` tuple. ``result`` is ``None`` if the anchor
+        can't be computed at all (missing shares/equity/net income/ROE, or
+        no scenario is computable), else a dict with ``scenarios`` (bear/
+        base/bull ``{"per_share", "lo", "hi"}``), ``per_share`` (the base
+        scenario's point estimate), ``bve0``, ``book_value_per_share``,
+        ``normalized_net_income``, and ``roe``. Never raises.
+    """
+    notes: List[str] = []
+    shares = metrics.get("shares")
+    if not shares or shares <= 0:
+        notes.append("RIM çapası hesaplanamadı: geçerli hisse sayısı yok.")
+        return None, notes
+
+    equity_series = to_annual_series(normalized, "StockholdersEquity")
+    ni_series = to_annual_series(normalized, "NetIncome")
+    roe_by_fy = {row.get("fy"): row.get("roe") for row in (ratios or []) if row.get("fy") is not None}
+
+    selected_fy, bve0, ni0, roe = None, None, None, None
+    for fy in sorted(equity_series, reverse=True):
+        eq = equity_series.get(fy)
+        ni = ni_series.get(fy)
+        candidate_roe = roe_by_fy.get(fy)
+        if eq is not None and eq > 0 and ni is not None and candidate_roe is not None:
+            selected_fy, bve0, ni0, roe = fy, eq, ni, candidate_roe
+            break
+
+    if selected_fy is None:
+        notes.append("RIM çapası hesaplanamadı: özkaynak, net kâr veya ROE verisi eksik.")
+        return None, notes
+
+    latest_fy = resolve_fundamental_fy(metrics)
+    if latest_fy is not None and selected_fy != latest_fy:
+        notes.append(
+            f"RIM çapası için {selected_fy} mali yılının özkaynak/net kâr/ROE verisi kullanıldı "
+            "(en son mali yılın temel verileriyle hisse sayısı hizalı değildi)."
+        )
+
+    if roe <= 0:
+        notes.append(f"RIM çapası hesaplanamadı: ROE (%{roe * 100:.1f}) pozitif değil.")
+        return None, notes
+
+    book_value_per_share = bve0 / shares
+
+    scenarios: Dict[str, dict] = {}
+    for key in _SCENARIO_KEYS:
+        scenario_assumptions = assumptions.get(key) or {}
+        growth_5y = scenario_assumptions.get("growth_5y")
+        terminal_growth = scenario_assumptions.get("terminal_growth")
+        discount_rate = scenario_assumptions.get("discount_rate")
+
+        if (
+            not all(_is_number(v) for v in (growth_5y, terminal_growth, discount_rate))
+            or discount_rate <= terminal_growth
+        ):
+            scenarios[key] = {"per_share": None, "lo": None, "hi": None}
+            notes.append(f"{key.capitalize()} senaryosu için RIM varsayımları eksik veya geçersiz.")
+            continue
+
+        try:
+            result = dcf.rim_per_share(
+                bve0, ni0, roe, growth_5y, terminal_growth, discount_rate, shares,
+                terminal_roe=discount_rate,
+            )
+        except ValueError as exc:
+            scenarios[key] = {"per_share": None, "lo": None, "hi": None}
+            notes.append(f"{key.capitalize()} senaryosu için RIM hesaplanamadı: {exc}")
+            continue
+
+        per_share = round(result["per_share"], 2)
+        lo, hi, used_fallback = _rim_scenario_band(
+            bve0, ni0, roe, growth_5y, terminal_growth, discount_rate, shares, per_share
+        )
+        if used_fallback:
+            notes.append(
+                f"{key.capitalize()} senaryosu için RIM duyarlılık bandı hesaplanamadı; "
+                "nokta tahminin +/-%10'u fallback olarak kullanıldı."
+            )
+        scenarios[key] = {"per_share": per_share, "lo": lo, "hi": hi}
+
+    if not any(_is_number(cell.get("per_share")) for cell in scenarios.values()):
+        return None, notes
+
+    return (
+        {
+            "scenarios": scenarios,
+            "per_share": scenarios["base"]["per_share"],
+            "bve0": bve0,
+            "book_value_per_share": book_value_per_share,
+            "normalized_net_income": ni0,
+            "roe": round(roe, 4),
+        },
+        notes,
+    )
+
+
+_ALTMAN_ZONE_NOTE = {
+    "safe": "Altman Z-skoru güvenli bölgede (iflas riski düşük).",
+    "grey": "Altman Z-skoru gri bölgede (belirsiz iflas riski -- izlenmeli).",
+    "distress": "Altman Z-skoru sıkıntı bölgesinde (yüksek iflas riski sinyali).",
+}
+
+
+def _build_altman_z(normalized: dict, metrics: dict) -> "tuple[Optional[dict], List[str]]":
+    """Altman Z-score distress screen (SPEC.md Sec.8g) -- an ADVISORY-ONLY
+    bankruptcy-risk overlay. Never headlines ``fair_value_range`` and never
+    participates in ``triangulate.triangulate``'s confidence vote; it exists
+    purely to flag distress risk alongside the valuation.
+
+    Not called for ``financial``/``reit`` filers (the caller,
+    ``_run_valuation``, gates this via :data:`_SECTORS_WITHOUT_FCF_DCF`) --
+    the classic Altman model was calibrated on industrial/manufacturing
+    balance sheets, and both structural leverage (banks) and GAAP real-estate
+    depreciation (REITs) make its ratios not meaningful for those sectors,
+    exactly the same rationale the FCF-DCF disablement already documents.
+
+    Args:
+        normalized: The dict returned by ``normalize_facts`` (reads
+            ``CurrentAssets``/``CurrentLiabilities``/``TotalAssets``/
+            ``TotalLiabilities``/``RetainedEarningsAccumulatedDeficit``/
+            ``OperatingIncome`` (EBIT proxy)/``Revenue`` annual series).
+        metrics: Used to resolve the fiscal year (``resolve_fundamental_fy``)
+            and for ``metrics["market_cap"]``.
+
+    Returns:
+        A ``(result, notes)`` tuple. ``result`` is ``None`` when the fiscal
+        year can't be resolved, working-capital inputs are missing, or
+        :func:`distress.altman_z_score` itself returns ``None`` (missing
+        input or non-positive total assets/liabilities); else the dict
+        :func:`distress.altman_z_score` returns (``z_score``, ``zone``,
+        ``components``). Never raises.
+    """
+    notes: List[str] = []
+    fy = resolve_fundamental_fy(metrics)
+    if fy is None:
+        return None, notes
+
+    current_assets = to_annual_series(normalized, "CurrentAssets").get(fy)
+    current_liabilities = to_annual_series(normalized, "CurrentLiabilities").get(fy)
+    if current_assets is None or current_liabilities is None:
+        notes.append("Altman Z-skoru hesaplanamadı: dönen varlık/kısa vadeli yükümlülük verisi eksik.")
+        return None, notes
+    working_capital = current_assets - current_liabilities
+
+    total_assets = to_annual_series(normalized, "TotalAssets").get(fy)
+    total_liabilities = to_annual_series(normalized, "TotalLiabilities").get(fy)
+    retained_earnings = to_annual_series(normalized, "RetainedEarningsAccumulatedDeficit").get(fy)
+    ebit = to_annual_series(normalized, "OperatingIncome").get(fy)
+    revenue = to_annual_series(normalized, "Revenue").get(fy)
+    market_cap = metrics.get("market_cap")
+
+    result = distress.altman_z_score(
+        working_capital, total_assets, retained_earnings, ebit, market_cap, total_liabilities, revenue
+    )
+    if result is None:
+        notes.append(
+            "Altman Z-skoru hesaplanamadı: gerekli veriler eksik veya toplam varlık/yükümlülük pozitif değil."
+        )
+        return None, notes
+
+    notes.append(f"{_ALTMAN_ZONE_NOTE[result['zone']]} (Z={result['z_score']})")
+    return result, notes
+
+
+#: SGI (sales growth index) above which a Beneish manipulation flag is
+#: caveated as a possible high-growth artifact (SPEC.md Sec.8j / I2): SGI is
+#: revenue_t/revenue_t-1, so 1.40 == ~40% YoY sales growth. Beneish's SGI and
+#: DSRI both rise mechanically with fast growth and carry positive
+#: coefficients, so genuine hyper-growers (e.g. NVDA) can trip the -1.78
+#: threshold without manipulating earnings.
+_BENEISH_HIGH_GROWTH_SGI = 1.40
+
+#: Concepts pulled per fiscal year for the Beneish M-score (SPEC.md Sec.8j).
+#: ``sga``/``long_term_debt``/``current_liabilities``/``net_income``/
+#: ``operating_cash_flow`` gate the full 8-variable vs. 5-variable model
+#: choice inside ``distress.beneish_m_score`` itself.
+_BENEISH_CONCEPT_MAP = {
+    "receivables": "Receivables",
+    "revenue": "Revenue",
+    "gross_profit": "GrossProfit",
+    "current_assets": "CurrentAssets",
+    "ppe_gross": "PropertyPlantAndEquipmentGross",
+    "total_assets": "TotalAssets",
+    "depreciation": "Depreciation",
+    "sga": "SellingGeneralAndAdministrativeExpense",
+    "long_term_debt": "LongTermDebt",
+    "current_liabilities": "CurrentLiabilities",
+    "net_income": "NetIncome",
+    "operating_cash_flow": "OperatingCashFlow",
+}
+
+
+def _build_beneish_m(normalized: dict, metrics: dict) -> "tuple[Optional[dict], List[str]]":
+    """Beneish M-score earnings-manipulation screen (SPEC.md Sec.8j) -- an
+    ADVISORY-ONLY overlay, same non-chain-touching contract as
+    :func:`_build_altman_z`: never headlines `fair_value_range`, never
+    participates in `triangulate.triangulate`'s confidence vote.
+
+    Pulls two consecutive fiscal years (the resolved fundamental FY and the
+    year immediately before it) of raw figures and delegates the actual
+    8-variable-vs-5-variable model choice and math to
+    :func:`distress.beneish_m_score`.
+
+    Args:
+        normalized: The dict returned by ``normalize_facts`` (reads every
+            concept in :data:`_BENEISH_CONCEPT_MAP`'s annual series).
+        metrics: Used to resolve the current fiscal year via
+            ``resolve_fundamental_fy``; the prior year is simply
+            ``fy - 1``.
+
+    Returns:
+        A ``(result, notes)`` tuple. ``result`` is ``None`` when the fiscal
+        year can't be resolved, or :func:`distress.beneish_m_score` itself
+        returns ``None`` (missing required input for even the 5-variable
+        model); else that function's result dict. Never raises.
+    """
+    notes: List[str] = []
+    fy = resolve_fundamental_fy(metrics)
+    if fy is None:
+        return None, notes
+    prior_fy = fy - 1
+
+    series = {key: to_annual_series(normalized, concept) for key, concept in _BENEISH_CONCEPT_MAP.items()}
+    current = {key: s.get(fy) for key, s in series.items()}
+    prior = {key: s.get(prior_fy) for key, s in series.items()}
+
+    result = distress.beneish_m_score(current, prior)
+    if result is None:
+        notes.append(
+            "Beneish M-skoru hesaplanamadı: iki ardışık mali yıl için gerekli veriler eksik."
+        )
+        return None, notes
+
+    partial_note = " (kısmi -- 5 değişkenli model; SG&A/kaldıraç/tahakkuk verisi eksik)" if result["partial"] else ""
+    flag_note = ""
+    if result["flag"]:
+        flag_note = " -- olası kazanç manipülasyonu sinyali"
+        # I2 caveat: Beneish systematically OVER-flags fast-growing firms --
+        # SGI (sales growth index) and DSRI both rise mechanically with rapid
+        # growth and carry positive coefficients, so a high-growth filer can
+        # trip the -1.78 threshold without any manipulation. When sales grew
+        # aggressively (SGI above the caveat threshold), surface that the
+        # flag may be a growth artifact rather than a red flag.
+        sgi = (result.get("components") or {}).get("sgi")
+        if _is_number(sgi) and sgi > _BENEISH_HIGH_GROWTH_SGI:
+            flag_note += (
+                f" (DİKKAT: satışlar hızlı büyümüş [SGI={sgi:.2f}]; Beneish hızlı büyüyen "
+                "şirketleri yapısal olarak yukarı-yanlı işaretler -- bu bir büyüme yan etkisi olabilir)"
+            )
+    notes.append(f"Beneish M-skoru {result['m_score']}{partial_note}{flag_note}.")
+    return result, notes
+
+
+_MERTON_ZONE_NOTE = {
+    "safe": "Merton mesafe-temerrüt modeli güvenli bölgede.",
+    "elevated": "Merton mesafe-temerrüt modeli yükselmiş temerrüt riski gösteriyor -- izlenmeli.",
+    "distress": "Merton mesafe-temerrüt modeli yüksek temerrüt riski sinyali veriyor.",
+}
+
+
+def _build_merton_dtd(
+    metrics: dict, price_df, risk_free_pct: Optional[float]
+) -> "tuple[Optional[dict], List[str]]":
+    """Merton distance-to-default (SPEC.md Sec.8k) -- an ADVISORY-ONLY
+    overlay, same non-chain-touching contract as `_build_altman_z`/
+    `_build_beneish_m`: never headlines `fair_value_range`, never
+    participates in `triangulate.triangulate`'s confidence vote.
+
+    Args:
+        metrics: Reads `market_cap` (equity value) and `total_debt` (debt
+            face-value proxy).
+        price_df: Passed to `distress._annualized_volatility` for the
+            equity-volatility input (a ~1-year window, NOT the technical/
+            momentum subsystem's 20-day `volatility_20d`).
+        risk_free_pct: The Damodaran sector risk-free rate (a PERCENTAGE
+            number, e.g. `4.5` for 4.5%), already resolved earlier in
+            `_run_valuation`. `None` -> anchor unavailable (this engine
+            never guesses a risk-free rate for this model).
+
+    Returns:
+        A `(result, notes)` tuple. `result` is `None` when `risk_free_pct`
+        is missing, `_annualized_volatility` can't produce an equity-vol
+        estimate (insufficient price history), or
+        `distress.merton_distance_to_default` itself returns `None`
+        (missing/degenerate input, or solver non-convergence); else that
+        function's result dict. Never raises.
+    """
+    notes: List[str] = []
+    if risk_free_pct is None:
+        notes.append("Merton mesafe-temerrüt hesaplanamadı: risksiz getiri oranı yok.")
+        return None, notes
+
+    equity_vol = distress._annualized_volatility(price_df)
+    if equity_vol is None:
+        notes.append(
+            "Merton mesafe-temerrüt hesaplanamadı: yeterli fiyat geçmişi yok (özkaynak volatilitesi)."
+        )
+        return None, notes
+
+    result = distress.merton_distance_to_default(
+        metrics.get("market_cap"), equity_vol, metrics.get("total_debt"), risk_free_pct / 100.0,
+    )
+    if result is None:
+        notes.append(
+            "Merton mesafe-temerrüt hesaplanamadı: gerekli veriler eksik/geçersiz veya sayısal "
+            "çözüm yakınsamadı."
+        )
+        return None, notes
+
+    notes.append(
+        f"{_MERTON_ZONE_NOTE[result['zone']]} (DD={result['distance_to_default']}, "
+        f"PD=%{result['probability_of_default'] * 100:.2f})"
+    )
+    return result, notes
+
+
+def _build_lbo_floor(metrics: dict, fcf0: Optional[float]) -> "tuple[Optional[dict], List[str]]":
+    """LBO-implied floor value (SPEC.md Sec.8h) -- an ADVISORY-ONLY,
+    private-equity-return-based value floor. Never headlines
+    ``fair_value_range`` and never participates in
+    ``triangulate.triangulate``'s confidence vote (see
+    ``lbo.lbo_implied_floor_per_share``'s module docstring for the
+    deleveraging-return mechanics).
+
+    Entry multiple is the filer's OWN current EV/EBITDA
+    (``metrics["ev_ebitda"]``) -- "could a disciplined financial buyer
+    justify paying today's price". Exit multiple is held equal to the entry
+    multiple (no multiple-expansion credit). **FCF is held FLAT
+    (``fcf_growth=0.0``, F3):** a genuine conservative floor credits NO
+    organic growth ANYWHERE -- EBITDA flat, exit multiple flat, and the
+    debt-paydown FCF stream flat too. (An earlier version grew the FCF
+    sweep at the base scenario's ``growth_5y`` while pinning EBITDA flat,
+    which is internally incoherent -- for a high-growth filer the projected
+    FCF could exceed EBITDA, over-sweeping the debt and inflating the
+    "floor" past any conservative reading.) The LBO floor therefore no
+    longer depends on the assumption set at all.
+
+    Args:
+        metrics: Reads ``ebitda``, ``ev_ebitda`` (entry/exit multiple),
+            ``total_debt``, and ``shares``.
+        fcf0: The engine's already-selected base-year FCF (SPEC.md Sec.4's
+            ``fcf0`` -- the SAME cash-flow base the standard DCF uses, not a
+            separately re-derived figure), swept flat over the hold period.
+
+    Returns:
+        A ``(result, notes)`` tuple. ``result`` is ``None`` when any
+        required input is missing/degenerate (delegates entirely to
+        :func:`lbo.lbo_implied_floor_per_share`'s own guards), else that
+        function's result dict. Never raises.
+    """
+    notes: List[str] = []
+    result = lbo.lbo_implied_floor_per_share(
+        ebitda=metrics.get("ebitda"),
+        entry_multiple=metrics.get("ev_ebitda"),
+        existing_debt=metrics.get("total_debt"),
+        exit_multiple=metrics.get("ev_ebitda"),
+        fcf0=fcf0,
+        fcf_growth=0.0,
+        shares=metrics.get("shares"),
+    )
+    if result is None:
+        notes.append(
+            "LBO çapası hesaplanamadı: FAVÖK, FD/FAVÖK çarpanı, toplam borç, FCF veya hisse sayısı eksik/geçersiz."
+        )
+        return None, notes
+
+    notes.append(
+        f"LBO çapası (bilgi amaçlı, manşete GİRMEZ): %{lbo._LBO_TARGET_IRR * 100:.0f} hedef getiriyle "
+        f"disiplinli bir finansal alıcının bugün ödeyebileceği en yüksek fiyat ~${result['per_share']:.2f}."
+    )
+    return result, notes
 
 
 def _select_latest_ffo(
@@ -3536,6 +4006,7 @@ def run_valuation(
     hyper_growth_extras: Optional[dict] = None,
     as_of=None,
     fred_rate: Optional[dict] = None,
+    precedent_transactions_dir: Optional[str] = None,
 ) -> dict:
     """Run the full deterministic valuation engine (SPEC Sec.11).
 
@@ -3584,6 +4055,12 @@ def run_valuation(
         fred_rate: Optional historical risk-free dict (from
             :func:`sec_analyzer.fetch.fred.get_risk_free_asof`), forwarded to
             the macro load. Only consulted when ``as_of`` is set.
+        precedent_transactions_dir: Directory holding an operator-curated
+            precedent-transaction (M&A comps) reference CSV (SPEC.md
+            Sec.8i). Defaults to ``Config.PRECEDENT_TRANSACTIONS_DIR``.
+            Purely additive/optional -- absent data degrades silently to
+            today's behavior (no EV/EBITDA sector-median axis-b comparison
+            for leveraged filers).
 
     Returns:
         The ``valuation`` dict documented in SPEC Sec.11. Every
@@ -3594,7 +4071,7 @@ def run_valuation(
         return _run_valuation(
             normalized or {}, ratios or [], metrics or {}, price, price_df, assumptions or {},
             sector_type, damodaran_dir, sic_description, hyper_growth_extras,
-            as_of=as_of, fred_rate=fred_rate,
+            as_of=as_of, fred_rate=fred_rate, precedent_transactions_dir=precedent_transactions_dir,
         )
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("run_valuation() failed unexpectedly; returning a degraded result.")
@@ -3607,6 +4084,7 @@ def _run_valuation(
     hyper_growth_extras: Optional[dict] = None,
     as_of=None,
     fred_rate: Optional[dict] = None,
+    precedent_transactions_dir: Optional[str] = None,
 ) -> dict:
     notes: List[str] = []
 
@@ -3686,6 +4164,21 @@ def _run_valuation(
 
     sector_capex_sales = (sector_medians_result or {}).get("capex_sales")
 
+    # --- Precedent-transaction (M&A comps) reference data (SPEC.md Sec.8i) --
+    # Optional, purely additive: looked up against the SAME industry name
+    # sector_medians_result already resolved (no second SIC matcher). Fills a
+    # real gap in the multiples-comparison block below -- Damodaran's own
+    # multiples.csv carries no EV/EBITDA sector median at all, so a leveraged
+    # filer's axis-b comparison was previously always disabled for its
+    # primary (FD/FAVÖK) multiple; precedent-transaction EV/EBITDA medians
+    # can fill that in when the operator has curated the data.
+    precedent_deals = precedent_transactions.load_precedent_transactions(
+        precedent_transactions_dir if precedent_transactions_dir is not None else Config.PRECEDENT_TRANSACTIONS_DIR
+    )
+    precedent_medians = precedent_transactions.find_industry_medians(
+        precedent_deals, (sector_medians_result or {}).get("industry")
+    )
+
     # --- Hyper-grower detection (deterministic, from financials; SPEC Sec.1) ---
     # F4: never attempted for financial/reit sectors -- a revenue-margin
     # hyper-DCF doesn't make sense there (P/B x ROE is the method instead).
@@ -3728,19 +4221,33 @@ def _run_valuation(
             )
             notes.extend(variant_notes)
 
-    # --- P/B x ROE (financial) / FFO (reit) anchor (SPEC Sec.8/Sec.8c) ------
-    # `financial` keeps the unchanged P/B x ROE anchor. `reit` gets the new
-    # FFO-based Gordon-growth anchor instead (GAAP real-estate depreciation
-    # depresses both net income and book equity, so P/B x ROE systematically
-    # understates a REIT); if FFO can't be built at all (no Depreciation data
-    # for any fiscal year that also has NetIncome, or the resulting FFO is
-    # <= 0), gracefully fall back to the same P/B x ROE anchor `financial`
-    # uses, so there's still a book-based headline/triangulation anchor.
+    # --- RIM (financial) / FFO (reit) anchor (SPEC Sec.8/Sec.8c/Sec.8f) -----
+    # `financial` now gets the residual income model (RIM, Sec.8f) as its
+    # PRIMARY anchor instead of the single-period P/B x ROE heuristic -- a
+    # multi-year fade of growth/discount-rate assumptions rather than one
+    # static justified-multiple. If RIM can't be built at all (too little
+    # equity/net-income/ROE history, or no scenario is computable), fall
+    # back to the original P/B x ROE anchor, so there's still a book-based
+    # headline/triangulation anchor. `reit` is UNAFFECTED by RIM -- it keeps
+    # its own FFO-based Gordon-growth anchor (GAAP real-estate depreciation
+    # depresses both net income and book equity, so neither RIM nor P/B x
+    # ROE is a reliable book-value-based signal for a REIT); if FFO can't be
+    # built at all (no Depreciation data for any fiscal year that also has
+    # NetIncome, or the resulting FFO is <= 0), it falls back to P/B x ROE,
+    # exactly as before.
     pb_roe = None
+    rim = None
     ffo = None
     if sector_type == "financial":
-        pb_roe, pb_notes = _build_pb_roe(assumptions, normalized, metrics, ratios)
-        notes.extend(pb_notes)
+        rim, rim_notes = _build_rim(assumptions, normalized, metrics, ratios)
+        notes.extend(rim_notes)
+        if rim is None:
+            pb_roe, pb_notes = _build_pb_roe(assumptions, normalized, metrics, ratios)
+            notes.extend(pb_notes)
+            notes.append(
+                "Finansal sektörde RIM (kazanç-gücü/özkaynak bileşik modeli) hesaplanamadı; "
+                "manşet/üçgenleme çapası olarak P/B x ROE'ye geri dönüldü."
+            )
     elif sector_type == "reit":
         ffo, ffo_notes = _build_ffo(assumptions, normalized, metrics, ratios)
         notes.extend(ffo_notes)
@@ -3753,10 +4260,15 @@ def _run_valuation(
             )
 
     # The active anchor for THIS sector's headline/triangulation purposes:
-    # the FFO block when reit's FFO build succeeded, else pb_roe (which is
-    # the reit fallback above, or financial's own anchor, or None for every
-    # other sector).
-    reit_or_financial_anchor = ffo if (sector_type == "reit" and ffo is not None) else pb_roe
+    # the FFO block when reit's FFO build succeeded, else RIM when financial's
+    # RIM build succeeded, else pb_roe (the reit-FFO fallback above, the
+    # financial-RIM fallback above, or None for every other sector).
+    if sector_type == "reit" and ffo is not None:
+        reit_or_financial_anchor = ffo
+    elif sector_type == "financial" and rim is not None:
+        reit_or_financial_anchor = rim
+    else:
+        reit_or_financial_anchor = pb_roe
 
     # --- Hyper-grower revenue-first DCF (SPEC Sec.3) ------------------------
     # Only actually built once detected; any sub-step failure degrades the
@@ -4183,6 +4695,11 @@ def _run_valuation(
         "pe_median": (sector_medians_result or {}).get("pe"),
         "ps_median": (sector_medians_result or {}).get("ps"),
         "pfcf_median": (sector_medians_result or {}).get("pfcf"),
+        # SPEC.md Sec.8i: sourced from precedent-transaction data (optional,
+        # operator-curated), NOT Damodaran's own multiples.csv, which
+        # carries no EV/EBITDA sector median at all.
+        "ev_ebitda_median": (precedent_medians or {}).get("ev_ebitda"),
+        "precedent_transactions": precedent_medians,
     }
 
     # Sector-relative multiples axis (VALUATION.md Sec.7 axis-b): the current
@@ -4219,12 +4736,15 @@ def _run_valuation(
             (ps_pct, "P/S", current.get("ps"), sector_info["ps_median"]),
         )
     elif leveraged:
-        # EV/EBITDA is primary; no Damodaran EV/EBITDA median exists, so its
-        # sector axis-b is disabled (median None) -- mirrors reit's P/FFO. The
+        # EV/EBITDA is primary. Damodaran's own multiples.csv carries no
+        # EV/EBITDA sector median (SPEC.md Sec.8i note above) -- axis-b here
+        # is sourced from precedent-transaction data instead
+        # (sector_info["ev_ebitda_median"]), None (axis-b disabled, mirrors
+        # reit's P/FFO) when no precedent-transaction data is curated. The
         # P/E fallbacks stay in the list only so a filer with no usable
         # EV/EBITDA history still resolves a primary further down.
         _ratio_candidates = (
-            (ev_ebitda_pct, "FD/FAVÖK", current.get("ev_ebitda"), None),
+            (ev_ebitda_pct, "FD/FAVÖK", current.get("ev_ebitda"), sector_info["ev_ebitda_median"]),
             (pe_pct, "P/E", current.get("pe"), sector_info["pe_median"]),
             (ps_pct, "P/S", current.get("ps"), sector_info["ps_median"]),
             (pfcf_pct, "P/FCF", current.get("pfcf"), sector_info["pfcf_median"]),
@@ -4377,6 +4897,43 @@ def _run_valuation(
         ev_ebitda_pct=ev_ebitda_pct, net_debt_to_ebitda=net_debt_to_ebitda,
     )
 
+    # --- Altman Z-score distress screen (SPEC.md Sec.8g) --------------------
+    # ADVISORY ONLY: computed independently of everything above, never feeds
+    # fair_value_range/primary_dcf_scenarios/triangulation. Not meaningful
+    # for financial/reit (same rationale _SECTORS_WITHOUT_FCF_DCF already
+    # documents for the FCF-DCF disablement).
+    altman_z = None
+    if sector_type not in _SECTORS_WITHOUT_FCF_DCF:
+        altman_z, altman_notes = _build_altman_z(normalized, metrics)
+        notes.extend(altman_notes)
+
+    # --- Beneish M-score earnings-manipulation screen (SPEC.md Sec.8j) ------
+    # ADVISORY ONLY, same pattern as altman_z. Computed for every sector
+    # (unlike altman_z/lbo_floor_detail, this isn't leverage/EBITDA-based --
+    # a bank or REIT's revenue/receivables/gross-margin trend is just as
+    # meaningful an earnings-manipulation signal as any other sector's).
+    beneish_m, beneish_notes = _build_beneish_m(normalized, metrics)
+    notes.extend(beneish_notes)
+
+    # --- Merton distance-to-default (SPEC.md Sec.8k) ------------------------
+    # ADVISORY ONLY, same pattern as altman_z/beneish_m. Computed for every
+    # sector (like beneish_m) -- unlike altman_z/lbo_floor_detail, this isn't
+    # an EBITDA/leverage-ratio model that's structurally wrong for
+    # financial/reit; it only needs market cap, total debt, price history,
+    # and a risk-free rate, all equally meaningful across sectors.
+    merton_dtd, merton_notes = _build_merton_dtd(metrics, price_df, risk_free_pct)
+    notes.extend(merton_notes)
+
+    # --- LBO-implied floor value (SPEC.md Sec.8h) ---------------------------
+    # ADVISORY ONLY, same non-chain-touching pattern as altman_z above. Not
+    # meaningful for financial/reit (EV/EBITDA-based leverage doesn't apply
+    # to a bank's regulated capital structure or a REIT's FFO-centric one --
+    # same _SECTORS_WITHOUT_FCF_DCF gate as altman_z).
+    lbo_floor_detail = None
+    if sector_type not in _SECTORS_WITHOUT_FCF_DCF:
+        lbo_floor_detail, lbo_notes = _build_lbo_floor(metrics, fcf0)
+        notes.extend(lbo_notes)
+
     return {
         "sector_type": sector_type,
         "fcf0": fcf0,
@@ -4389,6 +4946,7 @@ def _run_valuation(
             "high_growth_flag": dcf_high_growth_flag,
         },
         "pb_roe": pb_roe,
+        "rim": rim,
         "ffo": ffo,
         "earnings_power": earnings_power,
         "earnings_power_headline": epv_headline,
@@ -4410,6 +4968,10 @@ def _run_valuation(
         "midgrowth_revenue_detail": midgrowth_revenue_detail,
         "cyclical_fcfe_headline": cyclical_fcfe_headline,
         "cyclical_fcfe_detail": cyclical_fcfe_detail,
+        "altman_z": altman_z,
+        "beneish_m": beneish_m,
+        "merton_dtd": merton_dtd,
+        "lbo_floor_detail": lbo_floor_detail,
         "assumptions": assumptions,
         "notes": notes,
         **(

@@ -585,7 +585,24 @@ hesaplamadığı anlamına gelebilir).
 | WP2b hata düzeltmesi + temsili yeniden ölçüm (CAPM+sektör medyanları devrede) | 0.768 | 0.891 | 0.443 | 1.030 | 13/9/4 (n=26) — **en büyük tek kazanç** |
 | WP3 (hiper iskonto fade) | 0.768 | 0.899 | 0.476 | 1.030 | 13/9/4 (n=26) — sepette etkisi yok (sepette hiper-grower isim az) |
 | WP4 (marj tavanı → bayrak) | 0.768 | 0.899 | 0.476 | 1.030 | 13/9/4 (n=26) — sepette etkisi yok |
-| WP5 (büyüme cap %40→%60, justified P/B clamp→bayrak) + LEVER'lar sonrası (final) | **0.925** | 0.940 | 0.476 | 1.065 | 11/11/4 (n=26) |
+| WP5 (büyüme cap %40→%60, justified P/B clamp→bayrak) + LEVER'lar sonrası | **0.925** | 0.940 | 0.476 | 1.065 | 11/11/4 (n=26) |
+| WP8-14 (profesyonel değerleme eklemeleri) + F1-F4 düzeltmeleri sonrası (2026-07-24, `post-fixes`) | **0.855** | 0.955 | 0.503 | 1.061 | 12/9/5 (n=26) |
+
+> **PRE-WP15 TABANI (I4 — ölçülen, güncel):** Post-fixes medyan **0.855**
+> (yukarıdaki son satır; snapshot `reports/calibration_post-fixes_
+> 20260724-1412.json`). 0.925→0.855 düşüşünün TEK sürücüsü finansalların
+> metod değişimidir: WP9 (RIM'in P/B×ROE yerine finansal manşet çapası olması)
+> + F1 (RIM terminal ROE fade'inin gerçekten çalışır hale gelmesi). F1 öncesi
+> banka manşetleri etkisiz-fade hatası yüzünden ~%36 şişkindi; JPM oranı
+> ~1.5'ten **0.725**'e, BAC **0.807**'ye indi (ikisi de `rim`). Bu bir
+> REGRESYON DEĞİL, doğruluk düzeltmesidir — bankalar önceden aşırı
+> değerleniyordu (ROADMAP ilkesi: parametreler backtest'i iyileştirmek için
+> ayarlanmaz; düzeltme kavramsal gerekçeyle yapılır, backtest sonradan yalnızca
+> ölçer). Advisory ekranlar (Altman/Beneish/Merton/LBO) `fair_value_range`'e
+> dokunmadığı için medyanı etkilemez. **WP15'in "önce/sonra calibrate" kapısı
+> bu 0.855 tabanına karşı kıyaslanmalı, eski 0.925'e karşı değil.** Aykırı
+> değerler (MU 0.088, KO 0.355, AAPL 0.356, XOM/VZ skipped) WP8-14 öncesinden
+> gelir, bu eklemelerden bağımsızdır.
 
 **En büyük tek kazanç WP2b'ydi** — bir float-sınır tutarsızlığı (bkz. SPEC.md
 §3'ün `_ERP_SPREAD_EPS` notu) `clamp_assumptions`'ın az önce geçerli kıldığı
@@ -636,3 +653,33 @@ kullanılır (bilinen bir yaklaşıklık, gizlenmez). Bu, §9'daki kalibrasyon
 aracının geçmiş piyasa rejimlerinde (ör. 2021 zirve vs. 2022 dip) de
 çalıştırılabilmesini sağlar. Tam sözleşme, fonksiyon imzaları ve sınırlamalar:
 SPEC.md §18; pratik kullanım: METODOLOJI.md §7.
+
+## 11. Risk taramaları (distress/kalite taramaları) — Altman Z / Beneish M / Merton DD
+
+`valuation.altman_z` (ve ilerideki `beneish_m`/`merton_dtd`) SADECE tanı
+amaçlı (advisory) taramalardır — bir red flag gibi düşünülmeli, bir
+değerleme girdisi gibi DEĞİL. Bu taramalar `fair_value_range`'i, üçgenleme
+güvenini veya herhangi bir senaryo hesabını HİÇBİR ZAMAN etkilemez; motor
+bunları ayrı, bağımsız bir katman olarak hesaplar.
+
+- Yorumda bu alanları KULLANIRKEN: Altman Z-skoru "gri" veya "sıkıntı"
+  bölgedeyse `key_risks`'e tek bir madde olarak ekle (Z-skorunu ve bölgeyi
+  adlandırarak); "güvenli" bölgedeyse hiç bahsetme (bu bir risk maddesi
+  değil, sessizce doğrulayan bir sinyal).
+- Bu taramalar SADECE `financial`/`reit` DIŞINDAKİ sektörler için hesaplanır
+  (klasik Altman modeli, bankaların yapısal kaldıracı ve REIT'lerin GAAP
+  amortisman çarpıtması için kalibre edilmemiştir — tıpkı bu iki sektörün
+  standart FCF-DCF yerine kendi çapalarını kullanması gibi).
+- Asla şunu YAPMA: bir Altman Z-skorunu (veya Beneish M/Merton DD'yi)
+  fair value bandını "düzeltmek" veya üçgenleme güvenini manuel olarak
+  yükseltip/düşürmek için gerekçe olarak kullanma — bu motorun kendi işi
+  değil, bu alanlar salt bilgilendirme amaçlıdır.
+- **Beneish M / hızlı büyüme uyarısı (I2):** Beneish M-skoru hızlı büyüyen
+  şirketleri YAPISAL olarak yukarı-yanlı işaretler — SGI (satış büyüme
+  endeksi) ve DSRI büyümeyle mekanik olarak şişer ve ikisi de pozitif
+  katsayılıdır, yani gerçek bir hiper-grower (ör. NVDA) hiç manipülasyon
+  olmadan -1.78 eşiğini aşabilir. Motor `beneish_m.components.sgi` yüksekse
+  (>%40 büyüme) notu zaten "olasılıkla büyüme yan etkisi" olarak nitele­tiyor;
+  bir Beneish flag'ını yorumlarken bunu bir manipülasyon iddiası gibi
+  değil, bu caveat ışığında oku. Beneish flag'ı + yüksek büyüme = büyük
+  olasılıkla model kusuru, kırmızı bayrak değil.

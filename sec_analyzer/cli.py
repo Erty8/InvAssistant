@@ -47,6 +47,7 @@ from sec_analyzer.calibrate import (
 from sec_analyzer.config import Config, ConfigError
 from sec_analyzer.fetch.analyst import get_analyst_targets
 from sec_analyzer.fetch.companyfacts import get_company_facts, get_submissions
+from sec_analyzer.fetch.earnings import get_earnings_history
 from sec_analyzer.fetch.filings import estimate_next_earnings
 from sec_analyzer.fetch.fred import get_risk_free_asof
 from sec_analyzer.fetch.prices import PriceDataError, get_price_history, latest_price, slice_asof
@@ -57,6 +58,7 @@ from sec_analyzer.normalize.metrics import compute_metrics, resolve_fundamental_
 from sec_analyzer.normalize.normalizer import format_table, normalize_facts
 from sec_analyzer.normalize.ratios import compute_ratios
 from sec_analyzer.normalize.red_flags import detect_red_flags
+from sec_analyzer.report.financials import serialize_financials
 from sec_analyzer.report.generator import generate_report
 from sec_analyzer.interpret import planning, rule_based
 from sec_analyzer.signals.events import detect_events, summarize_events
@@ -335,6 +337,26 @@ def _fetch_analyst_targets(ticker: str, no_cache: bool) -> Optional[dict]:
         return None
 
 
+def _fetch_earnings_history(ticker: str, no_cache: bool) -> Optional[dict]:
+    """Best-effort fetch of recent quarterly EPS beat/miss history; never raises.
+
+    Display-only cross-check (see :mod:`sec_analyzer.fetch.earnings`) -- never
+    feeds the valuation engine; shown only in the HTML report's "Bilanço" tab.
+    Any failure is logged and swallowed so it never blocks the rest of
+    ``analyze``.
+
+    Returns:
+        The dict returned by
+        :func:`sec_analyzer.fetch.earnings.get_earnings_history`, or ``None``
+        if unavailable or the fetch fails for any reason.
+    """
+    try:
+        return get_earnings_history(ticker, no_cache=no_cache)
+    except Exception:  # noqa: BLE001 - a display-only cross-check must never be fatal
+        logger.warning("Could not fetch earnings history for %s", ticker, exc_info=True)
+        return None
+
+
 def _fetch_risk_free_asof(as_of, no_cache: bool) -> Optional[dict]:
     """Best-effort historical risk-free rate (FRED DGS10) for as-of mode; never raises.
 
@@ -574,10 +596,14 @@ def _valuation_method_label(valuation: dict) -> str:
     - ``"FFO"``: the DCF is disabled and ``valuation["ffo"]`` is a populated
       FFO-based Gordon growth block (has a ``"scenarios"`` key) -- REIT/GYO
       filers valued via FFO multiples instead of a cash-flow DCF.
-    - ``"P/B×ROE"``: the DCF is disabled and there's no populated FFO block --
-      financial (banks/insurers) filers valued via the P/B x ROE anchor, or a
-      REIT that fell back to the P/B x ROE anchor without a populated FFO
-      block.
+    - ``"RIM"``: the DCF is disabled, there's no populated FFO block, and
+      ``valuation["rim"]`` is a populated residual income model block (has a
+      ``"scenarios"`` key) -- financial (banks/insurers) filers valued via
+      the multi-period RIM anchor (SPEC.md Sec.8f).
+    - ``"P/B×ROE"``: the DCF is disabled and there's no populated FFO or RIM
+      block -- financial filers whose RIM build failed (falls back to the
+      P/B x ROE anchor), or a REIT that fell back to the P/B x ROE anchor
+      without a populated FFO block.
     """
     valuation = valuation or {}
     # Hyper-grower revenue-first DCF takes precedence over every other anchor
@@ -600,6 +626,9 @@ def _valuation_method_label(valuation: dict) -> str:
     ffo = valuation.get("ffo")
     if isinstance(ffo, dict) and "scenarios" in ffo:
         return "FFO"
+    rim = valuation.get("rim")
+    if isinstance(rim, dict) and "scenarios" in rim:
+        return "RIM"
     return "P/B×ROE"
 
 
@@ -810,6 +839,85 @@ def _sensitivity_line(valuation: dict) -> str:
     if sensitivity.get("high_uncertainty"):
         line += " — yüksek belirsizlik"
     return line
+
+
+#: Turkish display label for each Altman-Z zone (SPEC.md Sec.8g).
+_ALTMAN_ZONE_LABEL_TR = {"safe": "güvenli", "grey": "gri", "distress": "sıkıntı"}
+
+
+def _distress_flags_line(valuation: dict) -> Optional[str]:
+    """Render the "Risk skoru:" card line (SPEC.md Sec.8g/8j/8k): a
+    single line summarizing whichever ADVISORY distress/earnings-quality
+    screens (Altman Z-score, Beneish M-score, Merton distance-to-default)
+    were computable for this filer.
+
+    These screens never affect ``fair_value_range`` or the triangulation
+    confidence (SPEC.md Sec.8g/8j/8k are explicit about this) -- this line
+    exists purely to surface bankruptcy-risk/earnings-manipulation signals
+    alongside the valuation, the same way "Red flags:" surfaces
+    ``detect_red_flags`` findings without touching the fair-value math.
+
+    A single shared line (rather than one bespoke line per screen) is
+    deliberate: all three screens are advisory-only and share the same
+    "is it present, what's its headline number/zone" shape, so one function
+    reading all three ``valuation`` keys avoids near-duplicate wiring per
+    screen as Beneish (Sec.8j) and Merton (Sec.8k) land.
+
+    Returns ``None`` (renders nothing) when none of the three screens
+    produced a result -- e.g. ``financial``/``reit`` sectors, where Altman Z
+    isn't computed at all (SPEC.md Sec.8g), or a filer missing the
+    underlying balance-sheet data for all three.
+    """
+    valuation = valuation or {}
+    parts = []
+
+    altman = valuation.get("altman_z")
+    if isinstance(altman, dict) and altman.get("z_score") is not None:
+        zone = _ALTMAN_ZONE_LABEL_TR.get(altman.get("zone"), altman.get("zone"))
+        parts.append(f"Altman Z {altman['z_score']:.2f} ({zone})")
+
+    beneish = valuation.get("beneish_m")
+    if isinstance(beneish, dict) and beneish.get("m_score") is not None:
+        suffix = " [kısmi]" if beneish.get("partial") else ""
+        if beneish.get("flag"):
+            # I2: caveat the flag as a likely growth artifact when sales grew
+            # fast (Beneish over-flags hyper-growers) rather than presenting it
+            # as a manipulation signal on the compact card.
+            sgi = (beneish.get("components") or {}).get("sgi")
+            if isinstance(sgi, (int, float)) and sgi > 1.40:
+                suffix += " — işaretlendi (olasılıkla hızlı büyüme yan etkisi)"
+            else:
+                suffix += " — olası manipülasyon sinyali"
+        parts.append(f"Beneish M {beneish['m_score']:.2f}{suffix}")
+
+    merton = valuation.get("merton_dtd")
+    if isinstance(merton, dict) and merton.get("distance_to_default") is not None:
+        pd_pct = merton.get("probability_of_default")
+        pd_text = f", PD %{pd_pct * 100:.1f}" if pd_pct is not None else ""
+        parts.append(f"Merton DD {merton['distance_to_default']:.2f}{pd_text}")
+
+    if not parts:
+        return None
+    return f"{'Risk skoru:'.ljust(_CARD_LABEL_WIDTH)}{' · '.join(parts)}"
+
+
+def _lbo_floor_line(valuation: dict) -> Optional[str]:
+    """Render the "LBO çapası:" card line (SPEC.md Sec.8h): the LBO-implied
+    per-share value floor -- the highest price a disciplined financial
+    (private-equity) buyer could justify today, purely from debt-paydown
+    ("deleveraging") returns, with NO organic growth or multiple-expansion
+    credit. ADVISORY ONLY: informational, never affects ``fair_value_range``
+    or the triangulation confidence.
+
+    Returns ``None`` (renders nothing) when ``valuation["lbo_floor_detail"]``
+    is absent -- e.g. ``financial``/``reit`` sectors (never computed), or
+    missing EBITDA/EV-EBITDA/debt/FCF/share data.
+    """
+    detail = valuation.get("lbo_floor_detail")
+    if not isinstance(detail, dict) or detail.get("per_share") is None:
+        return None
+    label = "LBO çapası:".ljust(_CARD_LABEL_WIDTH)
+    return f"{label}{_fmt_money(detail['per_share'])} (bilgi amaçlı, manşete girmez)"
 
 
 def _signed_pct_tr(value) -> str:
@@ -1074,6 +1182,12 @@ def _print_verdict_card(
             print(ev_multiples_line)
         print(_triangulation_line(valuation))
         print(_sensitivity_line(valuation))
+        distress_line = _distress_flags_line(valuation)
+        if distress_line:
+            print(distress_line)
+        lbo_line = _lbo_floor_line(valuation)
+        if lbo_line:
+            print(lbo_line)
 
     print(f"{'Fundamental:'.ljust(_CARD_LABEL_WIDTH)}{result.get('fundamental_verdict') or _DASH}")
 
@@ -1262,6 +1376,11 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         print("\n" + json.dumps(result, indent=2, ensure_ascii=False))
 
     if getattr(args, "html", False):
+        # The earnings beat/miss history is display-only and only shown in the
+        # HTML report's "Bilanço" tab, so it's fetched here (not on plain-text
+        # runs) and, like the analyst consensus, suppressed in as-of mode
+        # because it is undated and cannot be made point-in-time.
+        earnings = None if as_of is not None else _fetch_earnings_history(args.ticker, args.no_cache)
         try:
             report_path = generate_report(
                 args.ticker,
@@ -1274,6 +1393,8 @@ def cmd_analyze(args: argparse.Namespace) -> None:
                 as_of=price_as_of,
                 analyst=analyst,
                 analysis_as_of=as_of.isoformat() if as_of is not None else None,
+                financials=serialize_financials(normalized, ratios),
+                earnings=earnings,
             )
             print(f"\nHTML report saved to: {report_path}")
         except Exception as exc:  # noqa: BLE001 - a report-writing failure must not crash analyze

@@ -1365,7 +1365,14 @@ def _cyclical_risk_from_valuation(valuation: dict, red_flags: Optional[List[dict
     elif sector_type == "growth_unprofitable":
         text = "Şirket henüz kâr etmiyor; büyüme senaryoları ve ters DCF, P/E çarpanlarından daha belirleyici."
     elif sector_type == "financial":
-        text = "Finansal sınıflandırma nedeniyle döngüsellik P/B x ROE çapası üzerinden değerlendirildi."
+        rim = valuation.get("rim")
+        if isinstance(rim, dict) and "scenarios" in rim:
+            text = (
+                "Finansal sınıflandırma nedeniyle döngüsellik RIM (kazanç-gücü/özkaynak bileşik "
+                "modeli) çapası üzerinden değerlendirildi."
+            )
+        else:
+            text = "Finansal sınıflandırma nedeniyle döngüsellik P/B x ROE çapası üzerinden değerlendirildi."
     elif sector_type == "reit":
         text = (
             "GYO sınıflandırması nedeniyle döngüsellik FFO tabanlı değerleme "
@@ -1409,13 +1416,96 @@ def _horizon_note_from_valuation(horizon: str, valuation: dict, price_or_band_mi
     return note
 
 
+#: Turkish display label for each Altman-Z zone (SPEC.md Sec.8g), mirroring
+#: cli.py's ``_ALTMAN_ZONE_LABEL_TR``.
+_ALTMAN_ZONE_LABEL_TR = {"safe": "güvenli", "grey": "gri", "distress": "sıkıntı"}
+
+#: SGI threshold above which a Beneish flag is caveated as a likely
+#: high-growth artifact (SPEC.md Sec.8j / I2). Mirrors
+#: ``engine._BENEISH_HIGH_GROWTH_SGI`` (kept in sync deliberately -- the
+#: engine note and this script-provider risk sentence use the same cutoff).
+_BENEISH_HIGH_GROWTH_SGI = 1.40
+
+
+def _distress_risk_from_valuation(valuation: dict) -> Optional[str]:
+    """Turkish risk sentence from the ADVISORY-ONLY distress/quality screens
+    (Altman Z-score -- SPEC.md Sec.8g; Beneish M-score -- Sec.8j; Merton
+    distance-to-default -- Sec.8k), for ``key_risks``. These screens never
+    affect ``fair_value_range``/confidence -- this is the "script" provider's
+    narrative surface for them, the deterministic-mode counterpart to the
+    CLI's ``_distress_flags_line``/the HTML report's ``distressFlagsCardHtml``.
+
+    Only returns a sentence when at least one screen is actually flagging
+    risk (Altman Z in the "grey"/"distress" zone, a Beneish manipulation
+    flag) -- a "safe" Z-score isn't itself a risk worth spending one of
+    ``key_risks``'s 5 slots on. Returns ``None`` when no screen produced a
+    result, or every present screen reads clean.
+    """
+    parts: List[str] = []
+
+    altman = valuation.get("altman_z")
+    if isinstance(altman, dict) and altman.get("zone") in ("grey", "distress"):
+        zone_tr = _ALTMAN_ZONE_LABEL_TR.get(altman.get("zone"), altman.get("zone"))
+        parts.append(f"Altman Z-skoru {zone_tr} bölgede (Z={altman.get('z_score')}) -- iflas riski sinyali.")
+
+    beneish = valuation.get("beneish_m")
+    if isinstance(beneish, dict) and beneish.get("flag"):
+        sgi = (beneish.get("components") or {}).get("sgi")
+        # I2 caveat: Beneish over-flags fast growers (SGI/DSRI rise with
+        # growth, positive coefficients), so when sales grew aggressively the
+        # flag is likely a growth artifact, not a manipulation red flag.
+        if isinstance(sgi, (int, float)) and sgi > _BENEISH_HIGH_GROWTH_SGI:
+            parts.append(
+                f"Beneish M-skoru işaretlendi (M={beneish.get('m_score')}) ancak satışlar hızlı "
+                f"büyümüş (SGI={sgi:.2f}); Beneish hızlı büyüyenleri yapısal olarak yukarı-yanlı "
+                "işaretler -- bu olasılıkla bir büyüme yan etkisidir, manipülasyon kanıtı değil."
+            )
+        else:
+            parts.append(f"Beneish M-skoru olası kazanç manipülasyonu sinyali veriyor (M={beneish.get('m_score')}).")
+
+    merton = valuation.get("merton_dtd")
+    if isinstance(merton, dict) and merton.get("zone") in ("elevated", "distress"):
+        parts.append(f"Merton mesafe-temerrüt modeli yükselmiş temerrüt riski gösteriyor (DD={merton.get('distance_to_default')}).")
+
+    return " ".join(parts) if parts else None
+
+
+#: Prefixes of the ADVISORY-screen / LBO engine notes (SPEC.md Sec.8g/8h/8j/8k)
+#: that must NOT be surfaced verbatim in ``key_risks``. Kept in sync with the
+#: note producers in ``valuation/engine.py`` (``_build_altman_z``/
+#: ``_build_beneish_m``/``_build_merton_dtd``/``_build_lbo_floor``). Rationale:
+#: these screens have their OWN risk surface -- ``_distress_risk_from_valuation``
+#: (below), which fires ONLY on a genuine risk reading -- so pulling their raw
+#: notes into ``key_risks`` too would (a) list a "safe" Altman/Merton reading
+#: or the informational LBO floor AS a risk, and (b) duplicate the gated
+#: distress sentence for a non-clean reading. A "bankruptcy risk LOW" note is
+#: not a risk; the LBO floor is an opportunity/valuation datum, not a risk.
+_ADVISORY_NOTE_PREFIXES = (
+    "Altman Z-skoru",
+    "Beneish M-skoru",
+    "Merton mesafe-temerrüt",
+    "LBO çapası",
+)
+
+
 def _key_risks_from_valuation(valuation: dict, red_flags: Optional[List[dict]]) -> List[str]:
-    """Red-flag messages plus ``valuation["notes"]`` (Turkish engine
-    warnings), capped at 5 -- the phase-2 analog of :func:`_key_risks`,
-    which instead lists failed checklist item names (unavailable here since
-    :func:`commentary` doesn't run the checklist)."""
+    """Red-flag messages, an ADVISORY distress-screen risk sentence (see
+    :func:`_distress_risk_from_valuation`, which fires only on a genuine risk
+    reading), plus ``valuation["notes"]`` (Turkish engine warnings) EXCEPT the
+    advisory-screen/LBO notes (see :data:`_ADVISORY_NOTE_PREFIXES` -- those are
+    surfaced via the gated distress sentence + their own dedicated cards, and a
+    "safe" reading or the LBO floor is not a risk), capped at 5 -- the phase-2
+    analog of :func:`_key_risks`, which instead lists failed checklist item
+    names (unavailable here since :func:`commentary` doesn't run the
+    checklist)."""
     risks = [f.get("message") for f in (red_flags or []) if f.get("message")]
-    risks += [note for note in (valuation.get("notes") or []) if note]
+    distress_risk = _distress_risk_from_valuation(valuation)
+    if distress_risk:
+        risks.append(distress_risk)
+    risks += [
+        note for note in (valuation.get("notes") or [])
+        if note and not note.startswith(_ADVISORY_NOTE_PREFIXES)
+    ]
     return risks[:5]
 
 

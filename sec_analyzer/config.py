@@ -172,6 +172,16 @@ class Config:
     # over the network. Overridable via DAMODARAN_DIR.
     DAMODARAN_DIR = os.getenv("DAMODARAN_DIR", os.path.join(os.getcwd(), "data", "damodaran"))
 
+    # Directory holding a local, operator-curated precedent-transaction (M&A
+    # comps) reference CSV (see sec_analyzer/valuation/precedent_transactions.py)
+    # -- optional, not fetched over the network (deal comps aren't available
+    # from any of this project's data sources; this is manually-curated
+    # reference data, same pattern as DAMODARAN_DIR). Overridable via
+    # PRECEDENT_TRANSACTIONS_DIR.
+    PRECEDENT_TRANSACTIONS_DIR = os.getenv(
+        "PRECEDENT_TRANSACTIONS_DIR", os.path.join(os.getcwd(), "data", "precedent_transactions")
+    )
+
     # Benchmark-based mature-state FCF-margin ceiling for the hyper-grower
     # revenue-first DCF (valuation engine "B-prime", staged). The mature target
     # FCF margin is FLAGGED up to this ceiling and CAPPED beyond it -- replacing

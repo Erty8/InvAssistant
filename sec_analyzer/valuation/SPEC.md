@@ -1358,11 +1358,19 @@ consumed by interpret phase 2, CLI card, HTML report, and store):
   },
   "pb_roe": {"scenarios": {...}, "fair_pb": float,
              "justified_pb_flag": "above_reference"|"below_reference"|None,
-            }|None,  # financial's anchor; also reit's
+            }|None,  # financial's FALLBACK anchor (Sec.8f) when rim (below)
+                                         # couldn't be built; also reit's
                                          # FALLBACK anchor when ffo (below)
                                          # couldn't be built -- Sec.8c. fair_pb/
                                          # justified_pb_flag: WP5, raw (unclamped)
                                          # justified P/B + reference-band flag.
+  "rim": {"scenarios": {"bear"/"base"/"bull": {"per_share","lo","hi"}},
+          "per_share": float, "bve0": float, "book_value_per_share": float,
+          "normalized_net_income": float, "roe": float}|None,
+         # Sec.8f; financial's PRIMARY anchor (multi-period residual income
+         # model). None for every sector other than financial, and for
+         # financial itself when RIM couldn't be built (pb_roe above is
+         # populated instead in that fallback case).
   "ffo": {"scenarios": {"bear"/"base"/"bull": {"per_share","lo","hi"}},
            "ffo_per_share": float,
            "implied_pffo": {"bear"/"base"/"bull": float}}|None,
@@ -2372,6 +2380,819 @@ gate fires, and never to `financial`/`reit`/`growth_unprofitable`/`mature`
 or to any filer already in hyper-grower mode. A cyclical filer whose FCF
 suppression is the ordinary near-trough case (gate does not fire) keeps its
 EXISTING Sec.8 `normalized_variant` headline behavior unchanged.
+
+## 8f. Residual income model (RIM) — financial-sector anchor — `dcf.rim_per_share` / `engine._build_rim`
+
+Replaces Sec.8's single-period justified-P/B heuristic
+(`_justified_pb`, `(ROE - g) / (r - g)` applied as ONE static multiple to
+today's book value forever) as the PRIMARY anchor for `sector_type ==
+"financial"` with a genuine multi-period residual-income model: a 10-year,
+two-stage fade of growth/discount-rate assumptions (the same fade curve
+`dcf_per_share`/`fcfe_sustainable_growth_per_share` already use), rather
+than one perpetuity-style multiple applied to a single point-in-time ROE/g/r
+triple. `sector_type == "reit"` is UNAFFECTED — it keeps its own FFO/Gordon-
+growth anchor (Sec.8c), with `pb_roe` as ITS fallback exactly as before,
+since GAAP real-estate depreciation makes book value/net income unreliable
+inputs for a bank-shaped residual-income compounding too.
+
+### `dcf.rim_per_share(bve0, ni0, roe, growth_5y, terminal_growth, discount_rate, shares, dilution_rate=0.0, terminal_roe=None) -> dict`
+
+- Raises `ValueError` — never silently "fixes" an invalid input — when
+  `ni0 is None`, `bve0 is None` or `<= 0`, `shares` is falsy/`<= 0`, `roe <=
+  0`, or `discount_rate <= terminal_growth` (Gordon-growth terminal value
+  undefined), mirroring `dcf_per_share`/`fcfe_sustainable_growth_per_share`'s
+  raise-don't-fix discipline (Sec.4/8e).
+- Ohlson-style residual income: intrinsic equity value = book value today
+  PLUS the present value of all future "excess" earnings the firm generates
+  above what its cost of equity requires on the book value it starts each
+  period with — `RI_t = NI_t - discount_rate * BVE_{t-1}`.
+- Projects earnings along the SAME 10-year, two-stage path `project_fcf`
+  uses (years 1-5 at `growth_5y`, years 6-10 fading linearly to
+  `terminal_growth` via `_year_growth_rate`, Sec.4), reusing
+  `fcfe_sustainable_growth_per_share`'s exact `g_eff = min(g_year, roe)`
+  reinvestment-cap idiom (Sec.8e) rather than re-deriving it:
+  `ni_year = previous_ni * (1 + g_eff)`; reinvestment rate `b = g_eff / roe`;
+  `retained = ni_year * b`; `bve_year = previous_bve + retained` (clean-
+  surplus roll-forward — book value grows by the RETAINED portion of
+  earnings only, never the full `ni_year`, which would silently assume 100%
+  retention regardless of `g_eff`); `ri_year = ni_year - discount_rate *
+  previous_bve`, discounted at `(1 + discount_rate) ** year`.
+  - **Front-loading note (F4 — known modeling choice, minor):** the path
+    grows net income immediately (`ni_1 = ni0 * (1 + g_eff)`) while the
+    year-1 equity charge is on the ungrown opening book (`r * bve0`), so the
+    IMPLIED year-1 ROE is `roe * (1 + g)` rather than the input `roe`, and
+    the whole path runs slightly above the stated ROE — front-loading
+    residual income a few percent. This is a deliberate consequence of
+    mirroring the FCFE sibling's `ni0`-compounding path; the Ohlson identity
+    still holds for the forecast chosen, so it is documented, not "fixed". A
+    strictly ROE-consistent variant would set `ni_t = roe * bve_{t-1}` (no
+    year-1 jump) — not adopted, to keep the two anchors' earnings paths
+    identical in construction.
+- **Terminal ROE fades to the cost of equity (F1 — genuine fade).** The
+  terminal (perpetuity) net income is what the ending book value earns at the
+  faded terminal ROE, so terminal residual income is the excess of that over
+  the cost-of-equity charge on the same book:
+  `terminal_roe_resolved = terminal_roe if terminal_roe is not None else roe`;
+  `ri_terminal = (terminal_roe_resolved - discount_rate) * bve_10`;
+  `tv = ri_terminal / (discount_rate - terminal_growth)` (Gordon denominator
+  keeps the original `terminal_growth`). The engine passes `terminal_roe =
+  discount_rate`, so `ri_terminal == 0` and `tv == 0`: intrinsic equity is
+  `bve0 + PV(RI_1..10)` with NO terminal excess return — the standard RIM
+  "excess returns compete away in steady state" terminal (Damodaran/Penman).
+  **This is NOT the same mechanism as Sec.8e's FCFE fade** (there, terminal
+  reinvestment earns exactly the cost of equity and the terminal DIVIDEND
+  perpetuity stays positive; here the book value already captures the normal
+  return, so a faded terminal adds nothing beyond it — the RIM analog of the
+  same economics). A `terminal_roe` ABOVE the cost of equity (durable
+  franchise) yields a positive, `terminal_growth`-growing terminal residual.
+  **Regression note:** the earlier `g_t_eff = min(terminal_growth,
+  terminal_roe_resolved)` / `ni_terminal = ni_10 * (1 + g_t_eff)`
+  construction left `terminal_roe` INERT (the `min` always collapsed to
+  `terminal_growth` under the `r > terminal_growth` guard), silently booking
+  a permanent excess-return perpetuity — the current form is the fix.
+- No net-debt bridge: book value/net income are already equity-level
+  figures, so `discount_rate` must be a levered cost of equity, exactly like
+  Sec.4/8e. `effective_shares = shares * (1 + dilution_rate) ** 5` (same
+  year-5 dilution-horizon convention).
+- `equity = bve0 + sum(discounted ri_1..10) + pv(tv)`; `per_share = equity /
+  effective_shares`.
+- Returns `{"per_share", "equity", "bve0", "ri_path" (10 floats), "bve_path"
+  (10 floats), "tv", "effective_shares"}`. Nothing rounded here — rounding is
+  the caller's (`engine.py`'s) responsibility.
+
+### `engine._build_rim(assumptions, normalized, metrics, ratios) -> tuple[Optional[dict], list[str]]`
+
+- FY selection mirrors `_build_pb_roe` (Sec.8) byte-for-byte in spirit:
+  walks the `StockholdersEquity` series from the newest fiscal year down and
+  picks the first one that ALSO has both a `NetIncome` figure and a `roe`
+  figure (from `ratios`), independent of `metrics["latest_fy"]` (guards the
+  same JPM-shaped edge case Sec.8 documents). Missing shares, or no fiscal
+  year with all three → `(None, [Turkish note])`. `roe <= 0` → `(None,
+  [Turkish note])` (a non-positive ROE makes the reinvestment identity
+  meaningless, mirroring `_build_pb_roe`'s `fair_pb_base <= 0` guard).
+- Per scenario (bear/base/bull): reads that scenario's own
+  `growth_5y`/`terminal_growth`/`discount_rate`; any non-numeric value or
+  `discount_rate <= terminal_growth` → that scenario's cell is
+  `{"per_share": None, "lo": None, "hi": None}` plus a Turkish note (mirrors
+  `_build_dcf_scenarios`/`_build_cyclical_fcfe`). Otherwise calls
+  `rim_per_share(bve0, ni0, roe, growth_5y, terminal_growth, discount_rate,
+  shares, terminal_roe=discount_rate)` — the scenario's OWN discount rate
+  doubles as its `terminal_roe`, same convention as Sec.8e.
+- **Band**, per scenario, from `_rim_scenario_band`: recompute at
+  `discount_rate +/- sensitivity._DISCOUNT_RATE_STEP` (re-passing that same
+  nearby rate as `terminal_roe`), `growth_5y`/`terminal_growth` held fixed; a
+  rate that doesn't clear `> terminal_growth`, or a failed call, is excluded
+  (not clamped); falls back to the flat `_band(per_share)` (+/-10%) when
+  fewer than `_MIN_GRID_CELLS_FOR_BAND` points are usable, with the standard
+  fallback Turkish note.
+- Returns `(None, notes)` if no scenario computed a `per_share`; else
+  `({"scenarios": {...}, "per_share": scenarios["base"]["per_share"],
+  "bve0": bve0, "book_value_per_share": bve0 / shares,
+  "normalized_net_income": ni0, "roe": round(roe, 4)}, notes)`. Never raises.
+
+### Engine integration (`run_valuation`) — replaces `pb_roe` as the primary `financial` anchor
+
+```python
+pb_roe = None
+rim = None
+ffo = None
+if sector_type == "financial":
+    rim, rim_notes = _build_rim(assumptions, normalized, metrics, ratios)
+    notes.extend(rim_notes)
+    if rim is None:
+        pb_roe, pb_notes = _build_pb_roe(assumptions, normalized, metrics, ratios)
+        notes.extend(pb_notes)
+        notes.append(
+            "Finansal sektörde RIM (kazanç-gücü/özkaynak bileşik modeli) hesaplanamadı; "
+            "manşet/üçgenleme çapası olarak P/B x ROE'ye geri dönüldü."
+        )
+elif sector_type == "reit":
+    ...  # unchanged (Sec.8c)
+
+if sector_type == "reit" and ffo is not None:
+    reit_or_financial_anchor = ffo
+elif sector_type == "financial" and rim is not None:
+    reit_or_financial_anchor = rim
+else:
+    reit_or_financial_anchor = pb_roe
+```
+
+`reit_or_financial_anchor` is the SAME slot `_build_fair_value_range`,
+`triangulate.triangulate`'s `dcf_base_band` parameter, and the CLI/report
+method label already read for `financial`/`reit` (Sec.8/8c/10/11/13) — RIM
+is a drop-in replacement for `pb_roe` in that slot, not a new triangulation
+leg. **This required zero changes to `triangulate.py`**: `_dcf_signal`
+already treats whatever dict is passed as `dcf_base_band` generically (its
+own docstring says "DCF (or P/B x ROE, if that's what's passed)"), so RIM's
+identical `{"scenarios": {...}}` shape flows through unchanged.
+
+### Confidence ceiling (`triangulate.triangulate`, Sec.10)
+
+**N/A — no new parameter, no cap.** Unlike Sec.8a/8b/8d/8e's headline-
+override flags (which compete with an ALREADY-COMPUTED alternative anchor
+and therefore need a confidence cap to flag that the DCF leg isn't
+independent), RIM occupies the exact same `reit_or_financial_anchor` slot
+`pb_roe` already occupied for `financial` — there is no competing anchor to
+flag non-independence against, so `triangulate.triangulate`'s existing
+signature and confidence logic are entirely unchanged by this section.
+
+### Output shape additions (Sec.11)
+
+```python
+"rim": None | {
+   "scenarios": {"bear"/"base"/"bull": {"per_share", "lo", "hi"}},
+   "per_share": float,              # base scenario's point estimate
+   "bve0": float,                   # the selected fiscal year's StockholdersEquity
+   "book_value_per_share": float,   # bve0 / metrics["shares"]
+   "normalized_net_income": float,  # the selected fiscal year's NetIncome (ni0)
+   "roe": float,                    # the selected fiscal year's ROE (from ratios)
+},                                   # built (attempted) only when
+                                    # sector_type == "financial"; None for
+                                    # every other sector, and None when the
+                                    # build itself fails (falls back to pb_roe).
+```
+
+`_empty_valuation` (the crash-safety shape, Sec.11) also gains `"rim":
+None`. `cli._valuation_method_label` (Sec.13) checks `ffo` first (unchanged
+REIT precedence), then a populated `rim` (`"scenarios" in rim`) → returns
+`"RIM"`, THEN falls through to `"P/B×ROE"` — so a `financial` filer whose
+RIM build failed still gets an accurate label. `report/template.html`'s
+`triangulationRowHtml` mirrors the same FFO → RIM → P/B×ROE chain for its
+`dcfLabel`.
+
+### Scope
+
+Purely additive/substitutive within `financial`: does not change `dcf`,
+`earnings_power`, `ffo`, `sensitivity`, `multiples`, or any other existing
+output key's meaning; does not touch `reit` at all (FFO/Gordon-growth stays
+`reit`'s primary anchor, `pb_roe` stays ITS fallback, unchanged); does not
+touch `cyclical`/`growth_unprofitable`/`mature`/hyper-grower filers.
+`_build_pb_roe`/`_justified_pb` themselves are UNCHANGED code — they remain
+exactly as documented in Sec.8, now used only as `financial`'s fallback
+(when RIM can't be built) rather than its primary anchor.
+
+## 8g. Altman Z-score (distress screen) — `distress.altman_z_score` / `engine._build_altman_z`
+
+An ADVISORY-ONLY bankruptcy-risk overlay (new `sec_analyzer/valuation/
+distress.py` module — also the future home of Beneish M-score, Sec.8j, and
+Merton distance-to-default, Sec.8k). Unlike every anchor in Sec.8/8a-8f, this
+section adds NO new fair-value candidate: it never headlines
+`fair_value_range`, never feeds `primary_dcf_scenarios`, and never
+participates in `triangulate.triangulate`'s confidence vote. It exists
+purely to surface a classic bankruptcy-risk signal alongside whatever
+valuation anchor is already in use.
+
+### `distress.altman_z_score(working_capital, total_assets, retained_earnings, ebit, market_cap, total_liabilities, revenue) -> Optional[dict]`
+
+- Classic Altman (1968) formula: `Z = 1.2*X1 + 1.4*X2 + 3.3*X3 + 0.6*X4 +
+  1.0*X5`, where `X1 = working_capital / total_assets`, `X2 =
+  retained_earnings / total_assets`, `X3 = ebit / total_assets`, `X4 =
+  market_cap / total_liabilities`, `X5 = revenue / total_assets`.
+- Zone: `Z > 2.99` → `"safe"`; `1.81 <= Z <= 2.99` → `"grey"`; `Z < 1.81` →
+  `"distress"`.
+- Returns `None` (never raises, never fabricates) when any input is `None`,
+  or when `total_assets`/`total_liabilities` is non-positive (both the model
+  and its ratios are undefined in that case).
+- Returns `{"z_score": float (2dp), "zone": "safe"|"grey"|"distress",
+  "components": {"x1", "x2", "x3", "x4", "x5"} (each 4dp)}` on success.
+
+### `engine._build_altman_z(normalized, metrics) -> tuple[Optional[dict], list[str]]`
+
+- Resolves the fiscal year via `resolve_fundamental_fy(metrics)`; `None` →
+  `(None, [])`.
+- `working_capital = CurrentAssets_fy - CurrentLiabilities_fy`; either
+  missing → `(None, [Turkish note])`.
+- Reads `TotalAssets`/`TotalLiabilities`/`RetainedEarningsAccumulatedDeficit`
+  (new WP8 concept)/`OperatingIncome` (EBIT proxy)/`Revenue` for the same
+  fiscal year, and `metrics["market_cap"]`, then delegates to
+  `distress.altman_z_score`. A `None` result there (missing input, or
+  non-positive total assets/liabilities) → `(None, [Turkish note])`.
+- On success, appends ONE Turkish note naming the zone and Z-score (e.g.
+  `"Altman Z-skoru gri bölgede (belirsiz iflas riski -- izlenmeli). (Z=1.95)"`)
+  and returns `(result, notes)`. Never raises.
+
+### Engine integration (`run_valuation`) — sector gate, no chain participation
+
+```python
+altman_z = None
+if sector_type not in _SECTORS_WITHOUT_FCF_DCF:  # excludes financial/reit
+    altman_z, altman_notes = _build_altman_z(normalized, metrics)
+    notes.extend(altman_notes)
+```
+
+Called ONCE, near the end of `_run_valuation`, entirely independent of the
+DCF/EPV/revenue-first/RIM/FFO priority chain above it — nothing about this
+call can change `primary_dcf_scenarios`, `fair_value_range`, or any
+headline flag. Not computed at all for `financial`/`reit` (same
+`_SECTORS_WITHOUT_FCF_DCF` gate the FCF-DCF disablement uses): the classic
+Altman model is calibrated on industrial/manufacturing balance sheets, and
+neither a bank's structural leverage nor a REIT's GAAP real-estate
+depreciation make its ratios meaningful for those sectors.
+
+### Confidence ceiling (`triangulate.triangulate`, Sec.10)
+
+**N/A — no parameter, no interaction.** `altman_z` is computed entirely
+outside `triangulate.triangulate`'s call and is never passed into it; the
+Z-score cannot raise, lower, or cap `triangulate.confidence` in any way.
+
+### Output shape additions (Sec.11)
+
+```python
+"altman_z": None | {
+   "z_score": float, "zone": "safe"|"grey"|"distress",
+   "components": {"x1", "x2", "x3", "x4", "x5"},
+},  # None for financial/reit (never attempted), and None for every other
+    # sector when the underlying balance-sheet data is incomplete.
+```
+
+`_empty_valuation` (Sec.11) also gains `"altman_z": None`.
+
+### CLI / HTML / script-provider wiring — the shared advisory-card pattern
+
+Because Beneish M-score (Sec.8j) and Merton distance-to-default (Sec.8k)
+are the same shape of ADVISORY-ONLY screen, this section establishes ONE
+shared presentation pattern all three reuse (avoiding three near-duplicate
+wiring paths):
+
+- `cli._distress_flags_line(valuation)`: a single "Risk skoru:" card line
+  reading `valuation["altman_z"]`/`["beneish_m"]`/`["merton_dtd"]`, rendering
+  whichever are present (`None` when none are), printed after
+  `_sensitivity_line` in `_print_verdict_card`.
+- `report/template.html`'s `distressFlagsCardHtml(valuation)`: one card
+  ("Risk Taramaları"), same three-key read, rendered in `renderBody` right
+  before the red-flags card; returns `""` (renders nothing) when no screen
+  produced a result.
+- `interpret/rule_based.py`'s `_distress_risk_from_valuation(valuation)`:
+  folds a risk sentence into the script provider's `key_risks` list ONLY
+  when a screen is actually flagging risk (Altman zone `"grey"`/`"distress"`,
+  a Beneish manipulation flag) — a `"safe"` Z-score consumes none of
+  `key_risks`'s 5 slots.
+- LLM provider: sees `valuation.altman_z` automatically (full-dict
+  passthrough, Sec.12); `_PHASE2_OUTPUT_CONTRACT` (Sec.12) instructs it to
+  fold a `"grey"`/`"distress"` zone into `key_risks` the same way, and to
+  never treat it as a valuation input.
+- `VALUATION.md` §11 documents the "advisory only, never a fair-value input"
+  rule for both the LLM system prompt and human readers.
+
+### Scope
+
+Purely additive: does not change `dcf`, `earnings_power`, `rim`, `ffo`,
+`fair_value_range`, `sensitivity`, `multiples`, `triangulation`, or any
+other existing output key's meaning or value. Computed for every sector
+EXCEPT `financial`/`reit`. A filer missing the underlying balance-sheet
+concepts degrades to `altman_z: None` plus an explanatory note, exactly
+like every other engine anchor's missing-data behavior.
+
+## 8h. LBO-implied floor value — `lbo.lbo_implied_floor_per_share` / `engine._build_lbo_floor`
+
+An ADVISORY-ONLY, private-equity-return-based value floor (new
+`sec_analyzer/valuation/lbo.py` module). Standard LBO "deleveraging return"
+logic: a financial (private-equity) buyer doesn't need organic growth OR
+multiple expansion to earn a return — paying down acquisition debt out of
+the company's own free cash flow over a hold period mechanically grows the
+buyer's equity stake even with EBITDA and the exit multiple both held FLAT
+(deliberately conservative). Discounting the resulting exit equity value
+back to today at the sponsor's hurdle IRR gives the highest price a
+disciplined financial buyer could justify paying today — a value floor,
+distinct from (and never a substitute for) the public-market DCF anchor.
+Like Sec.8g, this adds NO new fair-value candidate: never headlines
+`fair_value_range`, never feeds `primary_dcf_scenarios`, never
+participates in `triangulate.triangulate`'s confidence vote.
+
+### `lbo.lbo_implied_floor_per_share(ebitda, entry_multiple, existing_debt, exit_multiple, fcf0, fcf_growth, shares, target_irr=0.20, hold_years=5) -> Optional[dict]`
+
+- `entry_ev = entry_multiple * ebitda`; `entry_equity = entry_ev -
+  existing_debt` (today's implied sponsor equity check at `entry_multiple`
+  — surfaced for display, not itself the floor).
+- FCF is projected `hold_years` forward via `dcf.project_fcf(fcf0,
+  fcf_growth, fcf_growth, years=hold_years)` — passing the SAME rate as both
+  `growth_5y` and `terminal_growth` keeps the path flat with no fade, since
+  `hold_years <= 5` (the default) never reaches `project_fcf`'s fade phase
+  (Sec.4).
+- Debt paydown is a 100% cash sweep: each year's entire projected FCF
+  reduces the outstanding balance, floored at `0.0`.
+- `exit_ev = exit_multiple * ebitda` — EBITDA held FLAT over the hold period
+  (no organic-growth credit; this is what makes the result a floor, not a
+  base-case LBO return). `exit_equity = exit_ev - remaining_debt`.
+- `floor_equity_today = exit_equity / (1 + target_irr) ** hold_years`;
+  `per_share = floor_equity_today / shares`.
+- Returns `None` (never raises, never fabricates) when `ebitda` is
+  missing/`<= 0`, `existing_debt` is missing/`< 0`, `entry_multiple`/
+  `exit_multiple` is missing/`<= 0`, `fcf0` is missing, `shares` is
+  falsy/`<= 0`, `target_irr <= -1`, or `hold_years <= 0`.
+- Returns `{"per_share", "entry_ev", "entry_equity", "exit_ev",
+  "exit_equity", "remaining_debt", "fcf_path" (hold_years floats),
+  "debt_path" (hold_years floats), "floor_equity_today"}` on success.
+  Nothing rounded — rounding is the caller's responsibility.
+
+### `engine._build_lbo_floor(metrics, fcf0) -> tuple[Optional[dict], list[str]]`
+
+- `entry_multiple`/`exit_multiple` are BOTH `metrics["ev_ebitda"]` (the
+  filer's OWN current EV/EBITDA — "could a sponsor justify TODAY's price",
+  no multiple-expansion view of its own). `existing_debt =
+  metrics["total_debt"]`. `fcf0` is the SAME base-year FCF the standard
+  DCF uses (Sec.4's already-selected `fcf0`, passed through from
+  `_run_valuation` — not a separately re-derived figure).
+- **F3: FCF is held FLAT (`fcf_growth=0.0`).** A genuine conservative floor
+  credits NO organic growth ANYWHERE — EBITDA flat, exit multiple flat, and
+  the debt-paydown FCF stream flat too. The earlier version passed the base
+  scenario's `growth_5y` as `fcf_growth` while pinning EBITDA flat, which is
+  internally incoherent: for a high-`growth_5y` filer the projected FCF
+  could exceed EBITDA (economically impossible), over-sweeping the debt and
+  inflating the "floor" past any conservative reading. Consequently
+  `_build_lbo_floor` **no longer takes/reads `assumptions` at all** (it
+  dropped the `assumptions` parameter and the earlier "base growth missing"
+  guard).
+- Any missing/degenerate input degrades via `lbo_implied_floor_per_share`'s
+  own guards → `(None, [Turkish note])`.
+- On success, appends ONE Turkish note explicitly labeled "bilgi amaçlı,
+  manşete GİRMEZ" (informational, does NOT enter the headline) naming the
+  target IRR and the resulting per-share floor. Never raises.
+- **Cyclical spot-EBITDA caveat (known limitation):** entry/exit EBITDA is
+  the filer's SPOT current EBITDA. For a cyclical filer at a cycle peak,
+  that spot EBITDA (× the spot EV/EBITDA multiple) can be well above
+  mid-cycle earning power, so the "floor" for such a name is really "floor
+  conditional on today's cycle position," not a through-cycle floor. This is
+  advisory-only and clearly labeled, so it is documented rather than
+  normalized here (normalizing EBITDA for the LBO path would duplicate the
+  cyclical-normalization machinery in Sec.3/8e for a non-headline number).
+
+### Engine integration (`run_valuation`) — sector gate, no chain participation
+
+```python
+lbo_floor_detail = None
+if sector_type not in _SECTORS_WITHOUT_FCF_DCF:  # excludes financial/reit
+    lbo_floor_detail, lbo_notes = _build_lbo_floor(metrics, fcf0)
+    notes.extend(lbo_notes)
+```
+
+Called once, near the end of `_run_valuation`, alongside (and independent
+of) `altman_z` (Sec.8g) — entirely outside the DCF/EPV/revenue-first/RIM/
+FFO priority chain. Not computed for `financial`/`reit` (same
+`_SECTORS_WITHOUT_FCF_DCF` gate as Sec.8g): EV/EBITDA-based leverage
+doesn't describe a bank's regulated capital structure or a REIT's
+FFO-centric one.
+
+### Confidence ceiling (`triangulate.triangulate`, Sec.10)
+
+**N/A — no parameter, no interaction**, identical to Sec.8g's Altman Z.
+
+### Output shape additions (Sec.11)
+
+```python
+"lbo_floor_detail": None | {
+   "per_share": float, "entry_ev": float, "entry_equity": float,
+   "exit_ev": float, "exit_equity": float, "remaining_debt": float,
+   "fcf_path": list[float], "debt_path": list[float],
+   "floor_equity_today": float,
+},  # None for financial/reit (never attempted), and None for every other
+    # sector when EBITDA/EV-EBITDA/debt/fcf0/shares is missing.
+```
+
+`_empty_valuation` (Sec.11) also gains `"lbo_floor_detail": None`.
+
+### CLI / HTML / script-provider wiring
+
+- `cli._lbo_floor_line(valuation)`: a single "LBO çapası:" card line,
+  printed after `_distress_flags_line` in `_print_verdict_card`; `None`
+  (renders nothing) when `lbo_floor_detail` is absent.
+- `report/template.html`'s `lboFloorCardHtml(valuation)`: one card ("LBO
+  Çapası"), rendered in `renderBody` right after the distress-screens card;
+  returns `""` when `lbo_floor_detail` is absent.
+- Not folded into the script provider's `key_risks`/`cyclical_risk` (unlike
+  Sec.8g's distress screens) — this is a floor/opportunity signal, not a
+  risk, so it doesn't belong in a risk list; it is surfaced only via the
+  CLI/HTML lines above and via `valuation["notes"]`.
+
+### Scope
+
+Purely additive: does not change `dcf`, `earnings_power`, `rim`, `ffo`,
+`altman_z`, `fair_value_range`, `sensitivity`, `multiples`,
+`triangulation`, or any other existing output key's meaning or value.
+Computed for every sector EXCEPT `financial`/`reit`. A filer missing the
+underlying EBITDA/leverage/FCF data degrades to `lbo_floor_detail: None`
+plus an explanatory note, exactly like every other engine anchor's
+missing-data behavior.
+
+## 8i. Precedent-transaction (M&A comps) multiples — `precedent_transactions.load_precedent_transactions` / `.find_industry_medians`
+
+Purely additive reference-data input to the EXISTING multiples leg
+(Sec.6/Sec.7) — new `sec_analyzer/valuation/precedent_transactions.py`
+module, mirroring `damodaran.py`'s architecture exactly (optional, local,
+no network access, tolerant of a missing directory/file). Deal comps aren't
+available from any of this project's data sources (SEC EDGAR, Damodaran,
+Stooq, FRED), so — exactly like `data/damodaran/*.csv` — this is data an
+analyst curates by hand, NOT a new software dependency. **Not a new
+triangulation vote**: `triangulate.triangulate`'s hardcoded 3-way signal
+count (`dcf`/`reverse_dcf`/`multiples`) is untouched; this section only
+fills in a value that the EXISTING `sector_ratio` parameter already
+threads through.
+
+### `precedent_transactions.load_precedent_transactions(dir_path) -> Optional[list[dict]]`
+
+- Reads `dir_path/deals.csv` (header row: `industry, ev_ebitda, ev_revenue,
+  control_premium[, deal_count]`), reusing `damodaran._read_csv_rows`/
+  `damodaran._to_float` (not re-implemented). Rows without a usable
+  `industry` value are skipped; other columns individually degrade to
+  `None` on missing/malformed data rather than dropping the row.
+- Returns `None` when `dir_path` doesn't exist, the file is missing/
+  unreadable, or no row has a usable industry name. Never raises.
+
+### `precedent_transactions.find_industry_medians(deals, industry) -> Optional[dict]`
+
+- **Deliberately NOT a second fuzzy SIC matcher.** `industry` is expected
+  to be whatever name `damodaran.sector_medians` ALREADY resolved for the
+  filer (`sector_medians_result["industry"]`) — this function just needs
+  to find that SAME name in the precedent-transaction rows via
+  `damodaran._normalize_text`-normalized exact match, not re-derive a
+  second SIC-to-industry mapping. One taxonomy, one matcher, reused.
+- Returns `None` when `deals`/`industry` is empty/`None`, or no row
+  matches. Never raises.
+
+### Engine integration (`run_valuation`) — fills the EV/EBITDA sector-median gap
+
+```python
+precedent_deals = precedent_transactions.load_precedent_transactions(
+    precedent_transactions_dir if precedent_transactions_dir is not None else Config.PRECEDENT_TRANSACTIONS_DIR
+)
+precedent_medians = precedent_transactions.find_industry_medians(
+    precedent_deals, (sector_medians_result or {}).get("industry")
+)
+```
+
+Loaded once, right after `sector_medians_result`/`sector_capex_sales` are
+resolved (Sec.8/WP6), reusing that SAME already-resolved industry name.
+`run_valuation` gains a new optional keyword argument,
+`precedent_transactions_dir` (default `None` → `Config.PRECEDENT_TRANSACTIONS_DIR`),
+mirroring `damodaran_dir`'s existing pattern — backward compatible with
+every existing caller.
+
+**The actual integration point** is the multiples-comparison block's
+`sector_info` dict (Sec.6/Sec.7's axis-b): Damodaran's own `multiples.csv`
+carries NO EV/EBITDA sector median at all (a pre-existing gap — a leveraged
+filer's axis-b comparison for its own PRIMARY multiple, FD/FAVÖK, was
+previously always disabled, hardcoded `None`). This section fills that gap:
+
+```python
+sector_info["ev_ebitda_median"] = (precedent_medians or {}).get("ev_ebitda")
+sector_info["precedent_transactions"] = precedent_medians  # full row, for display
+
+# In the `leveraged` branch of `_ratio_candidates` (previously hardcoded None):
+_ratio_candidates = (
+    (ev_ebitda_pct, "FD/FAVÖK", current.get("ev_ebitda"), sector_info["ev_ebitda_median"]),
+    ...  # P/E, P/S, P/FCF fallbacks unchanged
+)
+```
+
+Since `sector_ratio` (fed into `triangulate.triangulate`, Sec.10) is
+derived from whichever `_ratio_candidates` entry has a usable percentile
+(the existing `_primary` selection logic, unchanged), populating
+`ev_ebitda_median` from precedent-transaction data automatically makes
+`sector_ratio` computable for leveraged filers where it previously stayed
+`None` — **no `triangulate.py` code changes are needed**; this is purely a
+data-availability fix flowing through the existing wiring.
+
+### Confidence ceiling (`triangulate.triangulate`, Sec.10)
+
+**N/A — no new parameter.** This section adds no new argument to
+`triangulate.triangulate`; it only supplies a value for the pre-existing
+`sector_ratio` parameter in a case (`leveraged`) that previously always
+passed `None` for it.
+
+### Output shape additions (Sec.11)
+
+```python
+"multiples": {
+  ...,
+  "sector": {
+    ...,  # available/industry/pe_median/ps_median/pfcf_median unchanged
+    "ev_ebitda_median": float | None,  # NEW: from precedent-transaction data
+    "precedent_transactions": None | {
+       "industry": str, "ev_ebitda": float|None, "ev_revenue": float|None,
+       "control_premium": float|None, "deal_count": float|None,
+    },  # NEW: the full matched row, for display (control premium etc.)
+    "comparison": {...},  # unchanged shape; now CAN populate for a
+                           # leveraged filer's FD/FAVÖK when precedent data matches
+  },
+},
+```
+
+`_empty_valuation` (Sec.11) also gains `"ev_ebitda_median": None,
+"precedent_transactions": None` inside its `sector` sub-dict.
+
+### Config
+
+New `Config.PRECEDENT_TRANSACTIONS_DIR = os.getenv("PRECEDENT_TRANSACTIONS_DIR",
+os.path.join(os.getcwd(), "data", "precedent_transactions"))` — identical
+idiom to `Config.DAMODARAN_DIR`.
+
+### Scope
+
+Purely additive: does not change `dcf`, `earnings_power`, `rim`, `ffo`,
+`altman_z`, `lbo_floor_detail`, `fair_value_range`, `sensitivity`,
+`triangulation`, or any other existing output key's meaning; does not add a
+new triangulation vote or a new `triangulate.triangulate` parameter. A
+filer/sector with no curated precedent-transaction data, or no directory at
+all, degrades silently to today's exact behavior (`ev_ebitda_median: None`,
+axis-b comparison unavailable for the leveraged branch, exactly as before
+this section existed).
+
+## 8j. Beneish M-score (earnings-manipulation screen) — `distress.beneish_m_score` / `engine._build_beneish_m`
+
+An ADVISORY-ONLY earnings-manipulation screen (extends `distress.py`,
+Sec.8g's module). Same non-chain-touching contract as Altman Z (Sec.8g):
+never headlines `fair_value_range`, never feeds `primary_dcf_scenarios`,
+never participates in `triangulate.triangulate`'s confidence vote. Unlike
+Sec.8g/8h, this IS computed for every sector including `financial`/`reit` --
+revenue/receivables/gross-margin manipulation signals are just as
+meaningful there as anywhere else (only the leverage-ratio-based screens,
+Sec.8g/8h, are sector-gated).
+
+### `distress.beneish_m_score(current, prior) -> Optional[dict]`
+
+- **Full 8-variable model** (Beneish 1999) when both fiscal years carry
+  SG&A AND the leverage/accruals inputs (long-term debt, current
+  liabilities, net income, operating cash flow): `M = -4.84 + 0.920*DSRI +
+  0.528*GMI + 0.404*AQI + 0.892*SGI + 0.115*DEPI - 0.172*SGAI + 4.679*TATA -
+  0.327*LVGI`.
+- **Degrades to the 5-variable model** (a real, SEPARATELY published
+  Beneish variant with its OWN calibrated coefficients — NOT an ad hoc
+  truncation of the 8-variable regression, which would be statistically
+  invalid) when SG&A or the leverage/accruals inputs are missing for either
+  year: `M = -6.065 + 0.823*DSRI + 0.906*GMI + 0.593*AQI + 0.717*SGI +
+  0.107*DEPI`.
+- Both models flag `M > -1.78` (`_BENEISH_MANIPULATION_THRESHOLD`) as a
+  manipulation-likelihood signal (`"flag": bool`).
+- Index formulas (`t`/`t-1` = current/prior fiscal year): `DSRI =
+  (receivables_t/revenue_t) / (receivables_t-1/revenue_t-1)`; `GMI =
+  gm_t-1/gm_t` where `gm = gross_profit/revenue`; `SGI = revenue_t /
+  revenue_t-1`; `AQI = [1 - (current_assets_t+ppe_gross_t)/total_assets_t] /
+  [1 - (current_assets_t-1+ppe_gross_t-1)/total_assets_t-1]`; `DEPI =
+  [depreciation_t-1/(ppe_gross_t-1+depreciation_t-1)] /
+  [depreciation_t/(ppe_gross_t+depreciation_t)]`; `SGAI =
+  (sga_t/revenue_t) / (sga_t-1/revenue_t-1)` (8-variable only); `LVGI =
+  [(long_term_debt_t+current_liabilities_t)/total_assets_t] /
+  [(long_term_debt_t-1+current_liabilities_t-1)/total_assets_t-1]`
+  (8-variable only); `TATA = (net_income_t - operating_cash_flow_t) /
+  total_assets_t` (8-variable only).
+- **Gross-PP&E proxy note (AQI/DEPI)**: the classic formula uses NET PP&E;
+  this engine has no net-PP&E concept, so `PropertyPlantAndEquipmentGross`
+  (WP8) is used instead — a documented approximation, the same kind of
+  disclosed proxy choice as the FFO anchor's total-D&A substitute for
+  real-estate-only depreciation (Sec.8c).
+- Returns `None` (never raises, never fabricates) when any of DSRI/GMI/
+  AQI/SGI/DEPI (the 5-variable model's own required inputs) can't be
+  computed — a missing operand, or a zero denominator anywhere in the
+  ratio-of-ratios chain (`_beneish_ratio` is the shared safe-division
+  helper: `None` on a `None` operand or a zero denominator).
+- Returns `{"m_score": float (2dp), "partial": bool (True when the
+  5-variable model was used), "flag": bool, "components": {...}
+  (whichever of dsri/gmi/aqi/sgi/depi/sgai/lvgi/tata were computed, 4dp)}`
+  on success.
+
+### `engine._build_beneish_m(normalized, metrics) -> tuple[Optional[dict], list[str]]`
+
+- Resolves the current fiscal year via `resolve_fundamental_fy(metrics)`;
+  the prior year is simply `fy - 1`. `fy is None` → `(None, [])`.
+- Pulls both fiscal years' worth of the 12 concepts in
+  `_BENEISH_CONCEPT_MAP` (`receivables, revenue, gross_profit,
+  current_assets, ppe_gross, total_assets, depreciation, sga,
+  long_term_debt, current_liabilities, net_income, operating_cash_flow`)
+  and delegates entirely to `distress.beneish_m_score`.
+- On success, appends ONE Turkish note naming the M-score, whether it's the
+  partial (5-variable) model, and whether the manipulation flag fired.
+  Never raises.
+
+### Engine integration (`run_valuation`) — computed unconditionally, no chain participation
+
+```python
+beneish_m, beneish_notes = _build_beneish_m(normalized, metrics)
+notes.extend(beneish_notes)
+```
+
+Called once, near the end of `_run_valuation`, alongside `altman_z`
+(Sec.8g)/`lbo_floor_detail` (Sec.8h) — entirely outside the DCF/EPV/
+revenue-first/RIM/FFO priority chain. Unlike those two, this is computed
+for EVERY sector (no `_SECTORS_WITHOUT_FCF_DCF` gate): revenue/receivables/
+gross-margin trends are meaningful manipulation signals regardless of
+sector.
+
+### Confidence ceiling (`triangulate.triangulate`, Sec.10)
+
+**N/A — no parameter, no interaction**, identical to Sec.8g/8h.
+
+### Output shape additions (Sec.11)
+
+```python
+"beneish_m": None | {
+   "m_score": float, "partial": bool, "flag": bool,
+   "components": {"dsri", "gmi", "aqi", "sgi", "depi"[, "sgai", "lvgi", "tata"]},
+},  # None only when even the 5-variable model's inputs are missing for
+    # either fiscal year.
+```
+
+`_empty_valuation` (Sec.11) also gains `"beneish_m": None`.
+
+### CLI / HTML / script-provider wiring — reuses Sec.8g's shared advisory-card mechanism, unchanged
+
+`cli._distress_flags_line`, `report/template.html`'s
+`distressFlagsCardHtml`, and `interpret/rule_based.py`'s
+`_distress_risk_from_valuation` were ALL written in Sec.8g to already read
+`valuation["beneish_m"]` defensively (`.get("beneish_m")`, degrading to
+nothing when the key is absent) — landing this section required **zero
+changes** to any of those three, exactly as Sec.8g's own design intended.
+
+### Scope
+
+Purely additive: does not change `dcf`, `earnings_power`, `rim`, `ffo`,
+`altman_z`, `lbo_floor_detail`, `fair_value_range`, `sensitivity`,
+`multiples`, `triangulation`, or any other existing output key's meaning or
+value. Computed for every sector. A filer missing even the 5-variable
+model's required two-year data degrades to `beneish_m: None` plus an
+explanatory note, exactly like every other engine anchor's missing-data
+behavior.
+
+## 8k. Merton distance-to-default — `distress.merton_distance_to_default` / `distress._annualized_volatility` / `engine._build_merton_dtd`
+
+An ADVISORY-ONLY overlay (extends `distress.py`, Sec.8g/8j's module). Same
+non-chain-touching contract: never headlines `fair_value_range`, never
+feeds `primary_dcf_scenarios`, never participates in
+`triangulate.triangulate`'s confidence vote. Computed for every sector
+(like Beneish M, Sec.8j) — market cap/total debt/price history/risk-free
+rate are equally meaningful across sectors, unlike the leverage-RATIO
+models in Sec.8g/8h that are structurally wrong for `financial`/`reit`.
+
+Equity is modeled as a call option on the firm's assets (Merton 1974),
+struck at the face value of debt. The two simultaneous Black-Scholes-shaped
+equations relating OBSERVABLE equity value/volatility to UNOBSERVABLE asset
+value/volatility are solved via 2D Newton-Raphson with a numerically
+(finite-difference) approximated Jacobian — pure Python, `math.erf` for the
+normal CDF, no scipy.
+
+### `distress._annualized_volatility(price_df, window_days=252) -> Optional[float]`
+
+- Computed INDEPENDENTLY from `price_df` (the same DataFrame
+  `run_valuation` already receives) — deliberately NOT
+  `technical/indicators.py`'s `volatility_20d` (a 20-day window, the wrong
+  horizon for this model's 1-year default horizon).
+- Annualized stdev of daily returns (`price_df["Close"].pct_change()`)
+  over the trailing `window_days` (default 252, ~1 trading year),
+  annualized by `sqrt(252)`.
+- Returns `None` (never raises) when `price_df` is missing/malformed, or
+  fewer than `_MERTON_MIN_RETURN_OBSERVATIONS` (60) daily returns are
+  available in the trailing window (guards against a noisy estimate from a
+  handful of days, e.g. a recent IPO).
+
+### `distress.merton_distance_to_default(equity_value, equity_vol, debt_face_value, risk_free_rate, horizon_years=1.0) -> Optional[dict]`
+
+- Solves `F1(V, σ_V) = V·N(d1) - debt_face_value·e^(-r·T)·N(d2) -
+  equity_value = 0` and `F2(V, σ_V) = N(d1)·σ_V·V - equity_vol·equity_value
+  = 0` simultaneously for the implied asset value `V` and asset volatility
+  `σ_V`, where `d1 = [ln(V/debt_face_value) + (r + 0.5σ_V²)T] / (σ_V√T)`
+  and `d2 = d1 - σ_V√T`.
+- **Snapshot-only formulation, not the classic KMV iterative time-series
+  procedure**: this engine has no historical asset-return series to
+  iterate against, so both equations are solved AT ONCE via 2D
+  Newton-Raphson (finite-difference Jacobian, central differences,
+  `_MERTON_FD_EPS` relative step), starting from `V₀ = equity_value +
+  debt_face_value`, `σ_V₀ = equity_vol · equity_value / (equity_value +
+  debt_face_value)`. Capped at `_MERTON_MAX_ITER` (100) iterations;
+  convergence requires both residuals below `_MERTON_TOLERANCE` (1e-6,
+  scaled by `max(1, equity_value)`/`max(1, equity_vol·equity_value)`
+  respectively, since equity values span orders of magnitude across
+  filers).
+- **Non-convergence, or a degenerate iterate (non-positive `V`/`σ_V`
+  reached mid-solve, a domain error, a singular Jacobian) degrades to
+  `None`** — never a garbage distance-to-default, never a partial/best-
+  effort number.
+- **Distance-to-default and probability of default read directly off the
+  solved `d2`** (not a separate formula): `distance_to_default = d2`;
+  `probability_of_default = 1 - N(d2)`. This is the RISK-NEUTRAL convention
+  (asset drift assumed = risk-free rate) — a documented simplification of
+  the classic KMV model, which estimates the asset's ACTUAL drift from a
+  historical return series this engine doesn't reconstruct.
+- Zone (practitioner heuristic, NOT a precisely calibrated academic
+  cutoff — documented as such): `distance_to_default >= 3.0` → `"safe"`;
+  `1.0 <= distance_to_default < 3.0` → `"elevated"`; `< 1.0` →
+  `"distress"`.
+- Returns `None` (never raises, never fabricates) when `equity_value`/
+  `equity_vol`/`debt_face_value` is missing/non-positive, `risk_free_rate`
+  is `None` (may legitimately be zero/negative otherwise), `horizon_years
+  <= 0`, or the solve doesn't converge.
+- Returns `{"distance_to_default": float (4dp), "probability_of_default":
+  float (6dp), "asset_value": float (the solved implied total firm asset
+  value), "asset_vol": float (the solved implied asset volatility),
+  "zone": "safe"|"elevated"|"distress"}` on success.
+
+### `engine._build_merton_dtd(metrics, price_df, risk_free_pct) -> tuple[Optional[dict], list[str]]`
+
+- `equity_value = metrics["market_cap"]`; `debt_face_value =
+  metrics["total_debt"]`; `equity_vol =
+  distress._annualized_volatility(price_df)`.
+- `risk_free_pct` is the Damodaran sector risk-free rate ALREADY resolved
+  earlier in `_run_valuation` (a PERCENTAGE number, e.g. `4.5`) — divided
+  by 100 before being passed through as `risk_free_rate`. `risk_free_pct is
+  None` → `(None, [Turkish note])` — this engine never guesses a risk-free
+  rate for this model (unlike the terminal-growth anchor, which has a flat-
+  constant fallback; Merton's sensitivity to the risk-free rate doesn't
+  warrant the same fallback).
+- `equity_vol is None` (insufficient price history) → `(None, [Turkish
+  note])`. Any other missing/degenerate input, or solver non-convergence,
+  degrades via `merton_distance_to_default`'s own guards → `(None,
+  [Turkish note])`.
+- On success, appends ONE Turkish note naming the zone, distance-to-
+  default, and probability of default. Never raises.
+
+### Engine integration (`run_valuation`) — computed unconditionally, no chain participation
+
+```python
+merton_dtd, merton_notes = _build_merton_dtd(metrics, price_df, risk_free_pct)
+notes.extend(merton_notes)
+```
+
+Called once, near the end of `_run_valuation`, alongside `altman_z`
+(Sec.8g)/`beneish_m` (Sec.8j)/`lbo_floor_detail` (Sec.8h) — entirely
+outside the DCF/EPV/revenue-first/RIM/FFO priority chain. `risk_free_pct`
+is the SAME variable the terminal-growth anchor (Sec.4/WP2) already
+resolved from Damodaran sector data earlier in this function — reused, not
+recomputed.
+
+### Confidence ceiling (`triangulate.triangulate`, Sec.10)
+
+**N/A — no parameter, no interaction**, identical to Sec.8g/8h/8j.
+
+### Output shape additions (Sec.11)
+
+```python
+"merton_dtd": None | {
+   "distance_to_default": float, "probability_of_default": float,
+   "asset_value": float, "asset_vol": float,
+   "zone": "safe"|"elevated"|"distress",
+},  # None when risk_free_pct is missing, price history is insufficient
+    # for a volatility estimate, or the solver doesn't converge.
+```
+
+`_empty_valuation` (Sec.11) also gains `"merton_dtd": None`.
+
+### CLI / HTML / script-provider wiring — reuses Sec.8g's shared advisory-card mechanism, unchanged
+
+Same zero-new-wiring story as Sec.8j: `cli._distress_flags_line`,
+`report/template.html`'s `distressFlagsCardHtml`, and
+`interpret/rule_based.py`'s `_distress_risk_from_valuation` were all
+written in Sec.8g to already read `valuation["merton_dtd"]` defensively
+(`.get("merton_dtd")`) — landing this section required **zero changes** to
+any of those three.
+
+### Scope
+
+Purely additive: does not change `dcf`, `earnings_power`, `rim`, `ffo`,
+`altman_z`, `beneish_m`, `lbo_floor_detail`, `fair_value_range`,
+`sensitivity`, `multiples`, `triangulation`, or any other existing output
+key's meaning or value. Computed for every sector. A filer missing
+market cap/total debt/sufficient price history/a Damodaran risk-free rate,
+or whose solve doesn't converge, degrades to `merton_dtd: None` plus an
+explanatory note, exactly like every other engine anchor's missing-data
+behavior.
 
 ## 12. Two-phase interpret (`interpret/analyzer.py` refactor)
 
