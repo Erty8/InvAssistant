@@ -220,6 +220,13 @@
     background: rgba(90, 167, 255, 0.18);
     color: var(--primary-light);
   }
+  /* .horizon-pill is also reused as an <a> (the swing index selector) --
+     reset link defaults so it matches the <button> variant exactly. */
+  a.horizon-pill {
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+  }
 
   /* ---- Cards -------------------------------------------------------------*/
   .card {
@@ -1441,6 +1448,152 @@
     color: var(--red);
   }
   .error-box p { margin: 0; font-size: 0.88rem; color: var(--outline); }
+
+  /* ---- Swing screener mode (mode: "swing") --------------------------------
+     The 15-column table needs more room than the 720px card column the rest
+     of the app uses -- .page-wide is applied only in renderSwingMode(). */
+  .page-wide { max-width: 1180px; }
+
+  .swing-progress {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-top: 10px;
+    font-family: var(--mono);
+  }
+  .swing-scan-msg {
+    font-size: 0.78rem;
+    color: var(--amber);
+    margin-top: 8px;
+  }
+  .swing-index-toggle { margin: 10px 0 4px; }
+
+  .swing-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .swing-filter-bar label {
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+  .swing-filter-input, .swing-filter-select {
+    font-size: 0.82rem;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+  }
+  .swing-score-input { width: 6ch; }
+  .swing-text-input { width: 18ch; }
+
+  /* ---- Ranked table (reuses .sensitivity-table's border/spacing) --------*/
+  .swing-table-wrap { overflow-x: auto; }
+  .swing-table th.sortable { cursor: pointer; user-select: none; }
+  .swing-table th.sortable:hover { color: var(--text); }
+  .swing-left { text-align: left; }
+
+  .swing-ticker-cell { text-align: left; }
+  .swing-ticker-link {
+    font-family: var(--mono);
+    font-weight: 700;
+    color: var(--primary-light);
+    text-decoration: none;
+  }
+  .swing-ticker-link:hover { text-decoration: underline; }
+  .swing-name {
+    font-size: 0.66rem;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 18ch;
+  }
+
+  .swing-score-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .swing-score-num {
+    font-family: var(--mono);
+    font-weight: 700;
+    min-width: 2.2ch;
+    text-align: right;
+  }
+  .swing-score-bar-track {
+    position: relative;
+    width: 52px;
+    height: 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .swing-score-bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; }
+  .swing-score-bar-fill.green { background: var(--green); }
+  .swing-score-bar-fill.amber { background: var(--amber); }
+  .swing-score-bar-fill.caution { background: var(--caution); }
+  .swing-score-bar-fill.red { background: var(--red); }
+  .swing-score-bar-fill.muted { background: var(--muted); }
+
+  .swing-chip {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 1px 8px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    margin: 1px 3px 1px 0;
+    background: rgba(90, 167, 255, 0.14);
+    color: var(--primary-light);
+    border: 1px solid rgba(90, 167, 255, 0.35);
+    white-space: nowrap;
+  }
+
+  /* ---- Pager (50 rows/page, SWING_SPEC.md Sec.7 item 3) -----------------*/
+  .swing-pager {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .swing-pager-nav, .swing-pager-btn {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .swing-pager-nav:hover, .swing-pager-btn:hover { color: var(--text); border-color: var(--muted); }
+  .swing-pager-nav:disabled { opacity: 0.4; cursor: not-allowed; }
+  .swing-pager-btn.active {
+    background: rgba(90, 167, 255, 0.18);
+    color: var(--primary-light);
+    border-color: var(--primary);
+  }
+  .swing-pager-pages { display: flex; flex-wrap: wrap; gap: 4px; }
+  .swing-pager-ellipsis { color: var(--muted); padding: 0 4px; font-size: 0.76rem; }
+  .swing-pager-count {
+    margin-left: auto;
+    font-size: 0.74rem;
+    color: var(--muted);
+    font-family: var(--mono);
+  }
 </style>
 </head>
 <body>
@@ -1491,6 +1644,20 @@
     var abs = Math.abs(num);
     var decimals = Number.isInteger(abs) ? 0 : 2;
     return sign + "$" + abs.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  }
+
+  // Swing table money cells always use 2 decimals, unlike fmtMoney's
+  // integer-drops-decimals rule: in a dense price table with hundreds of
+  // rows, integer-valued neighbours (e.g. "$209") next to "$376,37" read as
+  // a formatting defect rather than a genuine whole-dollar price. Kept
+  // separate from fmtMoney so report/history call sites keep their existing
+  // integer behaviour untouched.
+  function swingFmtPrice(v) {
+    if (!isNum(v)) return "—";
+    var num = Number(v);
+    var sign = num < 0 ? "-" : "";
+    var abs = Math.abs(num);
+    return sign + "$" + abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
   // Renders a decimal fraction (0.08 -> "8%") -- used for sensitivity-table
@@ -4486,6 +4653,7 @@
           '<input type="date" class="provider-select asof-input" id="asof-input" max="' + todayStr + '" />' +
           '<button type="button" class="analyze-btn" id="analyze-btn">Analyse</button>' +
           '<button type="button" class="history-nav-btn" id="history-nav-btn">Geçmiş</button>' +
+          '<button type="button" class="history-nav-btn" id="swing-nav-btn">Swing</button>' +
         '</div>' +
       '</div>';
 
@@ -4497,6 +4665,7 @@
     var analyzeBtn = document.getElementById("analyze-btn");
     var horizonToggleEl = document.getElementById("nav-horizon-toggle");
     var historyNavBtn = document.getElementById("history-nav-btn");
+    var swingNavBtn = document.getElementById("swing-nav-btn");
 
     // Only meaningful once a ticker is typed -- navigates to the read-only
     // verdict-history screen (mode: "history") for that ticker.
@@ -4504,6 +4673,12 @@
       var ticker = tickerInput.value.trim().toUpperCase();
       if (!ticker) return;
       window.location.href = "/history?ticker=" + encodeURIComponent(ticker);
+    });
+
+    // Unlike the history button, the swing screener isn't ticker-scoped --
+    // it always navigates straight to the S&P 500 screener page.
+    swingNavBtn.addEventListener("click", function () {
+      window.location.href = "/swing";
     });
 
     horizonToggleEl.addEventListener("click", function (e) {
@@ -4731,11 +4906,621 @@
       globalFooterHtml();
   }
 
+  // ===================================================================
+  // Swing mode: multi-index swing-trade screener (mode: "swing", built by
+  // generator.render_swing_page / GET /swing?index=). `data` shape:
+  // {mode, scan, index, indexes, generated_on}, where `scan` is the
+  // SWING_SPEC.md Sec.4 dict for `index` (or null when that index has never
+  // been scanned), `index` is the currently displayed index code, and
+  // `indexes` is `[[code, label], ...]` in selector display order -- see
+  // sec_analyzer/screener/swing_scan.py's scan_swing() return shape and
+  // sec_analyzer/screener/universe.py's UNIVERSES.
+  //
+  // Unlike report/search mode, this page owns a small piece of live state
+  // (the currently loaded rows + the active filter/sort) that survives
+  // re-renders triggered by a background scan completing, so the table
+  // never needs a full page reload once a scan finishes. Switching index is
+  // the one exception: it is a plain navigation to /swing?index=<code> (see
+  // swingIndexToggleHtml), not an in-page state change, so the server can
+  // serve that index's own stored scan and the URL stays shareable.
+  // ===================================================================
+
+  // Swing setup label (SWING_SPEC.md Sec.3.10) -> one of the four verdict
+  // color buckets already used everywhere else (see bucketColor above).
+  // Order matters: "GÜÇLÜ FIRSAT" must be checked before the plain "FIRSAT"
+  // substring match so it isn't mistaken for the weaker grade.
+  function swingLabelClass(label) {
+    var s = String(label || "").toUpperCase();
+    if (s.indexOf("GÜÇLÜ") !== -1) return "green";
+    if (s.indexOf("FIRSAT") !== -1) return "green";
+    if (s.indexOf("NÖTR") !== -1) return "amber";
+    if (s.indexOf("ZAYIF") !== -1) return "caution";
+    if (s.indexOf("KAÇIN") !== -1) return "red";
+    return "muted";
+  }
+
+  // "2026-07-27T09:12:03Z" -> "2026-07-27 09:12:03 UTC"; falls back to "—"
+  // for anything missing/unparsable rather than printing "undefined".
+  function swingFormatTimestamp(v) {
+    if (!v) return "—";
+    return String(v).replace("T", " ").replace("Z", " UTC");
+  }
+
+  function swingBadgesHtml(badges) {
+    if (!badges || !badges.length) return "—";
+    return badges.map(function (b) {
+      return '<span class="swing-chip">' + escapeHtml(String(b)) + '</span>';
+    }).join("");
+  }
+
+  function swingScoreCellHtml(row) {
+    if (!isNum(row.score)) return '<td>—</td>';
+    var score = Math.max(0, Math.min(100, Number(row.score)));
+    var cls = swingLabelClass(row.label);
+    return (
+      '<td>' +
+        '<div class="swing-score-cell">' +
+          '<span class="swing-score-num">' + Math.round(score) + '</span>' +
+          '<span class="swing-score-bar-track">' +
+            '<span class="swing-score-bar-fill ' + cls + '" style="width:' + score + '%;"></span>' +
+          '</span>' +
+        '</div>' +
+      '</td>'
+    );
+  }
+
+  // One <tr> per scanned ticker (SWING_SPEC.md Sec.4 row shape). Every field
+  // is optional -- isNum/safeText guard each cell so a sparse row never
+  // prints "null"/"undefined"/"NaN". The ticker links out to the full
+  // verdict-card report in a new tab (3m horizon: this is a swing-trade
+  // screener, not a long-horizon valuation call).
+  function swingRowHtml(row, rank) {
+    row = row || {};
+    var tickerUpper = String(row.ticker || "").trim().toUpperCase();
+    var href = "/report?ticker=" + encodeURIComponent(tickerUpper) + "&horizon=3m";
+    var nameHtml = row.name ? '<div class="swing-name">' + escapeHtml(row.name) + '</div>' : "";
+    var stopCell = isNum(row.stop)
+      ? swingFmtPrice(row.stop) + (isNum(row.stop_pct) ? ' <span class="muted">(' + fmtSignedPct(row.stop_pct) + ')</span>' : "")
+      : "—";
+    var targetCell = isNum(row.target)
+      ? swingFmtPrice(row.target) + (isNum(row.target_pct) ? ' <span class="muted">(' + fmtSignedPct(row.target_pct) + ')</span>' : "")
+      : "—";
+    return (
+      '<tr>' +
+        '<td>' + rank + '</td>' +
+        '<td class="swing-ticker-cell">' +
+          '<a class="swing-ticker-link" href="' + href + '" target="_blank" rel="noopener">' +
+            escapeHtml(tickerUpper || "—") +
+          '</a>' + nameHtml +
+        '</td>' +
+        '<td class="swing-left">' + escapeHtml(safeText(row.sector)) + '</td>' +
+        '<td class="history-num">' + swingFmtPrice(row.price) + '</td>' +
+        swingScoreCellHtml(row) +
+        '<td><span class="badge badge-' + swingLabelClass(row.label) + '">' + escapeHtml(safeText(row.label)) + '</span></td>' +
+        '<td class="swing-left">' + escapeHtml(safeText(row.setup)) + '</td>' +
+        '<td class="history-num">' + (isNum(row.rsi14) ? Number(row.rsi14).toFixed(1) : "—") + '</td>' +
+        '<td class="history-num">' + (isNum(row.dist_sma50_pct) ? fmtSignedPct(row.dist_sma50_pct) : "—") + '</td>' +
+        '<td class="history-num">' + (isNum(row.rs_3m_pct) ? fmtSignedPct(row.rs_3m_pct) : "—") + '</td>' +
+        '<td class="history-num">' + swingFmtPrice(row.entry) + '</td>' +
+        '<td class="history-num">' + stopCell + '</td>' +
+        '<td class="history-num">' + targetCell + '</td>' +
+        '<td class="history-num">' + (isNum(row.rr) ? Number(row.rr).toFixed(2) : "—") + '</td>' +
+        '<td class="swing-left">' + swingBadgesHtml(row.badges) + '</td>' +
+      '</tr>'
+    );
+  }
+
+  function renderSwingMode() {
+    var pageEl = document.querySelector(".page");
+    if (pageEl) pageEl.classList.add("page-wide");
+
+    topnavEl.innerHTML =
+      '<div class="nav-inner">' +
+        '<span class="brand">VERDICT</span>' +
+        '<div class="nav-controls">' +
+          '<button type="button" class="history-nav-btn" id="swing-back-btn">Ara</button>' +
+        '</div>' +
+      '</div>';
+    var backBtn = document.getElementById("swing-back-btn");
+    if (backBtn) backBtn.addEventListener("click", function () { window.location.href = "/"; });
+
+    // Live state for this page: the currently loaded scan (baked payload or
+    // whatever /api/swing/results last returned), the scan-in-progress
+    // status, any transient scan-start message (e.g. a 409), and the
+    // client-side filter/sort/page the table is rendered through. Sortable
+    // columns per SWING_SPEC.md Sec.7: Skor/RSI/RS 3a/R:R. Pagination
+    // (Sec.7 item 3) is entirely client-side over this same filtered+sorted
+    // set -- `page` is 1-based and reset to 1 whenever a filter or the sort
+    // column changes, so the table never shows a stale/out-of-range page.
+    //
+    // `index`/`indexes` back the index selector (SWING_SPEC.md Sec.7): the
+    // baked payload names the currently displayed index and the full
+    // selector list, in display order. `runningIndex`/`runningIndexLabel`
+    // track which index's scan the background worker is (or was last)
+    // running, as reported by GET /api/swing/status -- used to tell "my
+    // scan finished" from "some other index's scan finished" so a foreign
+    // scan can never overwrite this table.
+    var SWING_PAGE_SIZE = 50;
+    var state = {
+      index: data.index || "SP500",
+      indexes: Array.isArray(data.indexes) ? data.indexes : [],
+      meta: (data.scan && typeof data.scan === "object") ? data.scan : null,
+      rows: [],
+      running: false,
+      done: 0,
+      total: 0,
+      runningIndex: null,
+      runningIndexLabel: null,
+      message: "",
+      sortKey: "score",
+      sortDir: "desc",
+      minScore: null,
+      setupFilter: "",
+      textFilter: "",
+      page: 1,
+    };
+    state.rows = (state.meta && state.meta.rows) || [];
+    document.title = "Swing Trade Fırsatları — " + swingIndexLabel(state.index) + " · Verdict Terminal";
+
+    // Display label for an index code, from state.indexes -- falls back to
+    // the raw code (never "undefined"/"None") if it isn't in the list.
+    function swingIndexLabel(code) {
+      var match = (state.indexes || []).filter(function (p) { return p && p[0] === code; })[0];
+      return match ? String(match[1]) : String(code || "—");
+    }
+
+    // Index selector: a segmented pill row (reusing .horizon-pill /
+    // .horizon-toggle) built from state.indexes, current index active.
+    // Each pill is a real <a> to /swing?index=<code> -- a plain page
+    // navigation, not a fetch, so the server renders that index's own
+    // stored scan and the URL stays shareable/bookmarkable
+    // (SWING_SPEC.md Sec.7: "Index selector").
+    function swingIndexToggleHtml() {
+      if (!state.indexes.length) return "";
+      var pills = state.indexes.map(function (pair) {
+        var code = String((pair && pair[0]) || "");
+        var label = String((pair && pair[1]) || code || "—");
+        var active = code === state.index ? " active" : "";
+        return '<a href="/swing?index=' + encodeURIComponent(code) + '" class="horizon-pill' +
+          active + '">' + escapeHtml(label) + '</a>';
+      }).join("");
+      return '<div class="horizon-toggle interactive swing-index-toggle">' + pills + '</div>';
+    }
+
+    var pollHandle = null;
+
+    function stopPolling() {
+      if (pollHandle) {
+        clearInterval(pollHandle);
+        pollHandle = null;
+      }
+    }
+
+    function updateHeaderCard() {
+      var card = document.getElementById("swing-header-card");
+      if (!card) return;
+      var meta = state.meta;
+      var metaLine = meta
+        ? "Üretildi: " + escapeHtml(swingFormatTimestamp(meta.generated_at)) +
+          " · Fiyat tarihi: " + escapeHtml(safeText(meta.price_as_of)) +
+          " · " + (isNum(meta.count) ? Math.round(Number(meta.count)) : 0) + " hisse" +
+          " · " + ((meta.skipped && meta.skipped.length) || 0) + " atlandı"
+        : "Henüz tarama yapılmadı.";
+      // Only the running scan for the CURRENTLY DISPLAYED index gets the
+      // done/total progress bar. A scan running for a different index still
+      // disables the button (one scan at a time globally, SWING_SPEC.md
+      // Sec.6) but is called out as a note naming that index instead, so it's
+      // never mistaken for progress on the visible table.
+      var sameIndexRunning = state.running && state.runningIndex === state.index;
+      var otherIndexRunning = state.running && state.runningIndex && state.runningIndex !== state.index;
+      var progressHtml = sameIndexRunning
+        ? '<div class="swing-progress"><span class="spinner"></span>Taranıyor: ' +
+          state.done + '/' + state.total + '</div>'
+        : "";
+      var noteHtml = otherIndexRunning
+        ? '<div class="swing-scan-msg">' +
+          escapeHtml(state.runningIndexLabel || swingIndexLabel(state.runningIndex)) +
+          ' için bir tarama çalışıyor; bitince tekrar deneyin.</div>'
+        : "";
+      var msgHtml = state.message
+        ? '<div class="swing-scan-msg">' + escapeHtml(state.message) + '</div>'
+        : "";
+      card.innerHTML =
+        '<div class="header-row">' +
+          '<div class="header-left">' +
+            '<div class="ticker-line"><span class="ticker">Swing Trade Fırsatları — ' +
+              escapeHtml(swingIndexLabel(state.index)) + '</span></div>' +
+            swingIndexToggleHtml() +
+            '<div class="source-note">' + metaLine + '</div>' +
+          '</div>' +
+          '<div class="header-right">' +
+            '<button type="button" class="analyze-btn" id="swing-scan-btn"' +
+              (state.running ? " disabled" : "") + '>Taramayı Başlat</button>' +
+          '</div>' +
+        '</div>' +
+        progressHtml + noteHtml + msgHtml;
+      var btn = document.getElementById("swing-scan-btn");
+      if (btn) btn.addEventListener("click", startScan);
+    }
+
+    function setScanMessage(msg) {
+      state.message = msg || "";
+      updateHeaderCard();
+    }
+
+    function swingFilterBarHtml() {
+      var setups = {};
+      (state.rows || []).forEach(function (r) {
+        if (r && r.setup) setups[r.setup] = true;
+      });
+      var setupOptions = '<option value="">Tüm kurulumlar</option>' +
+        Object.keys(setups).sort().map(function (s) {
+          return '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>';
+        }).join("");
+      return (
+        '<div class="swing-filter-bar" id="swing-filter-bar">' +
+          '<label for="swing-min-score">Min. skor</label>' +
+          '<input type="number" min="0" max="100" class="swing-filter-input swing-score-input" ' +
+            'id="swing-min-score" placeholder="0" />' +
+          '<label for="swing-setup-select">Kurulum</label>' +
+          '<select class="swing-filter-select" id="swing-setup-select">' + setupOptions + '</select>' +
+          '<label for="swing-text-filter">Hisse / şirket</label>' +
+          '<input type="text" class="swing-filter-input swing-text-input" ' +
+            'id="swing-text-filter" placeholder="ör. AAPL" autocomplete="off" />' +
+        '</div>'
+      );
+    }
+
+    function wireFilterBar() {
+      var minScoreEl = document.getElementById("swing-min-score");
+      var setupEl = document.getElementById("swing-setup-select");
+      var textEl = document.getElementById("swing-text-filter");
+      if (minScoreEl) {
+        minScoreEl.addEventListener("input", function () {
+          var v = minScoreEl.value.trim();
+          state.minScore = (v === "" || Number.isNaN(Number(v))) ? null : Number(v);
+          state.page = 1;
+          renderTable();
+        });
+      }
+      if (setupEl) {
+        setupEl.addEventListener("change", function () {
+          state.setupFilter = setupEl.value;
+          state.page = 1;
+          renderTable();
+        });
+      }
+      if (textEl) {
+        textEl.addEventListener("input", function () {
+          state.textFilter = textEl.value.trim().toLowerCase();
+          state.page = 1;
+          renderTable();
+        });
+      }
+    }
+
+    function filteredSortedRows() {
+      var rows = (state.rows || []).filter(function (r) {
+        if (!r) return false;
+        if (state.minScore !== null) {
+          if (!isNum(r.score) || Number(r.score) < state.minScore) return false;
+        }
+        if (state.setupFilter && r.setup !== state.setupFilter) return false;
+        if (state.textFilter) {
+          var hay = (String(r.ticker || "") + " " + String(r.name || "")).toLowerCase();
+          if (hay.indexOf(state.textFilter) === -1) return false;
+        }
+        return true;
+      });
+      var key = state.sortKey;
+      var dir = state.sortDir === "asc" ? 1 : -1;
+      rows.sort(function (a, b) {
+        var av = a ? a[key] : null;
+        var bv = b ? b[key] : null;
+        var an = isNum(av), bn = isNum(bv);
+        // Missing values always sort to the bottom, regardless of direction.
+        if (an && !bn) return -1;
+        if (!an && bn) return 1;
+        if (an && bn && Number(av) !== Number(bv)) return (Number(av) - Number(bv)) * dir;
+        return String(a.ticker || "").localeCompare(String(b.ticker || ""));
+      });
+      return rows;
+    }
+
+    // key -> Turkish header label, for the four sortable columns
+    // (SWING_SPEC.md Sec.7: "Column headers for Skor, RSI, RS 3a, R:R are
+    // click-to-sort").
+    function swingSortArrow(key) {
+      if (state.sortKey !== key) return "";
+      return state.sortDir === "asc" ? " ▲" : " ▼";
+    }
+
+    function swingHeaderCellHtml(key, label) {
+      return '<th class="sortable" data-sort-key="' + key + '">' +
+        escapeHtml(label) + swingSortArrow(key) + '</th>';
+    }
+
+    // Windowed page-number list for the pager (SWING_SPEC.md Sec.7: "with
+    // ~11 pages a windowed pager ... is fine"). Small page counts (<=7) show
+    // every page; larger ones show first/last plus a small window around
+    // the current page, with "..." gaps -- e.g. totalPages=11, page=5 ->
+    // [1, "...", 3, 4, 5, 6, 7, "...", 11].
+    function swingPagerWindow(page, totalPages) {
+      if (totalPages <= 7) {
+        var all = [];
+        for (var i = 1; i <= totalPages; i++) all.push(i);
+        return all;
+      }
+      var pages = [1];
+      var lo = Math.max(2, page - 2);
+      var hi = Math.min(totalPages - 1, page + 2);
+      if (lo > 2) pages.push("...");
+      for (var p = lo; p <= hi; p++) pages.push(p);
+      if (hi < totalPages - 1) pages.push("...");
+      pages.push(totalPages);
+      return pages;
+    }
+
+    // Pager controls below the table: Önceki/Sonraki, page numbers, and an
+    // "X–Y / N" counter (SWING_SPEC.md Sec.7 item 3). Renders "" for a
+    // single page so a <=50-row result shows a plain table, no pager.
+    function swingPagerHtml(total, page, totalPages) {
+      if (totalPages <= 1) return "";
+      var startIdx = (page - 1) * SWING_PAGE_SIZE + 1;
+      var endIdx = Math.min(page * SWING_PAGE_SIZE, total);
+      var buttonsHtml = swingPagerWindow(page, totalPages).map(function (p) {
+        if (p === "...") return '<span class="swing-pager-ellipsis">…</span>';
+        var active = p === page ? " active" : "";
+        return '<button type="button" class="swing-pager-btn' + active + '" data-page="' + p + '">' + p + '</button>';
+      }).join("");
+      return (
+        '<div class="swing-pager">' +
+          '<button type="button" class="swing-pager-nav" id="swing-pager-prev"' +
+            (page <= 1 ? " disabled" : "") + '>Önceki</button>' +
+          '<div class="swing-pager-pages">' + buttonsHtml + '</div>' +
+          '<button type="button" class="swing-pager-nav" id="swing-pager-next"' +
+            (page >= totalPages ? " disabled" : "") + '>Sonraki</button>' +
+          '<span class="swing-pager-count">' + startIdx + '–' + endIdx + ' / ' + total + '</span>' +
+        '</div>'
+      );
+    }
+
+    function wirePager(container, totalPages) {
+      var pagerEl = container.querySelector(".swing-pager");
+      if (!pagerEl) return;
+      pagerEl.addEventListener("click", function (e) {
+        var btn = e.target.closest ? e.target.closest("button") : null;
+        if (!btn || btn.disabled) return;
+        if (btn.id === "swing-pager-prev") {
+          if (state.page > 1) { state.page -= 1; renderTable(); }
+          return;
+        }
+        if (btn.id === "swing-pager-next") {
+          if (state.page < totalPages) { state.page += 1; renderTable(); }
+          return;
+        }
+        var p = btn.getAttribute("data-page");
+        if (p) {
+          state.page = Number(p);
+          renderTable();
+        }
+      });
+    }
+
+    // Rebuilds only #swing-table-container (table + pager) -- never the
+    // filter bar -- so paginating/sorting/filtering can't steal focus from
+    // (or clear the value of) the text filter input (SWING_SPEC.md Sec.7
+    // item 3: "no refetch on page change"; the same no-refetch/no-shell-
+    // rebuild contract applies to filter/sort changes too).
+    function renderTable() {
+      var container = document.getElementById("swing-table-container");
+      if (!container) return;
+      if (!state.meta) {
+        container.innerHTML = '<div class="card"><div class="empty-state">Henüz tarama yapılmadı.</div></div>';
+        return;
+      }
+      var allRows = filteredSortedRows();
+      if (!allRows.length) {
+        container.innerHTML =
+          '<div class="card"><div class="empty-state">Filtrelerle eşleşen hisse bulunamadı.</div></div>';
+        return;
+      }
+      var totalPages = Math.max(1, Math.ceil(allRows.length / SWING_PAGE_SIZE));
+      // Clamp rather than trust state.page verbatim -- a filter change can
+      // shrink the result set out from under whatever page was active.
+      if (state.page > totalPages) state.page = totalPages;
+      if (state.page < 1) state.page = 1;
+      var startIdx = (state.page - 1) * SWING_PAGE_SIZE;
+      var pageRows = allRows.slice(startIdx, startIdx + SWING_PAGE_SIZE);
+
+      container.innerHTML =
+        '<div class="card">' +
+          '<div class="swing-table-wrap">' +
+            '<table class="sensitivity-table swing-table">' +
+              '<thead><tr>' +
+                '<th>#</th>' +
+                '<th class="swing-left">Hisse</th>' +
+                '<th class="swing-left">Sektör</th>' +
+                '<th>Fiyat</th>' +
+                swingHeaderCellHtml("score", "Skor") +
+                '<th>Etiket</th>' +
+                '<th class="swing-left">Kurulum</th>' +
+                swingHeaderCellHtml("rsi14", "RSI") +
+                '<th>SMA50 %</th>' +
+                swingHeaderCellHtml("rs_3m_pct", "RS 3a") +
+                '<th>Giriş</th><th>Stop</th><th>Hedef</th>' +
+                swingHeaderCellHtml("rr", "R:R") +
+                '<th class="swing-left">Rozetler</th>' +
+              '</tr></thead>' +
+              // Rank (#) is the row's ABSOLUTE position in the filtered+sorted
+              // set (startIdx + i + 1), not its index on the page -- page 2
+              // starts at 51, not 1 (SWING_SPEC.md Sec.7 item 3).
+              '<tbody>' + pageRows.map(function (r, i) { return swingRowHtml(r, startIdx + i + 1); }).join("") + '</tbody>' +
+            '</table>' +
+          '</div>' +
+          swingPagerHtml(allRows.length, state.page, totalPages) +
+        '</div>';
+      var thead = container.querySelector("thead");
+      if (thead) {
+        thead.addEventListener("click", function (e) {
+          var th = e.target.closest ? e.target.closest("th.sortable") : null;
+          if (!th) return;
+          var key = th.getAttribute("data-sort-key");
+          if (state.sortKey === key) {
+            state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+          } else {
+            state.sortKey = key;
+            state.sortDir = "desc";
+          }
+          state.page = 1;
+          renderTable();
+        });
+      }
+      wirePager(container, totalPages);
+    }
+
+    // Rebuilds the whole body (header card + filter bar + table) -- used on
+    // first load and whenever a freshly completed scan replaces state.meta.
+    // Polling ticks in between only touch the header card (see
+    // updateHeaderCard) so in-progress filter/sort input isn't reset.
+    function renderShell() {
+      bodyEl.innerHTML =
+        '<div class="card" id="swing-header-card"></div>' +
+        (state.meta ? swingFilterBarHtml() : "") +
+        '<div id="swing-table-container"></div>' +
+        globalFooterHtml();
+      updateHeaderCard();
+      if (state.meta) wireFilterBar();
+      renderTable();
+    }
+
+    function loadResults() {
+      fetch("/api/swing/results?index=" + encodeURIComponent(state.index))
+        .then(function (r) { return r.json(); })
+        .then(function (json) {
+          if (json && json.ok) {
+            state.meta = json.scan || null;
+            state.rows = (state.meta && state.meta.rows) || [];
+          }
+          renderShell();
+        })
+        .catch(function () {
+          setScanMessage("Tarama sonuçları yüklenirken ağ hatası oluştu.");
+        });
+    }
+
+    function pollStatus() {
+      fetch("/api/swing/status")
+        .then(function (r) { return r.json(); })
+        .then(function (json) {
+          if (!json || !json.ok) return;
+          state.running = !!json.running;
+          state.done = json.done || 0;
+          state.total = json.total || 0;
+          state.runningIndex = json.index || null;
+          state.runningIndexLabel = json.index_label || null;
+          if (json.error) state.message = json.error;
+          updateHeaderCard();
+          if (!state.running) {
+            stopPolling();
+            // A scan that just finished for a DIFFERENT index than the one
+            // shown here must never overwrite this table (SWING_SPEC.md
+            // Sec.7 item 5) -- only reload when it's ours, or when no index
+            // is known at all (fresh server, nothing to conflict with).
+            if (!state.runningIndex || state.runningIndex === state.index) {
+              loadResults();
+            }
+          }
+        })
+        .catch(function () { /* transient network error -- next tick retries */ });
+    }
+
+    function startPolling() {
+      if (pollHandle) return;
+      pollHandle = setInterval(pollStatus, 2000);
+      pollStatus();
+    }
+
+    function startScan() {
+      var btn = document.getElementById("swing-scan-btn");
+      if (btn) btn.disabled = true;
+      setScanMessage("");
+      // No `limit` -- the UI always scans the full universe (SWING_SPEC.md
+      // Sec.7 item 4); `limit` stays API-only, for CLI/smoke runs. `index`
+      // is the currently selected/displayed index, so the button always
+      // scans what's on screen.
+      fetch("/api/swing/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ no_cache: false, index: state.index }),
+      })
+        .then(function (response) {
+          return response.json().then(function (json) {
+            return { status: response.status, json: json };
+          });
+        })
+        .then(function (res) {
+          if (res.status === 409) {
+            // Another scan (possibly for a different index) is already
+            // running -- surface the server's Turkish error (it names the
+            // index actually running) and start polling its progress anyway
+            // (SWING_SPEC.md Sec.7 item 4).
+            setScanMessage((res.json && res.json.error) || "Bir tarama zaten çalışıyor.");
+            startPolling();
+            return;
+          }
+          if (!res.json || !res.json.ok) {
+            setScanMessage((res.json && res.json.error) || "Tarama başlatılamadı.");
+            var btnRetry = document.getElementById("swing-scan-btn");
+            if (btnRetry) btnRetry.disabled = false;
+            return;
+          }
+          state.running = true;
+          state.runningIndex = res.json.index || state.index;
+          state.runningIndexLabel = swingIndexLabel(state.runningIndex);
+          state.total = res.json.total || 0;
+          state.done = 0;
+          updateHeaderCard();
+          startPolling();
+        })
+        .catch(function (err) {
+          setScanMessage("Ağ hatası: " + err.message);
+          var btnErr = document.getElementById("swing-scan-btn");
+          if (btnErr) btnErr.disabled = false;
+        });
+    }
+
+    // A page (re)load might land mid-scan (another tab/user started it, or
+    // this tab was refreshed while running) -- check once up front so the
+    // button/progress line reflect reality instead of assuming idle.
+    function checkInitialStatus() {
+      fetch("/api/swing/status")
+        .then(function (r) { return r.json(); })
+        .then(function (json) {
+          if (json && json.ok && json.running) {
+            state.running = true;
+            state.done = json.done || 0;
+            state.total = json.total || 0;
+            state.runningIndex = json.index || null;
+            state.runningIndexLabel = json.index_label || null;
+            updateHeaderCard();
+            startPolling();
+          }
+        })
+        .catch(function () { /* best-effort only -- baked payload still renders */ });
+    }
+
+    renderShell();
+    checkInitialStatus();
+  }
+
   function render() {
     if (data.mode === "search") {
       renderSearchMode();
     } else if (data.mode === "history") {
       renderHistoryMode();
+    } else if (data.mode === "swing") {
+      renderSwingMode();
     } else {
       renderReportMode();
     }

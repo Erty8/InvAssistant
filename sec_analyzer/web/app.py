@@ -24,7 +24,8 @@ than crashing.
 """
 
 import logging
-from datetime import date
+import threading
+from datetime import date, datetime, timezone
 from html import escape
 from typing import Optional, Tuple
 
@@ -50,12 +51,17 @@ from sec_analyzer.report.generator import (
     render_history_page,
     render_report_html,
     render_search_page,
+    render_swing_page,
 )
+from sec_analyzer.screener.swing_scan import DEFAULT_MAX_WORKERS, scan_swing
+from sec_analyzer.screener.universe import UNIVERSES, load_universe, normalize_index, universe_label
 from sec_analyzer.store.database import (
     load_latest_stored_price,
+    load_latest_swing_scan,
     load_verdicts,
     save_normalized,
     save_prices,
+    save_swing_scan,
     save_verdict,
 )
 from sec_analyzer.technical.indicators import compute_indicators, relative_strength
@@ -86,6 +92,78 @@ _PROVIDERS = [
 #: as a module-level alias here so the existing call sites (and the tests that
 #: patch/inspect them) read unchanged.
 _serialize_financials = serialize_financials
+
+
+#: Guards `_swing_state` so exactly one swing-trade screener scan can run at
+#: a time, regardless of index (SWING_SPEC.md Sec.6 -- the bottleneck is CPU,
+#: so scans across different indexes still serialize). A cold-cache
+#: full-universe scan takes minutes, so it runs in a background daemon
+#: thread; this lock + dict is the single source of truth both the
+#: scan-starting route and the progress-polling route read/write. `index`/
+#: `index_label` name the index the running (or last-completed) scan
+#: belongs to, so the UI can tell whether the progress it sees belongs to
+#: the index it is displaying.
+_swing_lock = threading.Lock()
+_swing_state = {
+    "running": False,
+    "done": 0,
+    "total": 0,
+    "index": None,
+    "index_label": None,
+    "started_at": None,
+    "finished_at": None,
+    "error": None,
+}
+
+
+def _utc_now_iso() -> str:
+    """Current UTC time as an ISO-8601-seconds string, e.g. "2026-07-27T09:12:03Z".
+
+    Matches the format `scan_swing`'s own `generated_at` uses -- the only
+    wall-clock value anywhere in the swing-screener feature (see
+    SWING_SPEC.md Sec.4), used here purely for scan-progress bookkeeping.
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _swing_progress_cb(done: int, total: int, ticker: str) -> None:
+    """Update the shared swing-scan progress state after each ticker.
+
+    Called from the scan's background worker thread; guarded by
+    `_swing_lock` since `GET /api/swing/status` reads the same dict
+    concurrently from Flask request threads.
+    """
+    with _swing_lock:
+        _swing_state["done"] = done
+        _swing_state["total"] = total
+
+
+def _run_swing_scan_worker(
+    tickers: Optional[list], no_cache: bool, max_workers: int, index: str,
+) -> None:
+    """Background-thread body for `POST /api/swing/scan`.
+
+    Runs the full scan for `index` (already normalized by the caller) and
+    persists it via `save_swing_scan` on success. The `finally` clause always
+    clears `_swing_state["running"]`, so a scan that raises (it shouldn't --
+    `scan_swing` itself never raises per its own contract -- but this is the
+    last line of defense) can never wedge the "exactly one scan at a time"
+    guard shut forever.
+    """
+    try:
+        result = scan_swing(
+            tickers=tickers, no_cache=no_cache, max_workers=max_workers,
+            progress_cb=_swing_progress_cb, index=index,
+        )
+        save_swing_scan(result, db_path=Config.DB_PATH)
+    except Exception as exc:  # noqa: BLE001 - never let a scan failure crash a daemon thread silently
+        logger.exception("Swing scan failed")
+        with _swing_lock:
+            _swing_state["error"] = str(exc)
+    finally:
+        with _swing_lock:
+            _swing_state["running"] = False
+            _swing_state["finished_at"] = _utc_now_iso()
 
 
 def _run_pipeline(ticker: str, years: int, no_cache: bool, as_of=None) -> Tuple[str, str, dict, list]:
@@ -426,6 +504,35 @@ def history():
         return _error_page("Analiz geçmişi yüklenirken beklenmeyen bir hata oluştu."), 500
 
 
+@app.route("/swing", methods=["GET"])
+def swing():
+    """Render the swing-trade screener page for one index.
+
+    Query params:
+        index: Universe code (default ``SP500``), resolved through
+            :func:`sec_analyzer.screener.universe.normalize_index` so a
+            missing/bogus value degrades to the S&P 500 rather than erroring.
+
+    Loads the most recently persisted scan for that index (via
+    :func:`sec_analyzer.store.database.load_latest_swing_scan`, or ``None``
+    if that index has never been scanned) and renders it through the shared
+    ``template.html`` shell in ``mode: "swing"``, alongside the full index
+    selector built from :data:`sec_analyzer.screener.universe.UNIVERSES`
+    (code + label only -- the CSV paths never reach the client). No scan
+    computation happens on this route -- scans are started via
+    ``POST /api/swing/scan`` and this page's client-side script polls their
+    progress and re-renders in place (see SWING_SPEC.md Sec.6-7).
+    """
+    index = normalize_index(request.args.get("index"))
+    try:
+        scan = load_latest_swing_scan(db_path=Config.DB_PATH, universe=index)
+        indexes = [(code, label) for code, (label, _path) in UNIVERSES.items()]
+        return render_swing_page(scan, index=index, indexes=indexes)
+    except Exception:  # noqa: BLE001 - last-resort guard, render a page not a stack trace
+        logger.exception("Unexpected error rendering swing screener page")
+        return _error_page("Swing tarama sayfası yüklenirken beklenmeyen bir hata oluştu."), 500
+
+
 @app.route("/api/financials", methods=["GET"])
 def api_financials():
     """Fetch, normalize, store, and return a ticker's SEC financials.
@@ -610,6 +717,119 @@ def api_analyze():
         "earnings": earnings,
         "as_of": as_of.isoformat() if as_of is not None else None,
     })
+
+
+@app.route("/api/swing/scan", methods=["POST"])
+def api_swing_scan():
+    """Start a background swing-trade screener scan for one index.
+
+    JSON body (all optional):
+        no_cache: Bypass the on-disk price cache (default False).
+        limit: Scan only the first N universe tickers (a quick smoke run);
+            omitted/``None`` scans the full universe.
+        index: Universe code (default ``SP500``), resolved through
+            :func:`sec_analyzer.screener.universe.normalize_index`.
+
+    Exactly one scan may run at a time, **across all indexes** -- the
+    bottleneck is CPU, not the index (SWING_SPEC.md Sec.6/Sec.10). Starts a
+    ``threading.Thread(daemon=True)`` and returns immediately with
+    ``202 {"ok": true, "status": "running", "total": N, "index": <code>}``.
+    If a scan is already running (for this index or another one), returns
+    ``409 {"ok": false, "error": "<label> için bir tarama zaten çalışıyor."}``
+    naming the index actually running, without starting a second one.
+    """
+    body = request.get_json(silent=True) or {}
+    no_cache = bool(body.get("no_cache", False))
+    limit = body.get("limit")
+    index = normalize_index(body.get("index"))
+
+    with _swing_lock:
+        if _swing_state["running"]:
+            running_label = _swing_state["index_label"] or universe_label(_swing_state["index"])
+            return jsonify(
+                {"ok": False, "error": f"{running_label} için bir tarama zaten çalışıyor."}
+            ), 409
+
+        try:
+            universe = load_universe(index=index)
+        except OSError:
+            logger.exception("Could not load %s universe for swing scan", index)
+            return jsonify({"ok": False, "error": "Hisse listesi yüklenemedi."}), 500
+
+        tickers = None
+        if limit is not None:
+            try:
+                limit_n = max(int(limit), 0)
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "'limit' bir tam sayı olmalı."}), 400
+            tickers = [row["ticker"] for row in universe[:limit_n]]
+
+        total = len(tickers) if tickers is not None else len(universe)
+
+        _swing_state["running"] = True
+        _swing_state["done"] = 0
+        _swing_state["total"] = total
+        _swing_state["index"] = index
+        _swing_state["index_label"] = universe_label(index)
+        _swing_state["started_at"] = _utc_now_iso()
+        _swing_state["finished_at"] = None
+        _swing_state["error"] = None
+
+    thread = threading.Thread(
+        target=_run_swing_scan_worker,
+        args=(tickers, no_cache, DEFAULT_MAX_WORKERS, index),
+        daemon=True,
+    )
+    thread.start()
+
+    return jsonify({"ok": True, "status": "running", "total": total, "index": index}), 202
+
+
+@app.route("/api/swing/status", methods=["GET"])
+def api_swing_status():
+    """Report the current/most-recent swing scan's progress.
+
+    Always ``200`` -- the client polls this every 2s while ``running`` is
+    true (SWING_SPEC.md Sec.6), whether or not a scan has ever been started.
+    ``index``/``index_label`` name the index the running (or last-completed)
+    scan belongs to, so the client can tell whether the progress/result it
+    sees belongs to the index it currently has displayed.
+    """
+    with _swing_lock:
+        state = dict(_swing_state)
+    return jsonify({
+        "ok": True,
+        "running": state["running"],
+        "done": state["done"],
+        "total": state["total"],
+        "index": state["index"],
+        "index_label": state["index_label"],
+        "started_at": state["started_at"],
+        "finished_at": state["finished_at"],
+        "error": state["error"],
+    })
+
+
+@app.route("/api/swing/results", methods=["GET"])
+def api_swing_results():
+    """Return the latest persisted swing scan for one index.
+
+    Query params:
+        index: Universe code (default ``SP500``), resolved through
+            :func:`sec_analyzer.screener.universe.normalize_index`.
+
+    Returns ``{"ok": true, "index": <code>, "scan": <SWING_SPEC.md Sec.4
+    dict or null>}`` -- ``null`` when that index has never been scanned.
+    """
+    index = normalize_index(request.args.get("index"))
+    try:
+        scan = load_latest_swing_scan(db_path=Config.DB_PATH, universe=index)
+        return jsonify({"ok": True, "index": index, "scan": scan})
+    except Exception:  # noqa: BLE001 - last-resort guard, never leak a stack trace to the client
+        logger.exception("Unexpected error loading latest swing scan for %s", index)
+        return jsonify(
+            {"ok": False, "error": "Tarama sonuçları yüklenirken beklenmeyen bir hata oluştu."}
+        ), 500
 
 
 #: Shell used by ``_error_page`` for ``/report`` failures -- a small,

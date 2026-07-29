@@ -189,3 +189,74 @@ kodlarına genişletme, REIT kartlarında P/E-tabanlı PEG yerine P/FFO. Kalanla
   %12) ve bastırma guardrail'ini geçtiğinde, salt multiples yerine §3c/§4a arası kalibre
   edilmiş (8 yıllık fade, %20 hedef-marj tavanı) bir revenue-first band manşet oluyor. Bkz.
   SPEC.md §8d, VALUATION.md §4b.
+
+## Swing screener + backtest (2026-07-27)
+
+Tamamlananlar: `/swing` sekmesi (S&P 500 + Nasdaq 100 endeks seçimli, 50 satır/sayfa),
+`technical/swing.py` skor motoru, `screener/` tarama katmanı, `swing_scans` /
+`swing_studies` tabloları, `cli swing` ve `cli backtest swing` komutları.
+Bağlayıcı sözleşmeler: `screener/SWING_SPEC.md`, `backtest/SWING_STUDY_SPEC.md`.
+
+### Aşama-1 desil çalışmasının bulguları (ölçüm)
+
+İki bağımsız koşu — Nasdaq 100 2022-2026 (5.274 gözlem) ve S&P 500 2018-2026
+(50.036 gözlem, çok rejimli):
+
+- **Bileşik skorun cross-sectional öngörü gücü YOK.** Üst-alt kova farkı S&P'de
+  %-0.01 (10g, GA %-0.30..%+0.26) ve %+0.08 (21g, GA %-0.30..%+0.50); NDX'te
+  %-0.35 / %+0.32 ve iki ufuk işaret olarak çelişiyor. İsabet oranları %47.7-49.9,
+  yani tümü yazı-turanın altında/seviyesinde. Tüm kovaların medyanı negatif,
+  ortalaması hafif pozitif (sağa çarpık dağılım).
+- **Kurulum sınıflandırması ise tekrarlanan bir sıralama taşıyor** (aynı yön, iki
+  evren, iki ufuk): `MOMENTUM DEVAM` en iyi (S&P: %+0.53 / %+0.82) > `SIKIŞMA` >
+  `AŞIRI SATIM TEPKİSİ` > taban `KURULUM YOK` (%+0.07 / %+0.18) >
+  `TRENDDE GERİ ÇEKİLME` > **`BREAKOUT` tek negatif kova** (%-0.13 / %-0.12,
+  isabet %47.5, n=11.310) — yani "hiç kurulum yok"tan kötü.
+- Büyüklükler küçük (<1pp / 21 gün) ve **maliyet öncesi**; sağlam olan iddia göreli
+  sıralama, özellikle BREAKOUT'un negatif işareti. Survivorship bias tüm rakamları
+  yukarı saptırdığı için boş sonuç göründüğünden daha kötü.
+
+### Bekleyen — kavramsal düzeltme adayları (ağırlık taraması DEĞİL)
+
+ROADMAP'in "backtest optimizasyon aracı değildir" ilkesi gereği düzeltmeler
+kavramsal gerekçeyle yapılıp sonra çalışma tekrar koşulmalı:
+
+- **`BREAKOUT` tanımı yanlış adlandırılmış.** SPEC §3.8'deki kural
+  `dist_52w_high_pct >= -3`, yani *52 hafta zirvesine yakınlık* — pivot üzerine
+  kararlı kapanış veya hacim teyidi yok. Fiilen uzamışlık satın alıyor. Gerçek bir
+  tetikleyiciye bağlanmalı.
+- **SPEC §3.3a ile §3.3c çelişiyor.** §3.3a fiyatın SMA50'nin çok üzerinde olmasını
+  cezalandırıyor, §3.3c 52 hafta zirvesine yakınlığı ödüllendiriyor (zirvede +1.0).
+  Aynı olguya zıt işaret; tek tutarlı fonksiyonda birleştirilmeli. Bu ikisi birlikte
+  skorun en kötü performanslı konfigürasyonu sıralamanın tepesine itmesini açıklıyor
+  (canlı S&P taramasında ilk 10'un tamamı BREAKOUT çıkmıştı — semptom buydu).
+- **`swing.py` / `momentum.py` yorumları ROADMAP ile çelişiyor:** ağırlıkların
+  "backtest tarafından kalibre edileceğini" söylüyorlar, ROADMAP ise parametre
+  taramasını yasaklıyor. Yorumlar düzeltilmeli.
+
+### Bekleyen — diğer
+
+- **Aşama 2 (yapılmadı):** gerçek giriş/stop/hedefle işlem düzeyi simülasyon —
+  R dağılımı, beklenti, kurulum tipi kırılımı. Kurulumların değerinin ham getiride
+  değil risk yönetiminde olup olmadığını sorar; Aşama-1 bulgularıyla çelişmeyen
+  farklı bir soru.
+- **Point-in-time endeks üyeliği (yapılmadı):** evren şu an *bugünün* üyeliği, bu
+  yüzden survivorship bias baskın kısıt. Wikipedia'nın endeks değişiklik tabloları
+  (ör. `List_of_NASDAQ-100_companies` içindeki `changes`) ile geçmiş üyelik
+  rekonstrüksiyonu yapılabilir; delisted isimlerin fiyatı ücretsiz kaynaklarda
+  olmadığı için kısmi kalır ama yanlılığı büyük ölçüde kırar.
+- **Test boşluğu:** `swing_scan`'in process-havuzu yolu otomatik testlerde
+  kapsanmıyor — mevcut testler modül fonksiyonlarını monkeypatch ettiği için
+  spawn edilen worker'lar yamayı görmez (bu yüzden 20 tickerdan küçük fan-out'lar
+  thread yolunda kalıyor). İki yolun eşdeğerliği canlı veriyle elle doğrulandı
+  (101 satır birebir aynı), otomatik test yok.
+- Kullanıcının şimdilik almadığı iki kozmetik iyileştirme: ATR türevi seviyeleri
+  yapısal seviyelerden ayırt eden işaret (breakout isimlerinde R:R sabit 1.50
+  çıkıyor, çünkü yukarıda direnç yok ve hedef ATR'den türetiliyor).
+
+### Performans notu
+
+Tarama CPU-bound (`compute_indicators` ~1s/hisse, saf Python). `swing_scan` artık
+`ProcessPoolExecutor` kullanıyor: 12 çekirdekte sıcak NDX cache'iyle ölçülen
+17.8s vs thread yolunda 71.8s (**4.0x**), satırlar birebir aynı. S&P 500 taraması
+~8 dakikadan ~2 dakikaya indi; Aşama-1 çalışması S&P 500 × 8.5 yıl için ~70 dakika.

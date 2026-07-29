@@ -293,6 +293,55 @@ def render_history_page(
     return _inject_payload(payload)
 
 
+def render_swing_page(
+    scan: Optional[dict],
+    index: str = "SP500",
+    indexes: Optional[List[Tuple[str, str]]] = None,
+) -> str:
+    """Build the swing-trade screener page HTML for one index.
+
+    The ``GET /swing`` counterpart to :func:`render_report_html` /
+    :func:`render_search_page` / :func:`render_history_page`: loads the same
+    ``template.html`` shell but injects a ``mode: "swing"`` payload the
+    client-side ``renderSwingMode`` renders as a filterable/sortable table of
+    swing-setup scores, an index selector, and scan controls that
+    ``POST /api/swing/scan`` and poll ``GET /api/swing/status`` (see
+    ``sec_analyzer/screener/SWING_SPEC.md`` Sec.6-7).
+
+    Args:
+        scan: The Sec.4 scan-result dict returned by
+            :func:`sec_analyzer.screener.swing_scan.scan_swing` -- typically
+            whatever :func:`sec_analyzer.store.database.load_latest_swing_scan`
+            last persisted for ``index`` -- or ``None`` when that index has
+            never been scanned. The template renders an empty state in that
+            case rather than crashing.
+        index: The currently displayed index code (e.g. ``"SP500"``,
+            ``"NDX"``), already resolved via
+            :func:`sec_analyzer.screener.universe.normalize_index` by the
+            caller. Defaults to ``"SP500"`` so existing call sites keep
+            rendering the S&P 500 unchanged.
+        indexes: ``[(code, label), ...]`` pairs for the index selector, in
+            display order -- typically built from
+            :data:`sec_analyzer.screener.universe.UNIVERSES` by the route.
+            Defaults to an empty list (no selector rendered) when omitted.
+
+    Returns:
+        The complete, self-contained swing-screener page HTML as a string.
+
+    Raises:
+        ValueError: If ``template.html`` is missing the ``__DATA_JSON__``
+            placeholder (a packaging error).
+    """
+    payload = {
+        "mode": "swing",
+        "scan": scan,
+        "index": index,
+        "indexes": [list(p) for p in (indexes or [])],
+        "generated_on": date.today().isoformat(),
+    }
+    return _inject_payload(payload)
+
+
 def generate_report(
     ticker: str,
     horizon: str,

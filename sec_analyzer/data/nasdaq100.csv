@@ -1,0 +1,104 @@
+ticker,name,sector,cik
+AAPL,Apple Inc.,Technology,0000320193
+ABNB,Airbnb,Consumer Discretionary,0001559720
+ADBE,Adobe Inc.,Technology,0000796343
+ADI,Analog Devices,Technology,0000006281
+ADP,Automatic Data Processing,Industrials,0000008670
+ADSK,Autodesk,Technology,0000769397
+AEP,American Electric Power,Utilities,0000004904
+ALAB,Astera Labs,Technology,0001736297
+ALNY,Alnylam Pharmaceuticals,Health Care,0001178670
+AMAT,Applied Materials,Technology,0000006951
+AMD,Advanced Micro Devices,Technology,0000002488
+AMGN,Amgen,Health Care,0000318154
+AMZN,Amazon,Consumer Discretionary,0001018724
+APP,AppLovin,Technology,0001751008
+ARM,Arm Holdings,Technology,0001973239
+ASML,ASML Holding,Technology,0000937966
+AVGO,Broadcom,Technology,0001730168
+AXON,Axon Enterprise,Industrials,0001069183
+BKNG,Booking Holdings,Consumer Discretionary,0001075531
+BKR,Baker Hughes,Energy,0001701605
+CCEP,Coca-Cola Europacific Partners,Consumer Staples,0001650107
+CDNS,Cadence Design Systems,Technology,0000813672
+CEG,Constellation Energy,Utilities,0001868275
+CMCSA,Comcast,Telecommunications,0001166691
+COST,Costco,Consumer Discretionary,0000909832
+CPRT,Copart,Consumer Discretionary,0000900075
+CRWD,CrowdStrike,Technology,0001535527
+CRWV,CoreWeave,Technology,0001769628
+CSCO,Cisco,Telecommunications,0000858877
+CSX,CSX Corporation,Industrials,0000277948
+CTAS,Cintas,Industrials,0000723254
+DASH,DoorDash,Technology,0001792789
+DDOG,Datadog,Technology,0001561550
+DXCM,DexCom,Health Care,0001093557
+EA,Electronic Arts,Consumer Discretionary,0000712515
+EXC,Exelon,Utilities,0001109357
+FANG,Diamondback Energy,Energy,0001539838
+FAST,Fastenal,Industrials,0000815556
+FER,Ferrovial,Industrials,0001468522
+FTNT,Fortinet,Technology,0001262039
+GEHC,GE HealthCare,Health Care,0001932393
+GILD,Gilead Sciences,Health Care,0000882095
+GOOG,Alphabet Inc.(Class C),Technology,0001652044
+GOOGL,Alphabet Inc.(Class A),Technology,0001652044
+HON,Honeywell Technologies,Industrials,0000773840
+HONA,Honeywell Aerospace,Industrials,0002089271
+IDXX,Idexx Laboratories,Health Care,0000874716
+INTC,Intel,Technology,0000050863
+INTU,Intuit,Technology,0000896878
+ISRG,Intuitive Surgical,Health Care,0001035267
+KDP,Keurig Dr Pepper,Consumer Staples,0001418135
+KHC,Kraft Heinz,Consumer Staples,0001637459
+KLAC,KLA Corporation,Technology,0000319201
+LIN,Linde plc,Basic Materials,0001707925
+LITE,Lumentum,Technology,0001633978
+LRCX,Lam Research,Technology,0000707549
+MAR,Marriott International,Consumer Discretionary,0001048286
+MCHP,Microchip Technology,Technology,0000827054
+MDLZ,Mondelez International,Consumer Staples,0001103982
+MELI,Mercado Libre,Consumer Discretionary,0001099590
+META,Meta Platforms,Technology,0001326801
+MNST,Monster Beverage,Consumer Staples,0000865752
+MPWR,Monolithic Power Systems,Technology,0001280452
+MRVL,Marvell Technology,Technology,0001835632
+MSFT,Microsoft,Technology,0000789019
+MSTR,MicroStrategy,Technology,0001050446
+MU,Micron Technology,Technology,0000723125
+NBIS,Nebius Group,Technology,0001513845
+NFLX,"Netflix, Inc.",Consumer Discretionary,0001065280
+NVDA,Nvidia,Technology,0001045810
+NXPI,NXP Semiconductors,Technology,0001413447
+ODFL,Old Dominion Freight Line,Industrials,0000878927
+ORLY,O'Reilly Automotive,Consumer Discretionary,0000898173
+PANW,Palo Alto Networks,Technology,0001327567
+PAYX,Paychex,Industrials,0000723531
+PCAR,Paccar,Consumer Discretionary,0000075362
+PDD,PDD Holdings,Technology,0001737806
+PEP,PepsiCo,Consumer Staples,0000077476
+PLTR,Palantir Technologies,Technology,0001321655
+PYPL,PayPal,Industrials,0001633917
+QCOM,Qualcomm,Technology,0000804328
+REGN,Regeneron Pharmaceuticals,Health Care,0000872589
+RKLB,Rocket Lab,Industrials,0001819994
+ROP,Roper Technologies,Technology,0000882835
+ROST,Ross Stores,Consumer Discretionary,0000745732
+SBUX,Starbucks,Consumer Discretionary,0000829224
+SHOP,Shopify,Technology,0001594805
+SNDK,Sandisk,Technology,0002023554
+SNPS,Synopsys,Technology,0000883241
+SPCX,SpaceX,Telecommunications,0001181412
+STX,Seagate Technology,Technology,0001137789
+TER,Teradyne,Technology,0000097210
+TMUS,T-Mobile US,Telecommunications,0001283699
+TRI,Thomson Reuters,Technology,0001075124
+TSLA,"Tesla, Inc.",Consumer Discretionary,0001318605
+TTWO,Take-Two Interactive,Consumer Discretionary,0000946581
+TXN,Texas Instruments,Technology,0000097476
+VRTX,Vertex Pharmaceuticals,Health Care,0000875320
+WBD,Warner Bros. Discovery,Consumer Discretionary,0001437107
+WDAY,"Workday, Inc.",Technology,0001327811
+WDC,Western Digital,Technology,0000106040
+WMT,Walmart,Consumer Discretionary,0000104169
+XEL,Xcel Energy,Utilities,0000072903

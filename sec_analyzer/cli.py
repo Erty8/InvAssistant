@@ -61,6 +61,8 @@ from sec_analyzer.normalize.red_flags import detect_red_flags
 from sec_analyzer.report.financials import serialize_financials
 from sec_analyzer.report.generator import generate_report
 from sec_analyzer.interpret import planning, rule_based
+from sec_analyzer.screener.swing_scan import DEFAULT_MAX_WORKERS, scan_swing
+from sec_analyzer.screener.universe import load_universe, normalize_index
 from sec_analyzer.signals.events import detect_events, summarize_events
 from sec_analyzer.store import assumptions as assumptions_store
 from sec_analyzer.valuation import damodaran
@@ -77,6 +79,7 @@ from sec_analyzer.store.database import (
     load_verdicts,
     save_normalized,
     save_prices,
+    save_swing_scan,
     save_verdict,
 )
 from sec_analyzer.technical.indicators import compute_indicators, relative_strength
@@ -488,6 +491,25 @@ def _fmt_money(value) -> str:
         return _DASH
     if value == int(value):
         return f"${value:,.0f}"
+    return f"${value:,.2f}"
+
+
+def _fmt_swing_price(value) -> str:
+    """Format a number as a dollar amount for the swing-scan table.
+
+    Unlike :func:`_fmt_money` (which drops decimals for whole numbers in the
+    terminal verdict card by deliberate, pre-existing choice), the swing
+    table's Fiyat/Giriş/Stop/Hedef columns must always show exactly 2
+    decimals so the column stays visually aligned across rows (e.g.
+    ``"$153.00"``, never ``"$153"``). Returns :data:`_DASH` for
+    ``None``/unparseable input.
+    """
+    if value is None:
+        return _DASH
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return _DASH
     return f"${value:,.2f}"
 
 
@@ -1438,6 +1460,186 @@ def cmd_calibrate(args: argparse.Namespace) -> None:
         print("\nWARNING: failed to save calibration snapshot.", file=sys.stderr)
 
 
+#: Column widths for the swing-scan terminal table (SWING_SPEC.md Sec.8).
+_SWING_COL_WIDTHS = [4, 8, 6, 14, 22, 10, 10, 10, 10, 6]
+
+#: How often (in scanned tickers) a progress line is logged during `swing`,
+#: so a cold-cache 500-ticker scan doesn't flood the log with one line per
+#: ticker but still shows it's making progress.
+_SWING_PROGRESS_STEP = 25
+
+
+def _print_swing_table(result: dict, top: int) -> None:
+    """Print the ranked plain-text swing-scan table (SWING_SPEC.md Sec.8):
+    rank, ticker, score, label, setup, price, entry/stop/target, R:R, plus a
+    one-line summary of skipped tickers."""
+    rows = result.get("rows") or []
+    index_label = result.get("universe_label") or result.get("universe") or _DASH
+    print(
+        f"\nSwing Tarama — {index_label} — {result.get('generated_at') or _DASH} "
+        f"(fiyat tarihi: {result.get('price_as_of') or _DASH}) — "
+        f"{result.get('count', 0)}/{result.get('total', 0)} hisse tarandı"
+    )
+
+    headers = ["#", "Hisse", "Skor", "Etiket", "Kurulum", "Fiyat", "Giriş", "Stop", "Hedef", "R:R"]
+    print("".join(h.ljust(w) for h, w in zip(headers, _SWING_COL_WIDTHS)))
+    print("-" * sum(_SWING_COL_WIDTHS))
+
+    for rank, row in enumerate(rows[:top], start=1):
+        rr = row.get("rr")
+        cells = [
+            str(rank),
+            str(row.get("ticker") or _DASH),
+            str(row.get("score") if row.get("score") is not None else _DASH),
+            str(row.get("label") or _DASH),
+            str(row.get("setup") or _DASH),
+            _fmt_swing_price(row.get("price")),
+            _fmt_swing_price(row.get("entry")),
+            _fmt_swing_price(row.get("stop")),
+            _fmt_swing_price(row.get("target")),
+            f"{rr:.2f}" if rr is not None else _DASH,
+        ]
+        print("".join(c.ljust(w) for c, w in zip(cells, _SWING_COL_WIDTHS)))
+
+    skipped = result.get("skipped") or []
+    if skipped:
+        sample = ", ".join(str(s.get("ticker") or "?") for s in skipped[:5])
+        more = f" (+{len(skipped) - 5} diğer)" if len(skipped) > 5 else ""
+        print(f"\nAtlanan: {len(skipped)} hisse — {sample}{more}")
+    else:
+        print("\nAtlanan: yok")
+
+
+def cmd_swing(args: argparse.Namespace) -> None:
+    """Handle the ``swing`` subcommand: scan the S&P 500 (or a subset, via
+    ``--limit``) for long-only swing-trade setups (SWING_SPEC.md Sec.8),
+    print a ranked table, and persist the result unless ``--no-save``.
+
+    Never raises out to the user: a failed scan prints a Turkish error line
+    to stderr and exits with status 1, so a warmed-cache/network hiccup
+    can't crash the CLI (CLAUDE.md: analysis layer never crashes the CLI).
+    """
+    index = normalize_index(getattr(args, "index", None))
+
+    tickers = None
+    if args.limit is not None:
+        try:
+            universe = load_universe(index=index)
+        except OSError as exc:
+            print(f"Evren dosyası okunamadı: {exc}", file=sys.stderr)
+            sys.exit(1)
+            return
+        tickers = [row["ticker"] for row in universe[: args.limit]]
+
+    def _progress(done: int, total: int, ticker: str) -> None:
+        if done % _SWING_PROGRESS_STEP == 0 or done == total:
+            logger.info("Swing tarama ilerlemesi: %d/%d (son: %s)", done, total, ticker)
+
+    try:
+        result = scan_swing(
+            tickers=tickers,
+            no_cache=args.no_cache,
+            max_workers=args.workers,
+            progress_cb=_progress,
+            index=index,
+        )
+    except Exception as exc:  # noqa: BLE001 - a failed scan must not crash the CLI
+        logger.exception("Swing tarama başarısız oldu")
+        print(f"Swing tarama başarısız: {exc}", file=sys.stderr)
+        sys.exit(1)
+        return
+
+    _print_swing_table(result, args.top)
+
+    if not args.no_save:
+        scan_id = save_swing_scan(result, db_path=Config.DB_PATH)
+        if scan_id:
+            print(f"\nTarama kaydedildi (id {scan_id}): {Config.DB_PATH}")
+        else:
+            print("\nWARNING: swing tarama veritabanına kaydedilemedi.", file=sys.stderr)
+
+
+#: Column widths for the swing-study decile terminal table (SWING_STUDY_SPEC.md
+#: Sec.5): Kova, n, ortalama fazla getiri %, medyan, isabet %, ortalama skor.
+_SWING_STUDY_DECILE_COL_WIDTHS = [8, 8, 16, 12, 10, 12]
+
+
+def _fmt_swing_study_pct(value) -> str:
+    return _DASH if value is None else f"%{value:.2f}"
+
+
+def _print_swing_study_report(result: dict) -> None:
+    """Print the swing-study terminal report (SWING_STUDY_SPEC.md Sec.5):
+    header, one decile table per horizon, top-minus-bottom spread,
+    monotonicity, the per-setup table, then limitations and the disclaimer.
+    """
+    index_label = result.get("index_label") or result.get("index") or _DASH
+    print(
+        f"\n=== Swing skor kova (decile) çalışması — {index_label} — "
+        f"{result.get('start') or _DASH} .. {result.get('end') or _DASH} ==="
+    )
+    print(
+        f"Rebalance tarihi: {result.get('rebalance_dates', 0)} · "
+        f"Gözlem: {result.get('observations', 0)} · "
+        f"Taranan hisse: {result.get('tickers_scanned', 0)} · "
+        f"Atlanan: {len(result.get('skipped') or [])} · "
+        f"Skor-yok: {result.get('dropped_no_score', 0)} · "
+        f"Vade-verisi-yok: {result.get('dropped_no_forward', 0)}"
+    )
+
+    deciles = result.get("deciles") or {}
+    spread = result.get("spread") or {}
+    monotonicity = result.get("monotonicity") or {}
+
+    for horizon_key in sorted(deciles, key=lambda k: int(k)):
+        print(f"\n[{horizon_key} işlem günü ileri getiri]")
+        headers = ["Kova", "n", "Ort. fazla getiri", "Medyan", "İsabet %", "Ort. skor"]
+        print("".join(h.ljust(w) for h, w in zip(headers, _SWING_STUDY_DECILE_COL_WIDTHS)))
+        print("-" * sum(_SWING_STUDY_DECILE_COL_WIDTHS))
+        for row in deciles.get(horizon_key) or []:
+            flag = "  ⚠ yetersiz örneklem" if row.get("low_sample") else ""
+            cells = [
+                str(row.get("decile")),
+                str(row.get("n")),
+                _fmt_swing_study_pct(row.get("mean_excess_pct")),
+                _fmt_swing_study_pct(row.get("median_excess_pct")),
+                f"%{row['hit_rate_pct']:.1f}" if row.get("hit_rate_pct") is not None else _DASH,
+                f"{row['mean_score']:.1f}" if row.get("mean_score") is not None else _DASH,
+            ]
+            print("".join(c.ljust(w) for c, w in zip(cells, _SWING_STUDY_DECILE_COL_WIDTHS)) + flag)
+
+        sp = spread.get(horizon_key) or {}
+        ci_low, ci_high = sp.get("ci_low"), sp.get("ci_high")
+        ci_str = (
+            f" (bootstrap %95 GA: {_fmt_swing_study_pct(ci_low)} .. {_fmt_swing_study_pct(ci_high)})"
+            if ci_low is not None and ci_high is not None else ""
+        )
+        print(f"Üst-alt kova farkı: {_fmt_swing_study_pct(sp.get('mean_excess_pct'))}{ci_str}")
+        print(f"Monotonluk (Spearman rho): {monotonicity.get(horizon_key, 0.0):.3f}")
+
+    by_setup = result.get("by_setup") or {}
+    if by_setup:
+        print("\n[Kurulum türüne göre]")
+        print(f"{'Kurulum':<24}{'n':>5}{'Fazla 10g':>12}{'Fazla 21g':>12}{'İsabet 10g':>12}{'İsabet 21g':>12}")
+        print("-" * 77)
+        for setup, row in sorted(by_setup.items()):
+            hit_10 = row.get("hit_rate_10_pct")
+            hit_21 = row.get("hit_rate_21_pct")
+            hit_10_str = _DASH if hit_10 is None else f"%{hit_10:.1f}"
+            hit_21_str = _DASH if hit_21 is None else f"%{hit_21:.1f}"
+            print(
+                f"{setup:<24}{row.get('n', 0):>5}"
+                f"{_fmt_swing_study_pct(row.get('mean_excess_10_pct')):>12}"
+                f"{_fmt_swing_study_pct(row.get('mean_excess_21_pct')):>12}"
+                f"{hit_10_str:>12}{hit_21_str:>12}"
+            )
+
+    print("\n[Bilinen kısıtlar]")
+    for line in result.get("limitations") or []:
+        print(f"  - {line}")
+    print(f"\n{result.get('disclaimer') or ''}")
+
+
 def cmd_backtest(args: argparse.Namespace) -> None:
     """Handle the ``backtest`` subcommand group: ``run``/``evaluate``/``report``.
 
@@ -1509,7 +1711,42 @@ def cmd_backtest(args: argparse.Namespace) -> None:
         print(f"\nHTML backtest raporu: {path}")
         return
 
-    print("Usage: backtest {run|evaluate|report} ...", file=sys.stderr)
+    if action == "swing":
+        from sec_analyzer.backtest.swing_study import run_swing_study
+        from sec_analyzer.screener.universe import normalize_index
+        from sec_analyzer.store.database import save_swing_study
+
+        index = normalize_index(getattr(args, "index", None))
+
+        def _progress(done: int, total: int, ticker: str) -> None:
+            if done % _SWING_PROGRESS_STEP == 0 or done == total:
+                logger.info("Swing çalışması ilerlemesi: %d/%d (son: %s)", done, total, ticker)
+
+        try:
+            result = run_swing_study(
+                index=index,
+                start=args.start,
+                end=args.end,
+                max_workers=args.workers,
+                progress_cb=_progress,
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed study must not crash the CLI
+            logger.exception("Swing skor çalışması başarısız oldu")
+            print(f"Swing skor çalışması başarısız: {exc}", file=sys.stderr)
+            sys.exit(1)
+            return
+
+        _print_swing_study_report(result)
+
+        if not args.no_save:
+            study_id = save_swing_study(result, db_path=Config.DB_PATH)
+            if study_id:
+                print(f"\nÇalışma kaydedildi (id {study_id}): {Config.DB_PATH}")
+            else:
+                print("\nWARNING: swing çalışması veritabanına kaydedilemedi.", file=sys.stderr)
+        return
+
+    print("Usage: backtest {run|evaluate|report|swing} ...", file=sys.stderr)
 
 
 def _parse_as_of(value: str) -> date:
@@ -2108,6 +2345,53 @@ def build_parser() -> argparse.ArgumentParser:
     )
     calibrate_parser.set_defaults(func=cmd_calibrate)
 
+    # --- swing (S&P 500 swing-trade screener; SWING_SPEC.md Sec.8) ---
+    swing_parser = subparsers.add_parser(
+        "swing",
+        help=(
+            "Scan the S&P 500 (or a subset) for long-only swing-trade setups "
+            "and print a ranked table (see sec_analyzer.screener.swing_scan)."
+        ),
+    )
+    swing_parser.add_argument(
+        "--index",
+        type=str,
+        default="sp500",
+        help=(
+            "Universe to scan: sp500 (default) or ndx (Nasdaq 100). "
+            "Case-insensitive; an unrecognized value falls back to sp500."
+        ),
+    )
+    swing_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Scan only the first N universe tickers (alphabetical), for a quick smoke run.",
+    )
+    swing_parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Bypass the on-disk price cache and re-fetch for every ticker (including SPY).",
+    )
+    swing_parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_MAX_WORKERS,
+        help=f"Thread-pool size for the per-ticker fan-out (default: {DEFAULT_MAX_WORKERS}).",
+    )
+    swing_parser.add_argument(
+        "--top",
+        type=int,
+        default=25,
+        help="Number of top-ranked rows to print (default: 25).",
+    )
+    swing_parser.add_argument(
+        "--no-save",
+        action="store_true",
+        help="Do not persist the scan result to the database.",
+    )
+    swing_parser.set_defaults(func=cmd_swing)
+
     # --- backtest {run|evaluate|report} ---
     backtest_parser = subparsers.add_parser(
         "backtest",
@@ -2144,6 +2428,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     backtest_sub.add_parser(
         "report", help="Print hit-rate/calibration/divergence tables and write an HTML report.",
+    )
+
+    bt_swing = backtest_sub.add_parser(
+        "swing",
+        help=(
+            "Stage 1 swing backtest: score-decile forward-return study -- does a "
+            "higher swing score predict a higher forward return? "
+            "See sec_analyzer/backtest/SWING_STUDY_SPEC.md."
+        ),
+    )
+    bt_swing.add_argument(
+        "--index", type=str, default="sp500",
+        help="Universe to study: sp500 (default) or ndx. Case-insensitive.",
+    )
+    bt_swing.add_argument("--start", type=str, default=None, help="ISO start date (default: earliest usable).")
+    bt_swing.add_argument("--end", type=str, default=None, help="ISO end date (default: latest available bar).")
+    bt_swing.add_argument(
+        "--workers", type=int, default=None,
+        help="Process/thread-pool size (default: min(8, cpu_count)).",
+    )
+    bt_swing.add_argument(
+        "--no-save", action="store_true", help="Do not persist the study result to the database.",
     )
 
     backtest_parser.set_defaults(func=cmd_backtest)

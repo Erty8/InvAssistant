@@ -12,6 +12,13 @@ an empty body, or too few rows), this module falls back to the optional
 ``yfinance`` package when it is installed. If neither source yields usable
 data, :class:`PriceDataError` is raised with a message intended to be shown
 directly to a user.
+
+Both Stooq and yfinance can hand back a trailing (or, rarely, interior) bar
+for an in-progress/unsettled session that carries a ``Volume`` estimate but
+``NaN`` for ``Open``/``High``/``Low``/``Close``. Every frame this module
+returns -- from cache, Stooq, or yfinance -- has such rows dropped before
+being handed back (see :func:`_drop_unusable_bars`), so a caller can always
+rely on ``Close`` being usable on every row of the returned frame.
 """
 
 import io
@@ -106,6 +113,59 @@ def _validate_frame(df: pd.DataFrame) -> bool:
     return len(df) >= _MIN_ROWS
 
 
+def _drop_unusable_bars(df: pd.DataFrame, ticker: str = "") -> pd.DataFrame:
+    """Drop rows with no usable ``Close`` price from a price-history frame.
+
+    Stooq (and occasionally yfinance) can include a trailing bar for an
+    in-progress/unsettled session that carries a ``Volume`` estimate but
+    ``NaN`` for ``Open``/``High``/``Low``/``Close`` -- and, more rarely, an
+    interior gap where a session's data is equally incomplete. Either shape
+    poisons every rolling-window indicator downstream: a single NaN
+    anywhere in a rolling window makes that whole window's result NaN (see
+    ``sec_analyzer.technical.indicators.compute_indicators``, which reads
+    ``close.iloc[-1]`` and rolling ``sma50``/``sma200`` windows). So no path
+    in this module may return a frame with an unusable ``Close`` on any row.
+
+    This must be called on every frame this module produces (cache load,
+    Stooq, yfinance) *before* :func:`_validate_frame`, so a frame that only
+    clears the minimum-row bar because of junk rows is correctly rejected
+    as too short rather than silently passed through.
+
+    Dropping a lone trailing row is an expected, routine occurrence during
+    market hours (not an error), so it is logged at debug level; dropping
+    more than one row is logged at info level since it is more likely to
+    indicate an actual upstream data problem worth noticing.
+
+    Args:
+        df: A candidate price-history DataFrame, or ``None``.
+        ticker: Ticker symbol, used only to make the log message more
+            useful. Optional.
+
+    Returns:
+        ``df`` with every row whose ``Close`` is NaN removed (order and
+        remaining columns unchanged). ``None``, an empty frame, or a frame
+        with no ``Close`` column at all is returned unchanged -- there is
+        nothing to drop, and the missing-column case is already rejected
+        by :func:`_validate_frame` downstream. Never raises.
+    """
+    if df is None or df.empty or "Close" not in df.columns:
+        return df
+
+    close = pd.to_numeric(df["Close"], errors="coerce")
+    bad = close.isna()
+    n_bad = int(bad.sum())
+    if n_bad == 0:
+        return df
+
+    label = f" for {ticker}" if ticker else ""
+    log = logger.debug if n_bad == 1 else logger.info
+    log("Dropping %d row(s) with unusable (NaN) Close price%s.", n_bad, label)
+
+    df = df.copy()
+    df["Close"] = close
+    return df.loc[~bad]
+
+
 def _fetch_stooq(ticker: str) -> pd.DataFrame:
     """Fetch and parse daily price history from Stooq.
 
@@ -141,6 +201,8 @@ def _fetch_stooq(ticker: str) -> pd.DataFrame:
         df = pd.read_csv(io.StringIO(text), parse_dates=["Date"])
     except Exception as exc:  # noqa: BLE001 - surface any parse failure uniformly
         raise PriceDataError(f"Stooq CSV for {ticker} could not be parsed: {exc}") from exc
+
+    df = _drop_unusable_bars(df, ticker)
 
     if not _validate_frame(df):
         raise PriceDataError(
@@ -193,6 +255,8 @@ def _fetch_yfinance(ticker: str, period: str = _YFINANCE_DEFAULT_PERIOD) -> pd.D
 
     df.index.name = "Date"
 
+    df = _drop_unusable_bars(df, ticker)
+
     if not _validate_frame(df):
         raise PriceDataError(
             f"yfinance returned too little data for {ticker} "
@@ -215,6 +279,19 @@ def get_price_history(
     range params, so it always returns the full daily history it has --
     there is no lookback window to widen on that path. ``yfinance_period``
     only affects the fallback path.
+
+    Every row of the returned frame has a usable (non-NaN) ``Close``: see
+    :func:`_drop_unusable_bars`, which is applied on the cache-load path
+    and on both the Stooq and yfinance fetch paths, before each frame is
+    checked by :func:`_validate_frame`. On the Stooq/yfinance paths the
+    cleaned frame is what gets both cached to disk and returned -- there is
+    no separate "dirty" version written to cache, since cleaning once and
+    reusing the same frame for both is simpler than keeping the raw and
+    cleaned frames separate. On the cache-load path the cleaning happens
+    only in memory (the on-disk file is left as-is); a pre-existing cache
+    file written before this cleaning existed will simply have its junk
+    rows dropped again on every load until its next 24h refresh replaces it
+    with an already-clean fetch.
 
     Args:
         ticker: Stock ticker symbol, e.g. ``"AAPL"``.
@@ -244,6 +321,7 @@ def get_price_history(
     if not no_cache and _is_cache_fresh(path):
         try:
             df = _load_cache(path)
+            df = _drop_unusable_bars(df, ticker)
             if _validate_frame(df):
                 logger.info(
                     "price cache hit for %s: %s (%d rows)", ticker, path, len(df)

@@ -140,8 +140,9 @@ def get_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
 
 
 def init_db(db_path: Optional[str] = None) -> None:
-    """Create the ``companies``, ``financials``, ``ratios``, ``prices``, and
-    ``verdicts`` tables.
+    """Create the ``companies``, ``financials``, ``ratios``, ``prices``,
+    ``verdicts``, ``verdict_outcomes``, ``swing_scans``, and ``swing_studies``
+    tables.
 
     Safe to call any number of times: every statement is
     ``CREATE TABLE IF NOT EXISTS``, and any columns added to ``financials``,
@@ -256,6 +257,44 @@ def init_db(db_path: Optional[str] = None) -> None:
                     referee_note TEXT,
                     evaluated_at TEXT,
                     PRIMARY KEY (verdict_id, horizon)
+                )
+                """
+            )
+
+            # S&P 500 swing-trade screener scans (SWING_SPEC.md Sec.5): one
+            # row per scan run, the full result dict stored as a single JSON
+            # payload column rather than shredded into per-ticker columns --
+            # this is a recomputable display artifact (from prices, at any
+            # time), not a fundamental fact, and 500 rows render fine
+            # client-side.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS swing_scans (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    generated_at TEXT NOT NULL,
+                    price_as_of  TEXT,
+                    universe     TEXT NOT NULL,
+                    count        INTEGER NOT NULL,
+                    payload      TEXT NOT NULL
+                )
+                """
+            )
+
+            # Swing-score decile forward-return study runs
+            # (SWING_STUDY_SPEC.md Sec.5): one row per study run, the full
+            # result dict stored as a single JSON payload column -- same
+            # rationale as ``swing_scans`` (a recomputable display artifact,
+            # not a fundamental fact).
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS swing_studies (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    generated_at TEXT NOT NULL,
+                    universe     TEXT NOT NULL,
+                    start_date   TEXT,
+                    end_date     TEXT,
+                    observations INTEGER NOT NULL,
+                    payload      TEXT NOT NULL
                 )
                 """
             )
@@ -994,3 +1033,188 @@ def load_outcomes(db_path: Optional[str] = None) -> List[dict]:
         return [dict(row) for row in cursor.fetchall()]
     finally:
         conn.close()
+
+
+def save_swing_scan(result: dict, db_path: Optional[str] = None) -> int:
+    """Persist a swing-screener scan result (SWING_SPEC.md Sec.4/5).
+
+    The full ``result`` dict is stored verbatim as a single JSON payload
+    column (deliberately not shredded into per-ticker columns -- see the
+    ``swing_scans`` DDL comment in :func:`init_db`); ``generated_at``,
+    ``price_as_of``, ``universe``, and ``count`` are pulled out into their
+    own columns purely so the latest-scan lookup doesn't need to parse JSON
+    just to order by recency.
+
+    Args:
+        result: The dict returned by
+            :func:`sec_analyzer.screener.swing_scan.scan_swing`.
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+
+    Returns:
+        The id (``rowid``) of the newly inserted row, or ``0`` on failure.
+        Never raises -- mirrors :func:`save_prices`'s non-fatal posture,
+        since a scan that took minutes to compute must not be lost to a
+        transient disk/DB error.
+    """
+    result = result or {}
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+        try:
+            with conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO swing_scans (generated_at, price_as_of, universe, count, payload)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        result.get("generated_at"),
+                        result.get("price_as_of"),
+                        result.get("universe"),
+                        int(result.get("count") or 0),
+                        json.dumps(result, ensure_ascii=False),
+                    ),
+                )
+                scan_id = cursor.lastrowid
+            logger.info(
+                "Saved swing scan (%d rows) to %s", result.get("count") or 0, db_path or Config.DB_PATH
+            )
+            return scan_id
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - a scan is a recomputable display artifact, never fatal to lose
+        logger.warning("Failed to save swing scan", exc_info=True)
+        return 0
+
+
+def load_latest_swing_scan(db_path: Optional[str] = None, universe: Optional[str] = None) -> Optional[dict]:
+    """Return the most recently saved swing-screener scan's payload.
+
+    Args:
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+        universe: When given, restricts the lookup to the most recent scan
+            of that index only (e.g. ``"SP500"``/``"NDX"``), so switching
+            indexes in the UI never surfaces another index's rows. ``None``
+            (default) returns the most recent scan of any index, preserving
+            the original single-index behaviour.
+
+    Returns:
+        The stored ``result`` dict (see :func:`save_swing_scan`), or
+        ``None`` when no matching scan has been stored yet, the payload is
+        unreadable, or any error occurs. Never raises.
+    """
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+        try:
+            if universe is None:
+                row = conn.execute(
+                    "SELECT payload FROM swing_scans ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT payload FROM swing_scans WHERE universe = ? ORDER BY id DESC LIMIT 1",
+                    (universe,),
+                ).fetchone()
+            if row is None or not row["payload"]:
+                return None
+            return json.loads(row["payload"])
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - best-effort read, never fatal
+        logger.warning("Failed to load latest swing scan", exc_info=True)
+        return None
+
+
+def save_swing_study(result: dict, db_path: Optional[str] = None) -> int:
+    """Persist a swing-score decile study result (SWING_STUDY_SPEC.md Sec.5).
+
+    The full ``result`` dict (as returned by
+    :func:`sec_analyzer.backtest.swing_study.run_swing_study`) is stored
+    verbatim as a single JSON payload column, mirroring
+    :func:`save_swing_scan`'s rationale exactly (a recomputable display
+    artifact, not a fundamental fact); ``generated_at``, ``universe``,
+    ``start_date``/``end_date`` (from ``result["start"]``/``result["end"]``),
+    and ``observations`` are pulled into their own columns purely so the
+    latest-study lookup doesn't need to parse JSON just to order by recency.
+
+    Args:
+        result: The dict returned by
+            :func:`sec_analyzer.backtest.swing_study.run_swing_study`.
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+
+    Returns:
+        The id (``rowid``) of the newly inserted row, or ``0`` on failure.
+        Never raises -- a study that took a long time to compute must not be
+        lost to a transient disk/DB error.
+    """
+    result = result or {}
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+        try:
+            with conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO swing_studies (
+                        generated_at, universe, start_date, end_date, observations, payload
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        result.get("generated_at"),
+                        result.get("index"),
+                        result.get("start"),
+                        result.get("end"),
+                        int(result.get("observations") or 0),
+                        json.dumps(result, ensure_ascii=False),
+                    ),
+                )
+                study_id = cursor.lastrowid
+            logger.info(
+                "Saved swing study (%d observations) to %s",
+                result.get("observations") or 0, db_path or Config.DB_PATH,
+            )
+            return study_id
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - a study is a recomputable display artifact, never fatal to lose
+        logger.warning("Failed to save swing study", exc_info=True)
+        return 0
+
+
+def load_latest_swing_study(db_path: Optional[str] = None, universe: Optional[str] = None) -> Optional[dict]:
+    """Return the most recently saved swing-study's payload.
+
+    Args:
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+        universe: When given, restricts the lookup to the most recent study
+            of that index only (e.g. ``"SP500"``/``"NDX"``). ``None``
+            (default) returns the most recent study of any index.
+
+    Returns:
+        The stored ``result`` dict (see :func:`save_swing_study`), or
+        ``None`` when no matching study has been stored yet, the payload is
+        unreadable, or any error occurs. Never raises.
+    """
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+        try:
+            if universe is None:
+                row = conn.execute(
+                    "SELECT payload FROM swing_studies ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT payload FROM swing_studies WHERE universe = ? ORDER BY id DESC LIMIT 1",
+                    (universe,),
+                ).fetchone()
+            if row is None or not row["payload"]:
+                return None
+            return json.loads(row["payload"])
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - best-effort read, never fatal
+        logger.warning("Failed to load latest swing study", exc_info=True)
+        return None
