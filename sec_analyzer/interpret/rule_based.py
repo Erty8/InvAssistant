@@ -105,6 +105,13 @@ _CYCLICAL_STDEV_MODERATE = 0.15
 _VERDICT_STRONG_PCT = 0.75
 _VERDICT_ADEQUATE_PCT = 0.50
 
+#: Leverage-check threshold for ``sector_type == "financial"`` (SPEC.md
+#: Sec.20c). The ratio checked is liabilities/equity INCLUDING deposits, so
+#: mid-single-digit is ordinary for a deposit funder (SoFi is ~4x) and the
+#: generic 2.0x bar would fail every bank. Above ~10x is genuinely thin
+#: capitalization and still fails.
+_FINANCIAL_LEVERAGE_MAX = 10.0
+
 #: Growth anchor used in the fair-value scenarios is clamped to this range
 #: (0% to 25%) regardless of the raw computed CAGR, to keep even the bull
 #: scenario conservative for a company on a brief growth tear.
@@ -248,14 +255,23 @@ def _resolve_latest_fy(ratios: List[dict], series_dicts: List[Dict[int, float]])
 
 
 def _build_checks(
-    latest_fy: Optional[int], series: Dict[str, Dict[int, float]], ratio_by_fy: Dict[int, dict]
+    latest_fy: Optional[int], series: Dict[str, Dict[int, float]], ratio_by_fy: Dict[int, dict],
+    sector_type: Optional[str] = None,
 ) -> List[dict]:
     """Run the fixed ten-point deterministic checklist for ``latest_fy``.
 
     Every check is defensive: if a required figure is missing, the check's
     ``passed`` is ``None`` ("n/a due to missing data") rather than being
     counted as a failure. See the module docstring for the rationale.
+
+    ``sector_type == "financial"`` re-bases two checks whose generic
+    thresholds are meaningless for a deposit-funded balance sheet (SPEC.md
+    Sec.20c): liquidity becomes n/a, and the leverage threshold moves to
+    :data:`_FINANCIAL_LEVERAGE_MAX`. Any other value (including the default
+    ``None``, used by callers with no sector in scope) keeps the existing
+    thresholds exactly.
     """
+    is_financial = sector_type == "financial"
     fy_lbl = _fy_label(latest_fy)
     latest_ratios = ratio_by_fy.get(latest_fy, {}) if latest_fy is not None else {}
     checks: List[dict] = []
@@ -367,7 +383,19 @@ def _build_checks(
 
     # 6. Liquidity: latest current_ratio >= 1.0.
     current_ratio = latest_ratios.get("current_ratio")
-    if current_ratio is None:
+    if is_financial:
+        # A bank does not classify its balance sheet by maturity, so whatever
+        # AssetsCurrent/LiabilitiesCurrent it happens to tag is an artifact of
+        # its filing style, not a liquidity signal (SPEC.md Sec.20c).
+        checks.append(
+            _check(
+                "Liquidity",
+                None,
+                "Current ratio is not defined for a financial institution "
+                "(assets/liabilities are not classified by maturity).",
+            )
+        )
+    elif current_ratio is None:
         checks.append(_check("Liquidity", None, f"current_ratio is not computable for {fy_lbl}."))
     else:
         checks.append(
@@ -396,6 +424,19 @@ def _build_checks(
                 "Leverage",
                 None,
                 f"debt_to_equity is not computable for {fy_lbl}.",
+            )
+        )
+    elif is_financial:
+        # `debt_to_equity` is TotalLiabilities/StockholdersEquity, so for a
+        # deposit funder it measures deposit-inclusive leverage -- the right
+        # measure, but on the wrong scale: mid-single-digit is normal, and the
+        # generic 2.0x bar would flag every bank (SPEC.md Sec.20c).
+        checks.append(
+            _check(
+                "Leverage",
+                debt_to_equity <= _FINANCIAL_LEVERAGE_MAX,
+                f"Liabilities-to-equity incl. deposits ({fy_lbl}) = {debt_to_equity:.2f} "
+                f"(financial-sector threshold {_FINANCIAL_LEVERAGE_MAX:.2f}).",
             )
         )
     else:
@@ -884,6 +925,7 @@ def analyze(
     red_flags: Optional[List[dict]] = None,
     catalyst: Optional[dict] = None,
     horizon: str = "1y",
+    sector_type: Optional[str] = None,
 ) -> dict:
     """Run the deterministic, script-based fundamental screen.
 
@@ -908,6 +950,12 @@ def analyze(
         horizon: Investment horizon: ``"3m"``, ``"1y"``, or ``"5y"``.
             Controls ``horizon_note`` wording and (indirectly, since the
             weights are informational here) which signals are emphasized.
+        sector_type: One of
+            :func:`sec_analyzer.valuation.sector.classify_sector`'s buckets,
+            or ``None``. Only ``"financial"`` changes anything: it re-bases
+            the checklist's liquidity and leverage thresholds, whose generic
+            forms are meaningless for a deposit-funded balance sheet (SPEC.md
+            Sec.20c). ``None`` preserves the pre-existing behavior exactly.
 
     Returns:
         A dict matching the unified bear/base/bull schema documented in
@@ -921,7 +969,8 @@ def analyze(
         into an "insufficient data" result with the same schema.
     """
     try:
-        return _analyze(normalized or {}, ratios or [], metrics, technical, red_flags, catalyst, horizon)
+        return _analyze(normalized or {}, ratios or [], metrics, technical, red_flags, catalyst,
+                        horizon, sector_type)
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("rule_based.analyze() failed unexpectedly; returning an insufficient-data result.")
         return _error_result()
@@ -935,6 +984,7 @@ def _analyze(
     red_flags: Optional[List[dict]],
     catalyst: Optional[dict],
     horizon: str,
+    sector_type: Optional[str] = None,
 ) -> dict:
     """Do the actual work for :func:`analyze` (split out so the latter can
     wrap it in a single top-level try/except)."""
@@ -945,7 +995,7 @@ def _analyze(
 
     latest_fy = _resolve_latest_fy(ratios, list(series.values()))
 
-    checks = _build_checks(latest_fy, series, ratio_by_fy)
+    checks = _build_checks(latest_fy, series, ratio_by_fy, sector_type)
     points, max_points = _score(checks)
     tier_label = _verdict_label(points, max_points)
     cyclical = _cyclical_risk(ratios)

@@ -206,17 +206,22 @@ def fcfe_sustainable_growth_per_share(
 
     ni_path: List[float] = []
     fcfe_path: List[float] = []
+    growth_path: List[float] = []
+    growth_capped = False
     previous_ni = ni0
     pv_sum = 0.0
     for year in range(1, HORIZON_YEARS + 1):
         growth_rate = _year_growth_rate(year, growth_5y, terminal_growth)
         g_eff = min(growth_rate, roe)
+        if g_eff < growth_rate:
+            growth_capped = True
         ni_year = previous_ni * (1 + g_eff)
         reinvestment_rate = g_eff / roe
         fcfe_year = ni_year * (1 - reinvestment_rate)
 
         ni_path.append(ni_year)
         fcfe_path.append(fcfe_year)
+        growth_path.append(g_eff)
         pv_sum += fcfe_year / (1 + discount_rate) ** year
         previous_ni = ni_year
 
@@ -248,6 +253,11 @@ def fcfe_sustainable_growth_per_share(
         "fcfe_path": fcfe_path,
         "tv": tv,
         "effective_shares": effective_shares,
+        # SPEC.md Sec.22a: the growth actually applied, so a caller can tell
+        # the reader when the internal-funding cap discarded the assumption.
+        "growth_path": growth_path,
+        "effective_growth_5y": min(growth_5y, roe),
+        "growth_capped": growth_capped,
     }
 
 
@@ -378,12 +388,16 @@ def rim_per_share(
 
     ri_path: List[float] = []
     bve_path: List[float] = []
+    growth_path: List[float] = []
+    growth_capped = False
     previous_ni = ni0
     previous_bve = bve0
     pv_sum = 0.0
     for year in range(1, HORIZON_YEARS + 1):
         growth_rate = _year_growth_rate(year, growth_5y, terminal_growth)
         g_eff = min(growth_rate, roe)
+        if g_eff < growth_rate:
+            growth_capped = True
         ni_year = previous_ni * (1 + g_eff)
         reinvestment_rate = g_eff / roe
         retained = ni_year * reinvestment_rate
@@ -392,6 +406,7 @@ def rim_per_share(
 
         ri_path.append(ri_year)
         bve_path.append(bve_year)
+        growth_path.append(g_eff)
         pv_sum += ri_year / (1 + discount_rate) ** year
         previous_ni = ni_year
         previous_bve = bve_year
@@ -436,6 +451,12 @@ def rim_per_share(
         "bve_path": bve_path,
         "tv": tv,
         "effective_shares": effective_shares,
+        # SPEC.md Sec.22a: the growth actually applied. When `growth_capped`
+        # is True the caller's `growth_5y` was discarded in favor of what
+        # retained earnings alone can fund, and the reader must be told.
+        "growth_path": growth_path,
+        "effective_growth_5y": min(growth_5y, roe),
+        "growth_capped": growth_capped,
     }
 
 
@@ -541,4 +562,141 @@ def dcf_per_share(
         "fcf_path": fcf_path,
         "tv": tv,
         "effective_shares": effective_shares,
+    }
+
+
+def rim_external_growth_per_share(
+    bve0: float,
+    ni0: float,
+    roe: float,
+    growth_5y: float,
+    terminal_growth: float,
+    discount_rate: float,
+    shares: float,
+    terminal_roe: Optional[float] = None,
+) -> dict:
+    """Residual income when growth is funded by issuing equity, not retention.
+
+    :func:`rim_per_share` caps every year at ``min(g, roe)`` -- the growth
+    retained earnings alone can fund (``g = b x ROE``, ``b <= 1``). A firm can
+    of course grow faster by issuing shares; SoFi's FY2025 equity went
+    ``6,525M -> 10,489M`` on ``481M`` of net income, so roughly ``3.5B`` came
+    from external issuance. This function answers what that does to value.
+
+    **Issuance is modeled at fair value, which is value-neutral**: new
+    shareholders pay in exactly what their claim is worth, so the injected
+    capital and the claim it buys cancel. Two consequences:
+
+    * the share count is NOT inflated -- ``per_share`` divides by today's
+      shares;
+    * the whole value effect comes from applying the ``roe - discount_rate``
+      spread to a LARGER book value.
+
+    Modeling issuance at any other price would transfer value between old and
+    new holders, and picking that price would make an *intrinsic* estimate
+    depend on the market price it exists to be tested against.
+
+    The sign is the point, and it is unambiguous: with ``roe >
+    discount_rate`` faster growth ADDS value, with ``roe == discount_rate``
+    it is exactly neutral (residual income is zero every year, so the value
+    is ``bve0`` regardless of growth), and with ``roe < discount_rate`` it
+    DESTROYS value. This function quantifies that; it does not rescue a
+    number.
+
+    Earnings follow an ROE-consistent path (``ni_t = roe * bve_{t-1}``) rather
+    than ``rim_per_share``'s ``ni0``-compounding path, so the stated ROE
+    cannot drift (see Sec.8f's documented F4 front-loading). To keep the
+    comparison honest, ``per_share_internal`` re-runs THIS path with growth
+    capped at ``roe`` -- so ``value_gap_per_share`` isolates the funding
+    assumption alone instead of mixing in the two functions' different
+    earnings paths.
+
+    Args:
+        bve0: Opening book value of equity. Must be positive.
+        ni0: Latest net income. Accepted for signature symmetry with
+            ``rim_per_share`` and validated identically; the projection
+            itself derives earnings from ``roe * bve`` (see above).
+        roe: Return on equity, as a fraction. Must be positive.
+        growth_5y: Assumed growth for years 1-5, applied UNCAPPED here.
+        terminal_growth: Perpetuity growth; also the years 6-10 fade target.
+        discount_rate: Levered cost of equity (no net-debt bridge -- book
+            value and net income are already equity-level figures).
+        shares: Today's share count. Must be positive.
+        terminal_roe: Terminal-phase ROE. The engine passes the cost of
+            equity, making terminal residual income (and so the terminal
+            value) exactly zero. Defaults to ``roe``.
+
+    Returns:
+        ``{"per_share", "equity", "bve0", "ri_path", "bve_path", "tv",
+        "effective_shares", "per_share_internal", "value_gap_per_share",
+        "external_funding_total", "external_funding_path"}``. Nothing is
+        rounded -- that is the caller's job.
+
+    Raises:
+        ValueError: On the same invalid inputs as :func:`rim_per_share`.
+    """
+    if ni0 is None:
+        raise ValueError("rim_external_growth_per_share: ni0 must not be None.")
+    if bve0 is None or bve0 <= 0:
+        raise ValueError(
+            f"rim_external_growth_per_share: bve0 must be positive, got {bve0!r}."
+        )
+    if not shares or shares <= 0:
+        raise ValueError(
+            f"rim_external_growth_per_share: shares must be a positive number, got {shares!r}."
+        )
+    if roe <= 0:
+        raise ValueError(f"rim_external_growth_per_share: roe must be positive, got {roe!r}.")
+    if discount_rate <= terminal_growth:
+        raise ValueError(
+            f"rim_external_growth_per_share: discount_rate ({discount_rate}) must be strictly "
+            f"greater than terminal_growth ({terminal_growth}) for the Gordon-growth terminal "
+            "value to be defined."
+        )
+
+    terminal_roe_resolved = terminal_roe if terminal_roe is not None else roe
+
+    def _run(cap_growth: bool):
+        ri_path: List[float] = []
+        bve_path: List[float] = []
+        funding_path: List[float] = []
+        previous_bve = bve0
+        pv_sum = 0.0
+        for year in range(1, HORIZON_YEARS + 1):
+            growth_rate = _year_growth_rate(year, growth_5y, terminal_growth)
+            g = min(growth_rate, roe) if cap_growth else growth_rate
+            # Residual income on the OPENING book, exactly as rim_per_share.
+            ri_year = (roe - discount_rate) * previous_bve
+            # Retention supplies `roe * previous_bve`; the rest must be issued.
+            funding_path.append(max(0.0, previous_bve * (g - roe)))
+            bve_year = previous_bve * (1 + g)
+
+            ri_path.append(ri_year)
+            bve_path.append(bve_year)
+            pv_sum += ri_year / (1 + discount_rate) ** year
+            previous_bve = bve_year
+
+        ri_terminal = (terminal_roe_resolved - discount_rate) * bve_path[-1]
+        tv = ri_terminal / (discount_rate - terminal_growth)
+        pv_sum += tv / (1 + discount_rate) ** HORIZON_YEARS
+        return bve0 + pv_sum, ri_path, bve_path, funding_path, tv
+
+    equity, ri_path, bve_path, funding_path, tv = _run(cap_growth=False)
+    equity_internal, _, _, _, _ = _run(cap_growth=True)
+
+    per_share = equity / shares
+    per_share_internal = equity_internal / shares
+
+    return {
+        "per_share": per_share,
+        "equity": equity,
+        "bve0": bve0,
+        "ri_path": ri_path,
+        "bve_path": bve_path,
+        "tv": tv,
+        "effective_shares": shares,
+        "per_share_internal": per_share_internal,
+        "value_gap_per_share": per_share - per_share_internal,
+        "external_funding_total": sum(funding_path),
+        "external_funding_path": funding_path,
     }

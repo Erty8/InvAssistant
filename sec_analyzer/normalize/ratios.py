@@ -89,6 +89,8 @@ def compute_ratios(normalized: dict) -> List[dict]:
               "period_end": str or None,
               "net_margin": float or None,             # NetIncome / Revenue
               "roe": float or None,                    # NetIncome / StockholdersEquity
+              "tangible_equity": float or None,        # equity - Goodwill - IntangibleAssets
+              "rotce": float or None,                  # NetIncome / tangible_equity
               "current_ratio": float or None,          # CurrentAssets / CurrentLiabilities
               "yoy_revenue_growth": float or None,      # (Rev_t - Rev_t-1) / Rev_t-1
               "yoy_net_income_growth": float or None,   # (NI_t - NI_t-1) / NI_t-1
@@ -101,6 +103,14 @@ def compute_ratios(normalized: dict) -> List[dict]:
             }
 
         Returns an empty list if no fiscal year has any usable input data.
+
+    Note on ``rotce``: the conventional term is return on tangible *common*
+    equity, which also deducts preferred equity. The normalized concept set
+    carries no reliable preferred-stock line, so none is deducted -- the
+    denominator is exactly ``StockholdersEquity - Goodwill -
+    IntangibleAssets``. For a filer with material preferred stock this reads
+    slightly high versus a strict ROTCE. The key keeps the recognizable name;
+    ``tangible_equity`` is returned alongside so the denominator is visible.
     """
     revenue = to_annual_series(normalized, "Revenue")
     net_income = to_annual_series(normalized, "NetIncome")
@@ -113,6 +123,8 @@ def compute_ratios(normalized: dict) -> List[dict]:
     total_liabilities = to_annual_series(normalized, "TotalLiabilities")
     operating_cash_flow = to_annual_series(normalized, "OperatingCashFlow")
     capex = to_annual_series(normalized, "CapEx")
+    goodwill = to_annual_series(normalized, "Goodwill")
+    intangibles = to_annual_series(normalized, "IntangibleAssets")
 
     fiscal_years = (
         set(revenue)
@@ -164,12 +176,33 @@ def compute_ratios(normalized: dict) -> List[dict]:
         # alone, which would overstate free cash flow.
         fcf = _safe_sub(ocf, cpx)
 
+        # Tangible equity = book equity less goodwill and other intangibles
+        # (SPEC.md Sec.23b). A missing goodwill/intangibles series for this
+        # fiscal year is treated as 0.0 -- an SEC filer with none simply does
+        # not tag it. If a filer HAS goodwill but left it untagged for a year,
+        # tangible_equity reads too high, which understates `rotce` (and
+        # overstates cheapness in metrics' `ptbv`); the raw figure is exposed
+        # below so that is auditable rather than hidden.
+        tangible_equity = (
+            None if eq is None
+            else eq - (goodwill.get(fy) or 0.0) - (intangibles.get(fy) or 0.0)
+        )
+        # A non-positive tangible base (goodwill exceeding book equity) makes
+        # the return meaningless, not merely negative.
+        rotce = (
+            _safe_div(ni, tangible_equity)
+            if tangible_equity is not None and tangible_equity > 0
+            else None
+        )
+
         results.append(
             {
                 "fy": fy,
                 "period_end": period_end_by_fy.get(fy),
                 "net_margin": _safe_div(ni, rev),
                 "roe": _safe_div(ni, eq),
+                "tangible_equity": tangible_equity,
+                "rotce": rotce,
                 "current_ratio": _safe_div(curr_assets, curr_liabs),
                 "yoy_revenue_growth": _safe_growth(rev, prev_rev),
                 "yoy_net_income_growth": _safe_growth(ni, prev_ni),

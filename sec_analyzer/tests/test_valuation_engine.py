@@ -1554,6 +1554,9 @@ def test_run_valuation_current_multiples_left_none_without_price_or_shares():
     )
     assert result["multiples"]["current"] == {
         "pe": None, "ps": None, "pfcf": None, "pffo": None, "ev_ebit": None, "ev_ebitda": None,
+        # ptbv joined the shape in SPEC.md Sec.23c; with no price it stays None
+        # like every sibling.
+        "ptbv": None,
     }
 
     # Price present but no shares at all -> ps/pfcf can't be derived

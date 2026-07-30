@@ -68,7 +68,7 @@ from sec_analyzer.store import assumptions as assumptions_store
 from sec_analyzer.valuation import damodaran
 from sec_analyzer.valuation.capm import compute_cost_of_equity
 from sec_analyzer.valuation.sanity import clamp_assumptions, validate_assumptions
-from sec_analyzer.valuation.sector import classify_sector
+from sec_analyzer.valuation.sector import SECTOR_FINANCIAL, _is_deposit_funded, classify_sector
 from sec_analyzer.signals.momentum import (
     compute_fundamental_momentum,
     compute_verdict_momentum,
@@ -100,7 +100,7 @@ _DASH = "—"
 _CARD_LABEL_WIDTH = 13
 
 
-def _print_ratios(ratios: List[dict]) -> None:
+def _print_ratios(ratios: List[dict], sector_type: Optional[str] = None) -> None:
     """Render the per-fiscal-year ratio list as a compact aligned table.
 
     Net margin and the two YoY growth ratios are shown as percentages; ROE
@@ -110,6 +110,12 @@ def _print_ratios(ratios: List[dict]) -> None:
     Args:
         ratios: The list returned by
             :func:`sec_analyzer.normalize.ratios.compute_ratios`.
+        sector_type: One of
+            :func:`sec_analyzer.valuation.sector.classify_sector`'s buckets,
+            or ``None``. ``"financial"`` drops the Current Ratio column,
+            which is undefined for a filer that does not classify its
+            balance sheet by maturity (SPEC.md Sec.20c); every other value
+            keeps the existing table unchanged.
     """
     if not ratios:
         print("No ratios available (insufficient annual data).")
@@ -121,7 +127,12 @@ def _print_ratios(ratios: List[dict]) -> None:
     def as_dec(value) -> str:
         return f"{value:.2f}" if value is not None else "-"
 
-    headers = ["FY", "Net Margin", "ROE", "Current Ratio", "Rev YoY", "NI YoY"]
+    show_current_ratio = sector_type != "financial"
+
+    headers = ["FY", "Net Margin", "ROE"]
+    if show_current_ratio:
+        headers.append("Current Ratio")
+    headers += ["Rev YoY", "NI YoY"]
     print("".join(h.rjust(_RATIO_COL_WIDTH) for h in headers))
     print("-" * (_RATIO_COL_WIDTH * len(headers)))
 
@@ -130,7 +141,10 @@ def _print_ratios(ratios: List[dict]) -> None:
             str(row.get("fy", "-")),
             as_pct(row.get("net_margin")),
             as_dec(row.get("roe")),
-            as_dec(row.get("current_ratio")),
+        ]
+        if show_current_ratio:
+            cells.append(as_dec(row.get("current_ratio")))
+        cells += [
             as_pct(row.get("yoy_revenue_growth")),
             as_pct(row.get("yoy_net_income_growth")),
         ]
@@ -166,7 +180,13 @@ def _fetch_normalize_store(args: argparse.Namespace) -> Tuple[str, str, dict, Li
 
     print(format_table(normalized))
     print()
-    _print_ratios(ratios)
+    # This function has no SIC in scope (submissions are fetched later, only
+    # by `analyze`), but the deposit test alone is enough to know the current
+    # ratio is meaningless here, and it needs no extra network call.
+    _print_ratios(
+        ratios,
+        sector_type=SECTOR_FINANCIAL if _is_deposit_funded(normalized, {}) else None,
+    )
 
     if as_of is not None:
         print(
@@ -818,6 +838,110 @@ def _ev_multiples_line(valuation: dict) -> Optional[str]:
     return f"{label}{' · '.join(fragments)}"
 
 
+_CYCLE_FLAG_LABELS = {
+    "peak_cycle_pe_trap": "tepe-döngü F/K tuzağı",
+    "peak_annualization": "tepe-çeyrek yıllıklaştırma",
+    "regime_change_premium": "rejim-değişimi primi",
+}
+
+
+def _cycle_lines(valuation: dict) -> List[str]:
+    """Render the cyclical cycle-position / two-regime block (SPEC.md Sec.26e).
+
+    Advisory: this never moves the headline fair value. It answers a
+    different question -- not "what is it worth" but "what does today's price
+    force you to believe about the cycle". Returns ``[]`` for any filer
+    without a ``cycle`` block (every non-cyclical sector, and cyclicals with
+    too little history)."""
+    cycle = valuation.get("cycle")
+    if not cycle:
+        return []
+    stats = cycle.get("stats") or {}
+    lines: List[str] = []
+
+    def _pct(value):
+        return f"%{value * 100:.1f}" if isinstance(value, (int, float)) else _DASH
+
+    percentile = stats.get("margin_percentile")
+    percentile_txt = f"{percentile:.0f}. pctile" if isinstance(percentile, (int, float)) else _DASH
+    position = (
+        f"marj {_pct(stats.get('margin_current'))} "
+        f"({stats.get('margin_current_basis', '?')}, {percentile_txt}) · "
+        f"ort {_pct(stats.get('margin_mean'))} · dip {_pct(stats.get('margin_trough'))} "
+        f"/ tepe {_pct(stats.get('margin_peak'))} [{stats.get('years')}y]"
+    )
+    lines.append(f"{'Döngü:'.ljust(_CARD_LABEL_WIDTH)}{position}")
+
+    if all(isinstance(stats.get(k), (int, float)) for k in ("pb_current", "pb_median", "pb_peak")):
+        lines.append(
+            f"{''.ljust(_CARD_LABEL_WIDTH)}P/B {stats['pb_current']:.2f} "
+            f"(tarihsel dip {stats['pb_trough']:.2f} · medyan {stats['pb_median']:.2f} "
+            f"· tepe {stats['pb_peak']:.2f})"
+        )
+
+    def _band(regime, label):
+        if not regime:
+            return None
+        parts = [
+            f"{name} ${regime[key]:,.0f}"
+            for name, key in (("düşük", "low"), ("merkez", "center"), ("yüksek", "high"))
+            if isinstance(regime.get(key), (int, float))
+        ]
+        return f"{label}: {' · '.join(parts)}" if parts else None
+
+    for text in (_band(cycle.get("regime_a"), "Rejim A (döngü ortalaması)"),
+                 _band(cycle.get("regime_b"), "Rejim B (yapısal kırılım)")):
+        if text:
+            lines.append(f"{''.ljust(_CARD_LABEL_WIDTH)}{text}")
+
+    blend = cycle.get("blend") or {}
+    if blend:
+        cells = " · ".join(f"p={p} ${v:,.0f}" for p, v in sorted(blend.items()))
+        lines.append(f"{''.ljust(_CARD_LABEL_WIDTH)}Harman: {cells}")
+
+    lines.append(f"{''.ljust(_CARD_LABEL_WIDTH)}{cycle.get('verdict_sentence', '')}")
+
+    fired = [label for key, label in _CYCLE_FLAG_LABELS.items() if (cycle.get("flags") or {}).get(key)]
+    if fired:
+        lines.append(f"{''.ljust(_CARD_LABEL_WIDTH)}Bayraklar: {', '.join(fired)}")
+    return lines
+
+
+def _tangible_multiples_line(valuation: dict) -> Optional[str]:
+    """Render the informational "Maddi çarpan:" card line for a financial
+    filer: current P/TBV (F/MDD -- fiyat / maddi defter değeri) with its own
+    historical percentile, plus ROTCE (SPEC.md Sec.23e).
+
+    Occupies the slot :func:`_ev_multiples_line` fills for other sectors and
+    that Sec.20b deliberately emptied for this one: enterprise value is
+    undefined for a deposit funder, while P/TBV is that sector's own
+    convention (P/B is not comparable across filers carrying different
+    goodwill loads). Reported alongside P/E; the verdict/triangulation still
+    keys off P/E. Returns ``None`` (line omitted) for any other sector, or
+    when no P/TBV figure exists."""
+    if (valuation.get("sector_type")) != "financial":
+        return None
+    multiples = valuation.get("multiples") or {}
+    ptbv = (multiples.get("current") or {}).get("ptbv")
+    if ptbv is None:
+        return None
+
+    pct = multiples.get("ptbv_percentile")
+    fragment = f"F/MDD {ptbv:.2f}×"
+    if pct is not None:
+        fragment += f" ({pct:.0f}. pctile)"
+    fragments = [fragment]
+
+    rotce = (valuation.get("rim") or {}).get("rotce")
+    if rotce is not None:
+        fragments.append(f"ROTCE %{rotce * 100:.1f}")
+
+    # 12 chars, so it still leaves a separating space at _CARD_LABEL_WIDTH
+    # (13) -- and it parallels _ev_multiples_line's "FD çarpanı:".
+    label = "MDD çarpanı:".ljust(_CARD_LABEL_WIDTH)
+    return f"{label}{' · '.join(fragments)}"
+
+
 def _triangulation_line(valuation: dict) -> str:
     """Render the "Üçgenleme:" card line (SPEC.md Sec.13): each of the three
     valuation methods' cheap/fair/expensive direction signal, plus a
@@ -1202,6 +1326,12 @@ def _print_verdict_card(
         ev_multiples_line = _ev_multiples_line(valuation)
         if ev_multiples_line:
             print(ev_multiples_line)
+        # SPEC.md Sec.23e: the same slot, for the sector where EV is undefined.
+        tangible_multiples_line = _tangible_multiples_line(valuation)
+        if tangible_multiples_line:
+            print(tangible_multiples_line)
+        for cycle_line in _cycle_lines(valuation):
+            print(cycle_line)
         print(_triangulation_line(valuation))
         print(_sensitivity_line(valuation))
         distress_line = _distress_flags_line(valuation)
@@ -2206,8 +2336,12 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument(
         "--years",
         type=int,
-        default=5,
-        help="Number of most-recent fiscal years to retain (default: 5).",
+        default=12,
+        help=(
+            "Number of most-recent fiscal years to retain (default: 12). "
+            "Wide enough to span a full commodity cycle -- a shorter window "
+            "makes through-cycle statistics depend on WHICH cycle it caught."
+        ),
     )
     common.add_argument(
         "--no-cache",
@@ -2322,8 +2456,12 @@ def build_parser() -> argparse.ArgumentParser:
     calibrate_parser.add_argument(
         "--years",
         type=int,
-        default=5,
-        help="Number of most-recent fiscal years to retain (default: 5).",
+        default=12,
+        help=(
+            "Number of most-recent fiscal years to retain (default: 12). "
+            "Wide enough to span a full commodity cycle -- a shorter window "
+            "makes through-cycle statistics depend on WHICH cycle it caught."
+        ),
     )
     calibrate_parser.add_argument(
         "--no-cache",
@@ -2414,7 +2552,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--dates", required=True,
         help="Comma-separated as-of dates, e.g. '2020-06-30,2022-06-30,2023-12-31'.",
     )
-    bt_run.add_argument("--years", type=int, default=5, help="Fiscal-year window (default 5).")
+    bt_run.add_argument("--years", type=int, default=12, help="Fiscal-year window (default 12).")
     bt_run.add_argument(
         "--no-cache", action="store_true", help="Bypass raw JSON/price caches and re-fetch.",
     )

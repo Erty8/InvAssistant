@@ -121,7 +121,7 @@ def _run_one(ticker: str, as_of: date, years: int, no_cache: bool, db_path: Opti
 def run_backtest(
     tickers: List[str],
     dates: List[date],
-    years: int = 5,
+    years: int = 12,
     no_cache: bool = False,
     db_path: Optional[str] = None,
     evaluate: bool = True,

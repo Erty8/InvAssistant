@@ -37,6 +37,16 @@ class Config:
     # Local cache directory for raw JSON payloads pulled from SEC EDGAR.
     RAW_DIR = os.path.join(BASE_DIR, "raw")
 
+    # Freshness windows for the SEC EDGAR JSON caches (SPEC.md Sec.21c). A
+    # filer's submissions/filing history moves daily -- and the earnings
+    # catalyst is derived from it -- so it expires fast; XBRL companyfacts
+    # only move when a periodic report is filed, so a week is plenty. Set
+    # either to 0 (or negative) to restore the old "cache never expires"
+    # behavior. Overridable via SEC_SUBMISSIONS_TTL_HOURS /
+    # SEC_COMPANYFACTS_TTL_HOURS.
+    SUBMISSIONS_CACHE_TTL_HOURS = float(os.getenv("SEC_SUBMISSIONS_TTL_HOURS", "24"))
+    COMPANYFACTS_CACHE_TTL_HOURS = float(os.getenv("SEC_COMPANYFACTS_TTL_HOURS", "168"))
+
     # SQLite database path. Overridable via SEC_DB_PATH.
     DB_PATH = os.getenv("SEC_DB_PATH", os.path.join(BASE_DIR, "sec_data.sqlite3"))
 

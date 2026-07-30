@@ -670,6 +670,32 @@ def compute_stop_adding(
         return []
 
 
+#: A catalyst this many days out (or nearer) counts as "yaklaşan" for the
+#: stop-adding signal. Matches the HTML report's own earnings-proximity badge
+#: window, so the two surfaces agree on what "near" means. SPEC.md Sec.21b.
+_CATALYST_NEAR_DAYS = 21
+
+
+def _catalyst_is_near(catalyst: dict) -> bool:
+    """Whether a catalyst is close enough to warrant the stop-adding signal.
+
+    A quarter published a day ago is not an upcoming catalyst, and neither is
+    one a full quarter away -- the signal used to fire on the mere PRESENCE
+    of a label. Uses ``days_until``/``recently_reported`` as computed by
+    ``fetch.filings.estimate_next_earnings`` against its own reference date,
+    so this stays deterministic in as-of mode (no wall-clock read here).
+
+    A catalyst dict without ``days_until`` (older or hand-built) keeps the
+    previous unconditional behavior rather than silently losing the signal.
+    """
+    if catalyst.get("recently_reported"):
+        return False
+    days_until = catalyst.get("days_until")
+    if not isinstance(days_until, int):
+        return True
+    return 0 <= days_until <= _CATALYST_NEAR_DAYS
+
+
 def _compute_stop_adding(
     valuation: dict,
     technical: Optional[dict],
@@ -738,7 +764,7 @@ def _compute_stop_adding(
             }
         )
 
-    if catalyst and catalyst.get("label"):
+    if catalyst and catalyst.get("label") and _catalyst_is_near(catalyst):
         signals.append(
             {
                 "code": "BINARY_CATALYST_NEAR",

@@ -18,7 +18,7 @@ malformed data.
 import logging
 from typing import Dict, Optional
 
-from sec_analyzer.normalize.normalizer import to_annual_series
+from sec_analyzer.normalize.normalizer import to_annual_series, to_quarterly_series
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +135,68 @@ def resolve_fundamental_fy(metrics: dict) -> Optional[int]:
     return fy if fy is not None else m.get("latest_fy")
 
 
+#: How many single quarters make a trailing-twelve-month window.
+_TTM_QUARTERS = 4
+
+
+def _empty_ttm() -> dict:
+    return {
+        "ttm_revenue": None, "ttm_net_income": None, "ttm_eps": None,
+        "ttm_net_margin": None, "ttm_period_end": None, "ttm_quarters": 0,
+        "ttm_complete": False, "pe_ttm": None, "ttm_vs_fy_net_income": None,
+    }
+
+
+def _compute_ttm(
+    normalized: dict, shares: Optional[float], price: Optional[float],
+    latest_fy_net_income: Optional[float],
+) -> dict:
+    """Trailing-twelve-month revenue/earnings from the quarterly series.
+
+    The valuation path reads ANNUAL series only, so a filer three quarters
+    into its fiscal year is valued on data that predates those quarters --
+    which for a cyclical mid-upswing is not a rounding issue (Micron on
+    2026-07-30: latest-FY net income ``$8.54B`` against a true TTM of
+    ``$50.47B``, a reported P/E of 97.4 against a true 16.5). These figures
+    are reported ALONGSIDE the fiscal-year ones; ``pe``/``ps``/``pfcf`` keep
+    their existing basis so percentiles and stored verdicts stay comparable
+    (SPEC.md Sec.24b).
+
+    Inherits Sec.24a's corrected fiscal-year grouping through
+    ``to_quarterly_series``. An incomplete window (fewer than four quarters)
+    still reports its partial sums but sets ``ttm_complete`` False and leaves
+    ``pe_ttm`` None -- a partial sum is not a trailing-twelve-month figure.
+    Never raises.
+    """
+    try:
+        revenue_q = to_quarterly_series(normalized, "Revenue")[-_TTM_QUARTERS:]
+        net_income_q = to_quarterly_series(normalized, "NetIncome")[-_TTM_QUARTERS:]
+    except Exception:  # noqa: BLE001 - metrics must never crash the pipeline
+        logger.warning("compute_metrics: TTM window could not be built.", exc_info=True)
+        return _empty_ttm()
+
+    if not net_income_q:
+        return _empty_ttm()
+
+    result = _empty_ttm()
+    result["ttm_quarters"] = len(net_income_q)
+    result["ttm_complete"] = len(net_income_q) == _TTM_QUARTERS
+    result["ttm_period_end"] = net_income_q[-1]["period_end"]
+    result["ttm_net_income"] = sum(q["value"] for q in net_income_q)
+    if revenue_q:
+        result["ttm_revenue"] = sum(q["value"] for q in revenue_q)
+        result["ttm_net_margin"] = _safe_div(result["ttm_net_income"], result["ttm_revenue"])
+
+    result["ttm_eps"] = _safe_div_allow_negative(result["ttm_net_income"], shares)
+    if result["ttm_complete"] and price is not None:
+        result["pe_ttm"] = _safe_div(price, result["ttm_eps"])
+    if latest_fy_net_income:
+        result["ttm_vs_fy_net_income"] = _safe_div(
+            result["ttm_net_income"], latest_fy_net_income
+        )
+    return result
+
+
 def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> dict:
     """Compute valuation and quality metrics for the latest fiscal year.
 
@@ -217,6 +279,8 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
             "operating_income": None, "ebitda": None, "ev": None,
             "ev_ebit": None, "ev_ebitda": None,
             "revenue_cagr_3y": None, "revenue_cagr_5y": None,
+            "tangible_equity": None, "tbv_per_share": None, "ptbv": None,
+            **_empty_ttm(),
             "sbc_revenue": None, "shares_yoy": None,
             "buyback_latest": None, "dividends_latest": None,
             "rnd_revenue": None, "fcf": None, "fcf_per_share": None,
@@ -268,7 +332,23 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
     pe = None if price is None else _safe_div(price, eps)
     ps = None if price is None else _safe_div(market_cap, revenue)
 
+    ttm = _compute_ttm(
+        normalized, shares, price,
+        to_annual_series(normalized, "NetIncome").get(latest_fundamental_fy),
+    )
+
     ratio_by_fy = {r["fy"]: r for r in (ratios or []) if r.get("fy") is not None}
+
+    # Tangible-equity figures (SPEC.md Sec.23c). Read from the SAME fiscal
+    # year's ratio row that supplies `fcf` below, so they never describe a
+    # different period than the rest of this dict. `ptbv` is only defined for
+    # a strictly positive tangible base.
+    tangible_equity = ratio_by_fy.get(latest_fundamental_fy, {}).get("tangible_equity")
+    if tangible_equity is not None and tangible_equity <= 0:
+        tangible_equity = None
+    tbv_per_share = _safe_div(tangible_equity, shares)
+    ptbv = None if price is None else _safe_div(price, tbv_per_share)
+
     fcf = ratio_by_fy.get(latest_fundamental_fy, {}).get("fcf")
     if fcf is None:
         fcf = _safe_sub(ocf_series.get(latest_fundamental_fy), capex_series.get(latest_fundamental_fy))
@@ -322,6 +402,10 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
         "ev": ev,
         "ev_ebit": ev_ebit,
         "ev_ebitda": ev_ebitda,
+        "tangible_equity": tangible_equity,
+        "tbv_per_share": tbv_per_share,
+        "ptbv": ptbv,
+        **ttm,
         "revenue_cagr_3y": revenue_cagr_3y,
         "revenue_cagr_5y": revenue_cagr_5y,
         "sbc_revenue": sbc_revenue,

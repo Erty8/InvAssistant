@@ -3647,3 +3647,984 @@ always a typo) via `argparse.ArgumentTypeError`. `cmd_analyze`'s flow, with
    comparisons (Sec.10's axis-b) and CAPM beta in as-of mode therefore use
    today's sector data applied to a historical filer -- a documented
    approximation, not a historical sector reconstruction.
+
+## 19. Financial-filer net-revenue basis (WP1) — `normalize.normalizer._apply_net_revenue_basis`
+
+**Problem this fixes (real, currently-shipping defect).** `concepts.CONCEPTS
+["Revenue"]` tries `RevenueFromContractWithCustomerExcludingAssessedTax`
+first. For a lender/bank-shaped filer that tag carries ONLY the ASC-606
+contract-fee slice of revenue, not the income statement's top line. SoFi
+(CIK 1818874, SIC 6199) reports both tags: FY2025 contract-revenue
+`$0.619B` vs. `RevenuesNetOfInterestExpense` `$3.613B`. Every revenue-derived
+figure downstream — `ratios.net_margin`, `yoy_revenue_growth`,
+`metrics.ps`/`revenue_cagr_5y`, the multiples history, the hyper-grower
+detector — is therefore computed off a number ~5.8x too small. Note the
+direction: the rejected value is an UNDER-statement here, not the
+gross-revenue over-statement an aggregator "sales" field would produce, so
+the rule below is deliberately symmetric (absolute divergence), catching
+both.
+
+**Ground truth is the income-statement top line net of interest expense**
+("total net revenue"), which the financial-filer XBRL tag
+`RevenuesNetOfInterestExpense` states directly. This section makes the
+normalizer prefer it when the two disagree materially, and makes the
+rejection auditable rather than silent.
+
+### New canonical concepts (`normalize/concepts.py`)
+
+Additive entries in `CONCEPTS`; no existing concept's tag list changes.
+
+```python
+"NetRevenue": ["RevenuesNetOfInterestExpense"],
+"InterestIncome": ["InterestIncomeOperating", "InterestAndDividendIncomeOperating"],
+"NoninterestIncome": ["NoninterestIncome"],
+"Deposits": ["Deposits", "InterestBearingDepositLiabilities"],   # Sec.20
+```
+
+`NetRevenue`, `InterestIncome`, `NoninterestIncome` are added to
+`FLOW_CONCEPTS`. `Deposits` is NOT (it is a balance-sheet stock, and
+`STOCK_CONCEPTS` is defined as the complement, so it lands there
+automatically). No `CONCEPT_UNITS` or `TAG_TAXONOMY` entry is needed — all
+four are plain `USD` us-gaap tags.
+
+`Deposits`' second tag is a strictly narrower measure (interest-bearing
+deposits only). Because `_extract_concept` merges across tags by period, a
+filer reporting the preferred tag in some years and only the fallback in
+others gets a mixed series. This is accepted: `Deposits`' only consumer is
+Sec.20's coarse `> 20% of liabilities` materiality trigger, where a narrower
+measure can only UNDER-state the ratio — the failure mode is "trigger doesn't
+fire", never a false positive.
+
+### `_apply_net_revenue_basis(annual, quarterly, matched_tags, missing) -> dict`
+
+A private helper called from `normalize_facts` **at the very end**, after the
+global fiscal-year windowing and immediately before the return dict is
+assembled, so it operates on the same windowed series every consumer sees.
+
+Constant: `_NET_REVENUE_DIVERGENCE_THRESHOLD = 0.05` (5%, strictly above
+triggers).
+
+1. Build `net = {fy: value}` from `annual["NetRevenue"]` and `rep = {fy:
+   value}` from `annual["Revenue"]`.
+2. **No `NetRevenue` data at all** → no change; return the `basis:
+   "as_reported"` metadata block below with every other field `None`/empty.
+   This is the path EVERY non-financial filer takes (the tag is
+   financial-specific), so their behavior is bit-for-bit unchanged.
+3. `overlap = sorted(fy for fy in net if fy in rep and net[fy])` (a zero
+   `net[fy]` is excluded — it cannot be a divergence denominator).
+   - `divergence(fy) = abs(rep[fy] - net[fy]) / abs(net[fy])`
+   - `max_divergence = max(divergence(fy) for fy in overlap)`, `None` if
+     `overlap` is empty.
+   - `divergent_fys = [fy for fy in overlap if divergence(fy) >
+     _NET_REVENUE_DIVERGENCE_THRESHOLD]`
+4. **Swap decision.** Swap iff `NetRevenue` has at least one annual value AND
+   (`overlap` is empty — nothing to contradict, and `Revenue` may be missing
+   entirely — OR `max_divergence > _NET_REVENUE_DIVERGENCE_THRESHOLD`).
+   Otherwise no swap: the two tags agree within tolerance and the existing
+   `Revenue` series stands.
+5. **On swap:** `annual["Revenue"]` becomes a copy of `annual["NetRevenue"]`
+   and `quarterly["Revenue"]` a copy of `quarterly["NetRevenue"]` (copy, not
+   alias — the `NetRevenue` buckets stay independently readable). Copies are
+   deep enough that mutating one record list cannot affect the other.
+   `matched_tags["Revenue"] = matched_tags["NetRevenue"]`, and `"Revenue"` is
+   removed from `missing` if present.
+   - **Mixed-basis years are dropped, not backfilled.** Fiscal years present
+     in the old `Revenue` series but absent from `NetRevenue` are simply gone
+     from the swapped series. A short single-basis series is strictly better
+     than a longer series that silently splices two revenue definitions
+     (`concepts.py`'s module docstring already states this principle). The
+     dropped years are recorded in `dropped_fys`.
+   - When `quarterly["NetRevenue"]` is empty but the annual swap happened,
+     `quarterly["Revenue"]` is set to `None` rather than left on the rejected
+     basis (same no-mixed-basis rule).
+6. **Never raises.** The whole body is wrapped so that any unexpected shape
+   logs a warning and degrades to the no-swap `basis: "as_reported"` result —
+   consistent with the module's "never raise on an individual concept" rule.
+
+### `normalized["revenue_basis"]` — new top-level key (always present)
+
+```python
+{
+  "basis": "net_revenue" | "as_reported",
+  "swapped": bool,
+  "max_divergence": float | None,        # fraction, rounded to 4dp
+  "divergent_fys": [int, ...],
+  "dropped_fys": [int, ...],
+  "rejected_annual": {fy: float} | None, # the as-reported series NOT used
+  "rejected_tags": [str, ...] | None,    # matched_tags of that series
+  "gross_annual": {fy: float} | None,    # InterestIncome + NoninterestIncome
+  "note": str | None,                    # Turkish, only when swapped
+}
+```
+
+`gross_annual` is **informational only** — it is never used as a revenue
+basis, never feeds a ratio, and exists so the report can show the
+gross/net wedge a financial filer's headline "revenue" figure hides (SoFi
+FY2025: gross `$4.77B` = interest income `$3.375B` + noninterest income
+`$1.394B`, vs. net revenue `$3.613B`). Computed only for fiscal years where
+BOTH inputs exist; `None` when neither concept resolved.
+
+Turkish `note` when swapped, naming the worst year concretely, e.g.:
+
+> "Gelir bazi duzeltildi: raporlanan gelir etiketi (FY2025: 0,62 Mr$) ile
+> faiz gideri dusulmus net gelir (FY2025: 3,61 Mr$) arasinda %82,9 sapma
+> var. Finansal kuruluslarda dogru baz net gelirdir; tum gelir turevli
+> oranlar net gelir uzerinden hesaplandi."
+
+Note the denominator: divergence is measured against the NET figure
+(`abs(rep - net) / abs(net)`), so SoFi's FY2025 pair is `abs(0.619 - 3.613) /
+3.613 = 0.8287` → 82.9%, NOT the 483% you get from expressing the same gap as
+a percentage of the (much smaller) rejected figure. Both describe the same
+5.8x error; the spec's ratio is the one the code computes and reports.
+
+(The implementation writes proper Turkish with correct diacritics; the quote
+above is ASCII-folded only to keep this spec file encoding-safe.)
+
+The note is appended to the engine's `notes` list by the CLI/engine wiring
+(the same channel every other Turkish data-quality note uses) so it reaches
+the verdict card and the HTML report.
+
+### Scope
+
+Purely a normalize-layer input correction. No valuation function, output key,
+or sector routing changes. Non-financial filers are unaffected by
+construction (step 2). `to_annual_series(normalized, "Revenue")` keeps
+identical semantics — only the underlying data is corrected.
+
+## 20. Deposit-funded detection + financial-sector metric hygiene (WP2)
+
+Three independent, additive changes, all keyed off `sector_type ==
+"financial"`. `reit` is NOT included in any of them: a REIT legitimately uses
+EV/EBITDA and has no deposit funding, and its FFO path (Sec.8c) is already
+correct.
+
+### 20a. Deposit-funded override — `sector._is_deposit_funded`
+
+A filer whose balance sheet is funded by deposits is a bank in economic
+substance regardless of the SIC code it files under. Constant:
+`_DEPOSIT_FUNDED_LIABILITY_SHARE = 0.20` (strictly above triggers).
+
+```python
+def _is_deposit_funded(normalized: dict, metrics: dict) -> bool:
+```
+- Reads the `Deposits` and `TotalLiabilities` annual series and walks fiscal
+  years **descending**, taking the first FY where BOTH have a value AND
+  `liabilities > 0` — the two figures must come from the SAME fiscal year (a
+  deposits figure divided by a different year's liabilities is meaningless),
+  and a non-positive-liabilities year is unusable data that is skipped rather
+  than treated as a decision. Independent of `metrics["latest_fy"]`, mirroring
+  `_build_pb_roe`/`_build_rim`'s FY-selection discipline (Sec.8/8f).
+- Returns `True` iff that year's `deposits / liabilities >
+  _DEPOSIT_FUNDED_LIABILITY_SHARE`. No usable year, or any missing input →
+  `False`.
+- Never raises (broad except → `False`, matching `detect_hyper_grower`).
+
+**Placement in `classify_sector`** — after the REIT and financial-SIC checks,
+before the semiconductor/cyclical branch:
+
+```python
+if sic_int == _REIT_SIC or _is_reit_like_sic(sic_int):
+    return SECTOR_REIT
+if _FINANCIAL_SIC_RANGE[0] <= sic_int <= _FINANCIAL_SIC_RANGE[1]:
+    return SECTOR_FINANCIAL
+if _is_deposit_funded(normalized, metrics):        # NEW
+    return SECTOR_FINANCIAL
+```
+
+Ordering rationale: it must never override `reit` (a mortgage REIT keeps its
+FFO anchor), and it must run before `cyclical`/profitability so a
+deposit-funded filer with a non-6xxx SIC is routed to the RIM anchor rather
+than an FCF-DCF. SoFi (SIC 6199) already classifies `financial` on SIC alone —
+this override exists for the filers SIC misses, and SoFi is the proof the
+trigger's arithmetic is right (deposits `$40.24B` / liabilities `$42.89B` =
+94%).
+
+`classify_sector`'s docstring and the Sec.8 classification list above gain
+this rule. **The `sic is None` engine-wiring fallback is unchanged** — the
+override lives inside `classify_sector`, which the CLI only calls when `sic`
+is not `None` (Sec.8).
+
+### 20b. EV metrics are not defined for a financial filer
+
+Enterprise value adds net debt to market cap to value the whole capital
+structure. For a deposit-funded lender, "debt" IS the raw material of the
+business, so EV and every EV multiple are meaningless. New engine constant:
+
+```python
+_SECTORS_WITHOUT_EV = ("financial",)
+```
+
+1. `_derive_current_multiples(normalized, ratios, metrics, price,
+   suppress_ev=False)` gains a defaulted keyword. When `True` it neither
+   seeds `current["ev_ebit"]/["ev_ebitda"]` from `metrics` nor runs the
+   `metrics["ev"]` back-fill block, and emits no `FD/FVÖK`/`FD/FAVÖK`
+   "derived from FY…" note. Both keys come back `None`. `suppress_ev=False`
+   (every existing caller) is bit-for-bit unchanged.
+2. In `_run_valuation`, the call passes `suppress_ev=sector_type in
+   _SECTORS_WITHOUT_EV`. Immediately after it, when suppressed:
+   - `current["ev_sales"] = None`;
+   - every row of `history` gets `ev_sales`/`ev_ebit`/`ev_ebitda` set to
+     `None` (so no percentile can be computed from history either);
+   - `net_debt_to_ebitda` is forced to `None` and `leveraged` to `False`.
+   `ev_ebit_pct`/`ev_ebitda_pct` then fall out as `None` on their own
+   (`percentile_position` returns `None` for a `None` current value) — no
+   special-casing at the percentile call sites.
+3. `multiples_out` gains one additive key: `"ev_applicable": bool` (`False`
+   only for `_SECTORS_WITHOUT_EV`, `True` everywhere else, including in
+   `_empty_valuation`'s crash-safety shape where it is `True`).
+4. One Turkish note when suppressed, stating that enterprise value is
+   undefined for a financial institution because deposits/borrowings are the
+   raw material of the business rather than a capital-structure adjustment,
+   and that EV/EBITDA, EV/EBIT and EV/Sales were therefore not computed.
+
+**Downstream degradation is already correct and requires no changes.**
+`triangulate` treats `ev_ebitda_pct=None` + `leveraged=False` as "not EV
+primary" and falls back to its existing P/E → P/S → P/FCF order (it never
+emits an `FD/FAVÖK` label in that path). `cli._ev_multiples_line` and the
+report's `evMultiplesLineHtml` already return nothing when the values are
+`None`. The LBO floor and Altman Z are already gated off for `financial` via
+`_SECTORS_WITHOUT_FCF_DCF`. `metrics` itself is **NOT mutated** — the engine
+suppresses only within its own output, so the stored metrics payload and any
+non-valuation consumer keep their existing shape.
+
+### 20c. Liquidity/leverage checks are re-based for a financial filer
+
+`ratios.compute_ratios` already computes `debt_to_equity` as
+`TotalLiabilities / StockholdersEquity` — deposit-inclusive leverage, exactly
+the measure the source analysis asks for. Only the LABEL and the THRESHOLD
+are wrong for this sector.
+
+1. **`interpret/rule_based.py`** — `_build_checks(latest_fy, series,
+   ratio_by_fy, sector_type=None)` gains a defaulted keyword, threaded from
+   `_analyze`. When `sector_type == "financial"`:
+   - the **"Liquidity"** check (current ratio `< 1.0`) is reported as
+     not-applicable (`None`, the existing "not computable" state) with a
+     Turkish detail explaining that the current ratio is undefined for a
+     financial institution (assets/liabilities are not classified by
+     maturity) — a bank's current ratio is an artifact of how it happens to
+     tag `AssetsCurrent`, not a liquidity signal;
+   - the **"Leverage"** check keeps the non-positive-equity auto-fail
+     unchanged, but its `debt_to_equity` threshold moves from `2.0` to a
+     separate constant `_FINANCIAL_LEVERAGE_MAX = 10.0`, and its detail
+     string names the measure as liabilities-to-equity including deposits.
+     SoFi's `3.97` is unremarkable for a deposit funder and must not surface
+     in `key_risks`; a genuinely over-levered bank (above ~10x) still does.
+   - `sector_type=None` (any existing caller that doesn't pass it) preserves
+     today's behavior exactly.
+2. **`report/template.html`** — `ratioTrendCardHtml(ratios)` gains a
+   `sectorType` argument, passed by `financialsTabHtml(payload)` from
+   `payload.result.valuation.sector_type` (already in scope one frame up).
+   For `"financial"`: the "Cari Oran" row is omitted entirely, the
+   "Borç / Özkaynak" row is relabeled to a deposit-inclusive
+   liabilities-to-equity label with its red threshold moved from `>2` to
+   `>10`, and the card footnote is replaced with one describing the
+   deposit-inclusive measure.
+3. **`cli._print_ratios(ratios, sector_type=None)`** gains the same defaulted
+   keyword; for `"financial"` the `Current Ratio` column is dropped from the
+   table. Its one caller, `_fetch_normalize_store`, has no SIC in scope
+   (submissions are fetched later, and only by `analyze`), so it passes
+   `SECTOR_FINANCIAL` when `sector._is_deposit_funded(normalized, {})` holds
+   and `None` otherwise — the deposit test needs no extra network call and is
+   sufficient to know the column is meaningless. A `financial`-by-SIC filer
+   that is NOT deposit-funded (an insurer or broker) therefore still shows the
+   column in this one raw-data table; that is a deliberate, documented limit
+   of the cheap check, not an oversight. Any other caller passing nothing is
+   unchanged.
+4. `web/templates/index.html` is a developer-facing raw-data table and is
+   left alone — it is explicitly not a user-facing verdict surface.
+
+### Scope
+
+No valuation anchor, fair-value number, triangulation weight, or output key
+MEANING changes. The only new output keys are `multiples.ev_applicable`
+(20b) and `normalized["revenue_basis"]` (Sec.19). Non-financial filers are
+unaffected by every rule in both sections.
+
+## 21. Earnings-catalyst correctness (WP5) — `fetch.filings.estimate_next_earnings` / cache TTL
+
+**Problem this fixes (real, observed on SOFI 2026-07-30).** The verdict card
+showed "~9 gün içinde earnings (tahmini 2026-08-07)" on a day when SoFi had
+ALREADY released Q2'26 earnings — the day before, on 2026-07-29. Two
+independent defects combined:
+
+1. **Wrong event.** `estimate_next_earnings` projected from `10-Q`/`10-K`
+   FILING dates. The earnings *release* reaches EDGAR earlier, as an `8-K`
+   carrying item **2.02** ("Results of Operations and Financial Condition").
+   For SoFi the 8-K→10-Q lag is a stable **9 days** (median over the last 8
+   quarters: `[9, 28, 7, 9, 9, 18, 8]`), which is exactly the "9 gün" the card
+   displayed. The estimate was therefore pointing at the paperwork that
+   follows the catalyst, not the catalyst.
+   - Real 2.02 releases: `2025-04-29, 2025-07-29, 2025-10-28, 2026-01-30,
+     2026-04-29, 2026-07-29` → correct next estimate **2026-10-28** (Q3),
+     90 days out, not 8 days out.
+2. **No cache freshness.** `get_submissions` returned any cache file that
+   merely EXISTED. The on-disk SoFi submissions document had stopped at
+   `2026-06-29`, so the 2026-07-29 earnings 8-K was invisible regardless of
+   fix (1). A catalyst estimate is the most time-sensitive field the report
+   carries and was being computed from month-old data.
+
+### 21a. Earnings releases come from `8-K` item 2.02
+
+`estimate_next_earnings(submissions, today=None)` keeps its signature and its
+never-raises contract. Its internals gain a **primary** source with the
+existing periodic-filing logic demoted to a **fallback**.
+
+- **Primary — release dates.** Filings where `form == "8-K"` AND the
+  filing's `items` string contains `"2.02"` (SEC packs a filing's 8-K item
+  numbers into a comma-separated string, e.g. `"2.02,9.01"`). Same
+  point-in-time guard as today: a filing dated after `today` is ignored.
+- **Fallback — periodic filings.** When fewer than `_MIN_USABLE_FILINGS` (3)
+  release dates are available — which includes every submissions dict with
+  no `items` key at all (older fixtures, the backtest's synthetic
+  documents) — the function behaves EXACTLY as before, projecting from
+  `10-Q`/`10-K` filing dates. This keeps every existing caller and test
+  bit-for-bit unchanged and degrades gracefully for filers whose 8-K items
+  SEC has not populated.
+- Median-gap projection, `_MAX_FILINGS_CONSIDERED` windowing, and the
+  roll-forward-to-`today` loop are unchanged in both paths; only the input
+  series differs.
+
+**Quarter label from releases.** `_next_quarter_label` (which counts 10-Qs
+since the last 10-K) cannot read 8-K forms, so the primary path uses a
+sibling, `_next_quarter_label_from_releases(release_dates, last_10k_date)`:
+count the releases strictly AFTER the most recent `10-K` FILING date, then map
+through the existing `_QUARTER_LABELS` (`0→Q1, 1→Q2, 2→Q3`, else `"FY"`).
+Verified against SoFi's real calendar at four points in time:
+
+| As of | Last 10-K filed | Releases since | Next label | Correct? |
+|---|---|---|---|---|
+| after 10-K (2026-02-17) | 2026-02-17 | 0 | Q1 | yes (Q1 rel. 2026-04-29) |
+| after Q1 rel. | 2026-02-17 | 1 | Q2 | yes (Q2 rel. 2026-07-29) |
+| after Q2 rel. | 2026-02-17 | 2 | Q3 | yes (Q3 rel. ~2026-10-28) |
+| after Q3 rel. (2025-10-28) | 2025-02-24 | 3 | FY | yes (FY rel. 2026-01-30) |
+
+The FY/Q4 release lands BEFORE the 10-K that reports the same year, which is
+why anchoring on the 10-K FILING date (not fiscal-year end) gives the right
+count. When the history carries no `10-K` at all, the quarter label is `None`
+and the label reads "Sonraki bilanço ~<date>" instead of "Q<n> earnings ~".
+
+### 21b. An already-released quarter is not an upcoming catalyst
+
+New constant `_RECENTLY_REPORTED_DAYS = 3`. The returned dict gains four
+additive keys (existing three unchanged):
+
+```python
+{
+  "estimate_date": "YYYY-MM-DD",   # unchanged meaning: the NEXT release
+  "label": str,
+  "based_on": str,
+  "source": "8-K 2.02" | "10-Q/10-K",   # NEW - which series produced it
+  "last_report_date": "YYYY-MM-DD" | None,  # NEW - most recent release/filing
+  "days_until": int,                # NEW - estimate_date - today, >= 0
+  "recently_reported": bool,        # NEW - last report within 3 days of today
+}
+```
+
+- `estimate_date` is ALWAYS the next release, never the one just published.
+  For SoFi on 2026-07-30 that is `2026-10-28`, so the report's existing
+  21-day proximity badge (`daysUntil(...) <= 21`, template.html) stops firing
+  on its own — **no template change is needed for the badge**; it was
+  reporting a wrong date, not applying a wrong rule.
+- When `recently_reported`, the Turkish `label` leads with the fact rather
+  than the projection, e.g. `"Q2 açıklandı (29 Tem) · sonraki: Q3 earnings
+  ~28 Eki"`. Otherwise it keeps today's shape, `"Q3 earnings ~28 Eki"`.
+- `days_until` is computed against the same `today` the projection used, so
+  it stays deterministic in as-of mode (no wall-clock read downstream).
+
+**`planning._compute_stop_adding` proximity gate.** Today it appends a
+`BINARY_CATALYST_NEAR` signal ("Yaklaşan binary katalizör…") whenever the
+catalyst dict merely HAS a label — unconditionally, even for an event a
+quarter away, and even for one that already happened. It now fires only when
+`catalyst["recently_reported"]` is false AND `0 <= catalyst["days_until"] <=
+_CATALYST_NEAR_DAYS` (21, matching the report badge's window). A catalyst
+dict lacking `days_until` (an older/hand-built dict) keeps the previous
+unconditional behavior, so no existing caller silently loses the signal.
+
+### 21c. Cache freshness — `fetch.companyfacts`
+
+`get_company_facts` and `get_submissions` currently return any cache file
+that exists. Both gain a TTL, with new `Config` entries:
+
+```python
+SUBMISSIONS_CACHE_TTL_HOURS = 24      # filing history moves daily
+COMPANYFACTS_CACHE_TTL_HOURS = 168    # XBRL facts move quarterly (7 days)
+```
+
+- A helper `_cache_is_fresh(path, ttl_hours) -> bool` compares
+  `os.path.getmtime(path)` against `time.time()`. A non-positive TTL means
+  "never expires" (the pre-existing behavior, available as an escape hatch).
+- Cache hit AND fresh → return it, as today.
+- Cache exists but STALE → re-fetch. **If the re-fetch fails** (network
+  error, SEC 5xx), fall back to the stale cache with a warning rather than
+  propagating the exception: a stale document is strictly better than no
+  analysis, and this preserves offline/degraded operation that the
+  exists-only check gave for free.
+- No cache → fetch, exactly as today.
+- `no_cache=True` still bypasses everything and overwrites.
+
+These are fetch-layer, wall-clock-dependent by nature; CLAUDE.md's determinism
+rule constrains the analysis/valuation path, which is unaffected — the same
+inputs still produce the same outputs.
+
+### Scope
+
+No valuation anchor, fair-value number, or triangulation weight changes. The
+report template is untouched (21b explains why the badge self-corrects). The
+only behavior changes are: which dates the catalyst estimate is built from,
+two extra Turkish label shapes, one newly-gated planning signal, and cache
+re-fetch timing.
+
+## 22. Growth-cap transparency + externally-funded growth (WP6) — `dcf.rim_external_growth_per_share` / engine wiring
+
+**Problem this fixes (real, observed on SOFI 2026-07-30).** `rim_per_share`
+and `fcfe_sustainable_growth_per_share` both cap each projection year at
+`g_eff = min(g_year, roe)`, encoding the internal-funding identity
+`g = b x ROE` with `b <= 1`. For a filer whose ROE sits below its assumed
+growth, that cap silently discards the entire growth assumption:
+
+| assumed `growth_5y` | `g_eff` actually used | RIM per share |
+|---|---|---|
+| 0% | 0% | $5.48 |
+| 5% | 4.59% | $5.05 |
+| 10% | 4.59% | $5.05 |
+| 25% | 4.59% | $5.05 |
+| 40% | 4.59% | $5.05 |
+
+(SoFi FY2025: `ni0 = 481.3M`, `bve0 = 10,489.5M`, `roe = 4.59%`, `r = 10%`.)
+
+Two consequences, both defects:
+
+1. **The report states a growth rate the model did not use.** SoFi's base
+   `fair_value_range` note reads "bu senaryoda uygulanan büyüme %25.0" while
+   the model compounded earnings at 4.59%. `financial` has no
+   `scenario_meta` override (Sec.11's chain covers hyper/mature/midgrowth/
+   cyclical/EPV but not RIM), so the label falls through to the raw
+   assumption. `_cyclical_fcfe_scenario_meta` does disclose its reinvestment
+   rate but still prints the UNCAPPED `growth_5y` as the growth.
+2. **The bear/base/bull band is a discount-rate band wearing a growth
+   label.** Holding `r` fixed and moving `g` from 5% to 30% leaves every
+   scenario byte-identical; only `r` moves the number
+   (bear $4.22 / base $5.05 / bull $5.53 come from r = 12/10/9%).
+
+### 22a. Both anchors report the growth path they actually used
+
+`rim_per_share` and `fcfe_sustainable_growth_per_share` gain three additive
+return keys (no signature change, no math change):
+
+```python
+"growth_path": [float, ...],       # the 10 g_eff values actually applied
+"effective_growth_5y": float,      # min(growth_5y, roe) -- years 1-5 are flat
+"growth_capped": bool,             # True iff any year's g_eff < its g_year
+```
+
+Existing keys and every computed number stay bit-for-bit identical.
+
+### 22b. Externally-funded growth — `dcf.rim_external_growth_per_share`
+
+```python
+rim_external_growth_per_share(bve0, ni0, roe, growth_5y, terminal_growth,
+                              discount_rate, shares, terminal_roe=None) -> dict
+```
+
+Answers the question the cap suppresses: *what if the firm funds its assumed
+growth by issuing equity instead of only from retained earnings?* SoFi did
+exactly that in FY2025 -- equity went `6,525M -> 10,489M` (+3,964M) on 481M of
+net income, so roughly 3.5B came from external issuance.
+
+**Issuance is modeled at fair value, which is value-neutral by construction.**
+This is the textbook treatment (new shareholders pay in exactly what their
+claim is worth), and it is what lets the model avoid inventing an
+issue-price convention -- an issue price below fair value would transfer
+value from existing holders, above it would transfer value to them, and
+either choice would make an *intrinsic* estimate depend on the market price
+it is supposed to be tested against. Consequently:
+
+- **the share count is NOT inflated** -- `per_share` divides by today's
+  shares, since the injected capital and the claim it buys cancel;
+- the entire value effect comes from applying the `ROE - r` spread to a
+  **larger book value**.
+
+Projection, years 1..10 (`HORIZON_YEARS`), using the same
+`_year_growth_rate` fade as every sibling:
+
+- `ni_t = roe * bve_{t-1}` (ROE-consistent, so the earnings path cannot drift
+  away from the stated ROE);
+- `ri_t = ni_t - discount_rate * bve_{t-1} = (roe - discount_rate) * bve_{t-1}`;
+- `bve_t = bve_{t-1} * (1 + g_t)` at the FULL, uncapped `g_t`;
+- `external_funding_t = max(0.0, bve_{t-1} * (g_t - roe))` -- the equity that
+  retention alone cannot supply (informational);
+- terminal exactly as `rim_per_share`: `ri_terminal = (terminal_roe_resolved -
+  discount_rate) * bve_10`, `tv = ri_terminal / (discount_rate -
+  terminal_growth)`, so the engine's `terminal_roe = discount_rate` gives
+  `tv = 0`.
+
+**The sign is the whole point, and it is unambiguous:**
+
+| | effect of faster growth |
+|---|---|
+| `roe > discount_rate` | `ri_t` more positive -> value ADDED |
+| `roe == discount_rate` | `ri_t == 0` every year -> value UNCHANGED at `bve0` |
+| `roe < discount_rate` | `ri_t` more negative -> value DESTROYED |
+
+So for SoFi (ROE 4.59% vs COE 10%) growing faster on external capital makes
+the per-share value **lower**, not higher. The diagnostic exists to quantify
+that, not to rescue the number.
+
+Returns `{"per_share", "equity", "bve0", "ri_path", "bve_path", "tv",
+"effective_shares", "per_share_internal", "value_gap_per_share",
+"external_funding_total", "external_funding_path"}`.
+
+`per_share_internal` re-runs the SAME ROE-consistent path with `g_t` capped
+at `roe`, so `value_gap_per_share = per_share - per_share_internal` isolates
+the funding assumption alone -- it is not contaminated by the difference
+between this function's ROE-consistent earnings path and `rim_per_share`'s
+`ni0`-compounding one (the documented F4 front-loading, Sec.8f). Comparing
+this function's `per_share` against `rim_per_share`'s output would mix two
+changes; comparing it against `per_share_internal` isolates one.
+
+Raises `ValueError` on the same invalid inputs as `rim_per_share`
+(`ni0`/`bve0`/`shares`/`roe`/`discount_rate <= terminal_growth`). Nothing
+rounded here.
+
+### 22c. Engine wiring
+
+**`_build_rim`** (Sec.8f) gains, in its returned dict:
+
+```python
+"growth_capped": bool,
+"effective_growth_5y": float | None,   # base scenario's
+"assumed_growth_5y": float | None,     # base scenario's, for the disclosure
+"external_growth": None | {            # base scenario only; diagnostic
+    "per_share": float,
+    "per_share_internal": float,
+    "value_gap_per_share": float,
+    "external_funding_total": float,
+},
+```
+
+`external_growth` is built ONLY when the base scenario's growth was actually
+capped (there is nothing to diagnose otherwise) and is **advisory**: it never
+headlines `fair_value_range`, never feeds `primary_dcf_scenarios`, and never
+enters triangulation -- same advisory-only discipline as Sec.8g/8j/8k.
+
+**Turkish note when the cap binds**, naming both rates, the reason, and the
+quantified consequence, e.g.:
+
+> "RIM büyüme varsayımı içsel finansman kısıtına takıldı: varsayılan %25,0
+> büyüme yerine %4,6 uygulandı (g = b x ROE, ROE %4,6 -- şirket kârından daha
+> hızlı büyümeyi kendi kaynağıyla fonlayamaz). Büyümenin dışarıdan özkaynak
+> ihracıyla fonlandığı varsayılsa, ROE (%4,6) özkaynak maliyetinin (%10,0)
+> altında olduğu için hisse başına değer 5,05 $ değil 3,12 $ olurdu."
+
+**New `_rim_scenario_meta(rim_detail, assumptions)`**, mirroring
+`_epv_scenario_meta`/`_cyclical_fcfe_scenario_meta`, added to the
+`scenario_meta` chain for `sector_type == "financial"`. Its per-scenario
+`growth` string reports the **effective** rate, with the assumed rate named
+as discarded when they differ:
+
+- capped: `"%4,6 büyüme (varsayılan %25,0 içsel finansman kısıtıyla sınırlandı)"`
+- not capped: `"%X büyüme (kazanç + sürdürülebilir büyüme)"`
+
+**`_cyclical_fcfe_scenario_meta`** gets the same treatment: its `growth`
+string now leads with the effective rate instead of the uncapped
+`growth_5y`. Its existing reinvestment-rate sentence is unchanged.
+
+Because the growth label is derived per scenario, a band that varies only by
+discount rate now says so on every row -- defect (2) above is fixed by the
+same change that fixes (1).
+
+### Scope
+
+No fair-value NUMBER changes anywhere: `growth_path`/`growth_capped` are
+observational, `external_growth` is advisory, and `scenario_meta` only
+rewrites display strings. `mature`/`growth_unprofitable`/`reit`/hyper-grower
+filers are untouched. The only behavior change for a filer whose growth was
+never capped is that `growth_capped` reads `False`.
+
+## 23. Tangible-equity diagnostics: ROTCE + P/TBV (WP7)
+
+Two reported measures, no new valuation anchor. Motivation, and the boundary
+this section deliberately does NOT cross, both come out of Sec.22's finding:
+
+- **ROTCE is the right measure of the return on INCREMENTAL capital**, because
+  new equity a bank deploys does not arrive with goodwill attached. That makes
+  it a forecasting input and a quality diagnostic. It is NOT the right
+  denominator for the RIM value base: residual income is accounting-invariant
+  by construction (write book down by `G` and every future equity charge
+  `r * B` falls by `r * G`, whose perpetuity PV is exactly `G`), so rebasing
+  the anchor on tangible equity would move the number ONLY through the
+  engine's 10-year truncation -- measured at `-$0.46/share` for SoFi against a
+  predicted `-G/(1+r)^10 = -$0.57` artifact. Sec.8f's RIM therefore keeps
+  using `StockholdersEquity`/`roe`.
+- **P/TBV is the market convention for comparing banks**, precisely because
+  P/B is not comparable across filers carrying different goodwill loads. That
+  belongs in the multiples layer.
+
+### 23a. New concepts (`normalize/concepts.py`)
+
+```python
+"Goodwill": ["Goodwill"],
+"IntangibleAssets": [
+    "IntangibleAssetsNetExcludingGoodwill",
+    "FiniteLivedIntangibleAssetsNet",
+],
+```
+
+Both are balance-sheet stocks (absent from `FLOW_CONCEPTS`, so
+`STOCK_CONCEPTS` picks them up).
+
+### 23b. Tangible equity + ROTCE (`normalize/ratios.py`)
+
+Two additive keys on every per-fiscal-year ratio row:
+
+```python
+"tangible_equity": float | None,   # StockholdersEquity - Goodwill - IntangibleAssets
+"rotce": float | None,             # NetIncome / tangible_equity
+```
+
+- A missing `Goodwill` or `IntangibleAssets` for that fiscal year is treated
+  as `0.0`, the standard convention (an SEC filer with no goodwill simply does
+  not tag it). Consequence to keep in mind: if a filer HAS goodwill but left
+  it untagged for a year, `tangible_equity` reads too high, which
+  **understates** `rotce` and **overstates** cheapness in `ptbv` (23c). The
+  raw `tangible_equity` is exposed alongside so the figure is auditable
+  rather than having to be trusted.
+- `tangible_equity` is `None` when `StockholdersEquity` is missing for that
+  year; `rotce` is `None` when either operand is missing or
+  `tangible_equity <= 0` (goodwill exceeding book equity makes the ratio
+  meaningless, not merely negative).
+- **Naming caveat, deliberate:** the conventional term is *return on tangible
+  COMMON equity*, which also deducts preferred equity. The normalized concept
+  set carries no reliable preferred-stock line, so none is deducted. For a
+  filer with material preferred this reads slightly high versus a strict
+  ROTCE. The key keeps the recognizable name `rotce`; the docstring states the
+  exact denominator.
+- For a filer with no goodwill or intangibles at all, `tangible_equity ==
+  StockholdersEquity` and `rotce == roe`. That is the correct answer, not a
+  degenerate one -- which is why 23e shows the row only where it adds
+  information.
+
+### 23c. P/TBV (`normalize/metrics.py`, `valuation/multiples.py`)
+
+`compute_metrics` gains three additive keys:
+
+```python
+"tangible_equity": float | None,    # latest fundamental FY's, from ratios
+"tbv_per_share": float | None,      # tangible_equity / shares
+"ptbv": float | None,               # price / tbv_per_share
+```
+
+All `None`-safe and all `None` when `tangible_equity <= 0` or shares/price
+are unavailable, mirroring how `pb`-style figures already degrade.
+
+`multiples.multiples_history` gains `"ptbv"` on each history row:
+`fy_price * shares / tangible_equity_fy`, defined only for
+`tangible_equity_fy > 0` and a usable share count -- same guard shape as the
+existing `pffo`/`ps` entries. Tangible equity is derived inside
+`multiples_history` from the `StockholdersEquity`/`Goodwill`/
+`IntangibleAssets` annual series with the same zero-fill rule as 23b, so the
+function keeps its existing `(normalized, price_df)` signature.
+
+`engine._run_valuation` computes `ptbv_pct = multiples.percentile_position(
+[h["ptbv"] for h in history], current["ptbv"])` and adds two additive keys to
+`multiples_out`: `"ptbv_percentile"` and `current["ptbv"]`.
+`_derive_current_multiples` seeds `current["ptbv"]` from `metrics["ptbv"]`
+and, when that is `None`, back-fills it from the latest fiscal year with a
+positive tangible equity -- the same fy-mismatch recovery it already does for
+`pe`/`ps`/`pfcf`, with the same Turkish "derived from FYxxxx" note.
+`_empty_valuation` gains both keys (`None` / `None`).
+
+**Explicitly NOT changed:** P/TBV does not enter the sector-axis candidate
+order, does not become any sector's PRIMARY own-history multiple, and does not
+reach `triangulate.triangulate`. Promoting it would change the multiples
+signal -- and therefore the verdict -- for every `financial` filer, which is a
+separate decision from reporting the number. `financial` keeps its existing
+P/E-primary order (Sec.10).
+
+### 23d. RIM block carries the tangible figures (`engine._build_rim`)
+
+`_build_rim`'s returned dict gains two additive, advisory keys so the reader
+can see the tangible base next to the book base the anchor actually used:
+
+```python
+"tangible_equity": float | None,       # the SELECTED fiscal year's
+"tbv_per_share": float | None,
+"rotce": float | None,
+```
+
+They are read from the same `ratios` row and the same fiscal year the anchor
+already selected (so they cannot describe a different year than `roe`/`bve0`),
+and they never feed the projection -- see the invariance argument at the top
+of this section.
+
+### 23e. Display
+
+- **`report/template.html`**: the "Önemli Oranlar" card gains a **ROTCE** row,
+  rendered only when `sectorType === "financial"` (elsewhere it either
+  duplicates ROE or describes a measure nobody reads for that sector). It sits
+  directly under the existing ROE row so the goodwill drag is visible as a
+  pair. A new muted `tangibleMultiplesLineHtml(valuation)` renders
+  `P/TBV <value> (persentil <n>) · ROTCE <n>%` under the MULTIPLES
+  triangulation method for `financial` -- the same slot, and the same visual
+  treatment, that `evMultiplesLineHtml` occupies for other sectors and that
+  Sec.20b emptied for this one.
+- **`cli.py`**: `_tangible_multiples_line(valuation)` mirrors
+  `_ev_multiples_line`'s shape ("Maddi çarpan: ..."), printed only for
+  `financial` and only when a P/TBV figure exists, right where the suppressed
+  "FD çarpanı:" line used to print.
+
+### Scope
+
+No fair-value number, anchor, triangulation weight, or verdict changes. Every
+new key is additive; every new display element is gated on
+`sector_type == "financial"` except the raw `rotce`/`tangible_equity`/`ptbv`
+figures, which are computed for all filers and simply not rendered elsewhere.
+
+## 24. Quarterly fiscal-year anchoring + TTM base (WP8)
+
+**Problem this fixes (real, observed on MU 2026-07-30).** Two compounding
+defects left a deep cyclical valued off a base three quarters out of date.
+
+### 24a. Quarterly fiscal-year assignment — `normalizer._fiscal_year_end_month`
+
+`_fiscal_year(period_end)` labels a period by the CALENDAR year of its end
+date. For an annual record that is right (the filer's FY-end month is the
+period end). For a QUARTER it is wrong whenever the fiscal year does not end
+in December: Micron's fiscal year ends in late August, so its Q1 (ending
+2025-11-27) lands in calendar 2025 while the rest of the same fiscal year
+(Q2 2026-02, Q3 2026-05, Q4/annual 2026-08) lands in 2026.
+
+`to_quarterly_series` groups by that label and then derives
+`Q4 = annual - sum(first three)`. For MU's FY2025 the calendar-2025 group held
+FY2025's Q2 (`8.05`) and Q3 (`9.30`) plus FY2026's Q1 (`13.64`), so it
+computed `37.38 - 30.99 = 6.39` and emitted **$6.38B** as Q4 FY2025. The
+correct figure is `37.38 - (8.71 + 8.05 + 9.30) = ` **$11.32B**.
+
+Fix, contained entirely inside `to_quarterly_series`:
+
+- `_fiscal_year_end_month(normalized) -> Optional[int]`: the most common
+  month among ANNUAL record `period_end`s across all concepts (ties resolved
+  toward the most recent). `None` when there are no annual records.
+- `_quarter_fiscal_year(period_end, fy_end_month) -> Optional[int]`: with
+  `M = fy_end_month`, a quarter ending in month `m` of calendar year `Y`
+  belongs to fiscal year `Y` when `m <= M`, else `Y + 1`.
+- `to_quarterly_series` uses this instead of the record's stored `fy`
+  whenever a fiscal-year-end month is resolvable; otherwise it falls back to
+  today's behavior.
+
+**Backward compatible for the common case:** a December fiscal-year-end
+(`M = 12`) makes `m <= 12` always true, so every quarter keeps its calendar
+year and the output is byte-for-byte unchanged. Only non-December filers
+change, and for them the current labels are wrong.
+
+**Known limitation, documented not fixed:** a 52/53-week filer whose year-end
+drifts across a month boundary (e.g. ending Jan 28 one year and Feb 2 the
+next) can still be misassigned by one bucket. The month rule is a large
+improvement over the calendar rule, not a calendar-exact reconstruction.
+
+The stored `fy` on individual quarterly RECORDS is left alone; only the
+grouping/accessor is corrected, keeping the change to one function.
+
+### 24b. TTM figures — `metrics.compute_metrics`
+
+The valuation path reads annual series only, so a filer mid-fiscal-year is
+valued on data that can be three quarters stale. For MU on 2026-07-30 that is
+not a rounding issue:
+
+| | latest FY (FY2025) | true TTM |
+|---|---|---|
+| revenue | `$37.38B` | `$90.28B` |
+| net income | `$8.54B` | `$50.47B` |
+| net margin | 22.8% | 55.9% |
+| EPS | `$7.59` | `$44.86` |
+| P/E at `$739` | **97.4** (reported) | **16.5** |
+
+`compute_metrics` gains additive keys, all `None`-safe:
+
+```python
+"ttm_revenue": float | None,
+"ttm_net_income": float | None,
+"ttm_eps": float | None,          # ttm_net_income / shares
+"ttm_net_margin": float | None,
+"ttm_period_end": str | None,     # the newest quarter in the window
+"ttm_quarters": int,              # how many quarters the window found (<= 4)
+"ttm_complete": bool,             # exactly 4 quarters
+"pe_ttm": float | None,           # price / ttm_eps, only when complete
+"ttm_vs_fy_net_income": float | None,   # ttm_net_income / latest-FY net income
+```
+
+Built from `to_quarterly_series(normalized, "Revenue"/"NetIncome")` -- so it
+inherits 24a's corrected grouping -- taking the newest 4 quarters. An
+incomplete window (`ttm_quarters < 4`) leaves `ttm_*` populated but
+`ttm_complete` `False` and `pe_ttm` `None`, since a partial sum is not a
+trailing-twelve-month figure.
+
+**`pe`/`ps`/`pfcf` are NOT redefined.** They keep their existing
+latest-fiscal-year basis so every percentile, history comparison and stored
+verdict stays comparable. `pe_ttm` is reported ALONGSIDE.
+
+### 24c. Stale-base disclosure (`engine._run_valuation`)
+
+New constant `_TTM_STALENESS_THRESHOLD = 0.25`. When `ttm_complete` and the
+latest-FY net income is positive and
+`abs(ttm_vs_fy_net_income - 1) > _TTM_STALENESS_THRESHOLD`, the engine
+appends a Turkish note naming both bases, both P/E readings, and the fact
+that the anchors below are built on the fiscal-year figure. Applies to every
+sector -- a stale base is not a cyclical-only problem, it is just worst there.
+
+`cli` prints the TTM P/E next to the FY P/E on the multiples line when they
+diverge; `report/template.html` does the same in its multiples sub-line.
+
+## 25. Through-cycle statistics + historical P/B band (WP9) — `valuation/cyclical.py`
+
+New module. Pure, deterministic, never raises; no new dependency.
+
+### 25a. `multiples_history` gains `pb`
+
+`fy_price * shares / StockholdersEquity`, defined only for a strictly
+positive book value and a usable share count -- same guard shape as the
+existing `ps`/`pffo`/`ptbv` entries. This is what makes a historical P/B band
+possible at all; before this the engine carried no P/B history of any kind
+(`_build_pb_roe`'s justified P/B is a forward-looking construct, not an
+observed multiple).
+
+### 25b. `cyclical.through_cycle_stats(normalized, ratios, price_df, metrics) -> Optional[dict]`
+
+```python
+{
+  "years": int,                       # fiscal years with a usable net margin
+  "margin_mean": float,               # through-cycle average net margin
+  "margin_median": float,
+  "margin_trough": float,             # worst fiscal year
+  "margin_trough_fy": int,
+  "margin_peak": float,
+  "margin_peak_fy": int,
+  "margin_current": float | None,     # TTM when complete, else latest FY
+  "margin_current_basis": "ttm" | "fy",
+  "margin_percentile": float | None,  # current within the historical set
+  "pb_trough": float | None, "pb_median": float | None, "pb_peak": float | None,
+  "pb_current": float | None,
+  "pe_median": float | None,          # through-cycle median annual P/E
+  "book_value_per_share": float | None,
+  "normalized_revenue": float | None, # see below
+  "revenue_basis_years": [int, ...],
+}
+```
+
+- Margins come from `ratios`' per-fiscal-year `net_margin`; at least
+  `_MIN_CYCLE_YEARS = 6` usable years are required (a "through-cycle"
+  statistic from fewer years is not one), else the function returns `None`.
+- `margin_percentile` reuses `multiples.percentile_position`, so the
+  "where in the cycle are we" reading uses the same midrank convention as
+  every other percentile in the engine.
+- P/B band from `multiples_history`'s new `pb` column: min / median / max.
+- `pe_median` is the median of the history's `pe` column (positive entries
+  only -- a loss year has no meaningful P/E).
+- `normalized_revenue`: mean of the last three fiscal years' revenue, with
+  **TTM revenue substituted for the most recent point when the TTM window is
+  complete and newer** -- otherwise a filer three quarters into a violent
+  upswing gets a "normalized" base that predates the upswing entirely. The
+  fiscal years actually used are reported in `revenue_basis_years`.
+  Deliberately NO bit-growth/unit-growth uplift: that is a judgment input
+  this layer cannot derive, and omitting it is the conservative direction.
+
+## 26. Two-regime cyclical valuation + implied break probability (WP10)
+
+`cyclical.two_regime_valuation(stats, shares, price) -> Optional[dict]`, wired
+into the engine as an **advisory block** for `sector_type == "cyclical"`.
+
+**Advisory, exactly like Sec.8g/8j/8k:** it never headlines
+`fair_value_range`, never feeds `primary_dcf_scenarios`, never enters
+triangulation, and never changes a verdict. Promoting it to the cyclical
+headline is a deliberate follow-up decision, not a side effect of adding it.
+
+### 26a. Regime A -- mean reversion
+
+- `normalized_eps_a = margin_mean * normalized_revenue / shares`
+- `center = min(normalized_eps_a * pe_median, pb_median * book_value_per_share)`
+  -- the prompt's "compute both, take the lower" rule; whichever leg is
+  missing, the other stands alone.
+- `low = pb_trough * book_value_per_share`
+- `high = pb_peak * book_value_per_share`
+- `trough_eps` (`margin_trough * normalized_revenue / shares`) is reported as
+  a diagnostic input.
+
+**Interpretation note, flagged rather than silently resolved:** the source
+prompt defines the low end as "trough-margin normalized EPS x trough P/B
+band", which mixes an EPS with a book multiple and is not dimensionally
+sound (and a trough-earnings P/E is meaningless -- it explodes as earnings
+approach zero). This section implements the low end as the **trough P/B
+applied to current book value per share** -- the multiple the market has
+actually paid at previous cycle bottoms -- and reports `trough_eps`
+separately. The choice is recorded here so it can be revisited.
+
+### 26b. Regime B -- structural break
+
+Judgment inputs, module constants, defaults taken from the source prompt and
+**documented as assumptions, not derivations**:
+
+```python
+_REGIME_B_MARGINS = (0.30, 0.38, 0.45)   # low / mid / high "new normal"
+_REGIME_B_MULTIPLES = (12.0, 13.5, 15.0) # below the semis median: still capital-intensive
+```
+
+- Revenue base is **TTM revenue** (`stats["normalized_revenue"]` is the
+  mean-reverting base; Regime B is the "this level persists" thesis, so it
+  uses the current run-rate). `None` when the TTM window is incomplete.
+- `eps_b[m] = margin_m * ttm_revenue / shares` for each of the three margins.
+- `sensitivity`: the full 3x3 `margin x multiple` grid.
+- `low` / `center` / `high` = `(margin_low, mult_low)`, `(margin_mid,
+  mult_mid)`, `(margin_high, mult_high)` corners of that grid.
+
+### 26c. Blend and implied probability
+
+- `blend[p] = p * fv_b_center + (1 - p) * fv_a_center` for
+  `p in (0.25, 0.50, 0.75)`.
+- `p_implied = (price - fv_a_center) / (fv_b_center - fv_a_center)`, `None`
+  when the denominator is zero or either center is missing.
+- `p_implied_status`: `"ok"` when in `[0, 1]`; `"above_range"` when `> 1`
+  (the price exceeds even the full structural-break value -- no probability
+  mix explains it); `"below_range"` when `< 0`. The raw value is reported
+  either way, never clamped.
+- Turkish verdict sentence in the prompt's required shape: "Mevcut fiyat,
+  yapisal kirilima >= %X olasilik vermeyi zorunlu kiliyor. Kendi p tahminin
+  bunun ustunde ise fiyat ucuz, altinda ise pahali." With an
+  `above_range`/`below_range` status the sentence instead states that no
+  probability in [0,1] reconciles the price with the two regimes.
+
+### 26d. Flags
+
+- `peak_cycle_pe_trap`: current net margin at or above the
+  `_PEAK_MARGIN_PERCENTILE = 80`th percentile of its own history AND
+  `pe_ttm` below `_PEAK_PE_MAX = 15`. This is the trap the existing
+  `red_flags._check_cyclical_trap` aims at, but that rule reads
+  `metrics["pe"]` -- the stale fiscal-year P/E -- so for MU it saw 97.4 and
+  stayed silent while the true TTM P/E was 16.5. This flag reads `pe_ttm`.
+- `peak_annualization`: the newest quarter's net margin exceeds the
+  through-cycle mean by more than `_PEAK_ANNUALIZATION_SPREAD = 20pp`,
+  i.e. any forward figure built by annualizing it is a peak extrapolation.
+- `regime_change_premium`: `pb_current > pb_peak`, the market already paying
+  above every historical cycle top.
+
+### 26e. Output shape and display
+
+`valuation["cycle"]` (`None` for every non-cyclical sector and whenever
+`through_cycle_stats` returns `None`):
+
+```python
+{"stats": {...}, "regime_a": {...}, "regime_b": {...},
+ "blend": {...}, "p_implied": float | None, "p_implied_status": str,
+ "verdict_sentence": str, "flags": {...}}
+```
+
+`_empty_valuation` gains `"cycle": None`. The CLI prints a compact
+cycle-position + p_implied block; `report/template.html` renders a "Döngü
+Konumu" card with the regime bands, the 3x3 sensitivity grid, the p-table and
+the flags.
+
+### Scope
+
+WP8 changes numbers only where they were wrong (non-December filers'
+quarterly grouping). WP9 and WP10 add reported figures and one advisory
+block; no anchor, `fair_value_range`, triangulation weight or verdict changes
+for any filer.

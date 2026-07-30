@@ -114,7 +114,7 @@ def _method_slug(valuation: dict) -> str:
 
 
 def run_calibration(
-    tickers: List[str], years: int = 5, no_cache: bool = False, as_of=None
+    tickers: List[str], years: int = 12, no_cache: bool = False, as_of=None
 ) -> List[dict]:
     """Run the headless script-provider pipeline for each ticker in ``tickers``.
 

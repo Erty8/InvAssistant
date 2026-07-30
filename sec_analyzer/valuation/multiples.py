@@ -142,6 +142,9 @@ def _multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Li
     operating_income_series = to_annual_series(normalized, "OperatingIncome")
     gain_re_series = to_annual_series(normalized, "GainOnSaleRealEstate")
     impair_re_series = to_annual_series(normalized, "RealEstateImpairment")
+    equity_series = to_annual_series(normalized, "StockholdersEquity")
+    goodwill_series = to_annual_series(normalized, "Goodwill")
+    intangibles_series = to_annual_series(normalized, "IntangibleAssets")
     end_by_fy = _period_end_by_fy(normalized)
 
     history: List[dict] = []
@@ -233,10 +236,37 @@ def _multiples_history(normalized: dict, price_df: Optional[pd.DataFrame]) -> Li
             else None
         )
 
+        # P/TBV (SPEC.md Sec.23c): the bank convention, since P/B is not
+        # comparable across filers carrying different goodwill loads. Tangible
+        # equity uses the same zero-fill rule as `ratios.compute_ratios`, and
+        # a non-positive tangible base (goodwill above book equity) yields
+        # None rather than a meaningless multiple.
+        equity_fy = equity_series.get(fy)
+        tangible_equity_fy = (
+            None if equity_fy is None
+            else equity_fy - (goodwill_series.get(fy) or 0.0) - (intangibles_series.get(fy) or 0.0)
+        )
+        ptbv = (
+            fy_price * shares / tangible_equity_fy
+            if tangible_equity_fy is not None and tangible_equity_fy > 0 and shares
+            else None
+        )
+
+        # P/B (SPEC.md Sec.25a): the observed book multiple, which is what a
+        # historical trough/median/peak band needs. Distinct from
+        # `engine._build_pb_roe`'s JUSTIFIED P/B, a forward-looking construct
+        # rather than something the market ever paid.
+        pb = (
+            fy_price * shares / equity_fy
+            if equity_fy is not None and equity_fy > 0 and shares
+            else None
+        )
+
         history.append(
             {
                 "fy": fy, "end": period_end, "price": fy_price, "pe": pe, "ps": ps, "pfcf": pfcf,
                 "ev_sales": ev_sales, "ev_ebit": ev_ebit, "ev_ebitda": ev_ebitda, "pffo": pffo,
+                "ptbv": ptbv, "pb": pb,
             }
         )
 

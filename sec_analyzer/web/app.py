@@ -539,7 +539,7 @@ def api_financials():
 
     Query params:
         ticker: Stock ticker symbol (required).
-        years: Number of most-recent fiscal years to retain (default 5).
+        years: Number of most-recent fiscal years to retain (default 12).
         no_cache: "true"/"false" -- bypass the on-disk raw JSON cache.
     """
     ticker = (request.args.get("ticker") or "").strip()
@@ -547,7 +547,7 @@ def api_financials():
         return jsonify({"ok": False, "error": "Query parameter 'ticker' is required."}), 400
 
     try:
-        years = int(request.args.get("years", 5))
+        years = int(request.args.get("years", 12))
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "'years' must be an integer."}), 400
 
@@ -626,7 +626,7 @@ def api_analyze():
         return jsonify({"ok": False, "error": "JSON field 'ticker' is required."}), 400
 
     try:
-        years = int(body.get("years", 5))
+        years = int(body.get("years", 12))
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "'years' must be an integer."}), 400
 

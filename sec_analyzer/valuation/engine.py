@@ -24,8 +24,8 @@ from sec_analyzer.config import Config
 from sec_analyzer.normalize.metrics import resolve_fundamental_fy
 from sec_analyzer.normalize.normalizer import to_annual_series
 from sec_analyzer.valuation import (
-    damodaran, dcf, distress, lbo, multiples, precedent_transactions, reverse_dcf, revenue_dcf,
-    sanity, sector, sensitivity, triangulate,
+    cyclical, damodaran, dcf, distress, lbo, multiples, precedent_transactions, reverse_dcf,
+    revenue_dcf, sanity, sector, sensitivity, triangulate,
 )
 from sec_analyzer.valuation.dcf import dcf_per_share
 
@@ -87,6 +87,20 @@ _EPV_GATE_CAPEX_OCF_RATIO = 0.5
 _FCF0_DEVIATION_THRESHOLD = 0.50
 
 _SECTORS_WITHOUT_FCF_DCF = ("financial", "reit")
+
+#: Sectors for which enterprise value is undefined (SPEC.md Sec.20b). EV adds
+#: net debt to market cap to value the whole capital structure; for a
+#: deposit-funded lender, borrowing IS the raw material of the business, so
+#: EV/EBITDA, EV/EBIT and EV/Sales carry no meaning. REITs are deliberately
+#: NOT here -- EV multiples are standard practice for them.
+_SECTORS_WITHOUT_EV = ("financial",)
+
+#: Turkish note emitted when EV multiples are suppressed (SPEC.md Sec.20b).
+_EV_SUPPRESSED_NOTE = (
+    "Finansal kuruluşlarda firma değeri (FD) tanımsızdır — mevduat ve borçlanma "
+    "işin hammaddesidir, sermaye yapısı düzeltmesi değil. FD/FAVÖK, FD/FVÖK ve "
+    "FD/Satış çarpanları hesaplanmadı."
+)
 
 # --- Hyper-grower revenue-first DCF wiring (SPEC.md Sec.3 / VALUATION.md Sec.4a) ---
 
@@ -356,6 +370,7 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
         },
         "pb_roe": None,
         "rim": None,
+        "cycle": None,
         "ffo": None,
         "earnings_power": None,
         "earnings_power_headline": False,
@@ -367,7 +382,7 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
             "history": [],
             "current": {
                 "pe": None, "ps": None, "pfcf": None, "pffo": None,
-                "ev_ebit": None, "ev_ebitda": None,
+                "ev_ebit": None, "ev_ebitda": None, "ptbv": None,
             },
             "pe_percentile": None,
             "ps_percentile": None,
@@ -375,8 +390,10 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
             "pffo_percentile": None,
             "ev_ebit_percentile": None,
             "ev_ebitda_percentile": None,
+            "ptbv_percentile": None,
             "net_debt_to_ebitda": None,
             "leveraged": False,
+            "ev_applicable": True,
             "history_years": 0,
             "sector": {
                 "available": False, "industry": None,
@@ -983,6 +1000,97 @@ def _rim_scenario_band(
     return round(min(cells), 2), round(max(cells), 2), False
 
 
+#: Relative gap between TTM and latest-FY net income above which the
+#: fiscal-year base is called out as stale (SPEC.md Sec.24c).
+_TTM_STALENESS_THRESHOLD = 0.25
+
+
+def _ttm_staleness_notes(metrics: dict) -> List[str]:
+    """Warn when the annual base the anchors use is materially out of date.
+
+    Fires in both directions -- a filer mid-upswing (Micron: TTM net income
+    5.9x the latest fiscal year) and one mid-collapse are equally misdescribed
+    by a stale annual figure. Reports both P/E readings, since the fiscal-year
+    P/E is what the rest of the card shows. Never raises.
+    """
+    metrics = metrics or {}
+    if not metrics.get("ttm_complete"):
+        return []
+    ratio = metrics.get("ttm_vs_fy_net_income")
+    if not _is_number(ratio) or abs(ratio - 1.0) <= _TTM_STALENESS_THRESHOLD:
+        return []
+
+    ttm_ni, pe_ttm, pe_fy = metrics.get("ttm_net_income"), metrics.get("pe_ttm"), metrics.get("pe")
+    direction = "üzerinde" if ratio > 1 else "altında"
+    note = (
+        f"Son 12 ay (TTM) verisi, değerleme çapalarının kullandığı mali yıl bazının "
+        f"belirgin {direction}: TTM net kâr {_format_usd_short(ttm_ni)} "
+        f"(mali yılın {ratio:.1f} katı, dönem sonu {metrics.get('ttm_period_end')}). "
+        "Tüm çapalar yıllık seriden hesaplandığı için bu çeyrekleri henüz görmüyor."
+    )
+    if _is_number(pe_ttm) and _is_number(pe_fy):
+        note += f" F/K mali yıl bazında {pe_fy:.1f}, TTM bazında {pe_ttm:.1f}."
+    return [note]
+
+
+def _format_usd_short(value: float) -> str:
+    """Compact USD magnitude for a Turkish note, e.g. ``"32.8 Mr$"``.
+
+    Uses a decimal POINT, matching every other number engine.py formats into
+    a Turkish note (``%{x:.1f}`` percentages, per-share dollar figures), so a
+    single sentence never mixes separators.
+    """
+    if abs(value) >= 1e9:
+        return f"{value / 1e9:.1f} Mr$"
+    if abs(value) >= 1e6:
+        return f"{value / 1e6:.0f} Mn$"
+    return f"{value:.0f} $"
+
+
+def _rim_tangible(ratio_by_fy: dict, selected_fy: Optional[int], key: str) -> Optional[float]:
+    """Read a tangible-equity figure for the fiscal year the RIM anchor used.
+
+    Returns ``None`` when the year has no ratio row or no usable value, so a
+    missing goodwill/intangibles series degrades to "not reported" rather than
+    to a figure describing a different period (SPEC.md Sec.23d).
+    """
+    value = (ratio_by_fy.get(selected_fy) or {}).get(key)
+    return value if _is_number(value) else None
+
+
+def _build_rim_external_growth(
+    bve0: float, ni0: float, roe: float, growth_5y: float,
+    terminal_growth: float, discount_rate: float, shares: float,
+) -> "tuple[Optional[dict], List[str]]":
+    """Externally-funded-growth diagnostic for the RIM anchor (SPEC.md Sec.22b).
+
+    Advisory only: it never headlines ``fair_value_range``, never feeds
+    ``primary_dcf_scenarios``, and never enters triangulation -- same
+    discipline as the Sec.8g/8j/8k screens. Its job is to quantify what the
+    internal-funding cap suppressed, so the reader can see whether the
+    discarded growth assumption would have HELPED or HURT.
+
+    Never raises: an invalid input degrades to ``(None, [Turkish note])``.
+    """
+    try:
+        result = dcf.rim_external_growth_per_share(
+            bve0, ni0, roe, growth_5y, terminal_growth, discount_rate, shares,
+            terminal_roe=discount_rate,
+        )
+    except ValueError as exc:
+        return None, [f"Dış finansmanlı büyüme senaryosu hesaplanamadı: {exc}"]
+
+    return (
+        {
+            "per_share": round(result["per_share"], 2),
+            "per_share_internal": round(result["per_share_internal"], 2),
+            "value_gap_per_share": round(result["value_gap_per_share"], 2),
+            "external_funding_total": result["external_funding_total"],
+        },
+        [],
+    )
+
+
 def _build_rim(
     assumptions: dict, normalized: dict, metrics: dict, ratios: list
 ) -> "tuple[Optional[dict], List[str]]":
@@ -1045,6 +1153,7 @@ def _build_rim(
     equity_series = to_annual_series(normalized, "StockholdersEquity")
     ni_series = to_annual_series(normalized, "NetIncome")
     roe_by_fy = {row.get("fy"): row.get("roe") for row in (ratios or []) if row.get("fy") is not None}
+    ratio_by_fy = {row.get("fy"): row for row in (ratios or []) if row.get("fy") is not None}
 
     selected_fy, bve0, ni0, roe = None, None, None, None
     for fy in sorted(equity_series, reverse=True):
@@ -1073,6 +1182,10 @@ def _build_rim(
     book_value_per_share = bve0 / shares
 
     scenarios: Dict[str, dict] = {}
+    growth_capped = False
+    effective_growth_5y = None
+    assumed_growth_5y = None
+    external_growth = None
     for key in _SCENARIO_KEYS:
         scenario_assumptions = assumptions.get(key) or {}
         growth_5y = scenario_assumptions.get("growth_5y")
@@ -1097,6 +1210,18 @@ def _build_rim(
             notes.append(f"{key.capitalize()} senaryosu için RIM hesaplanamadı: {exc}")
             continue
 
+        # SPEC.md Sec.22c: the base scenario drives the disclosure, since it
+        # is the one the headline fair_value_range reports.
+        if key == "base":
+            growth_capped = bool(result.get("growth_capped"))
+            effective_growth_5y = result.get("effective_growth_5y")
+            assumed_growth_5y = growth_5y
+            if growth_capped:
+                external_growth, external_notes = _build_rim_external_growth(
+                    bve0, ni0, roe, growth_5y, terminal_growth, discount_rate, shares,
+                )
+                notes.extend(external_notes)
+
         per_share = round(result["per_share"], 2)
         lo, hi, used_fallback = _rim_scenario_band(
             bve0, ni0, roe, growth_5y, terminal_growth, discount_rate, shares, per_share
@@ -1111,6 +1236,24 @@ def _build_rim(
     if not any(_is_number(cell.get("per_share")) for cell in scenarios.values()):
         return None, notes
 
+    if growth_capped and _is_number(assumed_growth_5y) and _is_number(effective_growth_5y):
+        note = (
+            f"RIM büyüme varsayımı içsel finansman kısıtına takıldı: varsayılan "
+            f"%{assumed_growth_5y * 100:.1f} büyüme yerine %{effective_growth_5y * 100:.1f} "
+            f"uygulandı (g = b x ROE, ROE %{roe * 100:.1f} — şirket, kârının tamamını "
+            "yeniden yatırsa bile ROE'sinden hızlı büyümeyi kendi kaynağıyla fonlayamaz)."
+        )
+        if external_growth:
+            note += (
+                f" Büyümenin tamamen dışarıdan özkaynak ihracıyla fonlandığı varsayılsa "
+                f"(10 yılda ~{_format_usd_short(external_growth['external_funding_total'])} "
+                f"yeni özkaynak), ROE özkaynak maliyetinin altında olduğu için hisse başına "
+                f"değer {external_growth['per_share_internal']:.2f} $ değil "
+                f"{external_growth['per_share']:.2f} $ olurdu — hızlı büyüme bu getiri "
+                "seviyesinde değer yaratmaz, yok eder."
+            )
+        notes.append(note)
+
     return (
         {
             "scenarios": scenarios,
@@ -1119,6 +1262,23 @@ def _build_rim(
             "book_value_per_share": book_value_per_share,
             "normalized_net_income": ni0,
             "roe": round(roe, 4),
+            # SPEC.md Sec.23d -- advisory only, read from the SAME fiscal year
+            # the anchor selected, so they cannot describe a different period
+            # than `roe`/`bve0`. These never feed the projection: residual
+            # income is accounting-invariant, so rebasing the anchor on
+            # tangible equity would move the value only through the 10-year
+            # truncation (see Sec.23's opening argument).
+            "tangible_equity": _rim_tangible(ratio_by_fy, selected_fy, "tangible_equity"),
+            "tbv_per_share": (
+                _rim_tangible(ratio_by_fy, selected_fy, "tangible_equity") / shares
+                if _rim_tangible(ratio_by_fy, selected_fy, "tangible_equity") else None
+            ),
+            "rotce": _rim_tangible(ratio_by_fy, selected_fy, "rotce"),
+            # SPEC.md Sec.22c -- observational/advisory only.
+            "growth_capped": growth_capped,
+            "effective_growth_5y": effective_growth_5y,
+            "assumed_growth_5y": assumed_growth_5y,
+            "external_growth": external_growth,
         },
         notes,
     )
@@ -3492,11 +3652,15 @@ def _build_midgrowth_revenue_dcf(
 
 #: Turkish labels for the current-multiple fallback notes, keyed by which
 #: multiple was derived.
-_MULTIPLE_LABELS = {"pe": "F/K", "ps": "F/S", "pfcf": "F/FCF", "ev_ebit": "FD/FVÖK", "ev_ebitda": "FD/FAVÖK"}
+_MULTIPLE_LABELS = {
+    "pe": "F/K", "ps": "F/S", "pfcf": "F/FCF",
+    "ev_ebit": "FD/FVÖK", "ev_ebitda": "FD/FAVÖK", "ptbv": "F/MDD",
+}
 
 
 def _derive_current_multiples(
-    normalized: dict, ratios: list, metrics: dict, price: Optional[float]
+    normalized: dict, ratios: list, metrics: dict, price: Optional[float],
+    suppress_ev: bool = False,
 ) -> "tuple[dict, List[str]]":
     """Fill gaps in ``metrics``' current pe/ps/pfcf from the per-FY series.
 
@@ -3520,7 +3684,14 @@ def _derive_current_multiples(
     """
     current = {
         "pe": metrics.get("pe"), "ps": metrics.get("ps"), "pfcf": metrics.get("pfcf"),
-        "ev_ebit": metrics.get("ev_ebit"), "ev_ebitda": metrics.get("ev_ebitda"),
+        # SPEC.md Sec.20b: for a sector with no meaningful enterprise value,
+        # the EV slots are never seeded and never back-filled below, so no
+        # "derived from FYxxxx" note claims an EV multiple that shouldn't exist.
+        "ev_ebit": None if suppress_ev else metrics.get("ev_ebit"),
+        "ev_ebitda": None if suppress_ev else metrics.get("ev_ebitda"),
+        # SPEC.md Sec.23c: reported for every sector, rendered only where it
+        # carries information (financial).
+        "ptbv": metrics.get("ptbv"),
     }
     notes: List[str] = []
     if price is None:
@@ -3543,6 +3714,21 @@ def _derive_current_multiples(
 
     shares = metrics.get("shares")
     if shares:
+        # P/TBV fy-mismatch recovery (SPEC.md Sec.23c), same shape as the
+        # pe/ps/pfcf fallbacks: scan back to the latest fiscal year with a
+        # positive tangible equity.
+        if current["ptbv"] is None:
+            tangible_by_fy = {
+                row.get("fy"): row.get("tangible_equity")
+                for row in (ratios or []) if row.get("fy") is not None
+            }
+            for fy in sorted(tangible_by_fy, reverse=True):
+                tangible = tangible_by_fy.get(fy)
+                if tangible is not None and tangible > 0:
+                    current["ptbv"] = round(price * shares / tangible, 4)
+                    _note("ptbv", fy)
+                    break
+
         if current["ps"] is None:
             revenue_series = to_annual_series(normalized, "Revenue")
             for fy in sorted(revenue_series, reverse=True):
@@ -3573,7 +3759,7 @@ def _derive_current_multiples(
     # has a non-positive/missing EBIT(DA), by scanning back to the latest fy
     # with a positive denominator. EV = current market cap + net debt
     # (metrics["ev"], already computed the same way).
-    ev = metrics.get("ev")
+    ev = None if suppress_ev else metrics.get("ev")
     if ev is not None:
         if current["ev_ebit"] is None:
             oi_series = to_annual_series(normalized, "OperatingIncome")
@@ -3880,6 +4066,69 @@ def _epv_scenario_meta(earnings_power: Optional[dict]) -> dict:
     return meta
 
 
+def _rim_scenario_meta(rim_detail: Optional[dict], assumptions: dict) -> dict:
+    """Build the ``fair_value_range`` ``scenario_meta`` override for the
+    financial-sector RIM headline (SPEC.md Sec.22c), mirroring
+    :func:`_cyclical_fcfe_scenario_meta`'s structure.
+
+    Before this existed, ``financial`` had no entry in the ``scenario_meta``
+    chain, so its fair-value rows fell through to the raw assumption's
+    ``growth_5y`` -- printing "%25 büyüme" for a filer whose RIM had actually
+    compounded earnings at its 4.6% ROE, because ``g = b x ROE`` caps growth
+    at what retained earnings can fund. The label now reports the EFFECTIVE
+    rate and names the assumed one as discarded.
+
+    Returns an empty dict (so :func:`_build_fair_value_range` falls back to
+    the assumptions-derived values) when ``rim_detail`` is ``None`` or is
+    missing its ``scenarios``/``roe``. Never raises.
+    """
+    if not rim_detail:
+        return {}
+    scenarios = rim_detail.get("scenarios") or {}
+    roe = rim_detail.get("roe")
+    if not scenarios or not _is_number(roe) or roe <= 0:
+        return {}
+
+    meta: dict = {}
+    for key in _SCENARIO_KEYS:
+        cell = scenarios.get(key) or {}
+        if not _is_number(cell.get("per_share")):
+            continue
+        scenario_assumptions = assumptions.get(key) or {}
+        growth_5y = scenario_assumptions.get("growth_5y")
+        discount_rate = scenario_assumptions.get("discount_rate")
+        if not _is_number(growth_5y) or not _is_number(discount_rate):
+            continue
+
+        effective_growth = min(growth_5y, roe)
+        if effective_growth < growth_5y:
+            growth_str = (
+                f"%{effective_growth * 100:.1f} büyüme "
+                f"(varsayılan %{growth_5y * 100:.1f} içsel finansman kısıtıyla sınırlandı)"
+            )
+            note = (
+                f"Artık gelir (RIM) çapası ({key}): defter değeri + 10 yıllık artık gelirin "
+                f"bugünkü değeri. Varsayılan %{growth_5y * 100:.1f} büyüme yerine ROE'nin "
+                f"fonlayabildiği %{effective_growth * 100:.1f} uygulandı; bu senaryoyu "
+                f"diğerlerinden ayıran tek etken özkaynak maliyeti "
+                f"(%{discount_rate * 100:.1f})."
+            )
+        else:
+            growth_str = f"%{growth_5y * 100:.1f} büyüme (kazanç + sürdürülebilir büyüme)"
+            note = (
+                f"Artık gelir (RIM) çapası ({key}): defter değeri + 10 yıllık artık gelirin "
+                f"bugünkü değeri; büyüme %{growth_5y * 100:.1f}, özkaynak maliyeti "
+                f"%{discount_rate * 100:.1f}, ROE %{roe * 100:.1f}."
+            )
+
+        meta[key] = {
+            "growth": growth_str,
+            "discount_rate": _format_discount_rate_pct(discount_rate),
+            "note": note,
+        }
+    return meta
+
+
 def _cyclical_fcfe_scenario_meta(cyclical_fcfe_detail: Optional[dict], assumptions: dict) -> dict:
     """Build the ``fair_value_range`` ``scenario_meta`` override for the
     cyclical sustainable-growth FCFE headline (SPEC.md Sec.8e), mirroring
@@ -3914,9 +4163,21 @@ def _cyclical_fcfe_scenario_meta(cyclical_fcfe_detail: Optional[dict], assumptio
         if not _is_number(growth_5y) or not _is_number(discount_rate):
             continue
 
-        reinvestment_rate = min(growth_5y, roe) / roe
+        # SPEC.md Sec.22c: report the growth ACTUALLY applied. The old label
+        # printed the uncapped assumption, so a filer whose ROE binds the cap
+        # was told its valuation assumed a growth rate the model discarded.
+        effective_growth = min(growth_5y, roe)
+        if effective_growth < growth_5y:
+            growth_str = (
+                f"%{effective_growth * 100:.1f} büyüme "
+                f"(varsayılan %{growth_5y * 100:.1f} içsel finansman kısıtıyla sınırlandı)"
+            )
+        else:
+            growth_str = f"%{growth_5y * 100:.1f} büyüme (kazanç + sürdürülebilir büyüme)"
+
+        reinvestment_rate = effective_growth / roe
         meta[key] = {
-            "growth": f"%{growth_5y * 100:.1f} büyüme (kazanç + sürdürülebilir büyüme)",
+            "growth": growth_str,
             "discount_rate": _format_discount_rate_pct(discount_rate),
             "note": (
                 f"Sürdürülebilir-büyüme FCFE çapası ({key}): normalize net kâr büyütülür, büyümeyi fonlamak "
@@ -4087,6 +4348,18 @@ def _run_valuation(
     precedent_transactions_dir: Optional[str] = None,
 ) -> dict:
     notes: List[str] = []
+
+    # SPEC.md Sec.19: surface a rejected as-reported revenue basis, so the
+    # substituted top line is auditable rather than a silent correction.
+    revenue_basis_note = ((normalized or {}).get("revenue_basis") or {}).get("note")
+    if revenue_basis_note:
+        notes.append(revenue_basis_note)
+
+    # SPEC.md Sec.24c: every anchor below is built on ANNUAL series, so a filer
+    # deep into an unreported fiscal year can be valued on a base that the
+    # quarterly filings have already overtaken. Say so rather than letting the
+    # stale figure pass as current.
+    notes.extend(_ttm_staleness_notes(metrics))
 
     is_unprofitable = sector_type == "growth_unprofitable"
     for violation in sanity.validate_assumptions(assumptions, is_unprofitable=is_unprofitable):
@@ -4537,6 +4810,11 @@ def _run_valuation(
         scenario_meta = _cyclical_fcfe_scenario_meta(cyclical_fcfe_detail, assumptions)
     elif epv_headline:
         scenario_meta = _epv_scenario_meta(earnings_power)
+    elif sector_type == "financial" and rim is not None:
+        # SPEC.md Sec.22c: `financial` was the one headline path with no
+        # scenario_meta, so its rows printed the raw (often discarded)
+        # assumption growth instead of what RIM actually applied.
+        scenario_meta = _rim_scenario_meta(rim, assumptions)
     fair_value_range = _build_fair_value_range(primary_dcf_scenarios, reit_or_financial_anchor, assumptions, scenario_meta)
 
     # --- Reverse DCF -----------------------------------------------------
@@ -4663,8 +4941,22 @@ def _run_valuation(
     history = multiples.multiples_history(normalized, price_df)
     if price_df is None or getattr(price_df, "empty", True):
         notes.append("Fiyat geçmişi alınamadığı için çarpan tarihçesi hesaplanamadı.")
-    current, current_notes = _derive_current_multiples(normalized, ratios, metrics, price)
+    ev_applicable = sector_type not in _SECTORS_WITHOUT_EV
+    current, current_notes = _derive_current_multiples(
+        normalized, ratios, metrics, price, suppress_ev=not ev_applicable
+    )
     notes.extend(current_notes)
+    if not ev_applicable:
+        # SPEC.md Sec.20b. Blanking the history too means the percentiles
+        # below have nothing to rank against either, so no EV signal can
+        # survive by a side route. `metrics` itself is deliberately NOT
+        # mutated -- suppression is scoped to this valuation's own output.
+        current["ev_sales"] = None
+        for row in history:
+            for key in ("ev_sales", "ev_ebit", "ev_ebitda"):
+                if key in row:
+                    row[key] = None
+        notes.append(_EV_SUPPRESSED_NOTE)
     pe_pct = multiples.percentile_position([h["pe"] for h in history], current["pe"])
     ps_pct = multiples.percentile_position([h["ps"] for h in history], current["ps"])
     pfcf_pct = multiples.percentile_position([h["pfcf"] for h in history], current["pfcf"])
@@ -4683,6 +4975,10 @@ def _run_valuation(
         else None
     )
     pffo_pct = multiples.percentile_position([h["pffo"] for h in history], current["pffo"])
+    # SPEC.md Sec.23c: reported, never promoted -- P/TBV does not enter the
+    # sector-axis candidate order and never reaches triangulate.triangulate,
+    # so `financial` keeps its existing P/E-primary multiples signal.
+    ptbv_pct = multiples.percentile_position([h.get("ptbv") for h in history], current.get("ptbv"))
 
     # `sector_medians_result` was already computed earlier in this function
     # (WP2/WP6, right after the `sector_data` load, so both the
@@ -4722,6 +5018,11 @@ def _run_valuation(
         if _is_number(_net_debt) and _is_number(_ebitda) and _net_debt > 0 and _ebitda > 0
         else None
     )
+    if not ev_applicable:
+        # SPEC.md Sec.20b: the leverage gate exists solely to promote
+        # EV/EBITDA to primary. With EV undefined there is nothing to promote,
+        # and a lender's net debt / EBITDA would trip it on every filer.
+        net_debt_to_ebitda = None
     leveraged = net_debt_to_ebitda is not None and net_debt_to_ebitda >= triangulate._LEVERAGE_EBITDA_RATIO
 
     if sector_type == "growth_unprofitable":
@@ -4789,6 +5090,28 @@ def _run_valuation(
     if growth_adjusted.get("reason"):
         notes.append(growth_adjusted["reason"])
 
+    # --- Cycle position + two-regime read (SPEC.md Sec.25/26) ---------------
+    # Advisory only: never headlines fair_value_range, never feeds
+    # primary_dcf_scenarios, never enters triangulation. Same discipline as
+    # the Sec.8g/8j/8k screens.
+    cycle = None
+    if sector_type == "cyclical":
+        cycle_stats = cyclical.through_cycle_stats(normalized, ratios, history, metrics)
+        cycle = cyclical.two_regime_valuation(cycle_stats, metrics, price)
+        if cycle is None and cycle_stats is None:
+            notes.append(
+                "Döngü konumu hesaplanamadı: through-cycle istatistiği için yeterli "
+                "yıllık net marj verisi yok (en az 6 mali yıl gerekir)."
+            )
+        elif cycle is not None:
+            if cycle["stats"].get("window_short"):
+                notes.append(
+                    f"Döngü istatistiği yalnızca {cycle['stats']['years']} mali yıl üzerinden "
+                    "hesaplandı; bu pencere bir döngüyü kapsar ama HANGİ döngüyü yakaladığı "
+                    "ortalamayı belirler. Daha geniş bir taban için `--years 12` ile çalıştırın."
+                )
+            notes.append(cycle["verdict_sentence"])
+
     multiples_out = {
         "history": history,
         "current": current,
@@ -4798,8 +5121,10 @@ def _run_valuation(
         "pffo_percentile": pffo_pct,
         "ev_ebit_percentile": ev_ebit_pct,
         "ev_ebitda_percentile": ev_ebitda_pct,
+        "ptbv_percentile": ptbv_pct,
         "net_debt_to_ebitda": (round(net_debt_to_ebitda, 2) if net_debt_to_ebitda is not None else None),
         "leveraged": leveraged,
+        "ev_applicable": ev_applicable,
         "history_years": len(history),
         "sector": sector_info,
         "growth_adjusted": growth_adjusted,
@@ -4972,6 +5297,7 @@ def _run_valuation(
         "beneish_m": beneish_m,
         "merton_dtd": merton_dtd,
         "lbo_floor_detail": lbo_floor_detail,
+        "cycle": cycle,
         "assumptions": assumptions,
         "notes": notes,
         **(
