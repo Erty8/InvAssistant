@@ -185,11 +185,25 @@ and collapse the DCF.
 `fcf0` = latest-FY FCF net of SBC (`metrics["fcf"] - sbc_fy`, SBC treated as
 `0.0` when missing — stock-based comp is a non-cash OCF add-back that this
 engine treats as a genuine cash expense, Damodaran-style). If it is `None`,
-non-positive, or deviates more than ±50% from the 3-year average (also
-SBC-adjusted) FCF, use the 3-year average instead and set `fcf0_source =
+non-positive, or deviates more than ±50% from the average of the **prior**
+fiscal years in the 3-year window (`latest_fy-1`/`latest_fy-2`, whichever are
+present; also SBC-adjusted), use the 3-year average (which DOES include the
+latest year — smoothing, not exclusion) instead and set `fcf0_source =
 "3y_avg"` plus a Turkish note; else `fcf0_source = "ttm"`. If no positive fcf0
 can be derived at all, DCF returns `None` per-share values with a note (do not
-raise). This same SBC-adjusted per-FY series is also the source for the
+raise).
+
+**Why the deviation reference excludes the candidate year (2026-07 fix):**
+the rule originally measured deviation against the 3-year average *including*
+`latest_fy`. For a window `(a, b, L)` that makes the nominal 50% trigger
+algebraically equivalent to `L > a + b` — roughly +100% versus the prior
+years' own average — so the documented threshold was silently enforced at
+double its stated value (UBER's FY2025 sat 143% above its prior-2 average but
+measured as 65%; a borderline one-off spike at, say, +70% escaped entirely).
+A reference must not contain the candidate it judges. When NO prior-year
+value exists in the window, the deviation is not assessable and does not
+fire (unchanged). The monotonic-ramp exception below and the fallback VALUE
+(the inclusive 3-year average) are both unchanged. This same SBC-adjusted per-FY series is also the source for the
 realized FCF CAGR used by reverse-DCF triangulation (Sec.5/Sec.10 F6) — it
 does NOT change the *display* metrics (`ratios[...]["fcf"]`, the P/FCF
 multiple), which stay conventional (non-SBC-adjusted).
@@ -3471,10 +3485,26 @@ sector classification and the CAPM cost of equity) is what gets measured.
   `"ratio"` values -- `count`, `median`/`mean`/`p25`/`p75` (deterministic
   sorted-list linear-interpolation percentiles, `None` if `count == 0`), and
   three bucket counts (`bucket_under_0.8`/`bucket_0.8_1.2`/`bucket_over_1.2`)
-  partitioning cheap/fair/expensive relative to price. A healthy calibration
-  target is a median near 0.9-1.1 with wide dispersion (a tight cluster
-  around 1.0 would itself be suspicious -- it would mean the engine is
-  anchoring toward price rather than computing it independently).
+  partitioning cheap/fair/expensive relative to price. **Healthy calibration
+  target (re-baselined 2026-07-31): a median near 0.8-1.0** with wide
+  dispersion (a tight cluster around 1.0 would itself be suspicious -- it
+  would mean the engine is anchoring toward price rather than computing it
+  independently). The original 0.9-1.1 band was drawn on 2026-07-17 under
+  conditions three later corrections invalidated: a 5-year window in which
+  `revenue_cagr_5y` could never compute (every consumer silently used the 3y
+  figure), a two-endpoint CAGR (Sec.27), and an fcf0 deviation reference that
+  included its own candidate year (Sec.4). With those fixed, the honest
+  median measured ~0.855-0.864 across two independent weeks (`post-fixes`
+  2026-07-24, `post-fcf0` 2026-07-31), so the band was moved to fit the
+  corrected engine rather than the engine tuned to fit the stale band.
+  **Reference baseline snapshot:** `reports/calibration_post-fcf0_
+  20260731-1152.json` (median 0.8638, buckets 11/7/8, n=26; years=12,
+  log-linear trend, prior-avg fcf0 reference). Future runs compare against
+  the LATEST documented baseline snapshot per-ticker -- not an older
+  snapshot (the 07-17 `final` predates the WP8-14 financial-anchor fixes and
+  gives wrong per-name deltas), and not the median alone (the tail names
+  have documented, individually-attributed reasons; see VALUATION.md's
+  trajectory table).
 - `save_calibration_snapshot(label, rows, summary) -> Optional[str]`: writes
   `Config.REPORTS_DIR/calibration_<label>_<YYYYMMDD-HHMM>.json`; never
   raises (logs a warning and returns `None` on failure).
@@ -4628,3 +4658,78 @@ WP8 changes numbers only where they were wrong (non-December filers'
 quarterly grouping). WP9 and WP10 add reported figures and one advisory
 block; no anchor, `fair_value_range`, triangulation weight or verdict changes
 for any filer.
+
+## 27. Log-linear trend growth replaces two-endpoint CAGR (WP11) — `metrics._trend_growth`
+
+**Problem this fixes (measured, 2026-07-31 calibration).** `metrics._cagr`
+computed `(latest / latest_fy-N) ** (1/N) - 1` -- two points, so whatever
+happened in the single starting year drives the whole estimate. With the
+window widened to 12 years (Sec.24) the 5-year figure became computable for
+the first time and immediately landed its start point on FY2020, the COVID
+trough. Filers whose 2020 was depressed then read as growers while actually
+shrinking:
+
+| | FY2020 | FY2025 | 3y CAGR | 5y endpoint CAGR |
+|---|---|---|---|---|
+| PFE | `$41.7B` | `$62.6B` | −12.0% | **+8.5%** |
+| CVX | `$94.5B` | `$184.4B` | −7.9% | **+14.3%** |
+| DE | `$35.5B` | `$45.7B` | −4.6% | +5.2% |
+
+Pfizer's revenue has fallen from `$91.8B` (FY2022) to `$62.6B`, and the
+estimator called it an 8.5% grower. The calibration basket's upper tail blew
+out accordingly (PFE fair-value/price 1.12 → 3.64, CVX 0.94 → 2.52; the
+`>1.2` bucket doubled from 4 to 8 names).
+
+### `_trend_growth(series, latest_fy, years) -> Optional[float]`
+
+Replaces `_cagr` as the estimator behind `revenue_cagr_3y`/`revenue_cagr_5y`.
+Ordinary least squares on the natural log of the series over the window:
+
+- Window = fiscal years in `[latest_fy - years, latest_fy]` inclusive (up to
+  `years + 1` points).
+- Only strictly positive values participate (the log is undefined otherwise);
+  non-positive years are dropped, not zero-filled.
+- `latest_fy` itself must be present. This is deliberately asymmetric: the
+  START point is the one the old estimator over-weighted, while the END point
+  is what anchors the figure to the present, and every other metric in this
+  module is already read at `latest_fundamental_fy`.
+- At least `_MIN_TREND_POINTS = 3` usable points, spanning at least 2 fiscal
+  years. With only 2 points a least-squares line IS the two-endpoint line, so
+  it would add nothing while pretending to be robust.
+- Fit `ln(value) = a + b * fy`; return `exp(b) - 1`, the annualized trend
+  growth rate.
+- Returns `None` when any condition above fails. Never raises.
+
+**Key names and meaning are unchanged.** `revenue_cagr_3y`/`revenue_cagr_5y`
+still mean "annualized realized revenue growth over N years" -- only the
+estimator changed -- so every consumer (`rule_based`'s growth anchor,
+`sector.detect_hyper_grower`'s trigger, `classify_sector`'s SIC-3674 branch,
+`engine`'s realized-CAGR reference, `planning`'s thesis metric) is unaffected
+in shape and reads a better number.
+
+### Measured effect
+
+Robust where the series is well-behaved, corrective where it is distorted --
+which is the whole property being bought:
+
+| | endpoint 5y | log-linear | delta |
+|---|---|---|---|
+| PFE | +8.5% | **+2.9%** | −5.6pp |
+| MU | +11.8% | **+5.3%** | −6.5pp |
+| CVX | +14.3% | **+11.5%** | −2.8pp |
+| AAPL | +8.7% | **+6.6%** | −2.0pp |
+| CAT | +10.1% | +9.7% | −0.4pp |
+| DE | +5.2% | +5.6% | +0.4pp |
+
+**Residual limitation, documented not fixed:** CVX stays at 11.5% because its
+FY2020 is an outlier deep enough to tilt even a six-point trend. A trend line
+is robust to endpoint NOISE, not to a genuine structural outlier inside the
+window. A median-of-year-over-year (Theil-Sen style) estimator would suppress
+it further, at the cost of discarding the compounding information a trend
+keeps; that trade-off was not taken here.
+
+### Scope
+
+One estimator swap inside `normalize/metrics.py`. No output key added,
+removed or renamed; no valuation formula, anchor or threshold changed. Filers
+whose revenue series is monotone see essentially no movement.

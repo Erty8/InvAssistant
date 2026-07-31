@@ -500,10 +500,15 @@ def _select_fcf0(
     Prefers the latest-FY FCF net of SBC (the "ttm" figure -- see
     ``_sbc_adjusted_fcf_by_fy``). Falls back to the 3-year average
     SBC-adjusted FCF when the ttm figure is missing, non-positive, or
-    deviates more than 50% from that average -- UNLESS the trailing 3
+    deviates more than 50% from the average of the PRIOR years in the
+    window (``latest_fy-1``/``latest_fy-2``, whichever exist; no prior year
+    -> deviation not assessable, never fires) -- UNLESS the trailing 3
     fiscal years form a monotonic ramp (see below), in which case the
     deviation is trusted as genuine structural growth/decline rather than a
-    one-off spike, and the latest-FY figure is kept. The 3y-average
+    one-off spike, and the latest-FY figure is kept. The reference
+    deliberately EXCLUDES the candidate year (SPEC Sec.4, 2026-07 fix):
+    including it turned the documented 50% into an effective ~+100%. The
+    fallback VALUE stays the inclusive 3-year average. The 3y-average
     fallback is only reachable when it is itself usable (positive); if it
     isn't, a positive ttm figure is still preferred over giving up
     entirely. Returns ``(fcf0, source, note)`` where ``source`` is
@@ -530,9 +535,17 @@ def _select_fcf0(
     ttm_usable = ttm_fcf is not None and ttm_fcf > 0
     avg_usable = avg_fcf is not None and avg_fcf > 0
 
+    # SPEC Sec.4 (2026-07 fix): the deviation REFERENCE is the prior years
+    # only. Including the candidate year diluted the documented 50% into an
+    # effective "latest > sum of the two prior years" (~+100%) -- a reference
+    # must not contain the candidate it judges. The fallback VALUE below
+    # stays the inclusive 3-year average (smoothing, not exclusion).
+    prior_values = [v for v in window[1:] if v is not None]
+    prior_avg = sum(prior_values) / len(prior_values) if prior_values else None
+
     deviates = False
-    if ttm_usable and avg_fcf is not None and avg_fcf != 0:
-        deviates = abs(ttm_fcf - avg_fcf) / abs(avg_fcf) > _FCF0_DEVIATION_THRESHOLD
+    if ttm_usable and prior_avg is not None and prior_avg != 0:
+        deviates = abs(ttm_fcf - prior_avg) / abs(prior_avg) > _FCF0_DEVIATION_THRESHOLD
 
     monotonic = False
     if len(window) == 3 and all(v is not None for v in window):

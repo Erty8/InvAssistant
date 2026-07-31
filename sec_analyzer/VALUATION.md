@@ -572,10 +572,15 @@ makul değeri piyasa fiyatına yakın demektir — bu tek başına "doğru" ya d
 ama BASKET medyanının sistematik olarak 1.0'ın belirgin altında (ör. ~0.4)
 takılı kalması, tek tek hisselerin değil motorun KENDİSİNİN sistematik bir
 düşük-değerleme yanlılığı taşıdığına işaret eder — bu tam olarak bu çalışmanın
-tespit ettiği durumdu. Sağlıklı bir kalibrasyon hedefi: medyan ~0.9-1.1
-aralığında VE geniş dağılım (kovalar arasında dağılmış) — medyanın 1.0'a çok
-sıkı kenetlenmesi de kuşkulu olurdu (motorun fiyata ÇAPALANDIĞI, bağımsız
-hesaplamadığı anlamına gelebilir).
+tespit ettiği durumdu. **Sağlıklı kalibrasyon hedefi (2026-07-31'de yeniden
+temellendirildi): medyan ~0.8-1.0** aralığında VE geniş dağılım (kovalar
+arasında dağılmış) — medyanın 1.0'a çok sıkı kenetlenmesi de kuşkulu olurdu
+(motorun fiyata ÇAPALANDIĞI, bağımsız hesaplamadığı anlamına gelebilir).
+Orijinal ~0.9-1.1 bandı, sonradan düzeltilen üç koşul altında çizilmişti
+(5 yıllık pencerede `revenue_cagr_5y` hiç hesaplanamıyordu; iki-uç-noktalı
+CAGR; fcf0 sapma referansının aday yılı kendini içermesi). Düzeltilmiş motor
+iki bağımsız haftada ~0.855-0.864 ölçtü; bant motora uyduruldu, motor banda
+değil.
 
 **Ölçülen yörünge (bu sepet, script provider, 2026-07-16/17):**
 
@@ -587,6 +592,8 @@ hesaplamadığı anlamına gelebilir).
 | WP4 (marj tavanı → bayrak) | 0.768 | 0.899 | 0.476 | 1.030 | 13/9/4 (n=26) — sepette etkisi yok |
 | WP5 (büyüme cap %40→%60, justified P/B clamp→bayrak) + LEVER'lar sonrası | **0.925** | 0.940 | 0.476 | 1.065 | 11/11/4 (n=26) |
 | WP8-14 (profesyonel değerleme eklemeleri) + F1-F4 düzeltmeleri sonrası (2026-07-24, `post-fixes`) | **0.855** | 0.955 | 0.503 | 1.061 | 12/9/5 (n=26) |
+| Pencere varsayılanı 5→12 yıl (`revenue_cagr_5y` İLK KEZ hesaplanır oldu; 2026-07-31, `years12`) | 0.919 | 1.223 | 0.610 | 1.223 | 11/7/8 (n=26) — üst kuyruk COVID-dip uç-nokta yanlılığıyla şişti (PFE 3.64, CVX 2.52) |
+| Log-lineer trend büyümesi (SPEC §27) + fcf0 sapma-referansı düzeltmesi (SPEC §4) (2026-07-31, `post-fcf0`) | **0.864** | 1.151 | 0.576 | 1.233 | 11/7/8 (n=26) |
 
 > **PRE-WP15 TABANI (I4 — ölçülen, güncel):** Post-fixes medyan **0.855**
 > (yukarıdaki son satır; snapshot `reports/calibration_post-fixes_
@@ -603,6 +610,21 @@ hesaplamadığı anlamına gelebilir).
 > bu 0.855 tabanına karşı kıyaslanmalı, eski 0.925'e karşı değil.** Aykırı
 > değerler (MU 0.088, KO 0.355, AAPL 0.356, XOM/VZ skipped) WP8-14 öncesinden
 > gelir, bu eklemelerden bağımsızdır.
+
+> **GÜNCEL TABAN (2026-07-31, kullanıcı onayıyla yeniden temellendirildi):**
+> medyan **0.8638**, snapshot `reports/calibration_post-fcf0_20260731-1152.json`
+> (years=12, log-lineer trend §27, fcf0 önceki-yıl referansı §4). Hedef bant
+> **~0.8-1.0** olarak güncellendi. İki kritik not: (1) Karşılaştırmalar HER
+> ZAMAN en güncel belgelenmiş taban snapshot'ına karşı yapılır — 07-17 `final`
+> snapshot'ı WP8-14 finansal-çapa düzeltmelerinden öncedir ve isim bazında
+> yanlış delta verir (bu hafta bir analiz bu tuzağa düştü: 0.925→0.864
+> "düşüşü" büyük ölçüde bayat taban artefaktıydı; gerçek zincir
+> 0.855→0.864 ≈ sabit). (2) >1.2 kuyruğunun her ismi bireysel olarak
+> nitelendirildi ve medyana uydurulmak İÇİN düzeltilmez: UBER 4.5 = COVID-
+> toparlanma pencereli %25 büyüme varsayımı × rampa-tepesi fcf0 (tasarım
+> gereği); PFE 2.6 = 5y/3y trend rejim ayrışması; ADBE/CRM ~2.2-2.5 = motorun
+> göremediği AI-yıkım riski fiyatlaması (meşru görüş ayrılığı). Alt kuyruk
+> (11 isim <0.8) = DCF'in ödemediği mega-cap kalite primi.
 
 **En büyük tek kazanç WP2b'ydi** — bir float-sınır tutarsızlığı (bkz. SPEC.md
 §3'ün `_ERP_SPREAD_EPS` notu) `clamp_assumptions`'ın az önce geçerli kıldığı

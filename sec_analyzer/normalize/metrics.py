@@ -16,6 +16,7 @@ malformed data.
 """
 
 import logging
+import math
 from typing import Dict, Optional
 
 from sec_analyzer.normalize.normalizer import to_annual_series, to_quarterly_series
@@ -105,21 +106,56 @@ def _safe_div_allow_negative(numerator: Optional[float], denominator: Optional[f
     return numerator / denominator
 
 
-def _cagr(series: Dict[int, float], latest_fy: Optional[int], years: int) -> Optional[float]:
-    """Compute a fixed-window CAGR: ``(latest / (latest_fy - years))^(1/years) - 1``.
+#: Fewest usable points a log-linear trend needs. With two points the
+#: least-squares line IS the two-endpoint line, so it would add nothing while
+#: presenting itself as robust.
+_MIN_TREND_POINTS = 3
 
-    Unlike ``rule_based._windowed_cagr``, this does NOT fall back to the
-    oldest year available within the window -- per the spec, it needs the
-    exact earlier fiscal year present, otherwise it's ``None``. Both
-    endpoints must be strictly positive for the growth rate to be meaningful.
+
+def _trend_growth(series: Dict[int, float], latest_fy: Optional[int], years: int) -> Optional[float]:
+    """Annualized growth from a log-linear least-squares trend (SPEC.md Sec.27).
+
+    Replaces a two-endpoint CAGR, whose entire estimate hangs on whatever
+    happened in the single starting year. In 2026 that starting year is
+    FY2020 for the five-year window, so every filer with a COVID-depressed
+    2020 read as a grower while actually shrinking -- Pfizer's revenue has
+    fallen from ``$91.8B`` (FY2022) to ``$62.6B``, and the endpoint estimator
+    called it an 8.5% grower. Fitting ``ln(value)`` across every point in the
+    window puts that year in its place: PFE lands at +2.9%, while a
+    well-behaved series barely moves (CAT 10.1% -> 9.7%).
+
+    The window is ``[latest_fy - years, latest_fy]`` inclusive. Only strictly
+    positive values participate (the log is undefined otherwise) and
+    ``latest_fy`` itself must be present -- deliberately asymmetric, since the
+    START point is what the old estimator over-weighted while the END point is
+    what keeps the figure anchored to the present.
+
+    Returns ``None`` when fewer than :data:`_MIN_TREND_POINTS` usable points
+    remain or they span under two fiscal years. Never raises.
     """
-    if latest_fy is None:
+    if latest_fy is None or not series:
         return None
-    latest_val = series.get(latest_fy)
-    earlier_val = series.get(latest_fy - years)
-    if latest_val is None or earlier_val is None or latest_val <= 0 or earlier_val <= 0:
+    points = [
+        (fy, value) for fy, value in series.items()
+        if latest_fy - years <= fy <= latest_fy and value is not None and value > 0
+    ]
+    if len(points) < _MIN_TREND_POINTS:
         return None
-    return (latest_val / earlier_val) ** (1.0 / years) - 1.0
+    if not any(fy == latest_fy for fy, _ in points):
+        return None
+    fiscal_years = [fy for fy, _ in points]
+    if max(fiscal_years) - min(fiscal_years) < 2:
+        return None
+
+    logs = [math.log(value) for _, value in points]
+    fy_mean = sum(fiscal_years) / len(fiscal_years)
+    log_mean = sum(logs) / len(logs)
+    covariance = sum((fy - fy_mean) * (log_value - log_mean)
+                     for fy, log_value in zip(fiscal_years, logs))
+    variance = sum((fy - fy_mean) ** 2 for fy in fiscal_years)
+    if variance == 0:
+        return None
+    return math.exp(covariance / variance) - 1.0
 
 
 def resolve_fundamental_fy(metrics: dict) -> Optional[int]:
@@ -374,8 +410,8 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
     )
     ev_ebitda = _safe_div(ev, ebitda) if ebitda is not None and ebitda > 0 else None
 
-    revenue_cagr_3y = _cagr(revenue_series, latest_fundamental_fy, _CAGR_WINDOWS["revenue_cagr_3y"])
-    revenue_cagr_5y = _cagr(revenue_series, latest_fundamental_fy, _CAGR_WINDOWS["revenue_cagr_5y"])
+    revenue_cagr_3y = _trend_growth(revenue_series, latest_fundamental_fy, _CAGR_WINDOWS["revenue_cagr_3y"])
+    revenue_cagr_5y = _trend_growth(revenue_series, latest_fundamental_fy, _CAGR_WINDOWS["revenue_cagr_5y"])
 
     sbc_revenue = _safe_div(sbc, revenue)
     rnd_revenue = _safe_div(rnd, revenue)

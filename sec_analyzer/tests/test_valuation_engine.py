@@ -1309,12 +1309,11 @@ def test_run_valuation_fcf0_falls_back_to_3y_average_when_latest_is_negative():
 
 def test_run_valuation_fcf0_keeps_latest_when_ramp_is_monotonic_rising():
     # This is the NVDA-shaped case: a steady rising ramp whose latest year
-    # deviates >50% from the 3y average (which, per _select_fcf0, includes
-    # the latest year itself in the average).
+    # deviates >50% from the PRIOR years' average (the deviation reference
+    # excludes the candidate year -- SPEC Sec.4, 2026-07 fix).
     #   fcf by fy: 2021=20, 2022=50, 2023=90 (latest).
-    #   avg = (90+50+20)/3 = 160/3 = 53.3333.
-    #   deviation = |90-53.3333|/53.3333 = 36.6667/53.3333 = 0.6875 -> >0.50
-    #   -> deviates=True.
+    #   prior avg = (50+20)/2 = 35.0.
+    #   deviation = |90-35|/35 = 1.5714 -> >0.50 -> deviates=True.
     #   oldest->newest = [20, 50, 90] -> 20<=50<=90 -> non-decreasing ->
     #   monotonic=True.
     #   -> ttm kept: fcf0=90, source="ttm", plus a trend note (NOT the
@@ -1340,9 +1339,8 @@ def test_run_valuation_fcf0_keeps_latest_when_ramp_is_monotonic_rising():
 def test_run_valuation_fcf0_keeps_latest_when_ramp_is_monotonic_falling():
     # Mirror of the rising case: a steady declining ramp.
     #   fcf by fy: 2021=90, 2022=50, 2023=20 (latest).
-    #   avg = (20+50+90)/3 = 160/3 = 53.3333.
-    #   deviation = |20-53.3333|/53.3333 = 33.3333/53.3333 = 0.625 -> >0.50
-    #   -> deviates=True.
+    #   prior avg = (50+90)/2 = 70.0.
+    #   deviation = |20-70|/70 = 0.7143 -> >0.50 -> deviates=True.
     #   oldest->newest = [90, 50, 20] -> 90>=50>=20 -> non-increasing ->
     #   monotonic=True.
     #   -> ttm kept: fcf0=20, source="ttm", plus a trend note.
@@ -1367,8 +1365,9 @@ def test_run_valuation_fcf0_falls_back_to_3y_average_when_series_is_spiky():
     # the old spike-normalization behavior is preserved when the trend
     # exception does NOT apply.
     #   fcf by fy: 2021=90, 2022=100, 2023=20 (latest).
-    #   avg = (20+100+90)/3 = 210/3 = 70.0.
-    #   deviation = |20-70|/70 = 50/70 = 0.7143 -> >0.50 -> deviates=True.
+    #   prior avg = (100+90)/2 = 95.0.
+    #   deviation = |20-95|/95 = 0.7895 -> >0.50 -> deviates=True.
+    #   Fallback VALUE stays the inclusive 3y average: (20+100+90)/3 = 70.0.
     #   oldest->newest = [90, 100, 20] -> 90<=100 but 100>20 (not
     #   non-decreasing); 90>=100 is False (not non-increasing either) ->
     #   monotonic=False.
@@ -1393,8 +1392,9 @@ def test_run_valuation_fcf0_deviation_rule_applies_when_trend_unassessable():
     # be assessed (monotonic is forced False) -> falls through to the
     # plain deviation rule, exactly as before this change.
     #   fcf by fy: 2023=100 (latest), 2022=20, 2021=missing (None).
-    #   avg window = [100, 20] (2021 dropped) -> avg = 120/2 = 60.0.
-    #   deviation = |100-60|/60 = 40/60 = 0.6667 -> >0.50 -> deviates=True.
+    #   prior avg = 20.0 (only 2022 present).
+    #   deviation = |100-20|/20 = 4.0 -> >0.50 -> deviates=True.
+    #   Fallback VALUE is the inclusive average: (100+20)/2 = 60.0.
     #   window has a None entry -> monotonic can't be assessed -> False.
     #   -> falls back to the 3y average: fcf0=60.0, source="3y_avg".
     normalized = _normalized({})
@@ -1409,6 +1409,66 @@ def test_run_valuation_fcf0_deviation_rule_applies_when_trend_unassessable():
 
     assert result["fcf0"] == pytest.approx(60.0)
     assert result["fcf0_source"] == "3y_avg"
+
+
+def test_run_valuation_fcf0_catches_a_spike_the_inclusive_average_hid():
+    """The defect SPEC Sec.4's 2026-07 fix exists for: with the candidate year
+    INSIDE its own reference average, a one-off spike had to exceed the SUM of
+    the two prior years to trip the documented 50% rule.
+
+      fcf by fy: 2021=10, 2022=4, 2023=12 (latest).
+      OLD reference (incl. self): avg=(10+4+12)/3=8.667, dev=38% -> escaped.
+      NEW reference (priors only): avg=(10+4)/2=7, dev=|12-7|/7=71% -> fires.
+      oldest->newest [10, 4, 12] oscillates -> not monotonic -> falls back.
+      Fallback VALUE is the inclusive 3y average: 8.667.
+    """
+    normalized = _normalized({})
+    ratios = [{"fy": 2023, "fcf": 12.0}, {"fy": 2022, "fcf": 4.0}, {"fy": 2021, "fcf": 10.0}]
+    metrics = {"shares": 10.0, "latest_fy": 2023, "fcf": 12.0, "net_debt": 0.0}
+    assumptions = _assumptions()
+
+    result = run_valuation(
+        normalized, ratios, metrics, price=None, price_df=None,
+        assumptions=assumptions, sector_type="mature",
+    )
+
+    assert result["fcf0"] == pytest.approx(26.0 / 3.0, rel=1e-6)
+    assert result["fcf0_source"] == "3y_avg"
+    assert any("3 yıllık ortalama" in n for n in result["notes"])
+
+
+def test_run_valuation_fcf0_just_under_the_prior_average_threshold_keeps_ttm():
+    #   fcf by fy: 2021=10, 2022=10, 2023=14 (latest).
+    #   prior avg = 10.0; deviation = 40% -> under the 50% bar -> ttm kept.
+    normalized = _normalized({})
+    ratios = [{"fy": 2023, "fcf": 14.0}, {"fy": 2022, "fcf": 10.0}, {"fy": 2021, "fcf": 10.0}]
+    metrics = {"shares": 10.0, "latest_fy": 2023, "fcf": 14.0, "net_debt": 0.0}
+    assumptions = _assumptions()
+
+    result = run_valuation(
+        normalized, ratios, metrics, price=None, price_df=None,
+        assumptions=assumptions, sector_type="mature",
+    )
+
+    assert result["fcf0"] == pytest.approx(14.0)
+    assert result["fcf0_source"] == "ttm"
+
+
+def test_run_valuation_fcf0_without_prior_years_never_fires_the_deviation():
+    # Only the latest fiscal year exists: no prior-year reference, so the
+    # deviation is not assessable and the positive ttm figure is kept.
+    normalized = _normalized({})
+    ratios = [{"fy": 2023, "fcf": 100.0}]
+    metrics = {"shares": 10.0, "latest_fy": 2023, "fcf": 100.0, "net_debt": 0.0}
+    assumptions = _assumptions()
+
+    result = run_valuation(
+        normalized, ratios, metrics, price=None, price_df=None,
+        assumptions=assumptions, sector_type="mature",
+    )
+
+    assert result["fcf0"] == pytest.approx(100.0)
+    assert result["fcf0_source"] == "ttm"
 
 
 def test_run_valuation_select_fcf0_uses_fundamental_fy_not_ghost_latest_fy():
