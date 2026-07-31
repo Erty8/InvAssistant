@@ -114,6 +114,7 @@ def render_report_html(
     flags: Optional[List[dict]] = None,
     price: Optional[float] = None,
     as_of: Optional[str] = None,
+    price_source: Optional[str] = None,
     entity_name: Optional[str] = None,
     analyst: Optional[dict] = None,
     analysis_as_of: Optional[str] = None,
@@ -150,6 +151,10 @@ def render_report_html(
             :func:`sec_analyzer.normalize.red_flags.detect_red_flags`, or
             ``None``/empty if none fired.
         price: The latest market price per share, or ``None`` if unavailable.
+        price_source: Which upstream produced the price history
+            (``"stooq"``/``"yfinance"``/``"cache(...)"``/``"stale-cache(...)"``),
+            surfaced in the report's provenance line so it names the source
+            actually used rather than a hardcoded one. ``None`` omits it.
         as_of: The date that ``price`` is as of (``"YYYY-MM-DD"``), or
             ``None``.
         entity_name: The filer's resolved company name (e.g. ``"Apple
@@ -191,6 +196,7 @@ def render_report_html(
         "price": price,
         "analyst": analyst,
         "as_of": as_of,
+        "price_source": price_source,
         "analysis_as_of": analysis_as_of,
         "generated_on": generated_on,
         "result": result or {},
@@ -351,6 +357,7 @@ def generate_report(
     flags: Optional[List[dict]] = None,
     price: Optional[float] = None,
     as_of: Optional[str] = None,
+    price_source: Optional[str] = None,
     out_dir: Optional[str] = None,
     entity_name: Optional[str] = None,
     analyst: Optional[dict] = None,
@@ -385,6 +392,8 @@ def generate_report(
         price: The latest market price per share, or ``None`` if unavailable.
         as_of: The date that ``price`` is as of (``"YYYY-MM-DD"``), or
             ``None``.
+        price_source: Which upstream produced the price history -- see
+            :func:`render_report_html`.
         out_dir: Directory to write the report into. Defaults to
             ``Config.REPORTS_DIR``; created if it doesn't already exist.
         entity_name: The filer's resolved company name, or ``None`` if
@@ -411,6 +420,7 @@ def generate_report(
     html = render_report_html(
         ticker, horizon, result,
         metrics=metrics, technical=technical, flags=flags, price=price, as_of=as_of,
+        price_source=price_source,
         entity_name=entity_name, analyst=analyst, analysis_as_of=analysis_as_of,
         financials=financials, earnings=earnings,
     )

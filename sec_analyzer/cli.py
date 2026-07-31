@@ -245,6 +245,11 @@ def _fetch_price_and_technical(
         indicators["momentum"] = compute_price_momentum(indicators)
         verdict_result = technical_verdict(indicators, horizon)
         technical = {**indicators, **verdict_result}
+        # Provenance of the price series these indicators were computed from,
+        # carried here rather than widening this function's return tuple
+        # (four call sites plus test fakes). The report names the source
+        # actually used instead of a hardcoded "Stooq".
+        technical["price_source"] = source
         logger.info(
             "Price data for %s from %s: %.2f as of %s", ticker, source, price, as_of_date
         )
@@ -1543,6 +1548,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
                 flags=flags,
                 price=price,
                 as_of=price_as_of,
+                price_source=(technical or {}).get("price_source"),
                 analyst=analyst,
                 analysis_as_of=as_of.isoformat() if as_of is not None else None,
                 financials=serialize_financials(normalized, ratios),

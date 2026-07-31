@@ -744,11 +744,11 @@ def test_get_price_history_stooq_success_writes_cache(monkeypatch, tmp_path):
 
 
 def test_get_price_history_cache_hit_skips_network(monkeypatch, tmp_path):
+    # Freshness is a property of the DATA now, not the file mtime (SPEC-less
+    # fix, see prices._cache_covers_last_session): the cache counts as fresh
+    # only if it carries a bar for the last completed session.
     monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
-    csv_text = _fake_stooq_csv(40)
-    cached_df = (
-        pd.read_csv(io.StringIO(csv_text), parse_dates=["Date"]).set_index("Date").sort_index()
-    )
+    cached_df = _cache_frame_through_last_session(40)
     cache_path = tmp_path / f"prices_FAKE{prices._CACHE_SUFFIX}.csv"
     cached_df.to_csv(cache_path, index_label="Date")
 
@@ -761,6 +761,63 @@ def test_get_price_history_cache_hit_skips_network(monkeypatch, tmp_path):
 
     assert source == "cache(stooq)"
     assert len(df) == 40
+
+
+def _cache_frame_through_last_session(n=40):
+    """A cached OHLCV frame whose newest bar IS the last completed session."""
+    end = prices.last_completed_session()
+    dates = pd.bdate_range(end=pd.Timestamp(end), periods=n)
+    price = 100.0
+    rows = []
+    for d in dates:
+        price += 0.5
+        rows.append({"Date": d, "Open": price - 0.3, "High": price + 0.5,
+                     "Low": price - 0.5, "Close": price, "Volume": 1000000})
+    return pd.DataFrame(rows).set_index("Date").sort_index()
+
+
+def test_get_price_history_refetches_when_cache_misses_the_last_session(monkeypatch, tmp_path):
+    """The MU 2026-07-31 defect: a cache written before the day's close stayed
+    "fresh" for 24h and served a price two sessions old."""
+    monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
+    stale = _cache_frame_through_last_session(40)
+    stale = stale.iloc[:-3]  # drop the newest bars -> misses the last session
+    cache_path = tmp_path / f"prices_FAKE{prices._CACHE_SUFFIX}.csv"
+    stale.to_csv(cache_path, index_label="Date")
+
+    monkeypatch.setattr(
+        prices.requests, "get", lambda *a, **k: _FakeResponse(_fake_stooq_csv(40))
+    )
+
+    df, source = prices.get_price_history("FAKE")
+
+    assert source == "stooq", "a cache missing the last session must re-fetch"
+
+
+def test_get_price_history_records_and_reports_the_cache_source(monkeypatch, tmp_path):
+    """A yfinance-sourced cache must not later report itself as Stooq."""
+    monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
+    cache_path = str(tmp_path / f"prices_FAKE{prices._CACHE_SUFFIX}.csv")
+    frame = _cache_frame_through_last_session(40)
+
+    prices._write_cache(cache_path, frame, source="yfinance")
+    assert prices._read_cache_source(cache_path) == "yfinance"
+
+    monkeypatch.setattr(prices.requests, "get", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("network should not be hit on a fresh cache hit")))
+
+    _df, source = prices.get_price_history("FAKE")
+    assert source == "cache(yfinance)"
+
+
+def test_unmarked_cache_defaults_to_stooq(monkeypatch, tmp_path):
+    """The 500+ caches written before the sidecar existed carry no marker;
+    Stooq is the primary source, so that is the honest default."""
+    monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
+    cache_path = str(tmp_path / f"prices_FAKE{prices._CACHE_SUFFIX}.csv")
+    prices._write_cache(cache_path, _cache_frame_through_last_session(40))
+
+    assert prices._read_cache_source(cache_path) == "stooq"
 
 
 def test_get_price_history_ignores_stale_narrow_cache_from_old_filename(monkeypatch, tmp_path):

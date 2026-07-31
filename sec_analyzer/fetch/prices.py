@@ -25,6 +25,8 @@ import io
 import logging
 import os
 import time
+from datetime import date, datetime, timedelta, timezone
+from typing import Optional
 
 import pandas as pd
 import requests
@@ -52,8 +54,16 @@ _EXPECTED_COLUMNS = ["Date", "Open", "High", "Low", "Close", "Volume"]
 #: considered usable, from either source.
 _MIN_ROWS = 30
 
-#: Cache freshness window, in seconds (24 hours).
-_CACHE_MAX_AGE_SECONDS = 24 * 60 * 60
+#: Hour (UTC) after which the current weekday's US equity session is treated
+#: as closed AND published. The cash close is 16:00 ET = 20:00 UTC in summer
+#: (EDT) / 21:00 UTC in winter (EST); 22:00 covers both without needing a
+#: timezone database, and leaves the provider an hour to publish the bar.
+#: Erring late only costs one extra re-fetch attempt, never a wrong price.
+_SESSION_PUBLISHED_HOUR_UTC = 22
+
+#: Hard ceiling on how old a cache may be before it is refused even as a
+#: last-resort fallback when every upstream source is failing.
+_CACHE_ABSOLUTE_MAX_AGE_DAYS = 30
 
 #: yfinance ``period`` string used as the default lookback for the fallback
 #: path. ``"max"`` returns the *entire* available daily history for the
@@ -90,17 +100,94 @@ def _load_cache(path: str) -> pd.DataFrame:
     return df
 
 
-def _write_cache(path: str, df: pd.DataFrame) -> None:
-    """Write a price-history DataFrame (Date as index) to ``path`` as CSV."""
+def _source_path(path: str) -> str:
+    """Sidecar file recording which upstream produced a cached CSV."""
+    return f"{path}.source"
+
+
+def _write_cache(path: str, df: pd.DataFrame, source: Optional[str] = None) -> None:
+    """Write a price-history DataFrame (Date as index) to ``path`` as CSV.
+
+    ``source`` is recorded in a sidecar file so a later cache hit can report
+    where the data actually came from. Without it the module reported every
+    cache hit as ``"cache(stooq)"`` even when the bytes had come from the
+    yfinance fallback -- which then surfaced in the HTML report's provenance
+    line as a flat, sometimes false, "Stooq".
+    """
     df.to_csv(path, index_label="Date")
+    if source:
+        try:
+            with open(_source_path(path), "w", encoding="utf-8") as handle:
+                handle.write(source)
+        except OSError:  # provenance is nice-to-have, never fatal
+            logger.debug("Could not write price-cache source marker for %s", path, exc_info=True)
 
 
-def _is_cache_fresh(path: str) -> bool:
-    """Return True if ``path`` exists and was modified within the last 24h."""
-    if not os.path.exists(path):
+def _read_cache_source(path: str) -> str:
+    """Which upstream produced a cached CSV; ``"stooq"`` when unrecorded.
+
+    Caches written before the sidecar existed have no marker, and Stooq is
+    the primary source, so that is the honest default for them.
+    """
+    try:
+        with open(_source_path(path), "r", encoding="utf-8") as handle:
+            recorded = handle.read().strip()
+        return recorded or "stooq"
+    except OSError:
+        return "stooq"
+
+
+def last_completed_session(now_utc: Optional[datetime] = None) -> date:
+    """The most recent weekday whose US equity session has closed and published.
+
+    Deliberately calendar-light: weekends are skipped, market holidays are
+    not known here. Treating a holiday as a session only costs one wasted
+    re-fetch (the returned frame simply has no bar for it), whereas missing a
+    real session hands back a stale price -- so the asymmetry is chosen on
+    purpose.
+    """
+    now_utc = now_utc or datetime.now(timezone.utc)
+    day = now_utc.date()
+    if now_utc.hour < _SESSION_PUBLISHED_HOUR_UTC:
+        day -= timedelta(days=1)
+    while day.weekday() >= 5:  # Saturday / Sunday
+        day -= timedelta(days=1)
+    return day
+
+
+def _cache_covers_last_session(df: pd.DataFrame, now_utc: Optional[datetime] = None) -> bool:
+    """Whether a cached frame includes the last completed trading session.
+
+    Replaces a fixed 24-hour age window, which was misaligned with the daily
+    market cycle: a cache written at, say, 12:09 UTC -- before the US session
+    had even opened -- stayed "fresh" for another 24 hours, straight past
+    that day's close, so any run in the following morning silently served a
+    price two sessions old. Observed on MU 2026-07-31: the report showed
+    ``$739`` (the 07-29 close) while 07-30 had closed at ``$874.66``, an 18%
+    error. Freshness is now a property of the DATA (does it contain the last
+    closed session?), not of the file's mtime.
+    """
+    if df is None or df.empty:
         return False
-    age = time.time() - os.path.getmtime(path)
-    return age < _CACHE_MAX_AGE_SECONDS
+    try:
+        newest = df.index.max().date()
+    except (AttributeError, ValueError):
+        return False
+    return newest >= last_completed_session(now_utc)
+
+
+def _stale_cache_is_usable(path: str) -> bool:
+    """Whether a stale cache is recent enough to serve as a last resort.
+
+    Past :data:`_CACHE_ABSOLUTE_MAX_AGE_DAYS` the file describes a different
+    market, so failing loudly beats quietly valuing a company off month-old
+    prices.
+    """
+    try:
+        age_days = (time.time() - os.path.getmtime(path)) / 86400.0
+    except OSError:
+        return False
+    return age_days <= _CACHE_ABSOLUTE_MAX_AGE_DAYS
 
 
 def _validate_frame(df: pd.DataFrame) -> bool:
@@ -318,19 +405,27 @@ def get_price_history(
     ticker = ticker.strip().upper()
     path = _cache_path(ticker)
 
-    if not no_cache and _is_cache_fresh(path):
+    # A usable-but-stale cache is kept aside: if every upstream then fails,
+    # a price two sessions old still beats aborting the whole analysis.
+    stale_df = None
+    if not no_cache and os.path.exists(path):
         try:
-            df = _load_cache(path)
-            df = _drop_unusable_bars(df, ticker)
-            if _validate_frame(df):
+            cached = _drop_unusable_bars(_load_cache(path), ticker)
+            if _validate_frame(cached):
+                if _cache_covers_last_session(cached):
+                    source = _read_cache_source(path)
+                    logger.info(
+                        "price cache hit for %s: %s (%d rows, source=%s)",
+                        ticker, path, len(cached), source,
+                    )
+                    return cached, f"cache({source})"
+                stale_df = cached
                 logger.info(
-                    "price cache hit for %s: %s (%d rows)", ticker, path, len(df)
+                    "Price cache for %s is missing the last completed session (%s); re-fetching.",
+                    ticker, last_completed_session().isoformat(),
                 )
-                # The cache doesn't record which upstream source produced it,
-                # so report it generically as a Stooq-origin cache hit (the
-                # only source this module writes to cache).
-                return df, "cache(stooq)"
-            logger.warning("Cached price file for %s failed validation; re-fetching.", ticker)
+            else:
+                logger.warning("Cached price file for %s failed validation; re-fetching.", ticker)
         except Exception:  # noqa: BLE001 - a corrupt cache file must not be fatal
             logger.warning("Failed to load price cache for %s at %s; re-fetching.", ticker, path, exc_info=True)
 
@@ -342,7 +437,7 @@ def get_price_history(
         df = None
 
     if df is not None:
-        _write_cache(path, df)
+        _write_cache(path, df, source="stooq")
         logger.info("Fetched %d price rows for %s from stooq; cached to %s", len(df), ticker, path)
         return df, "stooq"
 
@@ -352,12 +447,19 @@ def get_price_history(
         df = _fetch_yfinance(ticker, period=yfinance_period)
     except PriceDataError as exc:
         logger.error("Both Stooq and yfinance failed for %s: stooq=%s yfinance=%s", ticker, stooq_error, exc)
+        if stale_df is not None and _stale_cache_is_usable(path):
+            logger.warning(
+                "Both price sources failed for %s; falling back to the stale cache "
+                "(newest bar %s). Price-derived figures will be out of date.",
+                ticker, stale_df.index.max().date().isoformat(),
+            )
+            return stale_df, f"stale-cache({_read_cache_source(path)})"
         raise PriceDataError(
             f"Could not obtain price history for {ticker!r} from Stooq or yfinance. "
             f"Stooq error: {stooq_error}. yfinance error: {exc}"
         ) from exc
 
-    _write_cache(path, df)
+    _write_cache(path, df, source="yfinance")
     logger.info("Fetched %d price rows for %s from yfinance; cached to %s", len(df), ticker, path)
     return df, "yfinance"
 
