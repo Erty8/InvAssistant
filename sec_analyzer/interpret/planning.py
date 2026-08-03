@@ -254,7 +254,8 @@ def _collect_entry_candidates(
     excluded by product decision.
 
     Every candidate is tagged with a short Turkish ``source`` label (used
-    verbatim in the breakout trigger sentence). Missing/non-numeric values
+    verbatim in the trigger sentence, both kinds, so the reader can see
+    where each mechanical level came from). Missing/non-numeric values
     are simply omitted from both lists.
 
     Returns:
@@ -266,13 +267,13 @@ def _collect_entry_candidates(
     technical = technical or {}
 
     dip_raw = [
-        ("bear_lo", bear.get("lo")),
-        ("base_lo", base.get("lo")),
-        ("base_hi", base.get("hi")),
-        ("bull_hi", bull.get("hi")),
-        ("low_52w", technical.get("low_52w")),
-        ("sma50", technical.get("sma50")),
-        ("sma200", technical.get("sma200")),
+        ("ayı senaryosu alt bandı", bear.get("lo")),
+        ("baz senaryo alt bandı", base.get("lo")),
+        ("baz senaryo üst bandı", base.get("hi")),
+        ("boğa senaryosu üst bandı", bull.get("hi")),
+        ("52 hafta dibi", technical.get("low_52w")),
+        ("SMA50 desteği", technical.get("sma50")),
+        ("SMA200 desteği", technical.get("sma200")),
     ]
     dip = [
         {"source": label, "level": float(value), "kind": "dip"}
@@ -408,6 +409,40 @@ def _resolve_invalidation(valuation: dict, technical: Optional[dict], lowest_kep
     return round(base_level * (1 - _INVALIDATION_BUFFER_PCT), 2)
 
 
+def _support_confluence_note(level: float, technical: Optional[dict]) -> Optional[str]:
+    """Turkish note when a dip tranche's trigger level lands on/inside one of
+    the technical read's ``support_levels`` zones.
+
+    Dip candidates come from the valuation band (plus low_52w/SMA50/SMA200),
+    NOT from ``support_levels`` -- that asymmetry is deliberate (dip levels
+    stay value-anchored; see :func:`_collect_entry_candidates`). This note is
+    the bridge between the two report sections: when a value-derived level
+    happens to coincide with a swing-tested support zone, say so, so the
+    reader doesn't wonder why the technical card and the entry plan show
+    near-identical-but-different numbers.
+
+    A level "coincides" with a zone when it falls inside the zone's
+    ``low``/``high`` band widened by :data:`_DEDUPE_THRESHOLD_PCT` on each
+    side (the same tolerance used to call two candidate levels "the same").
+    Purely additive: selection, sizing, invalidation, and R:R are untouched.
+
+    Returns the note for the first (nearest-to-price) matching zone, or
+    ``None`` when there is no match / no usable zone data.
+    """
+    zones = (technical or {}).get("support_levels") or []
+    for zone in zones:
+        if not isinstance(zone, dict):
+            continue
+        zone_lo, zone_hi = zone.get("low"), zone.get("high")
+        if not isinstance(zone_lo, (int, float)) or not isinstance(zone_hi, (int, float)):
+            continue
+        if zone_lo * (1 - _DEDUPE_THRESHOLD_PCT) <= level <= zone_hi * (1 + _DEDUPE_THRESHOLD_PCT):
+            return (
+                f"Teknik destek bölgesiyle örtüşüyor ({zone_lo:.2f}-{zone_hi:.2f} USD)."
+            )
+    return None
+
+
 #: Stabilization precondition appended to dip tranches when momentum flags a
 #: falling knife (cheap fundamentals + negative price momentum). It gates the
 #: TIMING of a dip entry, not its price level -- the tranche's trigger/size are
@@ -500,7 +535,11 @@ def compute_entry_plan(valuation: Optional[dict], technical: Optional[dict], pri
                                                     # base.hi nor bull.hi is available
               "rr": float|None,                    # reward:risk, 1dp; None if no
                                                     # positive reward or risk
-              "note": str|None,
+              "note": str|None,                     # Turkish; "Model üstü" for an
+                                                    # above-target breakout, or a
+                                                    # support-zone confluence note
+                                                    # for a dip level that lands on
+                                                    # a technical support zone
               "kind": str,                          # "dip" or "breakout"
             }
 
@@ -552,7 +591,7 @@ def _compute_entry_plan(valuation: dict, technical: Optional[dict], price: Optio
             invalidation = dip_invalidation
             trigger = (
                 f"Günlük kapanış {level:.2f} USD seviyesinin altına inerse (bölge "
-                f"{lo:.2f}-{hi:.2f} USD); gün içi dokunuş tetik saymaz."
+                f"{lo:.2f}-{hi:.2f} USD — {source}); gün içi dokunuş tetik saymaz."
             )
         else:
             invalidation = round(level * (1 - _INVALIDATION_BUFFER_PCT), 2)
@@ -569,6 +608,11 @@ def _compute_entry_plan(valuation: dict, technical: Optional[dict], price: Optio
                 rr = round(reward / risk, 1)
 
         note = None
+        if kind == "dip":
+            # Bridge to the technical card: flag when this value-derived dip
+            # level coincides with a swing-tested support zone (see
+            # _support_confluence_note). Informational only.
+            note = _support_confluence_note(level, technical)
         if kind == "breakout" and target is not None and entry >= target:
             # Product decision: keep above-target breakout tranches (they're
             # trend-following adds, not value-anchored entries) but mark them,

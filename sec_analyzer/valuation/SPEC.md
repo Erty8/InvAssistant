@@ -2835,7 +2835,7 @@ Purely additive reference-data input to the EXISTING multiples leg
 module, mirroring `damodaran.py`'s architecture exactly (optional, local,
 no network access, tolerant of a missing directory/file). Deal comps aren't
 available from any of this project's data sources (SEC EDGAR, Damodaran,
-Stooq, FRED), so — exactly like `data/damodaran/*.csv` — this is data an
+yfinance, FRED), so — exactly like `data/damodaran/*.csv` — this is data an
 analyst curates by hand, NOT a new software dependency. **Not a new
 triangulation vote**: `triangulate.triangulate`'s hardcoded 3-way signal
 count (`dcf`/`reverse_dcf`/`multiples`) is untouched; this section only
@@ -3267,30 +3267,59 @@ PROFIL.md → horizon instruction → output contract):
        "base": {...}, "bull": {...}}`.
      - **`entry_plan`** (`planning.compute_entry_plan`, METODOLOJI.md §5,
        "Kademeli giriş planı"): a list of 0-5 tranche dicts, ordered by
-       descending trigger price:
+       descending trigger price (breakout tranches, when present, on top):
        ```python
        [{"n": 1, "trigger": "Günlük kapanış 180.00 USD seviyesinin altına "
-                              "inerse (bölge 177.30-182.70 USD); gün içi "
-                              "dokunuş tetik saymaz.",
+                              "inerse (bölge 177.30-182.70 USD — baz senaryo "
+                              "alt bandı); gün içi dokunuş tetik saymaz.",
          "price_zone": {"lo": 177.30, "hi": 182.70}, "size_pct": 10.0,
-         "invalidation": 142.50, "target": 250.0, "rr": 2.3, "note": None},
+         "invalidation": 142.50, "target": 250.0, "rr": 2.3, "note": None,
+         "kind": "dip"},
         ...]
        ```
-       Candidate trigger levels are pulled ONLY from already-computed figures
-       — `fair_value_range`'s `bear.lo`/`base.lo`/`base.hi`/`bull.hi` plus the
-       technical read's `low_52w`/`sma50`/`sma200` — filtered to levels at or
-       below the current price, deduplicated when two levels sit within 2% of
-       each other, sorted descending, capped at 5. A single shared
-       `invalidation` (a fixed buffer below the lower of `bear.lo`/`low_52w`)
-       and a single shared `target` (`bull.hi`, else `base.hi`) apply to every
-       tranche, so R:R is mathematically non-decreasing as price falls
-       (lower entry → larger reward, smaller risk); `rr` folds in a
-       round-trip transaction cost (METODOLOJI.md §2). `trigger` text is
-       Turkish and explicitly daily-close-only — an intraday touch never
-       counts. `[]` when price is missing/non-positive, or no candidate level
-       sits at or below the current price; fewer than 3 tranches is possible
-       (never fabricated) when fewer than 3 distinct levels survive
-       filtering/dedup.
+       Candidate trigger levels are pulled ONLY from already-computed figures,
+       collected in two directional kinds (METODOLOJI.md §1 item 5):
+       - **dip** (`kind="dip"`, level ≤ price): `fair_value_range`'s
+         `bear.lo`/`base.lo`/`base.hi`/`bull.hi` plus the technical read's
+         `low_52w`/`sma50`/`sma200`. The technical `support_levels` zones are
+         deliberately NOT dip candidates — dip levels stay value-anchored.
+         Instead, when a kept dip level coincides with a `support_levels`
+         zone (falls inside the zone's `low`/`high` band widened by the 2%
+         dedupe tolerance on each side), the tranche carries an informational
+         Turkish confluence `note` ("Teknik destek bölgesiyle örtüşüyor
+         (lo-hi USD).") — selection, sizing, invalidation, and R:R are
+         untouched by this pass, and it never applies to breakout tranches.
+       - **breakout** (`kind="breakout"`, level > price): `sma50`/`sma200`
+         reclaims, each technical `resistance_levels` zone's midpoint
+         (`zone["price"]`), and a `high_52w` breakout — unless an above-price
+         resistance zone is itself flagged `is_52w_high`, in which case the
+         separate `high_52w` candidate is skipped (same "new highs" event;
+         avoid double-counting).
+       Each side is deduplicated independently when two of its own levels sit
+       within 2% of each other (the dip pass keeps the higher level, the
+       breakout pass the lower/nearest-to-price one). Selection: if only one
+       side has candidates, up to 5 are taken from it; if both fit within 5,
+       all are kept; if they exceed 5, one slot per side is guaranteed
+       (nearest to price on each side) and the rest are filled alternating
+       sides by proximity. A single shared `target` (`bull.hi`, else
+       `base.hi`) applies to every tranche. Invalidation is per kind: all dip
+       tranches share one structural level (a fixed buffer below the lowest
+       of `bear.lo`/`low_52w`/the lowest kept dip level); each breakout
+       tranche carries its own failed-breakout invalidation (a fixed buffer
+       below its own trigger level). `rr` is computed per tranche against its
+       own invalidation and folds in a round-trip transaction cost
+       (METODOLOJI.md §2); because dip tranches share one invalidation and
+       target, dip-side R:R is mathematically non-decreasing as price falls —
+       a guarantee (and mechanical check) scoped to consecutive dip tranches
+       only. A breakout tranche whose entry sits at/above the shared target
+       keeps its slot but reports `rr = None` plus a "Model üstü" `note`
+       (trend-following add; no value-anchored reward). `trigger` text is
+       Turkish, names the source level it came from (e.g. "baz senaryo alt
+       bandı", "SMA200 desteği", "direnç/önceki zirve kırılımı"), and is
+       explicitly daily-close-only — an intraday touch never counts. `[]`
+       when price is missing/non-positive or neither side yields a usable
+       candidate; fewer than 3 tranches is possible (never fabricated) when
+       fewer distinct levels survive filtering/dedup/selection.
      - **`stop_adding`** (`planning.compute_stop_adding`, METODOLOJI.md §6,
        "Stop-adding sinyalleri"): `[{"code": str, "message": str}, ...]`,
        Turkish messages, `[]` if none fire. Checked in this fixed order:
@@ -3659,14 +3688,14 @@ always a typo) via `argparse.ArgumentTypeError`. `cmd_analyze`'s flow, with
 ### Limitations (must be surfaced, not hidden)
 
 1. **Split-adjusted prices vs. historical share counts (highest-risk
-   caveat).** Stooq/yfinance closes are adjusted to today, so a stock split
+   caveat).** yfinance closes are adjusted to today, so a stock split
    that happened *after* `as_of` (e.g. NVDA's 10:1 split in 2024) skews
    market cap and every price-derived multiple (P/E, P/S, EV/Sales) by the
    split factor when analyzing a date before that split. `metrics
    ["price_reliable"]` (Sec.17's P/E+P/S implausibility gate) catches some,
    but not all, of the resulting distortion -- it is not a complete guard
    against this specific failure mode.
-2. **Survivorship bias.** A delisted ticker has no price history on Stooq/
+2. **Survivorship bias.** A delisted ticker has no price history on
    yfinance, so an as-of calibration basket (Sec.17/`calibrate --as-of`) can
    only include names that are still trading today -- its measured
    ratio/median distribution is systematically skewed toward survivors.

@@ -95,7 +95,7 @@ _LIMITATIONS = [
     "veya iflas etmiş şirketler örneklemde yok, bu yüzden buradaki her getiri "
     "rakamı iyimser yönde sapmalıdır.",
     "Ücretsiz fiyat kaynağı: endeksten düşürülmüş/iflas etmiş hisselerin "
-    "Stooq/yfinance'te geçmiş verisi hiç yok, bu da hayatta kalma "
+    "yfinance'te geçmiş verisi hiç yok, bu da hayatta kalma "
     "yanlılığını güçlendirir.",
     "Maliyetsiz getiriler: komisyon, kayma (slippage) veya borçlanma "
     "maliyeti yok -- raporlanan getiriler brüttür.",

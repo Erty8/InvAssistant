@@ -203,11 +203,11 @@ def stub_price_layer(monkeypatch):
         if symbol == "ZZZ":
             raise PriceDataError("no usable data for ZZZ")
         if symbol == "SPY":
-            return spy_df, "stooq"
+            return spy_df, "yfinance"
         if symbol == "AAA":
-            return aaa_df, "stooq"
+            return aaa_df, "yfinance"
         if symbol in ("BBB", "CCC"):
-            return tie_df, "stooq"
+            return tie_df, "yfinance"
         raise PriceDataError(f"unexpected symbol {symbol}")
 
     monkeypatch.setattr(swing_scan, "get_price_history", _fake_get_price_history)
@@ -286,7 +286,7 @@ def test_scan_swing_index_ndx_scans_nasdaq100_universe_and_tags_result(monkeypat
     price_df = _swing_df(1.0)
 
     def _fake_get_price_history(symbol, no_cache=False):
-        return price_df, "stooq"
+        return price_df, "yfinance"
 
     def _fake_load_universe(index="SP500", path=None):
         load_universe_calls.append(index)

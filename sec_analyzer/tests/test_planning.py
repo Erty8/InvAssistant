@@ -598,6 +598,109 @@ def test_compute_entry_plan_high_52w_added_when_no_resistance_zone_is_52w_high()
     assert entries == pytest.approx([130.0, 140.0])
 
 
+def test_compute_entry_plan_dip_trigger_names_its_source_level():
+    # Every dip trigger sentence must name the Turkish source label of the
+    # level it came from (same transparency the breakout sentence already
+    # had), so the reader can tell a valuation-band level from a technical
+    # one. Fixture: bear_lo=40, base_lo=60, base_hi=80 (all <= price=110),
+    # plus sma200=95 and low_52w=35 from the technical read. bull_hi=200 is
+    # above price (target anchor only). 5 dip candidates, no two within 2%,
+    # all kept (cap=5).
+    valuation = _valuation_for_entry_plan()
+    technical = {"sma200": 95, "low_52w": 35}
+    plan = planning.compute_entry_plan(valuation, technical, 110)
+
+    assert len(plan) == 5
+    by_level = {round((t["price_zone"]["lo"] + t["price_zone"]["hi"]) / 2): t for t in plan}
+    assert "— SMA200 desteği" in by_level[95]["trigger"]
+    assert "— baz senaryo üst bandı" in by_level[80]["trigger"]
+    assert "— baz senaryo alt bandı" in by_level[60]["trigger"]
+    assert "— ayı senaryosu alt bandı" in by_level[40]["trigger"]
+    assert "— 52 hafta dibi" in by_level[35]["trigger"]
+    # daily-close-only wording is retained
+    assert all("seviyesinin altına inerse" in t["trigger"] for t in plan)
+
+
+def test_compute_entry_plan_support_confluence_note_on_overlapping_dip_only():
+    # support_levels zones are NOT dip candidates, but a dip level landing
+    # inside a zone's low/high band (widened by the 2% dedupe tolerance) gets
+    # an informational confluence note. Fixture: base_lo=60 falls inside the
+    # 59-61 support zone -> note; bear_lo=40 is far from any zone -> no note.
+    # base_hi=80 sits just outside the 82-84 zone even with the 2% widening
+    # (82 * 0.98 = 80.36 > 80) -> no note.
+    valuation = _valuation_for_entry_plan(bear_lo=40, base_lo=60, base_hi=80, bull_hi=200)
+    technical = {
+        "support_levels": [
+            {"low": 59.0, "high": 61.0, "price": 60.0},
+            {"low": 82.0, "high": 84.0, "price": 83.0},
+        ]
+    }
+    plan = planning.compute_entry_plan(valuation, technical, 110)
+
+    by_level = {round((t["price_zone"]["lo"] + t["price_zone"]["hi"]) / 2): t for t in plan}
+    assert by_level[60]["note"] == "Teknik destek bölgesiyle örtüşüyor (59.00-61.00 USD)."
+    assert by_level[80]["note"] is None
+    assert by_level[40]["note"] is None
+
+
+def test_compute_entry_plan_support_confluence_tolerance_edge():
+    # A dip level just inside the widened band matches: zone 59-61, level
+    # 58 -> 59 * 0.98 = 57.82 <= 58, so the note fires; level 50 is far
+    # below the widened band, so it does not. (The two dip levels are >2%
+    # apart so dedupe keeps both.) Uses sma50/sma200 as the dip levels to
+    # keep the fixture to exactly two candidates.
+    valuation = {"fair_value_range": {"bear": {}, "base": {}, "bull": {}}}
+    technical = {
+        "sma50": 58.0,
+        "sma200": 50.0,
+        "support_levels": [{"low": 59.0, "high": 61.0, "price": 60.0}],
+    }
+    plan = planning.compute_entry_plan(valuation, technical, 110)
+
+    by_level = {round((t["price_zone"]["lo"] + t["price_zone"]["hi"]) / 2, 1): t for t in plan}
+    assert by_level[58.0]["note"] == "Teknik destek bölgesiyle örtüşüyor (59.00-61.00 USD)."
+    assert by_level[50.0]["note"] is None
+
+
+def test_compute_entry_plan_support_confluence_never_touches_breakout_notes():
+    # Breakout tranches are untouched by the support-confluence pass: a
+    # support zone overlapping a breakout level (via garbage inputs) must not
+    # attach a note, and the "Model üstü" note logic is unchanged. Reuses the
+    # model-üstü fixture with a support zone straddling the sma50 breakout.
+    valuation = {
+        "fair_value_range": {
+            "bear": {"lo": 60},
+            "base": {"lo": 70, "hi": 90},
+            "bull": {"hi": 150},
+        }
+    }
+    technical = {
+        "sma50": 120,
+        "resistance_levels": [{"price": 160}],
+        "support_levels": [{"low": 119.0, "high": 121.0, "price": 120.0}],
+    }
+    plan = planning.compute_entry_plan(valuation, technical, 100)
+    by_level = {round((t["price_zone"]["lo"] + t["price_zone"]["hi"]) / 2): t for t in plan}
+
+    assert by_level[120]["kind"] == "breakout"
+    assert by_level[120]["note"] is None  # confluence pass is dip-only
+    assert by_level[160]["note"].startswith("Model üstü")
+
+
+def test_apply_stabilization_condition_appends_after_confluence_note():
+    # When a dip tranche already carries a confluence note, the falling-knife
+    # stabilization precondition appends after it rather than replacing it.
+    valuation = _valuation_for_entry_plan(bear_lo=40, base_lo=60, base_hi=80, bull_hi=200)
+    technical = {"support_levels": [{"low": 59.0, "high": 61.0, "price": 60.0}]}
+    plan = planning.compute_entry_plan(valuation, technical, 110)
+    plan = planning.apply_stabilization_condition(plan, True)
+
+    by_level = {round((t["price_zone"]["lo"] + t["price_zone"]["hi"]) / 2): t for t in plan}
+    note = by_level[60]["note"]
+    assert note.startswith("Teknik destek bölgesiyle örtüşüyor (59.00-61.00 USD).")
+    assert "Stabilizasyon koşulu" in note
+
+
 def test_compute_entry_plan_kind_key_present_and_legacy_keys_retained():
     plan = _mixed_plan_for_rr_and_note_checks()
     assert plan  # sanity

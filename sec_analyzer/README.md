@@ -383,17 +383,55 @@ hücrenin %60'ını aştığında eklenir.
 
 The technical-analysis layer (RSI, moving averages, 52-week range,
 volatility, and the technical verdict) needs a daily OHLCV price history,
-which is **not** available from SEC EDGAR. `sec_analyzer` fetches it from
-[Stooq](https://stooq.com)'s free, no-key CSV endpoint first; if Stooq is
-unavailable or returns something unusable (Stooq occasionally serves an
-HTML/JS-walled page instead of the CSV on some networks), it automatically
-falls back to the optional [`yfinance`](https://pypi.org/project/yfinance/)
-package if it's installed. Price history is cached on disk for 24 hours.
+which is **not** available from SEC EDGAR. `sec_analyzer` tries three sources
+in order, then the on-disk cache:
 
-If both sources fail (or `yfinance` isn't installed and Stooq is
-unreachable), the technical layer is skipped gracefully: `analyze` still
-runs the full fundamental analysis, with the technical verdict reported as
-unavailable rather than the command failing outright.
+| Order | Source | Key | History | Price basis |
+|---|---|---|---|---|
+| 1 | [`yfinance`](https://pypi.org/project/yfinance/) package | none | full | split **+ dividend** adjusted |
+| 2 | Yahoo chart endpoint over plain HTTP | none | full | split **+ dividend** adjusted |
+| 3 | Nasdaq public endpoint | none | ~10 years | split-adjusted **only** |
+
+Tier 2 exists for the failure that actually happens: the yfinance package
+breaking when Yahoo changes something behind it. It is byte-for-byte
+equivalent — verified on ORCL (2026-08-03) across all 10,176 bars, max close
+difference 0.000046 — because the endpoint returns `adjclose` separately and
+the fetcher reproduces yfinance's `auto_adjust` exactly. It does **not** cover
+Yahoo itself being down; tier 3 is the provider-independent one.
+
+> **Tier 3 carries a different price basis.** Nasdaq's closes are not
+> dividend-adjusted, and the gap compounds backwards: measured on ORCL, 0% on
+> the newest bar, −5% four years back, −16% ten years back. A tier-3 frame is
+> therefore used for **technicals only**. `prices.is_total_return_basis()`
+> gates it, and the callers hand the valuation layer no price frame at all, so
+> historical-multiple percentiles report "no data" instead of silently
+> reporting a biased one. Such a frame is also never written to the `prices`
+> table, and never taken as a plain cache hit — the preferred sources are
+> retried on the next run.
+
+[Stooq](https://stooq.com)'s free CSV endpoint was the primary source until
+2026-08-03, when Stooq put every endpoint behind a JavaScript
+browser-verification challenge — it now answers HTTP 200 with an HTML
+challenge page instead of CSV, which no plain HTTP client can get past. The
+Stooq path was removed rather than left in place to fail on every ticker.
+
+If every source fails, a recent-enough on-disk cache is used as a last resort
+and the report labels that price as stale. Failing that, the technical layer is
+skipped gracefully: `analyze` still runs the full fundamental analysis, with
+the technical verdict reported as unavailable rather than the command failing
+outright.
+
+### Cache freshness
+
+The on-disk price cache holds **settled sessions only** — a bar for a session
+still in progress is never written, because on any later day its date would
+make the cache look fresh while its close was really a mid-day snapshot. A
+cache counts as fresh once it carries the last completed session.
+
+That means a run during market hours serves the previous close by default,
+which is what anything ranking on daily bars (the swing screener, backtests)
+should use. The single-ticker `analyze` paths pass `prefer_live=True`, which
+re-fetches while a session is open so the printed price is the current one.
 
 ## SEC rate limits
 

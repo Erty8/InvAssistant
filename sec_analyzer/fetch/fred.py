@@ -4,7 +4,7 @@ Used by point-in-time ("as-of") mode to supply a historical risk-free rate:
 the CAPM intercept as it stood on a past date. FRED's free CSV download
 endpoint needs no API key.
 
-Like :mod:`sec_analyzer.fetch.prices` (Stooq), FRED is a third-party host, not
+FRED is a third-party host, not
 SEC EDGAR, so it is fetched with a plain ``requests`` call and a normal
 browser-style User-Agent rather than through
 :class:`sec_analyzer.http_client.SecHttpClient` (whose throttling/UA policy

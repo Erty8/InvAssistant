@@ -7,7 +7,7 @@ operator drops into ``Config.PRECEDENT_TRANSACTIONS_DIR`` -- mirrors
 a missing directory, missing file, or malformed columns; logs what's
 unavailable and returns whatever subset *is* usable rather than raising).
 Deal comps aren't available from any of this project's existing data
-sources (SEC EDGAR, Damodaran, Stooq, FRED all lack them), so -- exactly
+sources (SEC EDGAR, Damodaran, yfinance, FRED all lack them), so -- exactly
 like ``data/damodaran/*.csv`` -- this is data an analyst curates by hand, not
 a new software dependency.
 

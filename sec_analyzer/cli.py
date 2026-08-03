@@ -23,7 +23,7 @@ Usage::
 
 Only the official SEC EDGAR API and (for ``analyze`` with the ``claude_code``
 or ``ollama`` providers) a local LLM are used for financial statement data --
-no third-party finance data libraries beyond the optional Stooq/yfinance
+no third-party finance data libraries beyond the optional yfinance
 price-history fetch used to power the technical-analysis layer.
 """
 
@@ -50,7 +50,14 @@ from sec_analyzer.fetch.companyfacts import get_company_facts, get_submissions
 from sec_analyzer.fetch.earnings import get_earnings_history
 from sec_analyzer.fetch.filings import estimate_next_earnings
 from sec_analyzer.fetch.fred import get_risk_free_asof
-from sec_analyzer.fetch.prices import PriceDataError, get_price_history, latest_price, slice_asof
+from sec_analyzer.fetch.prices import (
+    PriceDataError,
+    drop_unsettled_bars,
+    get_price_history,
+    is_total_return_basis,
+    latest_price,
+    slice_asof,
+)
 from sec_analyzer.fetch.tickers import resolve_cik
 from sec_analyzer.http_client import SecHttpClient
 from sec_analyzer.interpret.analyzer import build_script_phase1, interpret, propose_assumptions
@@ -210,8 +217,8 @@ def _fetch_price_and_technical(
 ):
     """Fetch price history and derive the merged technical indicators/verdict.
 
-    Fully graceful: if price data can't be obtained (Stooq and yfinance both
-    fail, or the ticker simply has too little history), this logs a warning
+    Fully graceful: if price data can't be obtained (yfinance fails, or the
+    ticker simply has too little history), this logs a warning
     and returns ``(None, None, None, None)`` rather than raising -- the
     fundamental side of ``analyze`` must keep working even when there's no
     usable price data at all.
@@ -225,7 +232,11 @@ def _fetch_price_and_technical(
         is unavailable.
     """
     try:
-        price_df, source = get_price_history(ticker, no_cache=no_cache)
+        # prefer_live only when reporting on today: an as-of run slices the
+        # live bar back off anyway, so fetching it would be wasted work.
+        price_df, source = get_price_history(
+            ticker, no_cache=no_cache, prefer_live=as_of is None
+        )
         if as_of is not None:
             price_df = slice_asof(price_df, as_of)
             if price_df.empty:
@@ -279,7 +290,11 @@ def _fetch_relative_strength(
     if str(ticker).strip().upper() == benchmark:
         return None
     try:
-        bench_df, _ = get_price_history(benchmark, no_cache=no_cache)
+        # Matches the stock's own fetch: comparing a live bar against a
+        # settled benchmark bar would skew relative strength by a session.
+        bench_df, _ = get_price_history(
+            benchmark, no_cache=no_cache, prefer_live=as_of is None
+        )
         if as_of is not None:
             bench_df = slice_asof(bench_df, as_of)
         return relative_strength(price_df["Close"], bench_df["Close"], benchmark=benchmark)
@@ -484,8 +499,14 @@ def _save_price_rows(cik: str, price_df) -> None:
     Never raises: a failure to persist price history must not prevent the
     rest of ``analyze`` (interpretation, verdict card, HTML report) from
     completing.
+
+    Bars for a session still in progress are not stored: the same reasoning as
+    the price cache (see ``prices.drop_unsettled_bars``) applies to the
+    ``prices`` table, which ``load_latest_stored_price`` reads as a settled
+    close.
     """
     try:
+        price_df = drop_unsettled_bars(price_df)
         rows = [
             {
                 "date": row["Date"].strftime("%Y-%m-%d") if hasattr(row["Date"], "strftime") else str(row["Date"]),
@@ -1462,8 +1483,20 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     # the composite momentum score with it (SPY-only momentum is already set).
     _enrich_sector_momentum(args.ticker, technical, price_df, submissions, args.no_cache, as_of)
 
-    if price_df is not None and as_of is None:
-        _save_price_rows(cik, price_df)
+    # A degraded-source frame (split-adjusted only) must not overwrite rows in
+    # a table read as a total-return series, nor reach the valuation layer.
+    # Technicals keep the full frame -- see prices.is_total_return_basis.
+    price_source = (technical or {}).get("price_source")
+    valuation_price_df = price_df if is_total_return_basis(price_source) else None
+    if valuation_price_df is None and price_df is not None:
+        logger.warning(
+            "Price source %r is not a total-return series for %s; historical multiples "
+            "and price persistence are skipped. Technicals are unaffected.",
+            price_source, args.ticker,
+        )
+
+    if valuation_price_df is not None and as_of is None:
+        _save_price_rows(cik, valuation_price_df)
 
     # Resolve where phase-1 assumptions come from (frozen cache / deterministic
     # script / legacy live LLM) per --assumptions (ASSUMPTIONS_CACHE_SPEC.md).
@@ -1487,7 +1520,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         red_flags=flags,
         catalyst=catalyst,
         submissions=submissions,
-        price_df=price_df,
+        price_df=valuation_price_df,
         as_of=as_of,
         fred_rate=fred_rate,
         phase1_override=override,

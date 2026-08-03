@@ -7,11 +7,9 @@ publish, but they never feed into the valuation engine, triangulation, or any
 other computed output (see ``sec_analyzer/valuation/SPEC.md``, which this
 module does not touch and is not bound by).
 
-The only source is the optional ``yfinance`` package's ``Ticker.info`` dict.
-Stooq (the primary source for :mod:`sec_analyzer.fetch.prices`) has no
-analyst-target data at all, so there is no first-choice/fallback pair here
-like there is for price history -- yfinance is the sole source, and its
-absence (or failure) simply means no consensus figure is shown.
+The only source is the optional ``yfinance`` package's ``Ticker.info`` dict --
+the same sole source :mod:`sec_analyzer.fetch.prices` uses for price history.
+Its absence (or failure) simply means no consensus figure is shown.
 """
 
 import json

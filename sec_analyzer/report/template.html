@@ -62,6 +62,53 @@
     --caution: #ff8a3d;
     --red: #ffb4ab;
     --red-container: #93000a;
+
+    /* --- Tone system --------------------------------------------------
+       Two registers, deliberately unequal in weight:
+
+         ALERT      the saturated --green/--amber/--caution/--red above.
+                    Reserved for a call the reader may act on: verdict
+                    badges, red flags, entry triggers, invalidation stops.
+         REFERENCE  the *-ref hues below, for data that merely *has* a
+                    sign -- analyst consensus, balance-sheet cells, beat
+                    history, sector comparisons, score breakdowns. Same
+                    hue family, pulled toward --outline so a screen full
+                    of them never competes with one real alert.
+
+       Structural chrome (card borders, meter tracks, row washes) takes no
+       hue at all and stays on --border/--muted. */
+    --green-ref: #8fbfa4;
+    --amber-ref: #c9ab7d;
+    --red-ref: #cb9c97;
+
+    /* Tinted-pill surfaces. Every badge/tag/chip draws its fill+line from
+       one of these pairs instead of re-typing an rgba() literal. */
+    --fill-pos: rgba(77, 224, 130, 0.15);
+    --line-pos: rgba(77, 224, 130, 0.4);
+    --fill-neg: rgba(255, 180, 171, 0.15);
+    --line-neg: rgba(147, 0, 10, 0.55);
+    --fill-warn: rgba(255, 185, 83, 0.15);
+    --line-warn: rgba(255, 185, 83, 0.4);
+    --fill-caution: rgba(255, 138, 61, 0.16);
+    --line-caution: rgba(255, 138, 61, 0.5);
+    --fill-neutral: rgba(139, 145, 157, 0.14);
+    --line-neutral: rgba(139, 145, 157, 0.4);
+    --fill-info: rgba(90, 167, 255, 0.14);
+    --line-info: rgba(90, 167, 255, 0.4);
+
+    /* Half-strength washes for whole rows and panels, where a
+       pill-strength fill spread across a wide block reads as an alert it
+       isn't. */
+    --wash-pos: rgba(77, 224, 130, 0.06);
+    --wash-neg: rgba(255, 180, 171, 0.06);
+    --wash-warn: rgba(255, 185, 83, 0.08);
+    --wash-info: rgba(90, 167, 255, 0.10);
+
+    /* Shared meter track + its two threshold zones (see "Track meters"). */
+    --track-bg: #1a2436;
+    --zone-pos: rgba(77, 224, 130, 0.20);
+    --zone-neg: rgba(255, 180, 171, 0.20);
+
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
@@ -322,8 +369,8 @@
     font-weight: 700;
     color: var(--text);
   }
-  .analyst-consensus .ac-up { color: var(--green); }
-  .analyst-consensus .ac-down { color: var(--red); }
+  .analyst-consensus .ac-up { color: var(--green-ref); }
+  .analyst-consensus .ac-down { color: var(--red-ref); }
   .analyst-consensus .ac-count,
   .analyst-consensus .ac-range { color: var(--muted); }
   .analyst-consensus .ac-caption {
@@ -562,9 +609,12 @@
     font-size: 0.74rem;
     background: rgba(255, 255, 255, 0.03);
   }
+  /* Agreement glyphs are diagnostic, not actionable, and there is one per
+     valuation method -- reference tones so five of them don't outshout the
+     single verdict badge. */
   .tri-icon { font-size: 0.85rem; font-weight: 700; line-height: 1; }
-  .tri-agree .tri-icon { color: var(--green); }
-  .tri-disagree .tri-icon { color: var(--red); }
+  .tri-agree .tri-icon { color: var(--green-ref); }
+  .tri-disagree .tri-icon { color: var(--red-ref); }
   .tri-muted .tri-icon { color: var(--muted); }
   .tri-label {
     color: var(--muted);
@@ -602,8 +652,8 @@
     font-weight: 700;
     line-height: 1;
   }
-  .tri-marker-agree { color: var(--green); }
-  .tri-marker-disagree { color: var(--red); }
+  .tri-marker-agree { color: var(--green-ref); }
+  .tri-marker-disagree { color: var(--red-ref); }
   .tri-marker-muted { color: var(--muted); }
   .tri-reason {
     font-size: 0.78rem;
@@ -629,8 +679,9 @@
     font-family: inherit;
     margin-right: 4px;
   }
-  .sector-cmp-red { color: var(--red); }
-  .sector-cmp-green { color: var(--green); }
+  /* A historical multiple against its sector median -- reference data. */
+  .sector-cmp-red { color: var(--red-ref); }
+  .sector-cmp-green { color: var(--green-ref); }
   .sector-cmp-muted { color: var(--muted); }
   .tri-confidence {
     margin-top: 14px;
@@ -638,30 +689,117 @@
     border-top: 1px solid var(--border);
   }
 
-  /* ---- Badges (status / confidence) -------------------------------------*/
-  .badge {
+  /* ---- Pills: the one tinted-chip primitive -----------------------------
+     Every badge, tag and marker chip in the report is this shape. A
+     component picks one size and one tone; it does not re-declare padding
+     or an rgba() triple of its own. The tone rules are kept together here
+     rather than beside each card so the alert/reference split stays
+     readable in one place. Sizes are set per class below because the
+     class names are load-bearing in renderBody()'s string templates. */
+  .badge,
+  .mom-badge,
+  .regime-badge,
+  .rev-badge-mark,
+  .bs-badge,
+  .entry-kind-tag,
+  .sr-strength-badge,
+  .alert-box li .event-sev {
     display: inline-block;
     border-radius: 999px;
-    padding: 3px 11px;
-    font-size: 0.76rem;
+    border: 1px solid transparent;
     font-weight: 700;
-    max-width: 100%;
-    overflow-wrap: break-word;
     white-space: nowrap;
+    vertical-align: middle;
+    max-width: 100%;
   }
-  .badge-green { background: rgba(77, 224, 130, 0.15); color: var(--green); border: 1px solid rgba(77, 224, 130, 0.4); }
-  .badge-amber { background: rgba(255, 185, 83, 0.15); color: var(--amber); border: 1px solid rgba(255, 185, 83, 0.4); }
+  /* base -- a verdict badge standing on its own */
+  .badge { padding: 3px 11px; font-size: 0.76rem; overflow-wrap: break-word; }
+  /* lg -- the headline call at the top of a card */
+  .mom-badge,
+  .regime-badge { padding: 4px 14px; font-size: 0.9rem; }
+  /* sm -- chips that sit inline inside a denser row */
+  .rev-badge-mark { margin-left: 8px; padding: 2px 9px; font-size: 0.66rem; letter-spacing: 0.02em; }
+  .bs-badge { padding: 1px 8px; font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .entry-kind-tag { padding: 1px 7px; font-size: 0.62rem; margin-right: 6px; }
+  .sr-strength-badge { padding: 1px 7px; font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .alert-box li .event-sev {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin-right: 6px;
+  }
+
+  /* -- ALERT tones: saturated ink, visible outline. ---------------------- */
+  .badge-green,
+  .mom-badge-up,
+  .regime-up,
+  .entry-kind-breakout,
+  .setup-grade.grade-a {
+    background: var(--fill-pos); color: var(--green); border-color: var(--line-pos);
+  }
+  .badge-amber,
+  .mom-badge-flat,
+  .regime-neutral,
+  .setup-grade.grade-b {
+    background: var(--fill-warn); color: var(--amber); border-color: var(--line-warn);
+  }
   /* Distinct "caution" bucket for the hyper-grower YÜKSEK BEKLENTİ FİYATLANMIŞ
      verdict -- deliberately a different hue from both the neutral MAKUL
      amber and the PAHALI red, since it signals a different kind of risk
      (price implies an aggressive-but-not-yet-disqualified growth path). */
-  .badge-caution { background: rgba(255, 138, 61, 0.16); color: var(--caution); border: 1px solid rgba(255, 138, 61, 0.5); }
-  .badge-red { background: rgba(255, 180, 171, 0.15); color: var(--red); border: 1px solid rgba(147, 0, 10, 0.55); }
+  .badge-caution {
+    background: var(--fill-caution); color: var(--caution); border-color: var(--line-caution);
+  }
+  .badge-red,
+  .mom-badge-down,
+  .regime-down,
+  .entry-kind-dip {
+    background: var(--fill-neg); color: var(--red); border-color: var(--line-neg);
+  }
   /* Neutral bucket for a triangulation method with no usable signal
      (veri_yok) -- deliberately muted/gray rather than any of the four
      verdict colors, since "no data" isn't a point on the cheap<->expensive
      spectrum. */
-  .badge-muted { background: rgba(139, 145, 157, 0.14); color: var(--muted); border: 1px solid rgba(139, 145, 157, 0.4); }
+  .badge-muted,
+  .setup-grade.grade-c {
+    background: var(--fill-neutral); color: var(--muted); border-color: var(--line-neutral);
+  }
+
+  /* -- REFERENCE tones: same hues, no outline, ink pulled toward the body
+        text. For chips that state a fact rather than raise a flag -- S/R
+        strength, net-cash vs net-debt, a reversal that is still only
+        "building". A card can carry a dozen of these without any of them
+        reading as urgent. ------------------------------------------------ */
+  .sr-str-strong,
+  .rev-badge-mark.rev-mark-up,
+  .bs-badge-pos {
+    background: var(--wash-pos); color: var(--green-ref); border-color: transparent;
+  }
+  .sr-str-medium,
+  .rev-badge-mark.sq-mark,
+  .alert-box li.event-warning .event-sev {
+    background: var(--wash-warn); color: var(--amber-ref); border-color: transparent;
+  }
+  .rev-badge-mark.rev-mark-down,
+  .bs-badge-neg {
+    background: var(--wash-neg); color: var(--red-ref); border-color: transparent;
+  }
+  /* Neutral member of the reference set. Kept apart from .badge-muted --
+     that one is an outlined "no data" verdict standing on its own, whereas
+     these sit in a ladder beside their pos/neg siblings and must lose the
+     outline the way those did. */
+  .sr-str-weak,
+  .alert-box li.event-info .event-sev {
+    background: var(--fill-neutral); color: var(--muted); border-color: transparent;
+  }
+  /* The one 8-K severity that stays in the alert register: a critical
+     filing event is exactly the actionable case the split reserves it for. */
+  .alert-box li.event-critical .event-sev {
+    background: var(--fill-neg); color: var(--red); border-color: var(--line-neg);
+  }
+
   .badge-label {
     font-size: 0.66rem;
     font-weight: 700;
@@ -677,20 +815,45 @@
     flex-direction: column;
     gap: 10px;
   }
-  .gauge {
+  /* ---- Track meters: the one 1D-continuous primitive ---------------------
+     Four readings used to ship four different bars -- the verdict gauge,
+     RSI, momentum and cycle position -- each with its own height, marker
+     shape and gradient treatment. They all say "one value on a fixed
+     scale", so they share one track and one marker here. A variant only
+     re-tints its track where the *zones* themselves carry meaning (RSI
+     30/70, the momentum sign). Anything proportional (.weight-bar) or 2D
+     (.mom-quad, the fan rulers) is a different primitive and stays out. */
+  .gauge,
+  .rsi-gauge,
+  .mom-meter,
+  .cycle-track {
     position: relative;
-    height: 6px;
-    border-radius: 3px;
-    margin: 2px 2px 2px;
-    background: linear-gradient(to right, var(--green), var(--amber), var(--red));
+    height: 8px;
+    border-radius: 4px;
+    background: var(--track-bg);
+    border: 1px solid var(--border);
   }
-  .gauge-marker {
+  .rsi-gauge,
+  .mom-meter { flex: 1; }
+  /* The verdict gauge deliberately has NO gradient: the badge directly
+     above it already states cheap/fair/expensive, so a second green->red
+     ramp underneath was duplicate colour carrying no extra information. */
+  .gauge { margin: 8px 2px 2px; }
+
+  .gauge-marker,
+  .rsi-gauge-marker,
+  .mom-meter-marker,
+  .cycle-marker {
     position: absolute;
-    top: -9px;
-    transform: translateX(-50%);
-    font-size: 0.7rem;
-    color: var(--text);
+    top: -5px;
+    width: 2px;
+    height: 16px;
+    background: var(--text);
+    transform: translateX(-1px);
+    border-radius: 1px;
+    box-shadow: 0 0 0 2px rgba(13, 20, 32, 0.7);
   }
+
   .verdict-note {
     font-size: 0.82rem;
     color: var(--outline);
@@ -706,43 +869,33 @@
     margin: 14px 0 8px;
   }
   .rsi-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  /* Shape/marker come from the shared track-meter rules above; this only
+     layers the threshold zones over the neutral track -- oversold (<30) ·
+     neutral mid · overbought (>70), at reference strength so the marker
+     stays the thing the eye lands on. */
   .rsi-gauge {
-    position: relative;
-    flex: 1;
-    height: 8px;
-    border-radius: 4px;
-    /* oversold (<30) green zone · neutral mid · overbought (>70) red zone */
-    background: linear-gradient(to right,
-      rgba(77,224,130,0.55) 0%, rgba(77,224,130,0.55) 30%,
-      #2a3547 30%, #2a3547 70%,
-      rgba(255,180,171,0.65) 70%, rgba(255,180,171,0.65) 100%);
-  }
-  .rsi-gauge-marker {
-    position: absolute; top: -4px; width: 2px; height: 16px;
-    background: var(--text); transform: translateX(-1px); border-radius: 1px;
+    background:
+      linear-gradient(to right,
+        var(--zone-pos) 0%, var(--zone-pos) 30%,
+        transparent 30%, transparent 70%,
+        var(--zone-neg) 70%, var(--zone-neg) 100%),
+      var(--track-bg);
   }
   .rsi-val { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 2em; text-align: right; }
   .rsi-side { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 
   /* ---- Momentum synthesis: verdict badge + directional meter + sentence -- */
+  /* .mom-badge shape + tone: see the pill primitive in the Badges section. */
   .mom-badge-row { margin-bottom: 10px; }
-  .mom-badge { display: inline-block; border-radius: 999px; padding: 4px 14px; font-size: 0.9rem; font-weight: 700; }
-  .mom-badge-up { background: rgba(77, 224, 130, 0.15); color: var(--green); border: 1px solid rgba(77, 224, 130, 0.4); }
-  .mom-badge-down { background: rgba(255, 180, 171, 0.15); color: var(--red); border: 1px solid rgba(147, 0, 10, 0.55); }
-  .mom-badge-flat { background: rgba(255, 185, 83, 0.15); color: var(--amber); border: 1px solid rgba(255, 185, 83, 0.4); }
   .mom-meter-row { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
+  /* Shape/marker from the shared track-meter rules; this only layers the
+     sign zones: strong-down <- neutral -> strong-up. */
   .mom-meter {
-    position: relative;
-    flex: 1;
-    height: 8px;
-    border-radius: 4px;
-    /* strong-down (red) -> neutral -> strong-up (green) */
-    background: linear-gradient(to right,
-      rgba(255,180,171,0.6) 0%, #2a3547 45%, #2a3547 55%, rgba(77,224,130,0.6) 100%);
-  }
-  .mom-meter-marker {
-    position: absolute; top: -4px; width: 2px; height: 16px;
-    background: var(--text); transform: translateX(-1px); border-radius: 1px;
+    background:
+      linear-gradient(to right,
+        var(--zone-neg) 0%, transparent 45%,
+        transparent 55%, var(--zone-pos) 100%),
+      var(--track-bg);
   }
   .mom-ends { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); white-space: nowrap; }
   .mom-meter-cap { font-size: 0.72rem; color: var(--muted); text-align: center; margin-bottom: 8px; }
@@ -779,28 +932,23 @@
   .rev-row.rev-none, .rev-row.rev-bad { color: var(--muted); }
   .rev-watch {
     font-size: 0.72rem; line-height: 1.4; margin-top: 7px;
-    padding: 6px 9px; border-radius: 7px; background: rgba(90,167,255,0.10); border: 1px solid var(--border);
+    padding: 6px 9px; border-radius: 7px; background: var(--wash-info); border: 1px solid var(--border);
     color: var(--outline);
   }
   .rev-watch-label {
     font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
     font-weight: 700; margin-right: 6px;
   }
-  /* Reversal-building marker chip next to the momentum badge. */
-  .rev-badge-mark {
-    display: inline-block; margin-left: 8px; padding: 2px 9px; border-radius: 999px;
-    font-size: 0.66rem; font-weight: 700; letter-spacing: 0.02em; vertical-align: middle;
-  }
-  .rev-badge-mark.rev-mark-up { color: var(--green); background: rgba(77, 224, 130, 0.15); border: 1px solid rgba(77, 224, 130, 0.4); }
-  .rev-badge-mark.rev-mark-down { color: var(--red); background: rgba(255, 180, 171, 0.15); border: 1px solid rgba(147, 0, 10, 0.55); }
-  .rev-badge-mark.sq-mark { color: var(--amber); background: rgba(255, 185, 83, 0.15); border: 1px solid rgba(255, 185, 83, 0.4); }
+  /* Reversal-building marker chip next to the momentum badge -- shape and
+     tone come from the pill primitive (reference register: it marks a
+     setup that is still only forming, not a call to act). */
   /* ATR-based risk readout line under the watch line. */
   .rev-risk {
     font-size: 0.72rem; line-height: 1.4; margin-top: 6px;
     padding: 6px 9px; border-radius: 7px; background: var(--bg); border: 1px solid var(--border);
     color: var(--outline);
   }
-  .rev-risk.rev-risk-wide { background: rgba(255, 185, 83, 0.10); border-color: rgba(255, 185, 83, 0.4); }
+  .rev-risk.rev-risk-wide { background: var(--wash-warn); border-color: var(--line-warn); }
   /* ---- MOMENTUM card (result.momentum three-layer synthesis) ------------- */
   .mom-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
   .mom-sub-rows { display: flex; flex-direction: column; gap: 8px; }
@@ -822,8 +970,8 @@
   }
   .mom-cross-list { display: flex; flex-direction: column; gap: 6px; }
   .mom-chip { font-size: 0.75rem; line-height: 1.4; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); color: var(--outline); }
-  .mom-chip-warn { background: rgba(255, 185, 83, 0.10); border-color: rgba(255, 185, 83, 0.4); }
-  .mom-chip-good { background: rgba(77, 224, 130, 0.10); border-color: rgba(77, 224, 130, 0.4); }
+  .mom-chip-warn { background: var(--wash-warn); border-color: var(--line-warn); }
+  .mom-chip-good { background: var(--wash-pos); border-color: var(--line-pos); }
   .mom-chip-info { background: var(--bg); }
   /* Synthesis sentence -- the one-line "why" the composite verdict is what it
      is, built in JS from the three layers. */
@@ -877,28 +1025,31 @@
   .mom-bd-bar-track { position: relative; height: 8px; background: var(--bg); border-radius: 3px; overflow: hidden; }
   .mom-bd-bar-track::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--border); }
   .mom-bd-bar { position: absolute; top: 1px; bottom: 1px; border-radius: 2px; }
-  .mom-bd-bar-pos { background: var(--green); left: 50%; }
-  .mom-bd-bar-neg { background: var(--red); right: 50%; }
+  /* Signed variant of the track meter -- the score breakdown is the one
+     place a bar grows out from a centre line rather than marking a point.
+     Reference tones: this is the arithmetic behind the score, not a call. */
+  .mom-bd-bar-pos { background: var(--green-ref); left: 50%; }
+  .mom-bd-bar-neg { background: var(--red-ref); right: 50%; }
   .mom-bd-val { font-variant-numeric: tabular-nums; text-align: right; font-size: 0.7rem; }
-  .mom-bd-val-pos { color: var(--green); }
-  .mom-bd-val-neg { color: var(--red); }
+  .mom-bd-val-pos { color: var(--green-ref); }
+  .mom-bd-val-neg { color: var(--red-ref); }
   .mom-bd-val-zero { color: var(--muted); }
   .mom-bd-sig { display: grid; grid-template-columns: 16px 1fr; align-items: baseline; gap: 6px; padding: 2.5px 0; font-size: 0.74rem; color: var(--outline); }
   .mom-bd-icon { font-weight: 700; text-align: center; }
-  .mom-bd-icon-ok { color: var(--green); }
-  .mom-bd-icon-bad { color: var(--red); }
+  .mom-bd-icon-ok { color: var(--green-ref); }
+  .mom-bd-icon-bad { color: var(--red-ref); }
   .mom-bd-icon-neutral { color: var(--muted); }
   .tech-stat-sub { color: var(--muted); font-size: 0.72rem; font-weight: 400; }
   /* ---- Swing setup grade card -------------------------------------------- */
   .setup-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  /* Not a pill (it's a square tile), but it takes the same alert tones --
+     see the .setup-grade.grade-* rules in the Badges section. */
   .setup-grade {
     flex: none; width: 44px; height: 44px; border-radius: 10px;
+    border: 1px solid transparent;
     display: flex; align-items: center; justify-content: center;
     font-size: 1.5rem; font-weight: 800; line-height: 1;
   }
-  .setup-grade.grade-a { color: var(--green); background: rgba(77, 224, 130, 0.16); border: 1px solid rgba(77, 224, 130, 0.5); }
-  .setup-grade.grade-b { color: var(--amber); background: rgba(255, 185, 83, 0.16); border: 1px solid rgba(255, 185, 83, 0.5); }
-  .setup-grade.grade-c { color: var(--muted); background: rgba(139, 145, 157, 0.16); border: 1px solid var(--border); }
   .setup-note { font-size: 0.82rem; line-height: 1.4; color: var(--text); }
   .setup-parts { display: flex; flex-wrap: wrap; gap: 8px; }
   .setup-part {
@@ -915,7 +1066,7 @@
   .setup-part-text { font-weight: 600; }
   .setup-earn {
     margin-top: 10px; font-size: 0.74rem; line-height: 1.4; color: var(--outline);
-    padding: 7px 10px; border-radius: 7px; background: rgba(255, 185, 83, 0.10); border: 1px solid rgba(255, 185, 83, 0.4);
+    padding: 7px 10px; border-radius: 7px; background: var(--wash-warn); border: 1px solid var(--line-warn);
   }
   .setup-earn-badge { color: var(--amber); font-weight: 700; margin-right: 4px; }
   .setup-disc { margin-top: 10px; font-size: 0.66rem; color: var(--muted); font-style: italic; }
@@ -935,8 +1086,8 @@
     font-size: 0.6rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
   }
   .tech-stat-val { font-size: 0.9rem; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
-  .tech-pos { color: var(--green); }
-  .tech-neg { color: var(--red); }
+  .tech-pos { color: var(--green-ref); }
+  .tech-neg { color: var(--red-ref); }
   .tech-div-note {
     font-size: 0.75rem; line-height: 1.4; margin-top: 8px;
     padding: 7px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border);
@@ -946,42 +1097,36 @@
     display: flex; align-items: center; gap: 10px;
     padding: 5px 10px; border-radius: 7px; font-variant-numeric: tabular-nums;
   }
-  .sr-res { background: rgba(255,180,171,0.10); }
-  .sr-sup { background: rgba(77,224,130,0.10); }
-  .sr-price { background: rgba(90,167,255,0.16); border: 1px solid var(--border); }
+  /* Whole-row washes: half strength. A ladder of six rows tinted at
+     pill strength turned the S/R list into the loudest block on the page
+     for what is only descriptive structure. */
+  .sr-res { background: var(--wash-neg); }
+  .sr-sup { background: var(--wash-pos); }
+  .sr-price { background: var(--wash-info); border: 1px solid var(--border); }
   .sr-side { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); min-width: 72px; }
   .sr-lvl { font-weight: 600; min-width: 8.5em; white-space: nowrap; }
   .sr-dist { font-size: 0.8rem; min-width: 3.6em; }
   .sr-why { flex: 1; color: var(--muted); font-size: 0.72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .sr-strength-badge {
-    font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.04em;
-    padding: 1px 7px; border-radius: 6px; white-space: nowrap;
-  }
-  .sr-str-strong { color: var(--green); background: rgba(77, 224, 130, 0.14); }
-  .sr-str-medium { color: var(--amber); background: rgba(255, 185, 83, 0.14); }
-  .sr-str-weak { color: var(--muted); background: rgba(139, 145, 157, 0.16); }
+  /* .sr-strength-badge shape + tone: pill primitive, reference register. */
   .sr-fib-caption { font-size: 0.68rem; color: var(--muted); margin-bottom: 6px; }
   .tech-empty { color: var(--muted); font-size: 0.82rem; }
 
   /* ---- Trend & triggers (Technical card primary view) --------------------*/
   .trend-regime { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 6px; }
-  .regime-badge { display: inline-block; border-radius: 999px; padding: 4px 14px; font-size: 0.9rem; font-weight: 700; }
-  .regime-up { background: rgba(77, 224, 130, 0.15); color: var(--green); border: 1px solid rgba(77, 224, 130, 0.4); }
-  .regime-down { background: rgba(255, 180, 171, 0.15); color: var(--red); border: 1px solid rgba(147, 0, 10, 0.55); }
-  .regime-neutral { background: rgba(255, 185, 83, 0.15); color: var(--amber); border: 1px solid rgba(255, 185, 83, 0.4); }
+  /* .regime-badge shape + tone: pill primitive, alert register (lg size). */
   .regime-sub { font-size: 0.72rem; color: var(--muted); font-family: var(--mono); }
   .regime-evi { font-size: 0.78rem; color: var(--muted); line-height: 1.5; margin-bottom: 14px; }
   .trend-callout { display: flex; align-items: flex-start; gap: 8px; border-radius: 10px; padding: 10px 12px; margin-bottom: 16px; font-size: 0.84rem; line-height: 1.45; }
-  .callout-up { background: rgba(77, 224, 130, 0.10); border: 1px solid rgba(77, 224, 130, 0.35); }
+  .callout-up { background: var(--wash-pos); border: 1px solid var(--line-pos); }
   .callout-up .co-arrow { color: var(--green); }
-  .callout-down { background: rgba(255, 180, 171, 0.10); border: 1px solid rgba(147, 0, 10, 0.5); }
+  .callout-down { background: var(--wash-neg); border: 1px solid var(--line-neg); }
   .callout-down .co-arrow { color: var(--red); }
   .co-arrow { font-size: 1rem; line-height: 1.2; flex-shrink: 0; }
   .trigger-ladder { display: flex; flex-direction: column; gap: 5px; }
   .trig-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; border-left: 3px solid transparent; background: rgba(255, 255, 255, 0.03); }
   .trig-up { border-left-color: var(--green); }
   .trig-down { border-left-color: var(--red); }
-  .trig-now { border-left-color: var(--primary); background: rgba(90, 167, 255, 0.14); }
+  .trig-now { border-left-color: var(--primary); background: var(--fill-info); }
   .trig-nearest { box-shadow: 0 0 0 1px rgba(192, 199, 211, 0.5) inset; }
   .trig-arrow { width: 14px; text-align: center; font-size: 0.8rem; flex-shrink: 0; }
   .trig-up .trig-arrow { color: var(--green); }
@@ -1084,9 +1229,82 @@
     margin-top: 8px;
   }
 
-  /* ---- View tabs (Analiz / Bilanço) -------------------------------------*/
+  /* ---- Disclosure (progressive detail) ------------------------------------
+     Two skins over one native <details>. There is no JS behind either --
+     which is why wireTechnical() no longer exists.
+
+       .card-accordion   an advisory card that ships collapsed. Its
+                         <summary> IS the card title, so a closed one reads
+                         as one more card in the stack, not as a widget.
+       .tech-disclosure  a section nested *inside* a card (the Technical
+                         card's momentum detail). Keeps the small mono pill
+                         its <button> used to be.
+
+     Shared: the browser's default triangle is suppressed in favour of a ▾
+     that flips on open, so both skins disclose the same way. */
+  details.card-accordion > summary.card-title,
+  details.tech-disclosure > summary.tech-toggle {
+    cursor: pointer;
+    list-style: none;
+  }
+  details.card-accordion > summary.card-title::-webkit-details-marker,
+  details.tech-disclosure > summary.tech-toggle::-webkit-details-marker {
+    display: none;
+  }
+  details.card-accordion > summary.card-title:focus-visible,
+  details.tech-disclosure > summary.tech-toggle:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
+  }
+
+  /* Card-level: the title row spans the card with the caret at the far
+     right. The 14px gap under a card title only earns its keep once there
+     is a body beneath it, so it appears on open. */
+  details.card-accordion > summary.card-title {
+    margin: 0;
+    justify-content: space-between;
+  }
+  details.card-accordion[open] > summary.card-title { margin-bottom: 14px; }
+  details.card-accordion > summary.card-title:hover { color: var(--text); }
+  details.card-accordion > summary.card-title::after {
+    content: "▾";
+    font-size: 0.8rem;
+    line-height: 1;
+  }
+  details.card-accordion[open] > summary.card-title::after { content: "▴"; }
+
+  /* In-card: the pill is unchanged; <summary> only needs a display that
+     isn't list-item. */
+  details.tech-disclosure > summary.tech-toggle { display: inline-block; }
+  details.tech-disclosure > summary.tech-toggle::after { content: " ▾"; }
+  details.tech-disclosure[open] > summary.tech-toggle::after { content: " ▴"; }
+
+  /* ---- Analysis page width -----------------------------------------------
+     720px is a reading measure -- right for the search shell and the error
+     card, too narrow for the analysis view, whose widest tables (Staged
+     Entry Plan, Sensitivity) run six to seven columns and whose small cards
+     pair up two per row. Applied by renderBody() rather than declared on
+     .page so those other two surfaces keep the narrow default; the swing
+     screener stays on the wider .page-wide, its table being wider still. */
+  .page-report { max-width: 960px; }
+
+  /* ---- Two-up row for small cards ----------------------------------------
+     Cards that are only a few lines each (Thesis Metric + Scenario Returns,
+     Cycle + LBO, Red Flags + Events) sit side by side instead of each
+     taking a full-width band of scroll. auto-fit collapses the row back to
+     one column when 300px per card no longer fits. The cards keep their own
+     margin-bottom, so the row gap is horizontal only. */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 0 16px;
+    align-items: start;
+  }
+
+  /* ---- View tabs (Değerleme / Zamanlama / Risk / Bilanço) ----------------*/
   .view-tabs {
     display: inline-flex;
+    max-width: 100%;
     border: 1px solid var(--border);
     border-radius: 999px;
     overflow: hidden;
@@ -1102,11 +1320,17 @@
     border: none;
     border-right: 1px solid var(--border);
     cursor: pointer;
+    white-space: nowrap;
   }
   .view-tab:last-child { border-right: none; }
   .view-tab.active {
     background: rgba(90, 167, 255, 0.18);
     color: var(--primary-light);
+  }
+  /* Four tabs no longer fit a phone at the desktop padding -- tighten
+     rather than wrap, since a wrapped pill row breaks the rounded ends. */
+  @media (max-width: 560px) {
+    .view-tab { padding: 8px 11px; font-size: 0.7rem; }
   }
 
   /* ---- Balance-sheet tab (reuses .sensitivity-table) --------------------*/
@@ -1117,30 +1341,14 @@
     white-space: nowrap;
   }
   .bs-table td.bs-num { font-variant-numeric: tabular-nums; }
-  .bs-pos { color: var(--green); }
-  .bs-neg { color: var(--red); }
-  .bs-warn { color: var(--amber); }
-  .bs-badge {
-    display: inline-block;
-    border-radius: 999px;
-    padding: 1px 8px;
-    font-size: 0.64rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-  }
-  .bs-badge-pos {
-    background: rgba(77, 224, 130, 0.15);
-    color: var(--green);
-    border: 1px solid rgba(77, 224, 130, 0.4);
-  }
-  .bs-badge-neg {
-    background: rgba(255, 180, 171, 0.15);
-    color: var(--red);
-    border: 1px solid rgba(147, 0, 10, 0.55);
-  }
-  .beat-pos { color: var(--green); font-weight: 700; }
-  .beat-neg { color: var(--red); font-weight: 700; }
+  /* Reported financials and the beat record are history, not a call to
+     act -- reference tones throughout. .bs-badge shape + tone come from
+     the pill primitive. */
+  .bs-pos { color: var(--green-ref); }
+  .bs-neg { color: var(--red-ref); }
+  .bs-warn { color: var(--amber-ref); }
+  .beat-pos { color: var(--green-ref); font-weight: 700; }
+  .beat-neg { color: var(--red-ref); font-weight: 700; }
 
   /* ---- Entry plan table (reuses .sensitivity-table/.sens-base) -----------*/
   .entry-plan-table td.entry-trigger {
@@ -1149,26 +1357,8 @@
     font-size: 0.72rem;
     line-height: 1.4;
   }
-  .entry-kind-tag {
-    display: inline-block;
-    border-radius: 999px;
-    padding: 1px 7px;
-    font-size: 0.62rem;
-    font-weight: 700;
-    margin-right: 6px;
-    white-space: nowrap;
-    vertical-align: middle;
-  }
-  .entry-kind-breakout {
-    background: rgba(77, 224, 130, 0.15);
-    color: var(--green);
-    border: 1px solid rgba(77, 224, 130, 0.4);
-  }
-  .entry-kind-dip {
-    background: rgba(255, 180, 171, 0.15);
-    color: var(--red);
-    border: 1px solid rgba(147, 0, 10, 0.55);
-  }
+  /* .entry-kind-tag shape + tone: pill primitive, alert register -- entry
+     triggers are one of the few things on the page the reader acts on. */
   .entry-plan-table tr.entry-note-row td {
     text-align: left;
     color: var(--amber);
@@ -1282,13 +1472,8 @@
     font-weight: 700;
     margin-bottom: 12px;
   }
-  .cycle-track {
-    position: relative;
-    height: 8px;
-    border-radius: 4px;
-    background: linear-gradient(to right, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.12));
-    border: 1px solid var(--border);
-  }
+  /* Shape/marker from the shared track-meter rules -- this reading needs no
+     zone tint at all, which is what "deliberately neutral" above asks for. */
   .cycle-mid {
     position: absolute;
     left: 50%;
@@ -1296,16 +1481,6 @@
     bottom: -3px;
     width: 1px;
     background: var(--border);
-  }
-  .cycle-marker {
-    position: absolute;
-    top: -5px;
-    width: 2px;
-    height: 18px;
-    background: var(--text);
-    transform: translateX(-1px);
-    border-radius: 1px;
-    box-shadow: 0 0 0 2px rgba(13, 20, 32, 0.7);
   }
   .cycle-ends {
     display: flex;
@@ -1343,20 +1518,10 @@
     font-size: 0.78rem;
     margin-top: 2px;
   }
-  .alert-box li .event-sev {
-    display: inline-block;
-    font-family: var(--mono);
-    font-size: 0.66rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    padding: 1px 6px;
-    border-radius: 4px;
-    margin-right: 6px;
-    vertical-align: middle;
-  }
-  .alert-box li.event-critical .event-sev { background: rgba(220, 38, 38, 0.18); color: #f87171; }
-  .alert-box li.event-warning  .event-sev { background: rgba(217, 119, 6, 0.18); color: #fbbf24; }
-  .alert-box li.event-info     .event-sev { background: rgba(148, 163, 184, 0.18); color: var(--muted); }
+  /* .event-sev shape + tone: pill primitive. These three used to carry
+     their own #f87171/#fbbf24 hues, off the token palette entirely; they
+     now sit on the same red/amber/neutral as everything else, with only
+     "critical" in the alert register. */
   .empty-note {
     font-size: 0.82rem;
     color: var(--muted);
@@ -1882,21 +2047,34 @@
         ", risksiz faiz " + escapeHtml(macroAsof.risk_free_source || "—")
       : "";
     // Name the price source actually used. It was hardcoded to "Stooq", which
-    // silently mislabelled every yfinance-fallback run; a "stale-cache(...)"
-    // source additionally means both upstreams were down and the price is
-    // known to be out of date, which the reader must see.
+    // silently mislabelled every yfinance run even before the Stooq path was
+    // removed altogether; a "stale-cache(...)" source additionally means the
+    // upstream was down and the price is known to be out of date, which the
+    // reader must see.
     // Whether the bytes came from disk is the reader's business only when the
-    // cache is STALE (both upstreams down); otherwise the "as of" date already
+    // cache is STALE (upstream down); otherwise the "as of" date already
     // conveys freshness, so the cache wrapper is unwrapped for display.
-    var rawSource = payload.price_source || "stooq";
+    var rawSource = payload.price_source || "yfinance";
     var isStale = /^stale-cache/.test(rawSource);
     var upstream = (rawSource.match(/\(([^)]+)\)/) || [null, rawSource])[1];
-    var priceSource = upstream === "stooq" ? "Stooq" : upstream;
+    // "unknown" is what a cache written before source markers existed reports.
+    var priceSource = upstream === "unknown" ? "kaynak kaydı yok" : upstream;
     var staleWarning = isStale
       ? ' <span class="bs-neg">⚠ fiyat kaynakları erişilemedi, önbellekteki eski fiyat kullanıldı</span>'
       : "";
+    // Sources whose closes are split-adjusted but NOT dividend-adjusted are
+    // used for technicals only; the valuation layer is handed no price frame
+    // at all (see prices.is_total_return_basis), so the reader must be told
+    // why the historical-multiples section is empty rather than guessing.
+    var TOTAL_RETURN_SOURCES = ["yfinance", "yahoo-chart"];
+    var basisWarning = (upstream && upstream !== "unknown" &&
+                        TOTAL_RETURN_SOURCES.indexOf(upstream) === -1)
+      ? ' <span class="bs-neg">⚠ yedek fiyat kaynağı: temettü düzeltmesi yok, ' +
+        'tarihsel çarpan yüzdelikleri hesaplanmadı (teknik göstergeler etkilenmedi)</span>'
+      : "";
     var sourceNote = "SEC EDGAR + " + escapeHtml(priceSource) +
-      (payload.as_of ? " · as of " + escapeHtml(payload.as_of) : "") + macroNote + staleWarning;
+      (payload.as_of ? " · as of " + escapeHtml(payload.as_of) : "") + macroNote +
+      staleWarning + basisWarning;
     var entityHtml = payload.entity_name
       ? '<span class="entity-name">' + escapeHtml(payload.entity_name) + '</span>'
       : "";
@@ -2772,7 +2950,7 @@
       '<div class="card">' +
         '<div class="card-title">' + escapeHtml(label) + '</div>' +
         '<div class="verdict-card-body">' +
-          '<div class="gauge"><div class="gauge-marker" style="left:' + pos + '%;">▲</div></div>' +
+          '<div class="gauge"><div class="gauge-marker" style="left:' + pos + '%;"></div></div>' +
           '<div><span class="badge badge-' + color + '">' + escapeHtml(verdictText || "—") + '</span></div>' +
           '<div class="verdict-note">' + escapeHtml(noteText || "—") + '</div>' +
         '</div>' +
@@ -3773,45 +3951,28 @@
       '<div class="card">' +
         '<div class="card-title">Technical</div>' +
         '<div class="verdict-card-body">' +
-          '<div class="gauge"><div class="gauge-marker" style="left:' + GAUGE_POSITION[color] + '%;">▲</div></div>' +
+          '<div class="gauge"><div class="gauge-marker" style="left:' + GAUGE_POSITION[color] + '%;"></div></div>' +
           '<div><span class="badge badge-' + color + '">' + escapeHtml(verdictText || "—") + '</span></div>' +
           (t.verdict_detail ? '<div class="verdict-note">' + escapeHtml(t.verdict_detail) + '</div>' : "") +
           regimeHtml +
           calloutHtml +
           ladderHtml +
-          '<button type="button" class="tech-toggle" aria-expanded="false">Momentum &amp; detaylar ▾</button>' +
-          '<div class="tech-details" hidden>' +
-            '<div class="tech-section-title">Momentum</div>' +
-            momSynthesisHtml +
-            rsiHtml +
-            '<div class="tech-stats">' + momentumTiles.join("") + '</div>' +
-            '<div class="tech-section-title">Trend &amp; Durum</div>' +
-            '<div class="tech-stats">' + trendTiles.join("") + '</div>' +
-            divNote +
-            (fibCaption ? '<div class="tech-section-title">Seviye ayrıntıları</div>' + fibCaption : "") +
-          '</div>' +
+          '<details class="tech-disclosure">' +
+            '<summary class="tech-toggle">Momentum &amp; detaylar</summary>' +
+            '<div class="tech-details">' +
+              '<div class="tech-section-title">Momentum</div>' +
+              momSynthesisHtml +
+              rsiHtml +
+              '<div class="tech-stats">' + momentumTiles.join("") + '</div>' +
+              '<div class="tech-section-title">Trend &amp; Durum</div>' +
+              '<div class="tech-stats">' + trendTiles.join("") + '</div>' +
+              divNote +
+              (fibCaption ? '<div class="tech-section-title">Seviye ayrıntıları</div>' + fibCaption : "") +
+            '</div>' +
+          '</details>' +
         '</div>' +
       '</div>'
     );
-  }
-
-  // Wire the collapsible momentum/detail section of the Technical card.
-  function wireTechnical() {
-    var btn = bodyEl.querySelector(".tech-toggle");
-    var det = bodyEl.querySelector(".tech-details");
-    if (!btn || !det) return;
-    btn.addEventListener("click", function () {
-      var opening = det.hasAttribute("hidden");
-      if (opening) {
-        det.removeAttribute("hidden");
-        btn.setAttribute("aria-expanded", "true");
-        btn.innerHTML = "Momentum &amp; detaylar ▴";
-      } else {
-        det.setAttribute("hidden", "");
-        btn.setAttribute("aria-expanded", "false");
-        btn.innerHTML = "Momentum &amp; detaylar ▾";
-      }
-    });
   }
 
   // ---- Sensitivity analysis card -------------------------------------------
@@ -4120,10 +4281,9 @@
     }
 
     if (items.length === 0) return "";
-    return (
-      '<div class="card"><div class="card-title">Risk Taramaları</div>' +
-        '<div class="alert-box"><ul>' + items.join("") + '</ul></div>' +
-      '</div>'
+    return accordionCardHtml(
+      "Risk Taramaları",
+      '<div class="alert-box"><ul>' + items.join("") + '</ul></div>'
     );
   }
 
@@ -4135,13 +4295,12 @@
   function lboFloorCardHtml(valuation) {
     var detail = (valuation || {}).lbo_floor_detail;
     if (!detail || !isNum(detail.per_share)) return "";
-    return (
-      '<div class="card"><div class="card-title">LBO Çapası</div>' +
-        '<div class="alert-box">' +
-          '<div>' + fmtMoney(detail.per_share) + ' <span class="item-detail">' +
-            '(bilgi amaçlı, manşete girmez -- disiplinli bir finansal alıcının bugün ' +
-            'ödeyebileceği en yüksek fiyat, salt borç-azaltma getirisiyle)</span></div>' +
-        '</div>' +
+    return accordionCardHtml(
+      "LBO Çapası",
+      '<div class="alert-box">' +
+        '<div>' + fmtMoney(detail.per_share) + ' <span class="item-detail">' +
+          '(bilgi amaçlı, manşete girmez -- disiplinli bir finansal alıcının bugün ' +
+          'ödeyebileceği en yüksek fiyat, salt borç-azaltma getirisiyle)</span></div>' +
       '</div>'
     );
   }
@@ -4391,7 +4550,7 @@
       bodyHtml = headHtml + scenariosHtml + notesHtml;
     }
 
-    return '<div class="card"><div class="card-title">LLM Kullanım Raporu</div>' + bodyHtml + '</div>';
+    return accordionCardHtml("LLM Kullanım Raporu", bodyHtml);
   }
 
   // ---- Footer analysis (catalyst + summary) --------------------------------
@@ -4409,6 +4568,32 @@
         '<p class="summary-text">' + escapeHtml(summary || "No summary available.") + '</p>' +
       '</div>'
     );
+  }
+
+  // ---- Accordion card ------------------------------------------------------
+  // A card that ships collapsed (see .card-accordion). Advisory readings --
+  // ones that inform but never move the headline verdict -- go through this
+  // so they stay one click away instead of costing every reader the vertical
+  // scroll. Returns "" for an empty body, so a reading that isn't in this
+  // payload never leaves a disclosure row with nothing behind it.
+  function accordionCardHtml(title, bodyHtml) {
+    if (!bodyHtml) return "";
+    return (
+      '<details class="card card-accordion">' +
+        '<summary class="card-title">' + title + '</summary>' +
+        bodyHtml +
+      '</details>'
+    );
+  }
+
+  // ---- Two-up card row -----------------------------------------------------
+  // Pairs small cards into a single grid row (see .card-grid). Any argument
+  // may be "" -- a card that didn't render for this payload is dropped, and
+  // a lone survivor is emitted bare rather than as a half-empty grid row.
+  function cardGridHtml() {
+    var parts = [].slice.call(arguments).filter(function (html) { return html; });
+    if (parts.length < 2) return parts.join("");
+    return '<div class="card-grid">' + parts.join("") + '</div>';
   }
 
   function globalFooterHtml() {
@@ -4678,11 +4863,16 @@
   // ===================================================================
   function renderBody(payload) {
     var result = payload.result || {};
+    var pageEl = document.querySelector(".page");
 
     if (result.error) {
+      // The error card is a single narrow box -- widening for it would just
+      // stretch one sentence across the viewport.
+      if (pageEl) pageEl.classList.remove("page-report");
       bodyEl.innerHTML = errorCardHtml(payload, result);
       return;
     }
+    if (pageEl) pageEl.classList.add("page-report");
 
     var fv = result.fair_value_range || {};
     var technical = payload.technical || {};
@@ -4692,60 +4882,83 @@
     // render in that case, degrading to the simpler pre-valuation card set.
     var valuation = result.valuation || null;
 
-    // The "Analiz" tab holds every existing analysis card; the header card
-    // stays above the tab bar so it's visible in both tabs.
-    var analizHtml =
-      swingSetupCardHtml(payload, result, technical) +
+    // Always-visible core, above the tab bar: what this is, how the two
+    // signal families are weighted, and the one-paragraph thesis. These
+    // three answer "should I care?" and are needed from every tab, so they
+    // don't belong inside any one of them.
+    var coreHtml =
+      headerCardHtml(payload) +
       weightBarHtml(result._weights) +
+      footerAnalysisHtml(result);
+
+    // -- Değerleme: what it's worth, and how that number was arrived at.
+    var degerlemeHtml =
       priceChartCardHtml(technical, result, payload.horizon, payload.analyst) +
       fanChartCardHtml(result, payload.price) +
       (valuation ? triangulationRowHtml(valuation, result.confidence) : "") +
       verdictCardHtml("Fundamental", result.fundamental_verdict, result.horizon_note) +
+      (valuation ? sensitivityTableHtml(valuation.sensitivity) : "") +
+      cardGridHtml(
+        thesisMetricHtml(result.thesis_metric),
+        scenarioReturnsListHtml(result.scenario_returns)
+      ) +
+      (valuation ? cycleCardHtml(valuation) : "") +
+      // Collapsed: an advisory floor that by construction never moves the
+      // headline fair value, so it doesn't get to interrupt the numbers
+      // that do. Full width rather than paired with Cycle -- a one-line
+      // closed accordion beside a tall card is a lopsided grid row.
+      (valuation ? lboFloorCardHtml(valuation) : "");
+
+    // -- Zamanlama: whether now is the moment, and what unwinds that.
+    // Profile Fit card intentionally removed from the UI for now (still
+    // computed in the payload; just not rendered).
+    var zamanlamaHtml =
+      swingSetupCardHtml(payload, result, technical) +
       momentumCardHtml(result) +
       technicalCardHtml(technical, result.technical_verdict || technical.verdict, payload.horizon) +
-      // Profile Fit card intentionally removed from the UI for now (still
-      // computed in the payload; just not rendered).
-      (valuation ? sensitivityTableHtml(valuation.sensitivity) : "") +
       entryPlanHtml(result.entry_plan) +
-      stopAddingHtml(result.stop_adding) +
-      thesisMetricHtml(result.thesis_metric) +
-      scenarioReturnsListHtml(result.scenario_returns) +
+      stopAddingHtml(result.stop_adding);
+
+    // -- Risk: what breaks the thesis. The two open cards are the ones tied
+    // to this filer right now; the two accordions below them are standing
+    // diagnostics that are worth having on file but not worth reading on
+    // every routine analysis.
+    var riskHtml =
+      cardGridHtml(flagsCardHtml(payload.red_flags), eventsCardHtml(result.events)) +
       (valuation ? distressFlagsCardHtml(valuation) : "") +
-      (valuation ? cycleCardHtml(valuation) : "") +
-      (valuation ? lboFloorCardHtml(valuation) : "") +
-      flagsCardHtml(payload.red_flags) +
-      eventsCardHtml(result.events) +
-      llmReportCardHtml(result) +
-      footerAnalysisHtml(result);
+      llmReportCardHtml(result);
 
     var html =
-      headerCardHtml(payload) +
+      coreHtml +
       '<div class="view-tabs" id="view-tabs">' +
-        '<button type="button" class="view-tab active" data-view="analiz">Analiz</button>' +
+        '<button type="button" class="view-tab active" data-view="degerleme">Değerleme</button>' +
+        '<button type="button" class="view-tab" data-view="zamanlama">Zamanlama</button>' +
+        '<button type="button" class="view-tab" data-view="risk">Risk</button>' +
         '<button type="button" class="view-tab" data-view="bilanco">Bilanço</button>' +
       '</div>' +
-      '<div id="view-analiz">' + analizHtml + '</div>' +
-      '<div id="view-bilanco" style="display:none;">' + financialsTabHtml(payload) + '</div>' +
+      '<div data-view-pane="degerleme">' + degerlemeHtml + '</div>' +
+      '<div data-view-pane="zamanlama" style="display:none;">' + zamanlamaHtml + '</div>' +
+      '<div data-view-pane="risk" style="display:none;">' + riskHtml + '</div>' +
+      '<div data-view-pane="bilanco" style="display:none;">' + financialsTabHtml(payload) + '</div>' +
       globalFooterHtml();
 
     bodyEl.innerHTML = html;
     wireFanChart(fv, result.scenario_returns);
     wirePriceRange(technical, result, payload.analyst);
-    wireTechnical();
     wireViewTabs();
   }
 
   // ===================================================================
-  // View-tab wiring: toggles the "Analiz" / "Bilanço" panes. The analysis
-  // pane (with its charts) starts visible so the fan/price SVGs, wired
-  // above, measure a laid-out element; the balance-sheet pane is inert
-  // markup so it needs no wiring of its own.
+  // View-tab wiring: shows the one [data-view-pane] matching the clicked
+  // tab and hides the rest, so adding a tab is a markup change only. The
+  // Değerleme pane (with its charts) starts visible so the fan/price SVGs,
+  // wired above, are laid out from the first paint; the other three are
+  // inert markup and need no wiring of their own.
   // ===================================================================
   function wireViewTabs() {
     var tabs = document.getElementById("view-tabs");
     if (!tabs) return;
-    var analizPane = document.getElementById("view-analiz");
-    var bilancoPane = document.getElementById("view-bilanco");
+    var panes = bodyEl.querySelectorAll("[data-view-pane]");
     tabs.addEventListener("click", function (e) {
       var btn = e.target.closest ? e.target.closest(".view-tab") : null;
       if (!btn) return;
@@ -4753,8 +4966,9 @@
       tabs.querySelectorAll(".view-tab").forEach(function (t) {
         t.classList.toggle("active", t === btn);
       });
-      if (analizPane) analizPane.style.display = (view === "analiz") ? "" : "none";
-      if (bilancoPane) bilancoPane.style.display = (view === "bilanco") ? "" : "none";
+      panes.forEach(function (pane) {
+        pane.style.display = (pane.getAttribute("data-view-pane") === view) ? "" : "none";
+      });
     });
   }
 

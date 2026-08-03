@@ -56,7 +56,7 @@ _INDEX_ALIASES = {
 _MIN_FIELDS = 4
 
 #: Dotted class-share tickers whose price-layer symbol uses a dash instead of
-#: a dot (Stooq's ``brk-b.us``, yfinance's ``BRK-B``). Handled generically in
+#: a dot (yfinance's ``BRK-B``). Handled generically in
 #: :func:`price_symbol` by replacing ``.`` with ``-``, so this constant only
 #: documents the convention -- no lookup table is needed.
 
@@ -150,8 +150,8 @@ def price_symbol(ticker: "str | None") -> str:
     """Map a constituent ticker to the symbol the price layer understands.
 
     Dotted class shares (e.g. ``"BRK.B"``, ``"BF.B"``) become dash-separated
-    (``"BRK-B"``, ``"BF-B"``), which is what both Stooq (``brk-b.us``) and
-    yfinance expect. Everything else is returned upper-cased and stripped,
+    (``"BRK-B"``, ``"BF-B"``), which is what yfinance expects. Everything
+    else is returned upper-cased and stripped,
     unchanged.
 
     Args:

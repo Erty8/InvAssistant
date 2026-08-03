@@ -95,7 +95,7 @@ def classify_hit(fundamental_verdict: Optional[str], rel_return: Optional[float]
 
 
 class _PriceCache:
-    """Fetch each ticker's full Stooq history at most once per run."""
+    """Fetch each ticker's full price history at most once per run."""
 
     def __init__(self, no_cache: bool = False):
         self._no_cache = no_cache

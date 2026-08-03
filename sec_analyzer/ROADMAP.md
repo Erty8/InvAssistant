@@ -26,7 +26,7 @@ değildir:
   - **Küçük evren:** ~20-30 isimlik bir izleme listesi istatistiksel güç
     sağlamaz; birkaç ismin sonucu medyanı savurur.
   - **Survivorship bias:** delisted/iflas etmiş şirketler ücretsiz fiyat
-    kaynaklarında (Stooq) yok; sepet otomatik olarak hayatta kalanlara kayar,
+    kaynağında (yfinance) yok; sepet otomatik olarak hayatta kalanlara kayar,
     bu da hit-rate'i yukarı yanlı gösterir.
   - **Tek rejim:** elde birkaç as-of tarihi var; bir parametreyi bu küçük,
     yanlı, tek-rejim örneğine göre ayarlamak gürültüye overfit olmak demektir —

@@ -69,7 +69,7 @@ def price_symbol(ticker: str) -> str:
     """Map a constituent ticker to the symbol the price layer understands.
 
     Dotted class shares (BRK.B, BF.B) become dash-separated (BRK-B, BF-B),
-    which is what both Stooq (`brk-b.us`) and yfinance expect. Everything
+    which is what yfinance expects. Everything
     else is returned upper-cased and stripped, unchanged."""
 ```
 

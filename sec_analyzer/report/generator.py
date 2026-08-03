@@ -152,7 +152,7 @@ def render_report_html(
             ``None``/empty if none fired.
         price: The latest market price per share, or ``None`` if unavailable.
         price_source: Which upstream produced the price history
-            (``"stooq"``/``"yfinance"``/``"cache(...)"``/``"stale-cache(...)"``),
+            (``"yfinance"``/``"cache(...)"``/``"stale-cache(...)"``),
             surfaced in the report's provenance line so it names the source
             actually used rather than a hardcoded one. ``None`` omits it.
         as_of: The date that ``price`` is as of (``"YYYY-MM-DD"``), or

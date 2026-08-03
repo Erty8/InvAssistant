@@ -100,7 +100,7 @@ def _make_price_stub(price_map: dict):
     def _fake(symbol, no_cache=False):
         if symbol not in price_map:
             raise ValueError(f"no stubbed price data for {symbol}")
-        return price_map[symbol], "stooq"
+        return price_map[symbol], "yfinance"
 
     return _fake
 

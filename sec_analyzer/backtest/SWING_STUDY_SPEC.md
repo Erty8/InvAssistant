@@ -37,7 +37,7 @@ backtest output), each study result carries an explicit
    the sample is biased toward survivors and every return figure is optimistic.
    Reconstructing point-in-time membership is future work, deliberately not in
    this stage.
-2. **Free-source price data.** Delisted tickers have no Stooq/yfinance history
+2. **Free-source price data.** Delisted tickers have no yfinance history
    at all, compounding (1).
 3. **No costs.** Returns are gross — no commission, no slippage, no borrow.
 4. **Overlapping observations.** Consecutive rebalance dates share price bars,
