@@ -174,8 +174,12 @@ def run_calibration(
         _fetch_submissions,
     )
 
-    # One (cached) FRED fetch for the whole basket in as-of mode.
-    fred_rate = _fetch_risk_free_asof(as_of, no_cache) if as_of is not None else None
+    # One (cached) FRED fetch for the whole basket -- the latest observation
+    # on a live run, the as-of one on a historical run. Fetched once here so
+    # every ticker in the basket is priced off the SAME risk-free rate; a
+    # per-ticker fetch could straddle a FRED update mid-run and make the
+    # basket's fair-value/price ratios incomparable.
+    fred_rate = _fetch_risk_free_asof(as_of, no_cache)
 
     rows: List[dict] = []
     for ticker in tickers:

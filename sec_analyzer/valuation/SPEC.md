@@ -1780,6 +1780,50 @@ ceiling in both places, and `sanity.validate_assumptions`/`clamp_assumptions`
 (Sec.3) still independently enforce it on whatever `terminal_growth` ends up
 in `assumptions`.
 
+### Risk-free source: live FRED DGS10, not only in as-of mode (2026-08-07)
+
+The risk-free rate is a **shared input to two separate engine mechanisms**:
+the CAPM cost of equity (`capm.compute_cost_of_equity`) and the
+terminal-growth anchor above. Both therefore move whenever it moves.
+
+Before this change, `fred_rate` was resolved **only when `as_of` was set**
+(`cli._fetch_risk_free_asof` short-circuited to `None` on a live run, and
+`web/app.py`/`calibrate.py` guarded their call sites the same way). The
+consequence was backwards: a *backtest* of 2022 was priced off the actual
+2022 DGS10 observation, while *today's* analysis was priced off
+`data/damodaran/erp.csv` — a hand-refreshed file that can be a year old.
+The point-in-time path was more current than the live path.
+
+**Rule now:** `fred_rate` is resolved on EVERY run.
+`fetch.fred.get_risk_free_asof(as_of=None)` returns the LATEST DGS10
+observation; a date returns the last observation on/before it (unchanged).
+
+What this does and does not change:
+
+- The **rules are untouched.** `min(risk_free, 4%)`, `sanity.
+  _TERMINAL_GROWTH_MAX`, the CAPM formula, the ERP-spread guard and every
+  discount-rate floor are exactly as specified above. Only the freshness of
+  one input changed.
+- The **precedence chain is untouched.** `damodaran.load_sector_data`
+  already ranks `fred_rate` first (Sec. "as-of mode / Macro"); a FRED outage
+  still degrades to `erp_history.csv` and then to `erp.csv`, so the engine
+  keeps working offline exactly as before. FRED is a preference, not a
+  dependency.
+- **Fair values do move.** Every stored verdict produced before this change
+  was priced off the archived risk-free rate; re-running the same ticker
+  will not reproduce it to the cent. This is a deliberate correction of a
+  stale input, not a recalibration — no threshold was tuned, and per
+  ROADMAP.md's "Backtest — tasarım ilkesi" no parameter here was chosen by
+  looking at outcomes.
+- `macro_asof` provenance (`risk_free_source`) already names the series and
+  observation date, so a report always shows which number was used and when
+  it was observed. That block is no longer as-of-only.
+
+Deliberately NOT changed: the ERP still comes from the static
+`erp.csv`/`erp_history.csv`, and sector betas/multiples remain the static
+Damodaran snapshot. Those have no free live series behind them; only the
+risk-free rate does.
+
 ### Hyper-grower discount-rate fade to a mature rate (normalization Work Package 3)
 
 The hyper-grower revenue-first DCF fades revenue growth and FCF margin
@@ -3598,12 +3642,15 @@ code path when it is `None`.
     "Limitations" below).
   - `fetch.fred.get_risk_free_asof(as_of, no_cache=False) -> Optional[dict]`
     returns `{"value_pct": float, "date": "YYYY-MM-DD", "series": "DGS10",
-    "source": "FRED DGS10"}` -- the last DGS10 observation on/before `as_of`
-    (walks backward through weekends/holidays) -- or `None` on any failure
-    (network, unparseable CSV, no observation before the cutoff). Never
-    raises. Cached on disk (`Config.RAW_DIR/fred_DGS10.csv`, 24h freshness
-    window); the series is append-only history so a stale cache is harmless
-    for a historical `as_of`.
+    "source": "FRED DGS10", ...}` -- the last DGS10 observation on/before
+    `as_of`, walking backward through weekends/holidays -- or `None` on any
+    failure (network, unparseable CSV, no observation before the cutoff).
+    Never raises. Cached on disk (`Config.RAW_DIR/fred_DGS10.csv`, 24h
+    freshness window); the series is append-only history so a stale cache is
+    harmless for a historical `as_of`. **`as_of=None` returns the latest
+    observation** and is the live-run path -- see "Risk-free source: live
+    FRED DGS10" above; this call is therefore no longer as-of-only, and
+    `macro_asof` provenance is emitted on live runs too.
 - **Filing signals:** `signals.events.detect_events(..., today=as_of)` and
   `fetch.filings.estimate_next_earnings(submissions, today=None)` (renamed
   reference-date parameter, defaults to `date.today()`) both take the as-of
@@ -3642,7 +3689,7 @@ code path when it is `None`.
 ```python
 normalize.normalizer.normalize_facts(facts_json, years=5, as_of=None) -> dict
 fetch.prices.slice_asof(df, as_of) -> pd.DataFrame
-fetch.fred.get_risk_free_asof(as_of, no_cache=False) -> Optional[dict]
+fetch.fred.get_risk_free_asof(as_of, no_cache=False) -> Optional[dict]   # as_of=None -> latest observation
 valuation.damodaran.load_sector_data(dir_path, as_of=None, fred_rate=None) -> Optional[dict]
 valuation.engine.run_valuation(..., as_of=None, fred_rate=None) -> dict
 interpret.analyzer.interpret(..., as_of=None, fred_rate=None) -> dict

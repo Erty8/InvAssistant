@@ -298,23 +298,42 @@ def _asof_fixture_dir(tmp_path):
     return str(tmp_path)
 
 
-def test_load_sector_data_as_of_none_matches_pre_change_shape_exactly(tmp_path):
-    """Regression guard: as_of=None (the default) must return the EXACT
-    current-value dict, with no "macro_asof" key at all -- byte-for-byte the
-    pre-as-of-feature shape."""
+def test_load_sector_data_as_of_none_without_fred_uses_archived_risk_free(tmp_path):
+    """With no ``fred_rate``, a live call still resolves the archived erp.csv
+    risk-free value -- the FRED-outage fallback path (SPEC.md "Risk-free
+    source: live FRED DGS10"). Provenance is emitted with a NULL ``as_of``,
+    which is what marks a live run."""
     dir_path = _asof_fixture_dir(tmp_path)
 
     result = load_sector_data(dir_path)
 
-    assert result == {
-        "multiples": [
-            {"industry": "Semiconductor", "pe": 28.4, "ps": 6.1, "pfcf": 24.7,
-             "growth": None, "peg": None, "beta": None},
-        ],
-        "erp": pytest.approx(4.23),
-        "risk_free": pytest.approx(4.20),
-    }
-    assert "macro_asof" not in result
+    assert result["multiples"] == [
+        {"industry": "Semiconductor", "pe": 28.4, "ps": 6.1, "pfcf": 24.7,
+         "growth": None, "peg": None, "beta": None},
+    ]
+    assert result["erp"] == pytest.approx(4.23)
+    assert result["risk_free"] == pytest.approx(4.20)
+    assert result["macro_asof"]["as_of"] is None
+    assert result["macro_asof"]["risk_free_source"] == "erp.csv (arşiv değeri — FRED alınamadı)"
+
+
+def test_load_sector_data_as_of_none_prefers_live_fred_over_archived_csv(tmp_path):
+    """A live run must price off the FRED observation, not the hand-refreshed
+    erp.csv value -- the whole point of the change: before it, a 2022 backtest
+    used the real 2022 yield while today's run used a possibly year-old CSV."""
+    dir_path = _asof_fixture_dir(tmp_path)
+
+    result = load_sector_data(
+        dir_path,
+        fred_rate={"value_pct": 3.11, "date": "2026-08-06", "series": "DGS10"},
+    )
+
+    assert result["risk_free"] == pytest.approx(3.11)
+    assert result["macro_asof"]["as_of"] is None
+    assert result["macro_asof"]["risk_free_source"] == "DGS10 (2026-08-06)"
+    # The ERP is deliberately NOT live-sourced: there is no free live series
+    # behind it, so it stays on the archived snapshot.
+    assert result["erp"] == pytest.approx(4.23)
 
 
 def test_load_sector_data_as_of_year_hit_uses_erp_history_row(tmp_path):

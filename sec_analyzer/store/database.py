@@ -84,6 +84,22 @@ _VERDICTS_EXTRA_COLUMNS: List[Tuple[str, str]] = [
     # assumptions for this run (ASSUMPTIONS_CACHE_SPEC.md Sec.1); NULL for
     # legacy rows and for live/script runs that did not use a cached set.
     ("assumption_set_id", "INTEGER"),
+    # Insider (SEC Form 4) activity label ("GÜÇLÜ ALIM" / "ALIM" / "NÖTR" /
+    # "SATIŞ" / "YOĞUN SATIŞ") from result["insider"]["verdict"]; the full
+    # activity dict lives in result_json. Context layer only -- like momentum,
+    # it never feeds the fair value.
+    ("insider_verdict", "TEXT"),
+    # Estimated next-earnings date (ISO) as of this analysis, from the
+    # catalyst estimate (fetch/filings.estimate_next_earnings). Stored as its
+    # own column purely so the portfolio overview can show "who reports next"
+    # without parsing result_json for every row.
+    ("catalyst_date", "TEXT"),
+    # The filer's SEC SIC code (from the submissions document). Denormalized
+    # here so the portfolio overview can classify a name into an industry
+    # sector without a network call -- the bundled index-constituent CSVs only
+    # cover S&P 500 / Nasdaq 100 members, so anything outside both indexes had
+    # no sector at all before this.
+    ("sic", "TEXT"),
 ]
 
 
@@ -294,6 +310,26 @@ def init_db(db_path: Optional[str] = None) -> None:
                     start_date   TEXT,
                     end_date     TEXT,
                     observations INTEGER NOT NULL,
+                    payload      TEXT NOT NULL
+                )
+                """
+            )
+
+            # Cross-sectional peer snapshots built from SEC's XBRL Frames API
+            # (sec_analyzer.screener.peers): per-sector distributions of
+            # filing-derived metrics across the bundled index universe. Same
+            # single-JSON-payload rationale as ``swing_scans`` -- a snapshot is
+            # a recomputable artifact keyed on a fiscal year, not a fundamental
+            # fact, and shredding ~11 sectors x 9 metrics into columns would buy
+            # nothing. ``year`` is the fiscal year the frames were pulled for.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS peer_snapshots (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    generated_at TEXT NOT NULL,
+                    year         INTEGER NOT NULL,
+                    universe     TEXT,
+                    covered      INTEGER,
                     payload      TEXT NOT NULL
                 )
                 """
@@ -540,6 +576,8 @@ def save_verdict(
     analyzed_at: Optional[str] = None,
     valuation: Optional[dict] = None,
     as_of: Optional[str] = None,
+    catalyst_date: Optional[str] = None,
+    sic: Optional[str] = None,
 ) -> int:
     """Append one analysis result to the ``verdicts`` history table.
 
@@ -571,6 +609,16 @@ def save_verdict(
             ``datetime.now().isoformat(timespec="seconds")``.
         as_of: Point-in-time cutoff (ISO ``"YYYY-MM-DD"``) when the analysis
             was run in as-of mode, or ``None`` for an ordinary live run.
+        catalyst_date: Estimated next-earnings date (ISO ``"YYYY-MM-DD"``)
+            from :func:`sec_analyzer.fetch.filings.estimate_next_earnings`,
+            or ``None``. Denormalized into its own column so the portfolio
+            overview can order names by upcoming earnings without reading
+            ``result_json``.
+        sic: The filer's SEC SIC code (``submissions["sic"]``), or ``None``.
+            Stored as text so a zero-padded code survives round-tripping;
+            consumers parse it to ``int`` themselves. Lets the portfolio
+            overview assign an industry sector to a filer outside the bundled
+            index-constituent CSVs.
         valuation: The dict returned by
             :func:`sec_analyzer.valuation.engine.run_valuation` (typically
             ``result.get("valuation")``), or ``None``. When given, populates
@@ -599,6 +647,8 @@ def save_verdict(
     valuation_json = json.dumps(valuation, ensure_ascii=False) if valuation else None
     momentum = result.get("momentum") or {}
     momentum_verdict = momentum.get("verdict") if isinstance(momentum, dict) else None
+    insider = result.get("insider") or {}
+    insider_verdict = insider.get("verdict") if isinstance(insider, dict) else None
     # Provenance of the phase-1 assumptions: the CLI stamps the cached set's
     # id into the result when a frozen/cached set was used (Sec.4); NULL
     # otherwise (live/script runs, legacy callers).
@@ -629,6 +679,9 @@ def save_verdict(
         as_of,
         momentum_verdict,
         assumption_set_id,
+        insider_verdict,
+        catalyst_date,
+        None if sic is None else str(sic),
     )
 
     init_db(db_path)
@@ -643,9 +696,9 @@ def save_verdict(
                     fv_bear_lo, fv_bear_hi, fv_base_lo, fv_base_hi, fv_bull_lo, fv_bull_hi,
                     result_json, confidence, sector_type, implied_growth,
                     fair_value_json, valuation_json, as_of, momentum_verdict,
-                    assumption_set_id
+                    assumption_set_id, insider_verdict, catalyst_date, sic
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 row,
             )
@@ -770,6 +823,7 @@ def load_financials(cik: str, db_path: Optional[str] = None) -> List[dict]:
 _VERDICT_HISTORY_COLUMNS = (
     "id, cik, ticker, analyzed_at, as_of, horizon, provider, price, "
     "fundamental_verdict, technical_verdict, profile_fit, momentum_verdict, "
+    "insider_verdict, catalyst_date, sic, "
     "fv_bear_lo, fv_bear_hi, fv_base_lo, fv_base_hi, fv_bull_lo, fv_bull_hi, "
     "confidence, sector_type, implied_growth, watch_note"
 )
@@ -815,6 +869,91 @@ def load_verdicts(
             (str(ticker), int(limit)),
         )
         return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def load_latest_verdicts(
+    db_path: Optional[str] = None, live_only: bool = True
+) -> List[dict]:
+    """Return one row per ticker: that ticker's most recent stored verdict.
+
+    Powers the portfolio-overview screen (``sec_analyzer.screener.overview``),
+    which is a dashboard over everything already analyzed rather than a
+    per-ticker history. Reads the same scalar columns as :func:`load_verdicts`
+    (no JSON blobs -- see :data:`_VERDICT_HISTORY_COLUMNS`).
+
+    "Most recent" is resolved by ``analyzed_at`` descending with the row ``id``
+    as the tie-breaker, so two verdicts written within the same second still
+    order deterministically (the ``id`` is monotonic on an append-only table).
+
+    Args:
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+        live_only: When ``True`` (default), point-in-time (as-of / backtest)
+            runs are excluded, so a backtest grid can't displace the live
+            verdict a ticker's dashboard row is meant to show.
+
+    Returns:
+        A list of plain ``dict`` rows, one per ticker, ordered by ticker.
+        Empty list when nothing has been analyzed yet.
+    """
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        where = "WHERE as_of IS NULL" if live_only else "WHERE 1=1"
+        cursor = conn.execute(
+            f"""
+            SELECT {_VERDICT_HISTORY_COLUMNS}
+            FROM verdicts v
+            {where}
+              AND v.id = (
+                  SELECT v2.id FROM verdicts v2
+                  WHERE v2.ticker = v.ticker COLLATE NOCASE
+                    {"AND v2.as_of IS NULL" if live_only else ""}
+                  ORDER BY v2.analyzed_at DESC, v2.id DESC
+                  LIMIT 1
+              )
+            ORDER BY v.ticker COLLATE NOCASE
+            """
+        )
+        return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def load_watchlist_tickers(
+    db_path: Optional[str] = None, live_only: bool = True
+) -> List[str]:
+    """Return every ticker that has at least one stored verdict, sorted.
+
+    This is the implicit watchlist: the set of names the user has actually
+    analyzed. Used as the default universe for the pre-earnings briefing
+    (``sec_analyzer.screener.preearnings``) so the command works with no
+    arguments instead of demanding a hand-maintained ticker file.
+
+    Never raises -- an unreadable/missing database yields an empty list, and
+    the caller reports "no watchlist" rather than crashing.
+    """
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+    except Exception:  # noqa: BLE001 - best-effort convenience helper
+        logger.warning("load_watchlist_tickers: could not open DB", exc_info=True)
+        return []
+    try:
+        where = "WHERE as_of IS NULL" if live_only else ""
+        cursor = conn.execute(
+            f"""
+            SELECT DISTINCT UPPER(ticker) AS ticker
+            FROM verdicts
+            {where}
+            ORDER BY ticker
+            """
+        )
+        return [row["ticker"] for row in cursor.fetchall() if row["ticker"]]
+    except Exception:  # noqa: BLE001 - best-effort convenience helper
+        logger.warning("load_watchlist_tickers failed", exc_info=True)
+        return []
     finally:
         conn.close()
 
@@ -1123,6 +1262,88 @@ def load_latest_swing_scan(db_path: Optional[str] = None, universe: Optional[str
             conn.close()
     except Exception:  # noqa: BLE001 - best-effort read, never fatal
         logger.warning("Failed to load latest swing scan", exc_info=True)
+        return None
+
+
+def save_peer_snapshot(snapshot: dict, db_path: Optional[str] = None) -> int:
+    """Persist a cross-sectional peer snapshot (``screener.peers``).
+
+    The full snapshot is stored verbatim as one JSON payload column, mirroring
+    :func:`save_swing_scan`'s rationale; ``generated_at``, ``year``,
+    ``universe`` and ``covered`` are pulled into their own columns purely so
+    the latest-snapshot lookup can order by recency without parsing JSON.
+
+    Returns the new row id, or ``0`` on failure. Never raises -- a snapshot
+    costs a dozen multi-megabyte SEC downloads to rebuild, so a transient DB
+    error must not be allowed to throw it away silently *and* crash the run.
+    """
+    snapshot = snapshot or {}
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+        try:
+            with conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO peer_snapshots (generated_at, year, universe, covered, payload)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot.get("generated_at"),
+                        int(snapshot.get("year") or 0),
+                        ",".join(snapshot.get("indexes") or []) or None,
+                        int(snapshot.get("covered") or 0),
+                        json.dumps(snapshot, ensure_ascii=False),
+                    ),
+                )
+                snapshot_id = cursor.lastrowid
+            logger.info(
+                "Saved peer snapshot for %s (%s companies covered) to %s",
+                snapshot.get("year"), snapshot.get("covered"), db_path or Config.DB_PATH,
+            )
+            return snapshot_id
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - a recomputable artifact, never fatal to lose
+        logger.warning("Failed to save peer snapshot", exc_info=True)
+        return 0
+
+
+def load_latest_peer_snapshot(
+    db_path: Optional[str] = None, year: Optional[int] = None
+) -> Optional[dict]:
+    """Return the most recently saved peer snapshot's payload, or ``None``.
+
+    Args:
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+        year: When given, restricts the lookup to snapshots built for that
+            fiscal year; ``None`` (default) returns the most recent snapshot
+            of any year.
+
+    Never raises -- a missing/unreadable snapshot simply means the analyze
+    path shows no peer comparison, which is the same degraded state as a
+    database that has never had one built.
+    """
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+        try:
+            if year is None:
+                row = conn.execute(
+                    "SELECT payload FROM peer_snapshots ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT payload FROM peer_snapshots WHERE year = ? ORDER BY id DESC LIMIT 1",
+                    (int(year),),
+                ).fetchone()
+            if row is None or not row["payload"]:
+                return None
+            return json.loads(row["payload"])
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - best-effort read, never fatal
+        logger.warning("Failed to load latest peer snapshot", exc_info=True)
         return None
 
 

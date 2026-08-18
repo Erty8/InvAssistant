@@ -4415,14 +4415,26 @@ def _run_valuation(
         fred_rate=fred_rate,
     )
     risk_free_pct = sector_data.get("risk_free") if sector_data else None
-    if as_of is not None and sector_data and sector_data.get("macro_asof"):
+    # Macro provenance is emitted on EVERY run, not just as-of ones: the
+    # risk-free rate is now read live from FRED (SPEC.md "Risk-free source:
+    # live FRED DGS10"), so it moves between runs and the note is what lets a
+    # reader reproduce a given fair value. `macro_asof["as_of"]` is None on a
+    # live run, which is how the two phrasings are told apart.
+    if sector_data and sector_data.get("macro_asof"):
         macro_asof = sector_data["macro_asof"]
-        notes.append(
-            f"Geçmiş tarih (as-of) modu: {macro_asof['as_of']} itibarıyla — "
-            f"ERP kaynağı: {macro_asof['erp_source']}; risksiz faiz kaynağı: "
-            f"{macro_asof['risk_free_source']}; çarpan/beta kaynağı: "
-            f"{macro_asof.get('multiples_source', 'multiples.csv')}."
-        )
+        if macro_asof.get("as_of"):
+            notes.append(
+                f"Geçmiş tarih (as-of) modu: {macro_asof['as_of']} itibarıyla — "
+                f"ERP kaynağı: {macro_asof['erp_source']}; risksiz faiz kaynağı: "
+                f"{macro_asof['risk_free_source']}; çarpan/beta kaynağı: "
+                f"{macro_asof.get('multiples_source', 'multiples.csv')}."
+            )
+        else:
+            notes.append(
+                f"Makro kaynaklar — risksiz faiz: {macro_asof['risk_free_source']}; "
+                f"ERP: {macro_asof['erp_source']}; çarpan/beta: "
+                f"{macro_asof.get('multiples_source', 'multiples.csv')}."
+            )
         # Surface any anachronism warnings (current snapshot substituted for a
         # missing historical one) directly in the valuation notes.
         for warning in macro_asof.get("warnings") or []:
@@ -5313,9 +5325,11 @@ def _run_valuation(
         "cycle": cycle,
         "assumptions": assumptions,
         "notes": notes,
+        # Present on live runs too (``as_of: None`` inside marks them) so the
+        # risk-free observation behind a stored verdict is always recoverable.
         **(
             {"macro_asof": sector_data["macro_asof"]}
-            if as_of is not None and sector_data and sector_data.get("macro_asof")
+            if sector_data and sector_data.get("macro_asof")
             else {}
         ),
     }

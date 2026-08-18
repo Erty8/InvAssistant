@@ -299,6 +299,39 @@ def render_history_page(
     return _inject_payload(payload)
 
 
+def render_overview_page(overview: Optional[dict]) -> str:
+    """Build the portfolio-overview dashboard HTML.
+
+    The ``GET /overview`` counterpart to :func:`render_report_html` /
+    :func:`render_search_page` / :func:`render_history_page` /
+    :func:`render_swing_page`: loads the same ``template.html`` shell but
+    injects a ``mode: "overview"`` payload the client-side ``renderOverviewMode``
+    renders as a sector heat map plus a sortable table of every ticker that has
+    a stored verdict.
+
+    Args:
+        overview: The dict returned by
+            :func:`sec_analyzer.screener.overview.build_overview` -- built
+            from :func:`sec_analyzer.store.database.load_latest_verdicts` by
+            the route. ``None`` (or an empty payload) renders an empty state
+            rather than crashing, so a database with no stored verdicts yet
+            still serves a page.
+
+    Returns:
+        The complete, self-contained overview-page HTML as a string.
+
+    Raises:
+        ValueError: If ``template.html`` is missing the ``__DATA_JSON__``
+            placeholder (a packaging error).
+    """
+    payload = {
+        "mode": "overview",
+        "overview": overview or {},
+        "generated_on": date.today().isoformat(),
+    }
+    return _inject_payload(payload)
+
+
 def render_swing_page(
     scan: Optional[dict],
     index: str = "SP500",

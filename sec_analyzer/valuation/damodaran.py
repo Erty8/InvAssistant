@@ -238,10 +238,34 @@ def load_sector_data(
     if as_of is None:
         if not parsed_multiples and current_erp is None and current_risk_free is None:
             return None
+        # Live mode also prefers the FRED observation over the archived
+        # erp.csv risk-free value (SPEC.md "Risk-free source: live FRED
+        # DGS10"). Before this, only as-of runs consulted `fred_rate`, so a
+        # backtest of 2022 used the real 2022 yield while today's analysis
+        # used a hand-refreshed CSV that could be a year stale.
+        live_fred = fred_rate.get("value_pct") if isinstance(fred_rate, dict) else None
+        if live_fred is not None:
+            risk_free_value = live_fred
+            rf_date = fred_rate.get("date")
+            rf_series = fred_rate.get("series") or "FRED"
+            risk_free_source = f"{rf_series} ({rf_date})" if rf_date else str(rf_series)
+        else:
+            risk_free_value = current_risk_free
+            risk_free_source = "erp.csv (arşiv değeri — FRED alınamadı)"
+        # Provenance is emitted on live runs too, not just as-of runs: now
+        # that the risk-free rate moves daily, "which rate was used and when
+        # was it observed" is what makes a stored verdict reproducible. The
+        # null `as_of` is what tells a consumer this is a live run.
         return {
             "multiples": parsed_multiples or None,
             "erp": current_erp,
-            "risk_free": current_risk_free,
+            "risk_free": risk_free_value,
+            "macro_asof": {
+                "as_of": None,
+                "erp_source": "erp.csv (güncel değer)",
+                "risk_free_source": risk_free_source,
+                "multiples_source": "multiples.csv (güncel snapshot)",
+            },
         }
 
     # --- Point-in-time (as-of) macro resolution ---

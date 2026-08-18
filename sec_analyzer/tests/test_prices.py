@@ -536,6 +536,15 @@ def test_prefer_live_falls_back_to_the_settled_cache_when_the_fetch_fails(
 
     monkeypatch.setattr(prices, "session_in_progress", lambda *_a, **_k: True)
     monkeypatch.setitem(sys.modules, "yfinance", None)  # ImportError on import
+    # Disabling yfinance only knocks out the FIRST tier; the chain then tries
+    # the Yahoo chart endpoint and Nasdaq. Those must be stubbed too, or this
+    # test's outcome depends on whether two third-party hosts happen to answer
+    # -- which is not what it is trying to assert.
+    def _upstream_down(ticker):
+        raise prices.PriceDataError(f"stubbed upstream failure for {ticker}")
+
+    monkeypatch.setattr(prices, "_fetch_yahoo_chart", _upstream_down)
+    monkeypatch.setattr(prices, "_fetch_nasdaq", _upstream_down)
 
     df, source = prices.get_price_history("FAKE", prefer_live=True)
 

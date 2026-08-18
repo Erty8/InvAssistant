@@ -1,18 +1,27 @@
 """Command-line entry point for sec_analyzer.
 
-Two subcommands:
+Per-ticker subcommands:
 
 * ``fetch TICKER`` -- resolve the ticker to a CIK, pull SEC XBRL company
   facts, normalize them, compute ratios, print both, and persist everything
   to the local SQLite database.
 * ``analyze TICKER`` -- everything ``fetch`` does, plus price/technical data,
-  valuation metrics, red flags, an earnings-date estimate, and a full
-  fundamental+technical interpretation (fair-value range, verdicts,
-  cyclicality, and a summary) from a selectable backend: the local Claude Code
-  CLI (`claude -p`, subscription billing; default), a local Ollama/Gemma
-  model, or a deterministic script-based (no-AI) analyzer. The result is
-  printed as a compact Turkish-language verdict card and, optionally, saved as
-  a standalone HTML report.
+  valuation metrics, red flags, an earnings-date estimate, recent 8-K events,
+  SEC Form 4 insider activity, and a full fundamental+technical interpretation
+  (fair-value range, verdicts, cyclicality, and a summary) from a selectable
+  backend: the local Claude Code CLI (`claude -p`, subscription billing;
+  default), a local Ollama/Gemma model, or a deterministic script-based
+  (no-AI) analyzer. The result is printed as a compact Turkish-language
+  verdict card and, optionally, saved as a standalone HTML report.
+
+Portfolio-level subcommands, both of which read back what has already been
+analyzed rather than running a new valuation:
+
+* ``overview`` -- network-free dashboard over every ticker with a stored
+  verdict: sector heat map, per-name fair-value gap, staleness, upcoming
+  earnings, and verdict drift.
+* ``preearnings`` -- which watchlist names report soon, and what the stored
+  analysis currently says about each of them.
 
 Usage::
 
@@ -20,6 +29,8 @@ Usage::
     python -m sec_analyzer.cli analyze AAPL
     python -m sec_analyzer.cli analyze AAPL --horizon 5y --provider script
     python -m sec_analyzer.cli analyze AAPL --html
+    python -m sec_analyzer.cli overview
+    python -m sec_analyzer.cli preearnings --within 14
 
 Only the official SEC EDGAR API and (for ``analyze`` with the ``claude_code``
 or ``ollama`` providers) a local LLM are used for financial statement data --
@@ -49,7 +60,8 @@ from sec_analyzer.fetch.analyst import get_analyst_targets
 from sec_analyzer.fetch.companyfacts import get_company_facts, get_submissions
 from sec_analyzer.fetch.earnings import get_earnings_history
 from sec_analyzer.fetch.filings import estimate_next_earnings
-from sec_analyzer.fetch.fred import get_risk_free_asof
+from sec_analyzer.fetch.insider import get_insider_transactions
+from sec_analyzer.fetch.fred import get_macro_panel, get_risk_free_asof
 from sec_analyzer.fetch.prices import (
     PriceDataError,
     drop_unsettled_bars,
@@ -68,9 +80,23 @@ from sec_analyzer.normalize.red_flags import detect_red_flags
 from sec_analyzer.report.financials import serialize_financials
 from sec_analyzer.report.generator import generate_report
 from sec_analyzer.interpret import planning, rule_based
+from sec_analyzer.screener.overview import build_overview, sector_type_label
+from sec_analyzer.screener.peers import (
+    build_peer_snapshot,
+    metrics_from_normalized,
+    rank_against_peers,
+    resolve_sector,
+)
+from sec_analyzer.screener.preearnings import (
+    DEFAULT_WITHIN_DAYS,
+    format_surprise_pct,
+    scan_preearnings,
+)
 from sec_analyzer.screener.swing_scan import DEFAULT_MAX_WORKERS, scan_swing
 from sec_analyzer.screener.universe import load_universe, normalize_index
 from sec_analyzer.signals.events import detect_events, summarize_events
+from sec_analyzer.signals.insider import detect_insider_activity, summarize_insider
+from sec_analyzer.signals.macro import build_macro_context, summarize_macro
 from sec_analyzer.store import assumptions as assumptions_store
 from sec_analyzer.valuation import damodaran
 from sec_analyzer.valuation.capm import compute_cost_of_equity
@@ -82,9 +108,13 @@ from sec_analyzer.signals.momentum import (
     synthesize_momentum,
 )
 from sec_analyzer.store.database import (
+    load_latest_peer_snapshot,
+    load_latest_verdicts,
     load_prior_live_verdict,
     load_verdicts,
+    load_watchlist_tickers,
     save_normalized,
+    save_peer_snapshot,
     save_prices,
     save_swing_scan,
     save_verdict,
@@ -401,18 +431,29 @@ def _fetch_earnings_history(ticker: str, no_cache: bool) -> Optional[dict]:
 
 
 def _fetch_risk_free_asof(as_of, no_cache: bool) -> Optional[dict]:
-    """Best-effort historical risk-free rate (FRED DGS10) for as-of mode; never raises.
+    """Best-effort risk-free rate (FRED DGS10); never raises.
 
-    Thin wrapper over :func:`sec_analyzer.fetch.fred.get_risk_free_asof` so a
-    FRED outage degrades to the archived ERP/risk-free fallback rather than
-    blocking ``analyze``.
+    ``as_of=None`` (an ordinary live run) asks for the LATEST observation;
+    an as-of date asks for the last observation on/before it.
+
+    Live runs used to skip FRED entirely and let the risk-free rate fall
+    through to the archived ``data/damodaran/erp.csv`` value -- which meant a
+    backtest of 2022 was priced off the real 2022 yield while *today's*
+    analysis was priced off a hand-refreshed CSV that could be a year stale.
+    Since the risk-free rate feeds both the CAPM cost of equity and the
+    terminal-growth anchor (SPEC.md "Terminal-growth anchor"), that stale
+    input moved every fair value the engine produced. Preferring the live
+    series here changes no RULE -- only the freshness of its input -- and
+    `damodaran.load_sector_data` already ranks ``fred_rate`` above the CSV,
+    so a FRED outage still degrades to the archived value exactly as before.
     """
-    if as_of is None:
-        return None
     try:
         return get_risk_free_asof(as_of, no_cache=no_cache)
     except Exception:  # noqa: BLE001 - macro fetch must never be fatal
-        logger.warning("Could not fetch FRED risk-free rate for as-of %s", as_of, exc_info=True)
+        logger.warning(
+            "Could not fetch FRED risk-free rate (as_of=%s); falling back to "
+            "the archived erp.csv value.", as_of, exc_info=True,
+        )
         return None
 
 
@@ -491,6 +532,125 @@ def _detect_filing_events(submissions: Optional[dict], as_of=None) -> List[dict]
         max_events=_EVENTS_MAX,
         today=as_of,
     )
+
+
+#: Lookback window (days) for the SEC Form 4 insider-activity signal, and the
+#: cap on how many Form 4 documents one run will download. Six months is long
+#: enough for a cluster of buys to form and short enough that last year's
+#: compensation cycle doesn't drown out this quarter's conviction.
+_INSIDER_LOOKBACK_DAYS = 180
+_INSIDER_MAX_FILINGS = 40
+
+
+def _fetch_insider_activity(
+    cik: str, ticker: str, submissions: Optional[dict], no_cache: bool, as_of=None
+) -> Optional[dict]:
+    """Best-effort SEC Form 4 insider-activity signal; never raises.
+
+    Reuses the ``submissions`` document :func:`_fetch_submissions` already
+    fetched for this run to locate the recent Form 4 filings, then downloads
+    and parses each one's raw ownership XML (cached per accession, since a
+    filed document is immutable -- see :mod:`sec_analyzer.fetch.insider`).
+    Deterministic and LLM-free; context only, never an input to the fair
+    value. ``as_of`` is the point-in-time reference date, so a backtest run
+    only sees filings that existed on that date.
+    """
+    if not submissions:
+        return None
+    try:
+        client = SecHttpClient()
+        fetched = get_insider_transactions(
+            cik,
+            submissions,
+            client,
+            lookback_days=_INSIDER_LOOKBACK_DAYS,
+            max_filings=_INSIDER_MAX_FILINGS,
+            no_cache=no_cache,
+            today=as_of,
+        )
+        return detect_insider_activity(
+            fetched, lookback_days=_INSIDER_LOOKBACK_DAYS, today=as_of
+        )
+    except Exception:  # noqa: BLE001 - insider context is display-only, never fatal
+        logger.warning("Could not fetch insider activity for %s", ticker, exc_info=True)
+        return None
+
+
+def _base_terminal_growth(result: dict) -> Optional[float]:
+    """Pull the base scenario's terminal growth out of a valuation result.
+
+    Only used to give the macro layer something to cross-check against the
+    market's priced inflation expectation. Returns ``None`` for any shape it
+    doesn't recognize -- the cross-check is then simply omitted.
+    """
+    try:
+        base = ((result.get("valuation") or {}).get("assumptions") or {}).get("base") or {}
+        value = base.get("terminal_growth")
+        return float(value) if isinstance(value, (int, float)) else None
+    except Exception:  # noqa: BLE001 - a display cross-check must never be fatal
+        return None
+
+
+def _attach_macro(result: dict, as_of, no_cache: bool) -> None:
+    """Attach the rates/credit macro context to ``result``; never raises.
+
+    Context only -- SPEC.md's rules are untouched by anything here. The one
+    place macro data DOES reach the numbers is the risk-free rate, and that
+    goes through `_fetch_risk_free_asof` -> `damodaran.load_sector_data`
+    entirely separately from this block. Attached post-``interpret`` (like
+    events/insider/momentum) so it never enters an LLM payload.
+    """
+    try:
+        panel = get_macro_panel(as_of=as_of, no_cache=no_cache)
+        context = build_macro_context(panel, terminal_growth=_base_terminal_growth(result))
+        if context is not None:
+            result["macro"] = context
+    except Exception:  # noqa: BLE001 - macro context is display-only, never fatal
+        logger.warning("Could not build macro context", exc_info=True)
+
+
+def _attach_peers(
+    result: dict, ticker: str, cik: str, submissions: Optional[dict],
+    normalized: dict, ratios: list, metrics: dict, as_of=None,
+) -> None:
+    """Attach the cross-sectional peer comparison to ``result``; never raises.
+
+    Reads the most recent stored peer snapshot (built offline by
+    ``cli peers --refresh``) -- no network here, so an analysis never waits on
+    a dozen multi-megabyte Frames downloads. When no snapshot has been built
+    yet, the comparison is simply absent.
+
+    **Point-in-time guard.** A peer snapshot is keyed on a fiscal year, so an
+    as-of run must not be ranked against a snapshot built from filings that
+    did not exist on the cutoff date -- that is hindsight leakage of exactly
+    the kind the backtest layer is designed to avoid. In as-of mode we
+    therefore look for a snapshot of the last fiscal year that had completed
+    by the cutoff, and attach nothing when there isn't one, rather than
+    silently falling back to the newest snapshot.
+
+    Context only: this never feeds the fair value, the triangulation signals
+    or ``sector_ratio`` (see ``screener/peers.py`` and SPEC.md Sec.6/7, which
+    are deliberately NOT amended for this layer).
+    """
+    try:
+        if as_of is not None:
+            snapshot = load_latest_peer_snapshot(
+                db_path=Config.DB_PATH, year=as_of.year - 1
+            )
+        else:
+            snapshot = load_latest_peer_snapshot(db_path=Config.DB_PATH)
+        if not snapshot:
+            return
+        sic = (submissions or {}).get("sic")
+        sector = resolve_sector(ticker=ticker, cik=cik, sic=sic, snapshot=snapshot)
+        if not sector:
+            return
+        own = metrics_from_normalized(normalized, ratios, metrics)
+        ranked = rank_against_peers(own, sector, snapshot)
+        if ranked is not None:
+            result["peers"] = ranked
+    except Exception:  # noqa: BLE001 - peer context is display-only, never fatal
+        logger.warning("Could not build peer comparison for %s", ticker, exc_info=True)
 
 
 def _save_price_rows(cik: str, price_df) -> None:
@@ -1416,6 +1576,21 @@ def _print_verdict_card(
     events_line = summarize_events(result.get("events") or [])
     print(f"{'Olaylar:'.ljust(_CARD_LABEL_WIDTH)}{events_line}")
 
+    insider = result.get("insider")
+    print(f"{'İçeriden:'.ljust(_CARD_LABEL_WIDTH)}{summarize_insider(insider)}")
+    if isinstance(insider, dict) and insider.get("note"):
+        print(f"  {insider['note']}")
+
+    peers = result.get("peers")
+    if isinstance(peers, dict):
+        print(f"{'Emsal:'.ljust(_CARD_LABEL_WIDTH)}{peers.get('note') or _DASH}")
+
+    macro = result.get("macro")
+    if isinstance(macro, dict):
+        print(f"{'Makro:'.ljust(_CARD_LABEL_WIDTH)}{summarize_macro(macro)}")
+        for note in macro.get("notes") or []:
+            print(f"  {note}")
+
     print(f"{'Katalizör:'.ljust(_CARD_LABEL_WIDTH)}{result.get('catalyst') or _DASH}")
 
     summary = result.get("summary")
@@ -1479,6 +1654,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     submissions = _fetch_submissions(cik, args.ticker, args.no_cache)
     catalyst = _fetch_catalyst(submissions, args.ticker, as_of)
     events = _detect_filing_events(submissions, as_of)
+    insider = _fetch_insider_activity(cik, args.ticker, submissions, args.no_cache, as_of)
     # Now that the SIC is known, fold in sector-relative strength and recompute
     # the composite momentum score with it (SPY-only momentum is already set).
     _enrich_sector_momentum(args.ticker, technical, price_df, submissions, args.no_cache, as_of)
@@ -1533,6 +1709,11 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     # the HTML report, which reads result.events.
     if isinstance(result, dict):
         result["events"] = events
+        # Insider (Form 4) activity is the same kind of fact as `events`: SEC
+        # filing metadata classified deterministically, attached after
+        # interpret() so it never enters the LLM payload or the fair value.
+        if insider is not None:
+            result["insider"] = insider
         if as_of is not None:
             result["as_of"] = as_of.isoformat()
         # Momentum context layer (price + fundamental + verdict momentum),
@@ -1541,6 +1722,11 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         # save_verdict so the persisted verdict carries the momentum label.
         if "error" not in result:
             _attach_momentum(result, args.ticker, normalized, technical, as_of)
+            _attach_macro(result, as_of, args.no_cache)
+            _attach_peers(
+                result, args.ticker, cik, submissions, normalized, ratios, metrics,
+                as_of=as_of,
+            )
 
     if "error" in result:
         print(
@@ -1556,6 +1742,8 @@ def cmd_analyze(args: argparse.Namespace) -> None:
                 args.ticker, cik, horizon, verdict_provider or provider, price, result,
                 db_path=Config.DB_PATH, valuation=result.get("valuation"),
                 as_of=as_of.isoformat() if as_of is not None else None,
+                catalyst_date=(catalyst or {}).get("estimate_date"),
+                sic=(submissions or {}).get("sic"),
             )
         except Exception:  # noqa: BLE001 - persistence failure must not be fatal
             logger.warning("Failed to save verdict for %s", args.ticker, exc_info=True)
@@ -2356,6 +2544,426 @@ def cmd_assumptions(args: argparse.Namespace) -> None:
         print("Usage: assumptions {propose|show|edit|freeze} TICKER ...", file=sys.stderr)
 
 
+#: Column widths for the portfolio-overview terminal table: ticker, sector,
+#: verdict, price, fair value (base band mid), gap %, confidence, momentum,
+#: insider, age. The verdict column is sized for the longest label the engine
+#: actually emits ("MODEL-PİYASA AYRIŞMASI"); the valuation route is not a
+#: column here because it already has its own summary table above.
+_OVERVIEW_COL_WIDTHS = [8, 19, 24, 11, 11, 9, 8, 10, 12, 5]
+
+#: Column widths for the pre-earnings briefing tables: ticker, date, days,
+#: verdict, gap %, momentum, beat record, verdict age. The verdict column is
+#: sized for the longest label the engine emits ("MODEL-PİYASA AYRIŞMASI").
+_PREEARNINGS_COL_WIDTHS = [8, 13, 7, 24, 10, 10, 9, 6]
+
+#: Cap on how many per-name observation blocks the briefing prints before
+#: summarizing the rest. A full watchlist run can match dozens of names, and a
+#: briefing nobody reads to the end is not a briefing.
+_PREEARNINGS_MAX_NOTE_BLOCKS = 20
+
+
+def _fmt_pct(value: Optional[float], decimals: int = 1) -> str:
+    """Render a percentage with an explicit sign, or the em-dash placeholder."""
+    if value is None:
+        return _DASH
+    return f"{value:+.{decimals}f}%"
+
+
+def _fmt_price(value: Optional[float]) -> str:
+    """Render a price, or the em-dash placeholder for a missing one."""
+    return _DASH if value is None else f"{value:,.2f}"
+
+
+def _print_overview_table(overview: dict) -> None:
+    """Print the portfolio overview: the sector heat map, then one row per
+    analyzed ticker, then the stale / upcoming-earnings / drift call-outs.
+
+    Everything here is read back from stored verdicts -- no network, no
+    valuation is re-run, so the numbers are exactly what the last analysis of
+    each name produced.
+    """
+    rows = overview.get("rows") or []
+    print(
+        f"\nPortföy Genel Bakış — {overview.get('today') or _DASH} — "
+        f"{overview.get('count', 0)} hisse "
+        f"(medyan makul-değer/fiyat farkı: {_fmt_pct(overview.get('median_fv_vs_price_pct'))})"
+    )
+
+    sectors = overview.get("sectors") or []
+    if sectors:
+        print("\n[Sektör ısı haritası]")
+        print(f"{'Sektör':<28}{'n':>4}{'Medyan fark':>14}{'Ucuz':>7}{'Makul':>7}{'Pahalı':>8}{'Bayat':>7}")
+        print("-" * 75)
+        for sector in sectors:
+            print(
+                f"{str(sector.get('label') or _DASH)[:27]:<28}"
+                f"{sector.get('n', 0):>4}"
+                f"{_fmt_pct(sector.get('median_fv_vs_price_pct')):>14}"
+                f"{sector.get('cheap_n', 0):>7}"
+                f"{sector.get('fair_n', 0):>7}"
+                f"{sector.get('expensive_n', 0):>8}"
+                f"{sector.get('stale_n', 0):>7}"
+            )
+
+    routes = overview.get("routes") or []
+    if routes:
+        print("\n[Değerleme yoluna göre]")
+        print(f"{'Yol':<22}{'n':>4}{'Medyan fark':>14}{'Ucuz':>7}{'Makul':>7}{'Pahalı':>8}")
+        print("-" * 62)
+        for route in routes:
+            print(
+                f"{str(route.get('label') or _DASH)[:21]:<22}"
+                f"{route.get('n', 0):>4}"
+                f"{_fmt_pct(route.get('median_fv_vs_price_pct')):>14}"
+                f"{route.get('cheap_n', 0):>7}"
+                f"{route.get('fair_n', 0):>7}"
+                f"{route.get('expensive_n', 0):>8}"
+            )
+
+    if not rows:
+        print("\nKayıtlı analiz bulunamadı — önce `analyze TICKER` çalıştırın.")
+        return
+
+    print("\n[Hisseler — makul değer / fiyat farkına göre]")
+    headers = ["Hisse", "Sektör", "Karar", "Fiyat", "Makul", "Fark", "Güven", "Momentum", "İçeriden", "Yaş"]
+    print("".join(h.ljust(w) for h, w in zip(headers, _OVERVIEW_COL_WIDTHS)))
+    print("-" * sum(_OVERVIEW_COL_WIDTHS))
+    for row in rows:
+        age = row.get("age_days")
+        cells = [
+            str(row.get("ticker") or _DASH),
+            str(row.get("sector") or "Sınıflandırılmamış")[:18],
+            str(row.get("fundamental_verdict") or _DASH)[:23],
+            _fmt_price(row.get("price")),
+            _fmt_price(row.get("fv_base_mid")),
+            _fmt_pct(row.get("fv_vs_price_pct")),
+            str(row.get("confidence") or _DASH),
+            str(row.get("momentum_verdict") or _DASH)[:9],
+            str(row.get("insider_verdict") or _DASH)[:11],
+            (f"{age}g" if age is not None else _DASH),
+        ]
+        print("".join(c.ljust(w) for c, w in zip(cells, _OVERVIEW_COL_WIDTHS)))
+
+    upcoming = overview.get("upcoming_earnings") or []
+    if upcoming:
+        window = overview.get("earnings_window_days")
+        print(f"\n[Yaklaşan bilançolar — {window} gün]")
+        for row in upcoming:
+            print(
+                f"  {str(row.get('ticker') or _DASH):<8}"
+                f"{row.get('catalyst_date') or _DASH}  "
+                f"({row.get('days_until_earnings')} gün) — "
+                f"{row.get('fundamental_verdict') or _DASH}"
+            )
+
+    # The engine's own verdict asks WHERE IN THE BAND the price sits (inside
+    # the base band -> MAKUL); this dashboard's bucket asks HOW FAR the band's
+    # MIDPOINT is from the price. On a wide band those two can disagree while
+    # both being right, which is why the disagreement is worth naming: it
+    # isolates the names whose midpoint leans hard one way but whose band is
+    # too wide for the engine to commit.
+    drift = overview.get("drift") or []
+    if drift:
+        print("\n[Karar ile band ortası arasında gerilim]")
+        print("  (fiyat baz bandın içinde kaldığı için karar MAKUL; band geniş olduğundan orta nokta uzakta)")
+        for row in drift[:10]:
+            lo, hi = row.get("fv_base_lo"), row.get("fv_base_hi")
+            band = f"{_fmt_price(lo)}–{_fmt_price(hi)}" if lo is not None and hi is not None else _DASH
+            print(
+                f"  {str(row.get('ticker') or _DASH):<8}"
+                f"karar: {str(row.get('fundamental_verdict') or _DASH):<9}"
+                f"band ortası: {str(row.get('value_bucket') or _DASH):<8}"
+                f"fark: {_fmt_pct(row.get('fv_vs_price_pct')):<9}"
+                f"band: {band:<22}"
+                f"güven: {row.get('confidence') or _DASH}"
+            )
+
+    stale = overview.get("stale") or []
+    if stale:
+        names = ", ".join(str(r.get("ticker") or "?") for r in stale[:12])
+        more = f" (+{len(stale) - 12} diğer)" if len(stale) > 12 else ""
+        print(f"\nBayat analiz ({overview.get('stale_days')} günden eski): {len(stale)} — {names}{more}")
+
+
+def cmd_overview(args: argparse.Namespace) -> None:
+    """Handle the ``overview`` subcommand: a network-free dashboard over every
+    ticker that has a stored verdict -- sector heat map, per-name fair-value
+    gap, staleness, upcoming earnings, and verdict drift.
+
+    Reads only the local database, so it is instant and works offline. Never
+    raises out to the user (CLAUDE.md: the analysis layer never crashes the CLI).
+    """
+    try:
+        rows = load_latest_verdicts(db_path=Config.DB_PATH)
+    except Exception as exc:  # noqa: BLE001 - a read failure must not crash the CLI
+        logger.exception("Portföy genel bakış verisi okunamadı")
+        print(f"Genel bakış okunamadı: {exc}", file=sys.stderr)
+        sys.exit(1)
+        return
+
+    overview = build_overview(
+        rows,
+        stale_days=args.stale_days,
+        earnings_window_days=args.earnings_window,
+    )
+    _print_overview_table(overview)
+
+    if getattr(args, "json", False):
+        print("\n" + json.dumps(overview, indent=2, ensure_ascii=False))
+
+
+def _preearnings_row_cells(row: dict) -> List[str]:
+    """Render one briefing row's cells, shared by both briefing tables."""
+    age = row.get("verdict_age_days")
+    beat = row.get("beat_count")
+    surprises = row.get("surprises") or []
+    return [
+        str(row.get("ticker") or _DASH),
+        str(row.get("earnings_date") or _DASH),
+        (_DASH if row.get("just_reported") else str(row.get("days_until", _DASH))),
+        str(row.get("verdict") or _DASH)[:23],
+        _fmt_pct(row.get("fv_vs_price_pct")),
+        str(row.get("momentum_verdict") or _DASH)[:9],
+        (f"{beat}/{len(surprises)}" if beat is not None and surprises else _DASH),
+        (f"{age}g" if age is not None else _DASH),
+    ]
+
+
+def _print_preearnings_table(rows: List[dict], date_header: str) -> None:
+    """Print one briefing table with ``date_header`` naming what its date
+    column means -- the two sections below carry different dates (an upcoming
+    estimate vs. the estimate for the quarter AFTER the one just published),
+    and one shared header would misstate the second."""
+    headers = ["Hisse", date_header, "Gün", "Karar", "Fark", "Momentum", "Sürpriz", "Yaş"]
+    print("".join(h.ljust(w) for h, w in zip(headers, _PREEARNINGS_COL_WIDTHS)))
+    print("-" * sum(_PREEARNINGS_COL_WIDTHS))
+    for row in rows:
+        print("".join(c.ljust(w) for c, w in zip(_preearnings_row_cells(row), _PREEARNINGS_COL_WIDTHS)))
+
+
+def _print_preearnings_briefing(result: dict, include_all: bool = False) -> None:
+    """Print the pre-earnings briefing, then the per-name observations.
+
+    Upcoming and just-reported names are printed as two separate tables. They
+    are different states -- one is a catalyst still ahead, the other a print
+    that already landed -- and during earnings season the just-reported set is
+    large enough to bury the names actually about to report. Their date columns
+    also mean different things: for a just-reported name the estimate shown is
+    for the quarter AFTER the one just published, which can be months out.
+    """
+    rows = result.get("rows") or []
+    reported = [r for r in rows if r.get("just_reported")]
+    upcoming = [r for r in rows if not r.get("just_reported")]
+
+    # With --all the window is not applied, so naming it in the header would
+    # contradict the rows below it (names months out under a "14 gün" title).
+    window_text = "tüm takvim" if include_all else f"önümüzdeki {result.get('within_days')} gün"
+    print(
+        f"\nBilanço Öncesi Brifing — {result.get('today') or _DASH} — "
+        f"{window_text} — "
+        f"{result.get('count', 0)}/{result.get('requested', 0)} hisse"
+    )
+
+    if not rows:
+        print("\nBu pencerede bilanço açıklayacak isim yok.")
+
+    if upcoming:
+        print(f"\n[Yaklaşan bilançolar — {len(upcoming)} hisse]")
+        _print_preearnings_table(upcoming, "Bilanço")
+    elif rows:
+        print("\n[Yaklaşan bilançolar] yok — aşağıdaki isimler bilançosunu yeni açıkladı.")
+
+    if reported:
+        print(f"\n[Yeni açıklananlar — {len(reported)} hisse · tarih sütunu SONRAKİ çeyreğin tahmini]")
+        _print_preearnings_table(reported, "Sonraki")
+
+    # Observations: upcoming names first -- they are the ones a reader can
+    # still act on before the print.
+    ordered = upcoming + reported
+    for row in ordered[:_PREEARNINGS_MAX_NOTE_BLOCKS]:
+        notes = row.get("notes") or []
+        if not notes:
+            continue
+        print(f"\n{row.get('ticker')} — {row.get('catalyst_label') or _DASH}")
+        for note in notes:
+            print(f"  • {note}")
+        surprises = row.get("surprises") or []
+        if surprises:
+            cells = " · ".join(
+                f"{q.get('period') or _DASH}: {format_surprise_pct(q.get('surprise_pct'))}"
+                for q in surprises
+            )
+            print(f"  Geçmiş sürprizler: {cells}")
+    if len(ordered) > _PREEARNINGS_MAX_NOTE_BLOCKS:
+        print(
+            f"\n(+{len(ordered) - _PREEARNINGS_MAX_NOTE_BLOCKS} hissenin notları gösterilmedi — "
+            "daraltmak için --within kullanın veya tam veri için --json)"
+        )
+
+    skipped = result.get("skipped") or []
+    if skipped:
+        print(f"\nAtlanan: {len(skipped)} hisse")
+        for entry in skipped[:10]:
+            print(f"  {entry.get('ticker') or '?'}: {entry.get('reason') or _DASH}")
+        if len(skipped) > 10:
+            print(f"  (+{len(skipped) - 10} diğer)")
+
+
+def cmd_preearnings(args: argparse.Namespace) -> None:
+    """Handle the ``preearnings`` subcommand: which watchlist names report
+    soon, and what the stored analysis currently says about them.
+
+    The watchlist defaults to every ticker with a stored verdict (i.e. what
+    the user has actually analyzed); ``--tickers``/``--tickers-file`` override
+    it. Never raises out to the user.
+    """
+    tickers: List[str] = []
+    if getattr(args, "tickers", None):
+        tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
+    elif getattr(args, "tickers_file", None):
+        try:
+            with open(args.tickers_file, "r", encoding="utf-8") as handle:
+                tickers = [
+                    line.strip().upper()
+                    for line in handle
+                    if line.strip() and not line.strip().startswith("#")
+                ]
+        except OSError as exc:
+            print(f"İzleme listesi dosyası okunamadı: {exc}", file=sys.stderr)
+            sys.exit(1)
+            return
+    else:
+        tickers = load_watchlist_tickers(db_path=Config.DB_PATH)
+        if not tickers:
+            print(
+                "İzleme listesi boş: kayıtlı analiz yok. Önce `analyze TICKER` "
+                "çalıştırın veya --tickers / --tickers-file verin.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+            return
+
+    def _progress(done: int, total: int, ticker: str) -> None:
+        logger.info("Bilanço brifingi ilerlemesi: %d/%d (son: %s)", done, total, ticker)
+
+    include_all = getattr(args, "all", False)
+    result = scan_preearnings(
+        tickers,
+        within_days=args.within,
+        no_cache=args.no_cache,
+        db_path=Config.DB_PATH,
+        progress_cb=_progress,
+        include_all=include_all,
+    )
+    _print_preearnings_briefing(result, include_all=include_all)
+
+    if getattr(args, "json", False):
+        print("\n" + json.dumps(result, indent=2, ensure_ascii=False))
+
+
+#: Metrics shown, in this order, by the `peers` command's sector table.
+_PEER_TABLE_METRICS = [
+    ("net_margin", "Net marj"),
+    ("operating_margin", "Faaliyet marjı"),
+    ("gross_margin", "Brüt marj"),
+    ("fcf_margin", "FCF marjı"),
+    ("roe", "ROE"),
+    ("roa", "ROA"),
+    ("debt_to_equity", "Borç/Özkaynak"),
+    ("revenue_growth", "Gelir büyümesi"),
+]
+
+
+def _fmt_ratio(value: Optional[float]) -> str:
+    """Render a decimal-fraction metric as a Turkish-style percentage."""
+    if value is None:
+        return _DASH
+    return f"%{value * 100:.1f}".replace(".", ",")
+
+
+def _print_peer_snapshot(snapshot: dict) -> None:
+    """Print a built/stored peer snapshot: coverage, then per-sector medians."""
+    print(
+        f"\nEmsal Kesiti — {snapshot.get('year')} mali yılı — "
+        f"{snapshot.get('covered', 0)}/{snapshot.get('universe_size', 0)} şirket "
+        f"({', '.join(snapshot.get('indexes') or []) or _DASH})"
+    )
+    missing = snapshot.get("frames_missing") or []
+    if missing:
+        print(f"Çekilemeyen frame'ler: {', '.join(str(m) for m in missing)}")
+
+    sectors = snapshot.get("sectors") or {}
+    if not sectors:
+        print("\nSektör verisi yok.")
+        return
+
+    print(f"\n{'Sektör':<26}{'n':>4}" + "".join(f"{label:>16}" for _k, label in _PEER_TABLE_METRICS))
+    print("-" * (30 + 16 * len(_PEER_TABLE_METRICS)))
+    for sector in sorted(sectors):
+        data = sectors[sector] or {}
+        metrics = data.get("metrics") or {}
+        cells = "".join(
+            f"{_fmt_ratio((metrics.get(key) or {}).get('median')):>16}"
+            for key, _label in _PEER_TABLE_METRICS
+        )
+        print(f"{str(sector)[:25]:<26}{data.get('n', 0):>4}{cells}")
+
+    print(
+        "\nNot: bu kesit bağlam katmanıdır — makul değer hesabına, üçgenlemeye "
+        "veya sektör çarpanı sinyaline GİRMEZ."
+    )
+
+
+def cmd_peers(args: argparse.Namespace) -> None:
+    """Handle the ``peers`` subcommand: build or show the peer cross-section.
+
+    Without ``--refresh`` this only reads the stored snapshot (instant,
+    offline). With ``--refresh`` it pulls the SEC XBRL Frames documents for
+    the requested fiscal year and rebuilds — a dozen multi-megabyte downloads,
+    which is exactly why the analyze path never does it inline.
+
+    Never raises out to the user.
+    """
+    year = getattr(args, "year", None)
+    if getattr(args, "refresh", False):
+        if year is None:
+            # Default to the last COMPLETED calendar year: the current year's
+            # annual frames are still filling up as filers report, so a
+            # snapshot built from them would compare a handful of early
+            # filers against each other rather than a sector.
+            year = date.today().year - 1
+        print(f"{year} mali yılı için emsal kesiti oluşturuluyor (SEC Frames)...")
+        try:
+            snapshot = build_peer_snapshot(year, SecHttpClient(), no_cache=args.no_cache)
+        except Exception as exc:  # noqa: BLE001 - a failed build must not crash the CLI
+            logger.exception("Emsal kesiti oluşturulamadı")
+            print(f"Emsal kesiti oluşturulamadı: {exc}", file=sys.stderr)
+            sys.exit(1)
+            return
+        _print_peer_snapshot(snapshot)
+        if not args.no_save:
+            snapshot_id = save_peer_snapshot(snapshot, db_path=Config.DB_PATH)
+            if snapshot_id:
+                print(f"\nKesit kaydedildi (id {snapshot_id}): {Config.DB_PATH}")
+            else:
+                print("\nWARNING: emsal kesiti veritabanına kaydedilemedi.", file=sys.stderr)
+        return
+
+    snapshot = load_latest_peer_snapshot(db_path=Config.DB_PATH, year=year)
+    if not snapshot:
+        print(
+            "Kayıtlı emsal kesiti yok. Oluşturmak için: "
+            "python -m sec_analyzer.cli peers --refresh",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+        return
+    _print_peer_snapshot(snapshot)
+
+    if getattr(args, "json", False):
+        print("\n" + json.dumps(snapshot, indent=2, ensure_ascii=False))
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the top-level ``argparse`` parser with its subcommands."""
     parser = argparse.ArgumentParser(
@@ -2568,6 +3176,119 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not persist the scan result to the database.",
     )
     swing_parser.set_defaults(func=cmd_swing)
+
+    # --- overview (portfolio dashboard over stored verdicts) ---
+    overview_parser = subparsers.add_parser(
+        "overview",
+        help=(
+            "Network-free dashboard over every ticker with a stored verdict: "
+            "sector heat map, fair-value gap per name, staleness, upcoming "
+            "earnings, and verdict drift (see sec_analyzer.screener.overview)."
+        ),
+    )
+    overview_parser.add_argument(
+        "--stale-days",
+        type=int,
+        default=90,
+        help="Flag a stored verdict older than this many days as stale (default: 90).",
+    )
+    overview_parser.add_argument(
+        "--earnings-window",
+        type=int,
+        default=21,
+        help="Surface names whose stored earnings estimate falls within this many days (default: 21).",
+    )
+    overview_parser.add_argument(
+        "--json", action="store_true", help="Also print the full overview payload as JSON.",
+    )
+    overview_parser.set_defaults(func=cmd_overview)
+
+    # --- preearnings (pre-earnings briefing for the watchlist) ---
+    preearnings_parser = subparsers.add_parser(
+        "preearnings",
+        help=(
+            "Which watchlist names report soon, and what the stored analysis "
+            "says about them (see sec_analyzer.screener.preearnings)."
+        ),
+    )
+    preearnings_group = preearnings_parser.add_mutually_exclusive_group()
+    preearnings_group.add_argument(
+        "--tickers",
+        type=str,
+        default=None,
+        help="Comma-separated tickers. Defaults to every ticker with a stored verdict.",
+    )
+    preearnings_group.add_argument(
+        "--tickers-file",
+        type=str,
+        default=None,
+        dest="tickers_file",
+        help="Path to a watchlist file (one ticker per line; '#' comments allowed).",
+    )
+    preearnings_parser.add_argument(
+        "--within",
+        type=int,
+        default=DEFAULT_WITHIN_DAYS,
+        help=f"Only names reporting within this many days (default: {DEFAULT_WITHIN_DAYS}).",
+    )
+    preearnings_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Keep every name regardless of how far out its earnings date is (full calendar).",
+    )
+    preearnings_parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Bypass the on-disk SEC/price caches and re-fetch.",
+    )
+    preearnings_parser.add_argument(
+        "--json", action="store_true", help="Also print the full briefing payload as JSON.",
+    )
+    preearnings_parser.set_defaults(func=cmd_preearnings)
+
+    # --- peers (cross-sectional peer snapshot from SEC XBRL Frames) ---
+    peers_parser = subparsers.add_parser(
+        "peers",
+        help=(
+            "Build or show the cross-sectional peer snapshot: per-sector "
+            "medians of filing-derived metrics across the bundled index "
+            "universe, from SEC's XBRL Frames API (see "
+            "sec_analyzer.screener.peers). Context layer -- never feeds the "
+            "fair value."
+        ),
+    )
+    peers_parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help=(
+            "Rebuild from SEC Frames (a dozen multi-MB downloads). Without "
+            "this, the stored snapshot is shown from the database."
+        ),
+    )
+    peers_parser.add_argument(
+        "--year",
+        type=int,
+        default=None,
+        help=(
+            "Fiscal year to build/show. Defaults to the last completed "
+            "calendar year when refreshing, and to the most recent stored "
+            "snapshot of any year otherwise."
+        ),
+    )
+    peers_parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Bypass the on-disk Frames cache and re-fetch every document.",
+    )
+    peers_parser.add_argument(
+        "--no-save",
+        action="store_true",
+        help="Do not persist the rebuilt snapshot to the database.",
+    )
+    peers_parser.add_argument(
+        "--json", action="store_true", help="Also print the full snapshot as JSON.",
+    )
+    peers_parser.set_defaults(func=cmd_peers)
 
     # --- backtest {run|evaluate|report} ---
     backtest_parser = subparsers.add_parser(

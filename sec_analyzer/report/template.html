@@ -1759,6 +1759,55 @@
     color: var(--muted);
     font-family: var(--mono);
   }
+
+  /* ---- Insider-activity card (Form 4, result.insider) ---------------------
+     Money/share figures use insiderFmtMoney/insiderFmtShares (comma decimal,
+     period thousands) to match insider.py's own server-formatted `note`
+     sentences -- deliberately distinct from fmtMoney/fmtCompactMoney's
+     period-decimal convention used elsewhere in this file. */
+  .insider-summary { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.84rem; margin-bottom: 10px; }
+  .insider-buy { color: var(--green-ref); }
+  .insider-sell { color: var(--red-ref); }
+  .insider-net { font-weight: 700; }
+  .insider-net.pos { color: var(--green); }
+  .insider-net.neg { color: var(--red); }
+  .insider-truncated { font-size: 0.78rem; color: var(--amber); margin: 2px 0 10px; }
+
+  /* ---- Overview mode (mode: "overview") -----------------------------------
+     Portfolio-wide dashboard over every stored verdict. Deliberately reuses
+     .page-wide/.card/.card-title/.alert-box/.verdict-note/.swing-table*/
+     .swing-filter-bar/.horizon-toggle wholesale -- same dense-sortable-table
+     + pill-filter idiom the swing screener already established. Only the
+     heat-map tiles and the sign-coloured Fark%/median cells are new. */
+  .ov-heatmap {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+  }
+  .ov-tile {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    background: var(--fill-neutral);
+  }
+  /* A tile with no computable heat value is visibly hatched rather than
+     rendered as a solid (implicitly "fairly valued") tile -- unknown and
+     "near zero" are different claims. */
+  .ov-tile-unknown {
+    background-image: repeating-linear-gradient(
+      45deg, var(--fill-neutral), var(--fill-neutral) 6px, transparent 6px, transparent 12px
+    );
+    border-style: dashed;
+  }
+  .ov-tile-label { font-size: 0.78rem; font-weight: 700; margin-bottom: 4px; }
+  .ov-tile-n { font-size: 0.66rem; color: var(--muted); margin-bottom: 6px; }
+  .ov-tile-pct { font-family: var(--mono); font-size: 0.92rem; font-weight: 700; }
+
+  /* Reference-tone sign colouring for Fark%/median gap cells -- states a
+     fact (cheap/expensive direction), not an alert. */
+  .ov-pos { color: var(--green-ref); }
+  .ov-neg { color: var(--red-ref); }
+  .ov-stale { color: var(--amber); font-weight: 700; }
 </style>
 </head>
 <body>
@@ -1935,6 +1984,36 @@
     if (s.indexOf("DÜŞÜK") !== -1 || s.indexOf("DUSUK") !== -1) return "red";
     return "amber";
   }
+
+  // ---- Overview-mode colour mappings (mode: "overview") -------------------
+  // Distinct from bucketColor() above: that one defaults an unrecognized
+  // verdict to amber (a neutral "fair" reading), which is wrong for the
+  // overview table's "Karar" column -- a long outlier label like "MODEL-
+  // PİYASA AYRIŞMASI" is not a fair-value claim at all, so it must fall back
+  // to muted, not amber (see sec_analyzer/screener/overview.py's
+  // fundamental_verdict values).
+  function overviewVerdictColor(v) {
+    var s = String(v || "").toUpperCase();
+    if (s.indexOf("UCUZ") !== -1) return "green";
+    if (s.indexOf("PAHALI") !== -1) return "red";
+    if (s.indexOf("MAKUL") !== -1) return "amber";
+    return "muted";
+  }
+
+  // Exact-match against overview.py's _INSIDER_VALUES ("GÜÇLÜ ALIM", "ALIM",
+  // "NÖTR", "SATIŞ", "YOĞUN SATIŞ") -- an unrecognized/missing value (the
+  // "bilinmiyor" catch-all) falls back to muted.
+  function overviewInsiderColor(v) {
+    if (v === "GÜÇLÜ ALIM" || v === "ALIM") return "green";
+    if (v === "SATIŞ" || v === "YOĞUN SATIŞ") return "red";
+    if (v === "NÖTR") return "amber";
+    return "muted";
+  }
+
+  var OV_BUCKET_COLOR = { ucuz: "green", makul: "amber", pahali: "red" };
+  var OV_BUCKET_LABEL = { ucuz: "Ucuz", makul: "Makul", pahali: "Pahalı", bilinmiyor: "Bilinmiyor" };
+  function overviewBucketColor(b) { return OV_BUCKET_COLOR[b] || "muted"; }
+  function overviewBucketLabel(b) { return OV_BUCKET_LABEL[b] || "Bilinmiyor"; }
 
   var GAUGE_POSITION = { green: 10, amber: 50, caution: 72, red: 90 };
   var SCENARIO_LABEL = { bear: "BEAR", base: "BASE", bull: "BULL" };
@@ -3720,6 +3799,152 @@
     );
   }
 
+  // ===================================================================
+  // Insider-activity card (SEC Form 4, result.insider) -- see
+  // sec_analyzer/signals/insider.py's compute_insider_signal() docstring
+  // for the payload shape. Renders "" (card omitted) when the signal is
+  // entirely absent, exactly like eventsCardHtml -- a ticker with no Form 4
+  // filings never shows an empty shell. Every field is optional; isNum/
+  // safeText/escapeHtml guard each one individually.
+  // ===================================================================
+  var INSIDER_SEVERITY_COLOR = { positive: "green", negative: "red", neutral: "muted" };
+  var INSIDER_CATEGORY_COLOR = { open_market_buy: "green", open_market_sell: "red" };
+
+  // Compact Turkish-locale money -- deliberately mirrors insider.py's own
+  // _fmt_money() (comma decimal separator: "$2,5M"/"$840K"/"$840") instead
+  // of reusing fmtCompactMoney's period-decimal convention, so the card's
+  // own numbers read identically to insider.note's server-formatted
+  // sentences rather than clashing with them one line apart.
+  function insiderFmtMoney(v) {
+    if (!isNum(v)) return "—";
+    var num = Number(v);
+    var sign = num < 0 ? "-" : "";
+    var abs = Math.abs(num);
+    if (abs >= 1e6) return sign + "$" + (abs / 1e6).toFixed(1).replace(".", ",") + "M";
+    if (abs >= 1e3) return sign + "$" + Math.round(abs / 1e3) + "K";
+    return sign + "$" + Math.round(abs);
+  }
+
+  function insiderFmtSignedMoney(v) {
+    if (!isNum(v)) return "—";
+    return (Number(v) < 0 ? "-" : "+") + insiderFmtMoney(Math.abs(Number(v)));
+  }
+
+  // Turkish-locale share count (period thousands separator, no decimals) --
+  // mirrors insider.py's _fmt_shares (e.g. 12000 -> "12.000").
+  function insiderFmtShares(v) {
+    if (!isNum(v)) return "—";
+    return Math.round(Number(v)).toLocaleString("tr-TR");
+  }
+
+  // One side (buy or sell) of the two-sided summary line -- "3 işlem ·
+  // 12.000 adet · $2,5M". Returns null (side omitted) when both the count
+  // and the value are zero/absent, per spec: a "0 işlem" clause would only
+  // clutter the line.
+  function insiderSideSummary(count, shares, value) {
+    var hasCount = isNum(count) && Number(count) !== 0;
+    var hasValue = isNum(value) && Number(value) !== 0;
+    if (!hasCount && !hasValue) return null;
+    var parts = [];
+    if (isNum(count)) parts.push(Math.round(Number(count)) + " işlem");
+    if (isNum(shares)) parts.push(insiderFmtShares(shares) + " adet");
+    if (hasValue) parts.push(insiderFmtMoney(value));
+    return parts.join(" · ");
+  }
+
+  // "İşlem" cell: a category-coloured badge (open-market buy/sell get the
+  // alert green/red; everything else -- awards, exercises, gifts -- stays
+  // muted) plus a small "türev" marker when the row is a derivative
+  // transaction, since a derivative row is never an open-market trade and
+  // must not be read as one.
+  function insiderTxLabelHtml(row) {
+    var color = INSIDER_CATEGORY_COLOR[row.category] || "muted";
+    var derivTag = row.derivative ? ' <span class="swing-chip">türev</span>' : "";
+    return '<span class="badge badge-' + color + '">' + escapeHtml(safeText(row.label || row.code)) + '</span>' + derivTag;
+  }
+
+  function insiderRowHtml(row) {
+    row = row || {};
+    return (
+      '<tr>' +
+        '<td>' + escapeHtml(safeText(row.date)) + '</td>' +
+        '<td>' + escapeHtml(safeText(row.person)) + '</td>' +
+        '<td>' + escapeHtml(safeText(row.role)) + '</td>' +
+        '<td>' + insiderTxLabelHtml(row) + '</td>' +
+        '<td class="history-num">' + insiderFmtShares(row.shares) + '</td>' +
+        '<td class="history-num">' + swingFmtPrice(row.price) + '</td>' +
+        '<td class="history-num">' + insiderFmtMoney(row.value) + '</td>' +
+      '</tr>'
+    );
+  }
+
+  function insiderCardHtml(insider) {
+    if (!insider) return "";
+
+    var sevColor = INSIDER_SEVERITY_COLOR[insider.severity] || "muted";
+    var windowText = isNum(insider.window_days) ? "son " + Math.round(Number(insider.window_days)) + " gün" : "";
+
+    var buySide = insiderSideSummary(insider.buy_count, insider.buy_shares, insider.buy_value);
+    var sellSide = insiderSideSummary(insider.sell_count, insider.sell_shares, insider.sell_value);
+    var summaryHtml = "";
+    if (buySide || sellSide || isNum(insider.net_value)) {
+      summaryHtml = '<div class="insider-summary">' +
+        (buySide ? '<span class="insider-buy">Alım: ' + escapeHtml(buySide) + '</span>' : "") +
+        (sellSide ? '<span class="insider-sell">Satış: ' + escapeHtml(sellSide) + '</span>' : "") +
+        (isNum(insider.net_value)
+          ? '<span class="insider-net ' + (Number(insider.net_value) < 0 ? "neg" : "pos") + '">Net: ' +
+            escapeHtml(insiderFmtSignedMoney(insider.net_value)) + '</span>'
+          : "") +
+      '</div>';
+    }
+
+    var noteHtml = insider.note
+      ? '<div class="verdict-note" style="margin-bottom:8px;">' + escapeHtml(insider.note) + '</div>'
+      : "";
+
+    // The line that distinguishes routine selling from a real signal --
+    // shown directly whenever known, never tucked into an accordion.
+    var stakeHtml = isNum(insider.median_stake_sold_pct)
+      ? '<div class="verdict-note" style="margin-bottom:8px;">Satan yöneticiler paylarının medyan %' +
+        Number(insider.median_stake_sold_pct).toFixed(1).replace(".", ",") +
+        "'ini elden çıkardı.</div>"
+      : "";
+
+    var truncatedHtml = insider.truncated
+      ? '<div class="insider-truncated">⚠ Tarama üst sınıra takıldı — rakamlar kısmi.</div>'
+      : "";
+
+    var recent = Array.isArray(insider.recent) ? insider.recent : [];
+    var tableHtml = recent.length
+      ? '<div class="swing-table-wrap">' +
+          '<table class="sensitivity-table history-table">' +
+            '<thead><tr>' +
+              '<th>Tarih</th><th>Kişi</th><th>Görev</th><th>İşlem</th>' +
+              '<th>Adet</th><th>Fiyat</th><th>Tutar</th>' +
+            '</tr></thead>' +
+            '<tbody>' + recent.map(insiderRowHtml).join("") + '</tbody>' +
+          '</table>' +
+        '</div>'
+      : "";
+
+    return (
+      '<div class="card">' +
+        '<div class="mom-card-head">' +
+          '<div class="card-title" style="margin:0;">👤 İçeriden İşlemler (Form 4)</div>' +
+          '<div>' +
+            '<span class="badge badge-' + sevColor + '">' + escapeHtml(safeText(insider.verdict)) + '</span>' +
+            (windowText ? ' <span class="regime-sub">' + escapeHtml(windowText) + '</span>' : "") +
+          '</div>' +
+        '</div>' +
+        summaryHtml +
+        noteHtml +
+        stakeHtml +
+        truncatedHtml +
+        tableHtml +
+      '</div>'
+    );
+  }
+
   function technicalCardHtml(technical, verdictText, horizon) {
     var t = technical || {};
     // No usable indicators at all -> fall back to the plain verdict card.
@@ -4915,6 +5140,7 @@
     var zamanlamaHtml =
       swingSetupCardHtml(payload, result, technical) +
       momentumCardHtml(result) +
+      insiderCardHtml(result.insider) +
       technicalCardHtml(technical, result.technical_verdict || technical.verdict, payload.horizon) +
       entryPlanHtml(result.entry_plan) +
       stopAddingHtml(result.stop_adding);
@@ -5031,6 +5257,7 @@
           '<button type="button" class="analyze-btn" id="analyze-btn">Analyse</button>' +
           '<button type="button" class="history-nav-btn" id="history-nav-btn">Geçmiş</button>' +
           '<button type="button" class="history-nav-btn" id="swing-nav-btn">Swing</button>' +
+          '<button type="button" class="history-nav-btn" id="overview-nav-btn">Portföy</button>' +
         '</div>' +
       '</div>';
 
@@ -5043,6 +5270,7 @@
     var horizonToggleEl = document.getElementById("nav-horizon-toggle");
     var historyNavBtn = document.getElementById("history-nav-btn");
     var swingNavBtn = document.getElementById("swing-nav-btn");
+    var overviewNavBtn = document.getElementById("overview-nav-btn");
 
     // Only meaningful once a ticker is typed -- navigates to the read-only
     // verdict-history screen (mode: "history") for that ticker.
@@ -5056,6 +5284,12 @@
     // it always navigates straight to the S&P 500 screener page.
     swingNavBtn.addEventListener("click", function () {
       window.location.href = "/swing";
+    });
+
+    // Neither is the portfolio overview -- it dashboards every stored
+    // verdict at once, not just the ticker currently typed in.
+    overviewNavBtn.addEventListener("click", function () {
+      window.location.href = "/overview";
     });
 
     horizonToggleEl.addEventListener("click", function (e) {
@@ -5396,10 +5630,13 @@
         '<span class="brand">VERDICT</span>' +
         '<div class="nav-controls">' +
           '<button type="button" class="history-nav-btn" id="swing-back-btn">Ara</button>' +
+          '<button type="button" class="history-nav-btn" id="swing-overview-btn">Portföy</button>' +
         '</div>' +
       '</div>';
     var backBtn = document.getElementById("swing-back-btn");
     if (backBtn) backBtn.addEventListener("click", function () { window.location.href = "/"; });
+    var overviewBtn = document.getElementById("swing-overview-btn");
+    if (overviewBtn) overviewBtn.addEventListener("click", function () { window.location.href = "/overview"; });
 
     // Live state for this page: the currently loaded scan (baked payload or
     // whatever /api/swing/results last returned), the scan-in-progress
@@ -5891,6 +6128,479 @@
     checkInitialStatus();
   }
 
+  // ===================================================================
+  // Overview mode: portfolio-wide dashboard over every ticker that already
+  // has a stored verdict (mode: "overview", built by
+  // generator.render_overview_page / GET /overview via
+  // sec_analyzer.screener.overview.build_overview()). No analysis runs
+  // here and nothing is fetched -- `data.overview` is the complete payload,
+  // baked once, and every control below is a pure client-side
+  // filter/sort/re-render over it (unlike renderSwingMode, there is no
+  // background scan to poll for).
+  //
+  // `data.overview` may be `{}` (empty database) -- every reader below
+  // guards for that and the empty-state branch below returns before any of
+  // it is touched.
+  // ===================================================================
+
+  // Continuous rgba tint for a heat-map tile from a -1..1 "heat" value (or a
+  // raw fv_vs_price_pct percentage, scaled by the same +/-40% saturation
+  // point overview.py's own `heat` field uses) -- negative -> red end,
+  // positive -> green end, near zero -> a faint neutral tint. Returns null
+  // for a genuinely unknown value so the caller can render a visibly
+  // hatched tile instead of a solid (implicitly "fairly valued") one.
+  function overviewHeatColor(value) {
+    if (!isNum(value)) return null;
+    var v = Math.max(-1, Math.min(1, Number(value)));
+    var alpha = 0.08 + Math.abs(v) * 0.38;
+    return v >= 0 ? hexToRgba("#4de082", alpha) : hexToRgba("#ffb4ab", alpha);
+  }
+
+  // One sector/route heat-map tile. `entry` is one item of overview.sectors
+  // or overview.routes (same shape: {sector|sector_type, label, n,
+  // median_fv_vs_price_pct, mean_heat, tickers, ...}). Prefers the
+  // pre-computed mean_heat; falls back to the entry's own median gap
+  // (scaled by the same 40%-saturation convention as overview.py) only when
+  // mean_heat itself is null, so a tile is never left untinted just because
+  // one of the two fields happens to be missing.
+  function overviewTileHtml(entry) {
+    entry = entry || {};
+    var heatVal = isNum(entry.mean_heat)
+      ? Number(entry.mean_heat)
+      : (isNum(entry.median_fv_vs_price_pct) ? Number(entry.median_fv_vs_price_pct) / 40 : null);
+    var bg = overviewHeatColor(heatVal);
+    var cls = bg === null ? " ov-tile-unknown" : "";
+    var style = bg !== null ? ' style="background:' + bg + ';"' : "";
+    var tickers = Array.isArray(entry.tickers) ? entry.tickers.join(", ") : "";
+    var titleAttr = tickers ? ' title="' + escapeHtml(tickers) + '"' : "";
+    return (
+      '<div class="ov-tile' + cls + '"' + style + titleAttr + '>' +
+        '<div class="ov-tile-label">' + escapeHtml(safeText(entry.label)) + '</div>' +
+        '<div class="ov-tile-n">' + (isNum(entry.n) ? Math.round(Number(entry.n)) : 0) + ' hisse</div>' +
+        '<div class="ov-tile-pct">' +
+          (isNum(entry.median_fv_vs_price_pct) ? fmtSignedPctTr(entry.median_fv_vs_price_pct) : "—") +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function overviewHeatSectionHtml(entries, titleText, emptyText) {
+    if (!entries || !entries.length) {
+      return (
+        '<div class="card">' +
+          '<div class="card-title">' + escapeHtml(titleText) + '</div>' +
+          '<div class="empty-state">' + escapeHtml(emptyText) + '</div>' +
+        '</div>'
+      );
+    }
+    return (
+      '<div class="card">' +
+        '<div class="card-title">' + escapeHtml(titleText) + '</div>' +
+        '<div class="ov-heatmap">' + entries.map(overviewTileHtml).join("") + '</div>' +
+      '</div>'
+    );
+  }
+
+  // "Yaklaşan Bilançolar" callout (overview.upcoming_earnings) -- omitted
+  // entirely when the list is empty.
+  function overviewEarningsCardHtml(rows) {
+    if (!rows || !rows.length) return "";
+    var items = rows.map(function (r) {
+      r = r || {};
+      var daysText = isNum(r.days_until_earnings) ? ' (' + Math.round(Number(r.days_until_earnings)) + ' gün sonra)' : "";
+      return (
+        '<li><strong>' + escapeHtml(safeText(r.ticker)) + '</strong> — ' + escapeHtml(safeText(r.catalyst_date)) + daysText +
+          '<span class="item-detail">' + escapeHtml(safeText(r.fundamental_verdict)) + '</span>' +
+        '</li>'
+      );
+    }).join("");
+    return (
+      '<div class="card">' +
+        '<div class="card-title">Yaklaşan Bilançolar</div>' +
+        '<div class="alert-box"><ul>' + items + '</ul></div>' +
+      '</div>'
+    );
+  }
+
+  // "Karar ile Band Ortası Arasında Gerilim" callout (overview.drift,
+  // per-row field verdict_drift). NOT an inconsistency/error -- both
+  // fundamental_verdict and value_bucket read the very same stored price;
+  // they simply ask different questions about it (fundamental_verdict:
+  // where in the base band does the price sit; value_bucket: how far is
+  // the band's MIDPOINT from the price). On a wide, low-confidence band
+  // both can be correct at once, which is exactly what the base-band and
+  // confidence columns below let the reader verify directly rather than
+  // taking the claim on faith. Omitted entirely when the list is empty.
+  function overviewDriftCardHtml(rows) {
+    if (!rows || !rows.length) return "";
+    var body = rows.map(function (r) {
+      r = r || {};
+      var band = (isNum(r.fv_base_lo) && isNum(r.fv_base_hi))
+        ? swingFmtPrice(r.fv_base_lo) + "–" + swingFmtPrice(r.fv_base_hi)
+        : "—";
+      return (
+        '<tr>' +
+          '<td>' + escapeHtml(safeText(r.ticker)) + '</td>' +
+          '<td><span class="badge badge-' + overviewVerdictColor(r.fundamental_verdict) + '">' +
+            escapeHtml(safeText(r.fundamental_verdict)) + '</span></td>' +
+          '<td><span class="badge badge-' + overviewBucketColor(r.value_bucket) + '">' +
+            escapeHtml(overviewBucketLabel(r.value_bucket)) + '</span></td>' +
+          '<td class="history-num">' + (isNum(r.fv_vs_price_pct) ? fmtSignedPctTr(r.fv_vs_price_pct) : "—") + '</td>' +
+          '<td class="history-num">' + band + '</td>' +
+          '<td>' + escapeHtml(safeText(r.confidence)) + '</td>' +
+        '</tr>'
+      );
+    }).join("");
+    return (
+      '<div class="card">' +
+        '<div class="card-title">Karar ile Band Ortası Arasında Gerilim</div>' +
+        '<div class="verdict-note" style="margin-bottom:10px;">' +
+          'Fiyat baz bandın içinde kaldığı için karar MAKUL; band geniş olduğundan orta nokta fiyattan uzakta. ' +
+          'İki ölçüt de aynı anda doğru olabilir — bu satırlar geniş bantlı, düşük güvenli isimleri işaret eder.' +
+        '</div>' +
+        '<div class="swing-table-wrap">' +
+          '<table class="sensitivity-table history-table">' +
+            '<thead><tr>' +
+              '<th>Hisse</th><th>Karar</th><th>Güncel Bant</th><th>Fark %</th><th>Baz Bant</th><th>Güven</th>' +
+            '</tr></thead>' +
+            '<tbody>' + body + '</tbody>' +
+          '</table>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  // "Bayat Analizler" callout (overview.stale) -- omitted entirely when the
+  // list is empty. Names the stale_days threshold so the reader knows what
+  // "stale" means here rather than taking it on faith.
+  function overviewStaleCardHtml(rows, staleDays) {
+    if (!rows || !rows.length) return "";
+    var items = rows.map(function (r) {
+      r = r || {};
+      var ageText = isNum(r.age_days) ? Math.round(Number(r.age_days)) + ' gün önce analiz edildi' : "—";
+      return (
+        '<li><strong>' + escapeHtml(safeText(r.ticker)) + '</strong>' +
+          '<span class="item-detail">' + escapeHtml(ageText) + '</span>' +
+        '</li>'
+      );
+    }).join("");
+    var thresholdText = isNum(staleDays) ? Math.round(Number(staleDays)) : "—";
+    return (
+      '<div class="card">' +
+        '<div class="card-title">Bayat Analizler</div>' +
+        '<div class="verdict-note" style="margin-bottom:8px;">' + thresholdText + ' günden eski analizler.</div>' +
+        '<div class="alert-box"><ul>' + items + '</ul></div>' +
+      '</div>'
+    );
+  }
+
+  // Total, null-safe comparator for the overview table's sortable columns:
+  // a missing value always sorts last regardless of direction, and ties
+  // break on ticker (ascending, regardless of direction too) -- same
+  // contract as renderSwingMode's own filteredSortedRows() sort, so the two
+  // dashboards behave identically.
+  function overviewCompareValues(a, b, key, dir) {
+    var av = a ? a[key] : null;
+    var bv = b ? b[key] : null;
+    var aMissing = av === null || av === undefined || av === "";
+    var bMissing = bv === null || bv === undefined || bv === "";
+    if (aMissing && !bMissing) return 1;
+    if (!aMissing && bMissing) return -1;
+    if (!aMissing && !bMissing) {
+      if (isNum(av) && isNum(bv)) {
+        var an = Number(av), bn = Number(bv);
+        if (an !== bn) return (an - bn) * dir;
+      } else {
+        var cmp = String(av).toLowerCase().localeCompare(String(bv).toLowerCase());
+        if (cmp !== 0) return cmp * dir;
+      }
+    }
+    return String((a && a.ticker) || "").localeCompare(String((b && b.ticker) || ""));
+  }
+
+  // One <tr> per overview row (see generator.render_overview_page's
+  // docstring for the full field list). Every field is optional --
+  // isNum/safeText/escapeHtml guard each cell so a sparse row (null
+  // sector, null fv_vs_price_pct, ...) never prints "null"/"undefined"/
+  // "NaN". The ticker links out to the full verdict-card report in a new
+  // tab, same convention as swingRowHtml.
+  function overviewRowHtml(row) {
+    row = row || {};
+    var tickerUpper = String(row.ticker || "").trim().toUpperCase();
+    var horizon = row.horizon || "1y";
+    var href = "/report?ticker=" + encodeURIComponent(tickerUpper) + "&horizon=" + encodeURIComponent(horizon);
+    var nameHtml = row.name ? '<div class="swing-name">' + escapeHtml(row.name) + '</div>' : "";
+
+    var fvBand = (isNum(row.fv_base_lo) && isNum(row.fv_base_hi))
+      ? swingFmtPrice(row.fv_base_lo) + "–" + swingFmtPrice(row.fv_base_hi) +
+        (isNum(row.fv_base_mid) ? ' <span class="muted">(orta ' + swingFmtPrice(row.fv_base_mid) + ')</span>' : "")
+      : "—";
+
+    var pctCell = "—";
+    if (isNum(row.fv_vs_price_pct)) {
+      var pctCls = Number(row.fv_vs_price_pct) >= 0 ? "ov-pos" : "ov-neg";
+      pctCell = '<span class="' + pctCls + '">' + fmtSignedPctTr(row.fv_vs_price_pct) + '</span>';
+    }
+
+    var earningsCell = isNum(row.days_until_earnings) ? Math.round(Number(row.days_until_earnings)) + "g" : "—";
+    var catalystTitle = row.catalyst_date ? ' title="' + escapeHtml(String(row.catalyst_date)) + '"' : "";
+
+    var ageCell = "—";
+    if (isNum(row.age_days)) {
+      var ageNum = Math.round(Number(row.age_days));
+      ageCell = row.stale ? '<span class="ov-stale">⚠ ' + ageNum + 'g</span>' : ageNum + "g";
+    }
+
+    return (
+      '<tr>' +
+        '<td class="swing-ticker-cell">' +
+          '<a class="swing-ticker-link" href="' + href + '" target="_blank" rel="noopener">' +
+            escapeHtml(tickerUpper || "—") +
+          '</a>' + nameHtml +
+        '</td>' +
+        '<td class="swing-left">' + escapeHtml(safeText(row.sector)) + '</td>' +
+        '<td class="swing-left">' + escapeHtml(safeText(row.sector_type_label)) + '</td>' +
+        '<td><span class="badge badge-' + overviewVerdictColor(row.fundamental_verdict) + '">' +
+          escapeHtml(safeText(row.fundamental_verdict)) + '</span></td>' +
+        '<td class="history-num">' + swingFmtPrice(row.price) + '</td>' +
+        '<td class="history-num">' + fvBand + '</td>' +
+        '<td class="history-num">' + pctCell + '</td>' +
+        '<td><span class="badge badge-' + confidenceColor(row.confidence) + '">' +
+          escapeHtml(safeText(row.confidence)) + '</span></td>' +
+        '<td><span class="badge badge-' + momentumVerdictColor(row.momentum_verdict) + '">' +
+          escapeHtml(safeText(row.momentum_verdict)) + '</span></td>' +
+        '<td><span class="badge badge-' + overviewInsiderColor(row.insider_verdict) + '">' +
+          escapeHtml(safeText(row.insider_verdict)) + '</span></td>' +
+        '<td class="history-num"' + catalystTitle + '>' + earningsCell + '</td>' +
+        '<td class="history-num">' + ageCell + '</td>' +
+      '</tr>'
+    );
+  }
+
+  function renderOverviewMode() {
+    var pageEl = document.querySelector(".page");
+    if (pageEl) pageEl.classList.add("page-wide");
+    document.title = "Portföy Genel Bakış · Verdict Terminal";
+
+    topnavEl.innerHTML =
+      '<div class="nav-inner">' +
+        '<span class="brand">VERDICT</span>' +
+        '<div class="nav-controls">' +
+          '<button type="button" class="history-nav-btn" id="ov-search-btn">Ara</button>' +
+          '<button type="button" class="history-nav-btn" id="ov-swing-btn">Swing</button>' +
+        '</div>' +
+      '</div>';
+    var searchBtn = document.getElementById("ov-search-btn");
+    if (searchBtn) searchBtn.addEventListener("click", function () { window.location.href = "/"; });
+    var swingBtn = document.getElementById("ov-swing-btn");
+    if (swingBtn) swingBtn.addEventListener("click", function () { window.location.href = "/swing"; });
+
+    var ov = (data.overview && typeof data.overview === "object") ? data.overview : {};
+    var rows = Array.isArray(ov.rows) ? ov.rows : [];
+
+    if (!rows.length) {
+      bodyEl.innerHTML =
+        '<div class="card"><div class="empty-state">' +
+          'Henüz kayıtlı analiz yok — bir hisseyi analiz edin, sonra buraya dönün.' +
+        '</div></div>';
+      return;
+    }
+
+    // All client-side state for the table's filter/sort -- there is no
+    // background job here (unlike swing's scan), so this never needs to
+    // survive a poll tick; it only needs to survive a re-render of
+    // #ov-table-container.
+    var state = {
+      rows: rows,
+      sortKey: "fv_vs_price_pct",
+      sortDir: "desc",
+      textFilter: "",
+      bucketFilter: "",
+      staleOnly: false,
+    };
+
+    function headerStripHtml() {
+      var counts = ov.bucket_counts || {};
+      var chips = ["ucuz", "makul", "pahali", "bilinmiyor"].map(function (b) {
+        var n = isNum(counts[b]) ? Math.round(Number(counts[b])) : 0;
+        return '<span class="badge badge-' + overviewBucketColor(b) + '">' + overviewBucketLabel(b) + ' ' + n + '</span>';
+      }).join(" ");
+      var medianHtml = "—";
+      if (isNum(ov.median_fv_vs_price_pct)) {
+        var medCls = Number(ov.median_fv_vs_price_pct) >= 0 ? "ov-pos" : "ov-neg";
+        medianHtml = '<span class="' + medCls + '">' + fmtSignedPctTr(ov.median_fv_vs_price_pct) + '</span>';
+      }
+      return (
+        '<div class="card">' +
+          '<div class="header-row">' +
+            '<div class="header-left">' +
+              '<div class="ticker-line"><span class="ticker">Portföy Genel Bakış</span></div>' +
+              '<div class="source-note">' +
+                (isNum(ov.count) ? Math.round(Number(ov.count)) : rows.length) + ' hisse · ' +
+                escapeHtml(safeText(ov.today)) +
+                ' · medyan makul-değer / fiyat farkı: ' + medianHtml +
+              '</div>' +
+            '</div>' +
+            '<div class="header-right">' + chips + '</div>' +
+          '</div>' +
+        '</div>'
+      );
+    }
+
+    // key -> sort arrow, closes over `state` (mirrors swingSortArrow).
+    function overviewSortArrow(key) {
+      if (state.sortKey !== key) return "";
+      return state.sortDir === "asc" ? " ▲" : " ▼";
+    }
+
+    function overviewHeaderCellHtml(key, label, extraClass) {
+      return '<th class="sortable' + (extraClass ? " " + extraClass : "") + '" data-sort-key="' + key + '">' +
+        escapeHtml(label) + overviewSortArrow(key) + '</th>';
+    }
+
+    function filteredSortedRows() {
+      var filtered = (state.rows || []).filter(function (r) {
+        if (!r) return false;
+        if (state.bucketFilter && r.value_bucket !== state.bucketFilter) return false;
+        if (state.staleOnly && !r.stale) return false;
+        if (state.textFilter) {
+          var hay = (String(r.ticker || "") + " " + String(r.name || "")).toLowerCase();
+          if (hay.indexOf(state.textFilter) === -1) return false;
+        }
+        return true;
+      });
+      var key = state.sortKey;
+      var dir = state.sortDir === "asc" ? 1 : -1;
+      filtered.sort(function (a, b) { return overviewCompareValues(a, b, key, dir); });
+      return filtered;
+    }
+
+    function filterBarHtml() {
+      return (
+        '<div class="swing-filter-bar" id="ov-filter-bar">' +
+          '<label for="ov-text-filter">Hisse / şirket</label>' +
+          '<input type="text" class="swing-filter-input swing-text-input" id="ov-text-filter" ' +
+            'placeholder="ör. AAPL" autocomplete="off" />' +
+          '<div class="horizon-toggle interactive" id="ov-bucket-toggle">' +
+            '<button type="button" class="horizon-pill active" data-bucket="">Tümü</button>' +
+            '<button type="button" class="horizon-pill" data-bucket="ucuz">Ucuz</button>' +
+            '<button type="button" class="horizon-pill" data-bucket="makul">Makul</button>' +
+            '<button type="button" class="horizon-pill" data-bucket="pahali">Pahalı</button>' +
+          '</div>' +
+          '<div class="horizon-toggle interactive" id="ov-stale-toggle">' +
+            '<button type="button" class="horizon-pill" data-stale="1">Yalnızca bayat</button>' +
+          '</div>' +
+          '<span class="swing-pager-count" id="ov-live-count"></span>' +
+        '</div>'
+      );
+    }
+
+    function wireFilterBar() {
+      var textEl = document.getElementById("ov-text-filter");
+      if (textEl) {
+        textEl.addEventListener("input", function () {
+          state.textFilter = textEl.value.trim().toLowerCase();
+          renderTable();
+        });
+      }
+      var bucketToggle = document.getElementById("ov-bucket-toggle");
+      if (bucketToggle) {
+        bucketToggle.addEventListener("click", function (e) {
+          var btn = e.target.closest ? e.target.closest(".horizon-pill") : null;
+          if (!btn) return;
+          state.bucketFilter = btn.getAttribute("data-bucket") || "";
+          bucketToggle.querySelectorAll(".horizon-pill").forEach(function (p) {
+            p.classList.toggle("active", p === btn);
+          });
+          renderTable();
+        });
+      }
+      var staleToggle = document.getElementById("ov-stale-toggle");
+      if (staleToggle) {
+        staleToggle.addEventListener("click", function (e) {
+          var btn = e.target.closest ? e.target.closest(".horizon-pill") : null;
+          if (!btn) return;
+          state.staleOnly = !state.staleOnly;
+          btn.classList.toggle("active", state.staleOnly);
+          renderTable();
+        });
+      }
+    }
+
+    // Rebuilds only #ov-table-container -- never the filter bar -- so
+    // sorting/filtering can't steal focus from (or clear the value of) the
+    // text filter input (same contract as renderSwingMode's renderTable).
+    function renderTable() {
+      var container = document.getElementById("ov-table-container");
+      if (!container) return;
+      var allRows = filteredSortedRows();
+      var countEl = document.getElementById("ov-live-count");
+      if (countEl) countEl.textContent = allRows.length + " / " + state.rows.length + " hisse";
+      if (!allRows.length) {
+        container.innerHTML = '<div class="card"><div class="empty-state">Filtrelerle eşleşen hisse bulunamadı.</div></div>';
+        return;
+      }
+      container.innerHTML =
+        '<div class="card">' +
+          '<div class="swing-table-wrap">' +
+            '<table class="sensitivity-table swing-table ov-table">' +
+              '<thead><tr>' +
+                overviewHeaderCellHtml("ticker", "Hisse", "swing-left") +
+                overviewHeaderCellHtml("sector", "Sektör", "swing-left") +
+                overviewHeaderCellHtml("sector_type_label", "Yol", "swing-left") +
+                overviewHeaderCellHtml("fundamental_verdict", "Karar") +
+                overviewHeaderCellHtml("price", "Fiyat") +
+                overviewHeaderCellHtml("fv_base_mid", "Makul (baz)") +
+                overviewHeaderCellHtml("fv_vs_price_pct", "Fark %") +
+                overviewHeaderCellHtml("confidence", "Güven") +
+                overviewHeaderCellHtml("momentum_verdict", "Momentum") +
+                overviewHeaderCellHtml("insider_verdict", "İçeriden") +
+                overviewHeaderCellHtml("days_until_earnings", "Bilanço") +
+                overviewHeaderCellHtml("age_days", "Yaş") +
+              '</tr></thead>' +
+              '<tbody>' + allRows.map(overviewRowHtml).join("") + '</tbody>' +
+            '</table>' +
+          '</div>' +
+        '</div>';
+      var thead = container.querySelector("thead");
+      if (thead) {
+        thead.addEventListener("click", function (e) {
+          var th = e.target.closest ? e.target.closest("th.sortable") : null;
+          if (!th) return;
+          var key = th.getAttribute("data-sort-key");
+          if (state.sortKey === key) {
+            state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+          } else {
+            state.sortKey = key;
+            state.sortDir = "desc";
+          }
+          renderTable();
+        });
+      }
+    }
+
+    bodyEl.innerHTML =
+      headerStripHtml() +
+      overviewHeatSectionHtml(ov.sectors, "Sektör Isı Haritası", "Sektör verisi yok.") +
+      overviewHeatSectionHtml(
+        ov.routes,
+        "Değerleme Yolu (Olgun / Döngüsel / Finansal / GYO / Büyüme)",
+        "Değerleme yolu verisi yok."
+      ) +
+      cardGridHtml(
+        overviewEarningsCardHtml(ov.upcoming_earnings),
+        overviewDriftCardHtml(ov.drift),
+        overviewStaleCardHtml(ov.stale, ov.stale_days)
+      ) +
+      filterBarHtml() +
+      '<div id="ov-table-container"></div>' +
+      '<div class="source-note" style="margin:10px 0 0;">Üretildi: ' + escapeHtml(swingFormatTimestamp(ov.generated_at)) + '</div>' +
+      globalFooterHtml();
+
+    wireFilterBar();
+    renderTable();
+  }
+
   function render() {
     if (data.mode === "search") {
       renderSearchMode();
@@ -5898,6 +6608,8 @@
       renderHistoryMode();
     } else if (data.mode === "swing") {
       renderSwingMode();
+    } else if (data.mode === "overview") {
+      renderOverviewMode();
     } else {
       renderReportMode();
     }

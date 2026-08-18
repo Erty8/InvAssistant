@@ -36,7 +36,6 @@ from sec_analyzer.fetch.analyst import get_analyst_targets
 from sec_analyzer.fetch.companyfacts import get_company_facts, get_submissions
 from sec_analyzer.fetch.earnings import get_earnings_history
 from sec_analyzer.fetch.filings import estimate_next_earnings
-from sec_analyzer.fetch.fred import get_risk_free_asof
 from sec_analyzer.fetch.prices import (
     PriceDataError,
     drop_unsettled_bars,
@@ -47,7 +46,14 @@ from sec_analyzer.fetch.prices import (
 )
 from sec_analyzer.fetch.tickers import resolve_cik
 from sec_analyzer.http_client import SecHttpClient
-from sec_analyzer.cli import _attach_momentum, _enrich_sector_momentum
+from sec_analyzer.cli import (
+    _attach_macro,
+    _attach_momentum,
+    _attach_peers,
+    _enrich_sector_momentum,
+    _fetch_insider_activity,
+    _fetch_risk_free_asof,
+)
 from sec_analyzer.interpret.analyzer import interpret
 from sec_analyzer.normalize.metrics import compute_metrics
 from sec_analyzer.normalize.normalizer import normalize_facts
@@ -56,15 +62,18 @@ from sec_analyzer.normalize.red_flags import detect_red_flags
 from sec_analyzer.report.financials import serialize_financials
 from sec_analyzer.report.generator import (
     render_history_page,
+    render_overview_page,
     render_report_html,
     render_search_page,
     render_swing_page,
 )
+from sec_analyzer.screener.overview import build_overview
 from sec_analyzer.screener.swing_scan import DEFAULT_MAX_WORKERS, scan_swing
 from sec_analyzer.screener.universe import UNIVERSES, load_universe, normalize_index, universe_label
 from sec_analyzer.store.database import (
     load_latest_stored_price,
     load_latest_swing_scan,
+    load_latest_verdicts,
     load_verdicts,
     save_normalized,
     save_prices,
@@ -322,6 +331,20 @@ def _fetch_catalyst(submissions: Optional[dict], ticker: str, as_of=None) -> Opt
         return None
 
 
+def _attach_insider(analysis: dict, cik: str, ticker: str, submissions, no_cache: bool, as_of) -> None:
+    """Attach the SEC Form 4 insider-activity signal to ``analysis``.
+
+    Mirrors the CLI's post-``interpret`` attachment of ``events``/``momentum``:
+    deterministic filing-derived context, never routed through the LLM and
+    never an input to the fair value. Best-effort -- the shared helper it
+    delegates to already swallows every failure -- so a missing signal simply
+    leaves ``analysis["insider"]`` absent.
+    """
+    insider = _fetch_insider_activity(cik, ticker, submissions, no_cache, as_of)
+    if insider is not None:
+        analysis["insider"] = insider
+
+
 def _fetch_analyst_targets(ticker: str, no_cache: bool) -> Optional[dict]:
     """Best-effort fetch of consensus analyst price targets; never raises.
 
@@ -422,8 +445,11 @@ def _run_full_pipeline(
         threaded straight into
         :func:`sec_analyzer.interpret.analyzer.interpret` as
         ``submissions=``/``price_df=``/``fred_rate=`` so the web UI gets the
-        same full deterministic valuation the CLI does. ``fred_rate`` is
-        ``None`` outside as-of mode.
+        same full deterministic valuation the CLI does. ``fred_rate`` carries
+        the latest DGS10 observation on a live run and the as-of one on a
+        historical run; it is ``None`` only when FRED itself is unreachable,
+        in which case the risk-free rate degrades to the archived
+        ``erp.csv`` value.
 
     Raises:
         Same as ``_run_pipeline`` -- financials fetch/normalize/store
@@ -441,7 +467,10 @@ def _run_full_pipeline(
     flags = detect_red_flags(normalized, ratios, metrics, horizon)
     submissions = _fetch_submissions(cik, ticker, no_cache)
     catalyst = _fetch_catalyst(submissions, ticker, as_of)
-    fred_rate = get_risk_free_asof(as_of, no_cache=no_cache) if as_of is not None else None
+    # Live runs take the latest DGS10 observation, as-of runs the one on/before
+    # the cutoff -- mirrors the CLI's `_fetch_risk_free_asof` (see its docstring
+    # for why a live run must not fall through to the archived erp.csv value).
+    fred_rate = _fetch_risk_free_asof(as_of, no_cache)
     # Fold sector-relative strength into `technical` and recompute the composite
     # momentum score now that the SIC is known (mirrors the CLI).
     _enrich_sector_momentum(ticker, technical, price_df, submissions, no_cache, as_of)
@@ -537,6 +566,83 @@ def history():
     except Exception:  # noqa: BLE001 - last-resort guard, render a page not a stack trace
         logger.exception("Unexpected error rendering history for %s", ticker)
         return _error_page("Analiz geçmişi yüklenirken beklenmeyen bir hata oluştu."), 500
+
+
+#: Bounds for the two ``/overview`` tuning knobs, so a hand-edited query
+#: string can't ask for a nonsensical window (a negative staleness threshold
+#: would mark every row stale; an unbounded one would mark none).
+_OVERVIEW_STALE_DAYS_DEFAULT = 90
+_OVERVIEW_EARNINGS_WINDOW_DEFAULT = 21
+_OVERVIEW_MAX_DAYS = 3650
+
+
+def _int_param(value, default: int, minimum: int = 1, maximum: int = _OVERVIEW_MAX_DAYS) -> int:
+    """Parse an optional integer query parameter, clamped into a sane range.
+
+    An absent, blank, or unparseable value falls back to ``default`` rather
+    than erroring: these are display-tuning knobs on a dashboard, not inputs
+    to a computation, so a bad value should degrade to the default view.
+    """
+    if value is None or str(value).strip() == "":
+        return default
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+@app.route("/overview", methods=["GET"])
+def overview():
+    """Render the portfolio-overview dashboard over every stored verdict.
+
+    Network-free and computation-free: reads one row per ticker (that
+    ticker's most recent live verdict) via
+    :func:`sec_analyzer.store.database.load_latest_verdicts`, enriches and
+    groups them with :func:`sec_analyzer.screener.overview.build_overview`,
+    and renders the result through the shared ``template.html`` shell in
+    ``mode: "overview"``. No valuation is re-run, so every number shown is
+    exactly what that name's last analysis produced.
+
+    Query params:
+        stale_days: Flag a verdict older than this many days as stale
+            (default 90).
+        earnings_window: Surface names whose stored earnings estimate falls
+            within this many days (default 21).
+    """
+    stale_days = _int_param(request.args.get("stale_days"), _OVERVIEW_STALE_DAYS_DEFAULT)
+    earnings_window = _int_param(
+        request.args.get("earnings_window"), _OVERVIEW_EARNINGS_WINDOW_DEFAULT
+    )
+    try:
+        rows = load_latest_verdicts(db_path=Config.DB_PATH)
+        payload = build_overview(
+            rows, stale_days=stale_days, earnings_window_days=earnings_window
+        )
+        return render_overview_page(payload)
+    except Exception:  # noqa: BLE001 - last-resort guard, render a page not a stack trace
+        logger.exception("Unexpected error rendering portfolio overview")
+        return _error_page("Portföy genel bakışı yüklenirken beklenmeyen bir hata oluştu."), 500
+
+
+@app.route("/api/overview", methods=["GET"])
+def api_overview():
+    """JSON counterpart to :func:`overview` -- same payload, no HTML shell."""
+    stale_days = _int_param(request.args.get("stale_days"), _OVERVIEW_STALE_DAYS_DEFAULT)
+    earnings_window = _int_param(
+        request.args.get("earnings_window"), _OVERVIEW_EARNINGS_WINDOW_DEFAULT
+    )
+    try:
+        rows = load_latest_verdicts(db_path=Config.DB_PATH)
+        payload = build_overview(
+            rows, stale_days=stale_days, earnings_window_days=earnings_window
+        )
+        return jsonify({"ok": True, "overview": payload})
+    except Exception:  # noqa: BLE001 - last-resort guard, never leak a stack trace to the client
+        logger.exception("Unexpected error building portfolio overview")
+        return jsonify(
+            {"ok": False, "error": "Portföy genel bakışı oluşturulurken beklenmeyen bir hata oluştu."}
+        ), 500
 
 
 @app.route("/swing", methods=["GET"])
@@ -728,11 +834,18 @@ def api_analyze():
 
     if isinstance(analysis, dict) and "error" not in analysis:
         _attach_momentum(analysis, ticker, normalized, technical, as_of)
+        _attach_insider(analysis, cik, ticker, submissions, no_cache, as_of)
+        _attach_macro(analysis, as_of, no_cache)
+        _attach_peers(
+            analysis, ticker, cik, submissions, normalized, ratios, metrics, as_of=as_of
+        )
         try:
             save_verdict(
                 ticker, cik, horizon, provider or Config.ANALYZER_PROVIDER, price, analysis,
                 db_path=Config.DB_PATH, valuation=analysis.get("valuation"),
                 as_of=as_of.isoformat() if as_of is not None else None,
+                catalyst_date=(catalyst or {}).get("estimate_date"),
+                sic=(submissions or {}).get("sic"),
             )
         except Exception:  # noqa: BLE001 - persistence failure must not fail the request
             logger.warning("Failed to save verdict for %s", ticker, exc_info=True)
@@ -1015,11 +1128,18 @@ def report():
 
     if isinstance(analysis, dict) and "error" not in analysis:
         _attach_momentum(analysis, ticker, normalized, technical, as_of)
+        _attach_insider(analysis, cik, ticker, submissions, no_cache, as_of)
+        _attach_macro(analysis, as_of, no_cache)
+        _attach_peers(
+            analysis, ticker, cik, submissions, normalized, ratios, metrics, as_of=as_of
+        )
         try:
             save_verdict(
                 ticker, cik, horizon, resolved_provider, price, analysis,
                 db_path=Config.DB_PATH, valuation=analysis.get("valuation"),
                 as_of=as_of.isoformat() if as_of is not None else None,
+                catalyst_date=(catalyst or {}).get("estimate_date"),
+                sic=(submissions or {}).get("sic"),
             )
         except Exception:  # noqa: BLE001 - persistence failure must not fail the request
             logger.warning("Failed to save verdict for %s", ticker, exc_info=True)
