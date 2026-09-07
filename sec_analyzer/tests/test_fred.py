@@ -20,6 +20,7 @@ and future, rather than relying on each test remembering to opt in.
 """
 
 import os
+import threading
 
 import pytest
 
@@ -41,6 +42,24 @@ def _isolate_raw_dir(tmp_path, monkeypatch):
     instance), which keeps them readable as self-contained examples.
     """
     monkeypatch.setattr(fred.Config, "RAW_DIR", str(tmp_path))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_breaker_state():
+    """Reset the process-level circuit breaker before and after every test.
+
+    Most tests in this module monkeypatch ``fred._fetch_csv`` wholesale, so
+    they never exercise the breaker at all -- but the dedicated breaker
+    tests below monkeypatch ``requests.get`` instead, one level down, so the
+    real breaker logic inside ``_fetch_csv`` runs. Without this autouse
+    reset, a breaker tripped by one test could linger (module-level global
+    state) and make an unrelated, later test skip a request it expected to
+    make -- exactly the kind of cross-test leak the ``Config.RAW_DIR``
+    fixture above already guards against for the cache directory.
+    """
+    fred._reset_breaker()
+    yield
+    fred._reset_breaker()
 
 
 _CANNED_CSV_LEGACY_HEADER = (
@@ -563,3 +582,205 @@ def test_cache_write_never_leaks_into_the_real_raw_dir(tmp_path, monkeypatch):
     if os.path.isdir(_REAL_RAW_DIR):
         leaked = [f for f in os.listdir(_REAL_RAW_DIR) if f.startswith("fred_")]
         assert leaked == [], f"cache write leaked into the real RAW_DIR: {leaked}"
+
+
+# ---------------------------------------------------------------------------
+# Circuit breaker -- FRED unreachable should stop being retried for a TTL,
+# without ever bypassing the stale-cache/Treasury fallback chain, and never
+# suppressing a request after the host demonstrably answered (even with a
+# bad body) or after a successful fetch. These monkeypatch ``requests.get``
+# itself (one level below ``fred._fetch_csv``, unlike most tests above which
+# replace ``_fetch_csv`` wholesale) so the real breaker logic inside
+# ``_fetch_csv`` actually runs.
+# ---------------------------------------------------------------------------
+
+
+class _FakeResponse:
+    """Minimal stand-in for ``requests.Response`` -- just enough for
+    ``_fetch_csv``'s ``response.raise_for_status()`` / ``response.text``."""
+
+    def __init__(self, text):
+        self.text = text
+
+    def raise_for_status(self):
+        return None
+
+
+def test_breaker_opens_after_first_hard_failure_second_call_skips_request(monkeypatch):
+    calls = []
+
+    def _boom(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise fred.requests.exceptions.ConnectTimeout("simulated FRED outage")
+
+    monkeypatch.setattr(fred.requests, "get", _boom)
+    # No Treasury substitute is exercised here -- the assertion is purely
+    # about how many times FRED itself was attempted.
+    monkeypatch.setattr(fred.treasury, "_fetch_csv", lambda year, real: None)
+
+    first = fred.get_series_asof(fred.SERIES_DGS10, as_of="2022-06-30")
+    second = fred.get_series_asof(fred.SERIES_DGS10, as_of="2022-06-30")
+
+    assert first is None
+    assert second is None
+    assert len(calls) == 1  # the second call's breaker was open -- no request issued
+
+
+def test_breaker_reset_helper_allows_a_new_attempt(monkeypatch):
+    calls = []
+
+    def _boom(*args, **kwargs):
+        calls.append(1)
+        raise fred.requests.exceptions.ConnectTimeout("simulated FRED outage")
+
+    monkeypatch.setattr(fred.requests, "get", _boom)
+    monkeypatch.setattr(fred.treasury, "_fetch_csv", lambda year, real: None)
+
+    fred.get_series_asof(fred.SERIES_DGS10, as_of="2022-06-30")
+    fred.get_series_asof(fred.SERIES_DGS10, as_of="2022-06-30")
+    assert len(calls) == 1
+
+    fred._reset_breaker()
+    fred.get_series_asof(fred.SERIES_DGS10, as_of="2022-06-30")
+    assert len(calls) == 2
+
+
+def test_breaker_ttl_expiry_allows_a_new_attempt_without_reset(monkeypatch):
+    """TTL expiry simulated by monkeypatching the clock -- no real sleeping."""
+    calls = []
+
+    def _boom(*args, **kwargs):
+        calls.append(1)
+        raise fred.requests.exceptions.ConnectTimeout("simulated FRED outage")
+
+    monkeypatch.setattr(fred.requests, "get", _boom)
+    monkeypatch.setattr(fred.treasury, "_fetch_csv", lambda year, real: None)
+
+    fake_now = [1_000.0]
+    monkeypatch.setattr(fred.time, "monotonic", lambda: fake_now[0])
+
+    fred.get_series_asof(fred.SERIES_DGS10, as_of="2022-06-30")
+    assert len(calls) == 1
+
+    # Still inside the TTL window -- breaker stays open, no new attempt.
+    fake_now[0] += fred._BREAKER_TTL_SECONDS - 1
+    fred.get_series_asof(fred.SERIES_DGS10, as_of="2022-06-30")
+    assert len(calls) == 1
+
+    # Past the TTL -- the breaker closes on its own; a new attempt is made.
+    fake_now[0] += 2
+    fred.get_series_asof(fred.SERIES_DGS10, as_of="2022-06-30")
+    assert len(calls) == 2
+
+
+def test_open_breaker_still_returns_a_value_from_stale_cache(tmp_path, monkeypatch):
+    cache_path = os.path.join(str(tmp_path), "fred_DGS10.csv")
+    os.makedirs(str(tmp_path), exist_ok=True)
+    with open(cache_path, "w", encoding="utf-8") as fh:
+        fh.write(_CANNED_CSV_LEGACY_HEADER)
+    old_time = os.path.getmtime(cache_path) - (25 * 60 * 60)  # >24h -- stale
+    os.utime(cache_path, (old_time, old_time))
+
+    fred._trip_breaker()
+    monkeypatch.setattr(
+        fred.requests,
+        "get",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            AssertionError("must not hit the network while the breaker is open")
+        ),
+    )
+
+    result = fred.get_risk_free_asof("2022-06-30")
+
+    assert result["value_pct"] == pytest.approx(2.98)
+    assert result["provider"] == "FRED"  # served from FRED's own stale cache
+
+
+def test_open_breaker_still_falls_back_to_treasury_for_rate_series(monkeypatch):
+    fred._trip_breaker()
+    monkeypatch.setattr(
+        fred.requests,
+        "get",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            AssertionError("must not hit FRED while the breaker is open")
+        ),
+    )
+    monkeypatch.setattr(
+        fred.treasury, "_fetch_csv", lambda year, real: _TREASURY_NOMINAL_2026_30_ROWS
+    )
+
+    for series_id in (fred.SERIES_DGS10, fred.SERIES_DGS2, fred.SERIES_DGS30):
+        result = fred.get_series_asof(series_id, as_of="2026-01-31")
+        assert result is not None
+        assert result["provider"] == "Treasury"
+
+    breakeven = fred.get_series_asof(fred.SERIES_T10YIE, as_of="2026-01-31")
+    assert breakeven is not None
+    assert breakeven["provider"] == "Treasury"
+
+
+def test_successful_fetch_clears_the_breaker(monkeypatch):
+    """A tripped breaker skips requests entirely while open (tested above),
+    so to observe a *successful* fetch clearing it, the TTL must first be
+    made to expire (fake clock) so the next call is actually allowed to try
+    FRED again -- then a successful response must reset the internal state
+    to fully closed (``_breaker_tripped_at is None``), not merely "expired
+    but still set", which is what distinguishes an explicit clear from the
+    TTL math alone happening to read as closed."""
+    fake_now = [1_000.0]
+    monkeypatch.setattr(fred.time, "monotonic", lambda: fake_now[0])
+
+    fred._trip_breaker()
+    assert fred._breaker_is_open() is True
+
+    fake_now[0] += fred._BREAKER_TTL_SECONDS + 1  # let the TTL expire
+    monkeypatch.setattr(
+        fred.requests, "get", lambda *a, **kw: _FakeResponse(_CANNED_CSV_LEGACY_HEADER)
+    )
+
+    result = fred.get_series_asof(fred.SERIES_DGS10, as_of="2022-06-30")
+
+    assert result["value_pct"] == pytest.approx(2.98)
+    assert fred._breaker_tripped_at is None
+
+
+def test_unusable_response_body_does_not_trip_breaker(monkeypatch):
+    """The host answered (no exception, no HTTP error) but the body has no
+    CSV content -- this must not be treated as a connectivity failure."""
+    monkeypatch.setattr(
+        fred.requests, "get", lambda *a, **kw: _FakeResponse("no csv body here")
+    )
+
+    result = fred._fetch_csv("DGS10")
+
+    assert result is None
+    assert fred._breaker_is_open() is False
+
+
+# ---------------------------------------------------------------------------
+# get_macro_panel -- concurrent fetch must preserve key order, fetch each
+# series exactly once, and keep one series' failure isolated from the rest.
+# ---------------------------------------------------------------------------
+
+
+def test_get_macro_panel_concurrent_fetch_preserves_order_and_fetches_once(monkeypatch):
+    call_counts: dict = {}
+    lock = threading.Lock()
+
+    def _fake_get_series_asof(series_id, as_of=None, no_cache=False, percentile_years=10):
+        with lock:
+            call_counts[series_id] = call_counts.get(series_id, 0) + 1
+        if series_id == fred.SERIES_BAA10Y:
+            return None  # simulate this one series failing
+        return {"series": series_id, "value_pct": 1.0}
+
+    monkeypatch.setattr(fred, "get_series_asof", _fake_get_series_asof)
+
+    panel = fred.get_macro_panel(as_of="2022-06-30")
+
+    assert list(panel.keys()) == list(fred.MACRO_PANEL)
+    assert panel[fred.SERIES_BAA10Y] is None
+    for series_id in fred.MACRO_PANEL:
+        if series_id != fred.SERIES_BAA10Y:
+            assert panel[series_id]["series"] == series_id
+    assert call_counts == {series_id: 1 for series_id in fred.MACRO_PANEL}

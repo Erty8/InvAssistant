@@ -24,7 +24,9 @@ than crashing.
 """
 
 import logging
+import re
 import threading
+import time
 from datetime import date, datetime, timezone
 from html import escape
 from typing import Optional, Tuple
@@ -132,6 +134,167 @@ _swing_state = {
 }
 
 
+#: Ordered stage table for the `POST /api/analyze` progress feature (see
+#: `_report_stage` below and `GET /api/analyze/progress`). Keys are English
+#: snake_case identifiers used internally and in the polling route's JSON
+#: contract; labels are the Turkish text shown to the user while that stage
+#: is the active one. Order matters -- it is also the order the pipeline
+#: actually executes in, which is what lets a stage's index double as a
+#: "done"/"active"/"pending" cursor.
+_ANALYZE_STAGES = [
+    ("resolve", "Şirket kimliği çözümleniyor (CIK)"),
+    ("facts", "SEC finansal verileri indiriliyor"),
+    ("normalize", "Finansallar normalize ediliyor, oranlar hesaplanıyor"),
+    ("price", "Fiyat geçmişi ve teknik göstergeler getiriliyor"),
+    ("filings", "SEC dosyalama geçmişi ve katalizör takvimi hesaplanıyor"),
+    ("macro", "Makro veriler getiriliyor (risksiz faiz)"),
+    ("market", "Analist konsensüsü ve kazanç geçmişi getiriliyor"),
+    ("valuation", "Değerleme motoru çalışıyor (DCF, çarpanlar, triangülasyon)"),
+    ("context", "Momentum, insider işlemleri ve benzer şirketler ekleniyor"),
+    ("save", "Sonuç kaydediliyor"),
+]
+_ANALYZE_STAGE_LABELS = dict(_ANALYZE_STAGES)
+_ANALYZE_STAGE_INDEX = {key: i for i, (key, _label) in enumerate(_ANALYZE_STAGES)}
+
+
+#: Guards `_analyze_progress`, the per-job progress-tracking dict for
+#: `POST /api/analyze`. Unlike `_swing_state` (one shared scan at a time),
+#: analyze requests run concurrently -- Flask's dev server is threaded by
+#: default (see `main`) -- so progress is keyed by a client-supplied job id
+#: rather than a single global record. Each record: `stage` (current stage
+#: key), `stage_index` (int cursor into `_ANALYZE_STAGES`), `started_at`/
+#: `updated_at` (`time.monotonic()` floats -- UI telemetry only, never fed
+#: into any analysis/valuation result), `done` (bool), `error`
+#: (Optional[str]), `ticker` (str, diagnostics only).
+_analyze_lock = threading.Lock()
+_analyze_progress: dict = {}
+
+#: Per-thread binding of "the job id this request is tracking", set by
+#: `_progress_begin` and cleared by `_progress_finish`. Each Flask request
+#: runs on its own thread, so this is how `_report_stage` -- called from deep
+#: inside `_run_pipeline`/`_run_full_pipeline`, which must keep their exact
+#: existing signatures for `/api/financials` and the tests that monkeypatch
+#: them -- finds "the job for this request" without threading a job id
+#: through every pipeline helper.
+_analyze_job_local = threading.local()
+
+#: Bounds for `_analyze_progress` pruning (see `_prune_analyze_progress`): a
+#: long-lived server process must not accumulate one record per analyze
+#: request forever just because a client abandoned a job without polling it
+#: to completion. Age and count are independent caps -- age catches jobs left
+#: around after their client stopped polling, count bounds memory even if
+#: every job is recent but numerous.
+_ANALYZE_PROGRESS_MAX_AGE_SECONDS = 15 * 60
+_ANALYZE_PROGRESS_MAX_RECORDS = 20
+
+#: Format for the client-supplied `job` id (`POST /api/analyze`'s JSON field
+#: and `GET /api/analyze/progress`'s query param). Validated defensively
+#: since it's used as a dict key and echoed back in a JSON response.
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _prune_analyze_progress() -> None:
+    """Drop stale and/or excess records from `_analyze_progress`.
+
+    Must be called with `_analyze_lock` already held. Called once per new
+    job registration (from `_progress_begin`), not on every `_report_stage`
+    call -- this is O(n) bookkeeping, not something that belongs on the hot
+    path of a request already fetching SEC/price/market data.
+    """
+    now = time.monotonic()
+    stale_ids = [
+        job_id for job_id, record in _analyze_progress.items()
+        if now - record["updated_at"] > _ANALYZE_PROGRESS_MAX_AGE_SECONDS
+    ]
+    for job_id in stale_ids:
+        del _analyze_progress[job_id]
+
+    if len(_analyze_progress) >= _ANALYZE_PROGRESS_MAX_RECORDS:
+        # Evict the oldest-updated records first, keeping just enough room
+        # (`_ANALYZE_PROGRESS_MAX_RECORDS - 1`) for the new record the caller
+        # is about to insert to fit under the cap.
+        oldest_first = sorted(_analyze_progress.items(), key=lambda kv: kv[1]["updated_at"])
+        overflow = len(oldest_first) - _ANALYZE_PROGRESS_MAX_RECORDS + 1
+        for job_id, _record in oldest_first[:overflow]:
+            del _analyze_progress[job_id]
+
+
+def _progress_begin(job_id: str, ticker: str) -> None:
+    """Register a fresh progress record for `job_id` and bind it to this thread.
+
+    Called once, at the start of `api_analyze`, only when the request supplied
+    a `job` id that passed `_JOB_ID_RE` -- requests that don't opt in never
+    touch `_analyze_progress` at all. `ticker` is stored for diagnostics only;
+    the polling route's response does not echo it.
+    """
+    with _analyze_lock:
+        _prune_analyze_progress()
+        now = time.monotonic()
+        _analyze_progress[job_id] = {
+            "stage": _ANALYZE_STAGES[0][0],
+            "stage_index": 0,
+            "started_at": now,
+            "updated_at": now,
+            "done": False,
+            "error": None,
+            "ticker": ticker,
+        }
+    _analyze_job_local.job_id = job_id
+
+
+def _report_stage(key: str) -> None:
+    """Record that the current thread's tracked job has entered stage `key`.
+
+    Called from true stage boundaries inside `_run_pipeline`,
+    `_run_full_pipeline`, and `api_analyze` (right before each stage's work
+    starts). Deliberately a silent no-op -- never raises, per this file's
+    "never let analysis-layer code crash" convention -- whenever there is
+    nothing to report to: no job bound to this thread (e.g. `/api/financials`
+    calling `_run_pipeline` directly, or an `/api/analyze` request with no/
+    invalid `job`), the bound job already pruned from `_analyze_progress`, or
+    an unrecognized `key`. This is what lets `_run_pipeline`/
+    `_run_full_pipeline` call it unconditionally without changing behavior
+    for callers that never asked for progress tracking.
+    """
+    try:
+        job_id = getattr(_analyze_job_local, "job_id", None)
+        if job_id is None or key not in _ANALYZE_STAGE_INDEX:
+            return
+        with _analyze_lock:
+            record = _analyze_progress.get(job_id)
+            if record is None:
+                return
+            record["stage"] = key
+            record["stage_index"] = _ANALYZE_STAGE_INDEX[key]
+            record["updated_at"] = time.monotonic()
+    except Exception:  # noqa: BLE001 - progress reporting must never break the pipeline
+        logger.warning("Failed to report analyze progress stage %r", key, exc_info=True)
+
+
+def _progress_finish(error: Optional[str] = None) -> None:
+    """Mark the current thread's tracked job done and unbind it from the thread.
+
+    Called from `api_analyze`'s `finally` clause, so it always runs on every
+    exit path (success, 400/404/500, or an unexpected exception) once a job
+    has been registered. A silent no-op -- never raises -- when no job is
+    bound to this thread (the common case: most requests don't pass `job`).
+    """
+    try:
+        job_id = getattr(_analyze_job_local, "job_id", None)
+        if job_id is not None:
+            with _analyze_lock:
+                record = _analyze_progress.get(job_id)
+                if record is not None:
+                    record["done"] = True
+                    record["updated_at"] = time.monotonic()
+                    if error is not None:
+                        record["error"] = error
+    except Exception:  # noqa: BLE001 - progress reporting must never break the pipeline
+        logger.warning("Failed to finalize analyze progress", exc_info=True)
+    finally:
+        _analyze_job_local.job_id = None
+
+
 def _utc_now_iso() -> str:
     """Current UTC time as an ISO-8601-seconds string, e.g. "2026-07-27T09:12:03Z".
 
@@ -205,8 +368,11 @@ def _run_pipeline(ticker: str, years: int, no_cache: bool, as_of=None) -> Tuple[
     """
     client = SecHttpClient()
 
+    _report_stage("resolve")
     cik, name = resolve_cik(ticker, client, no_cache=no_cache)
+    _report_stage("facts")
     facts = get_company_facts(cik, client, no_cache=no_cache)
+    _report_stage("normalize")
     normalized = normalize_facts(facts, years=years, as_of=as_of)
     ratios = compute_ratios(normalized)
 
@@ -255,6 +421,9 @@ def _fetch_price_and_technical(ticker: str, horizon: str, no_cache: bool, as_of=
         verdict_result = technical_verdict(indicators, horizon)
         technical = {**indicators, **verdict_result}
         technical["relative_strength"] = _fetch_relative_strength(ticker, price_df, no_cache, as_of)
+        # Provenance of the price series, so the total-return guard and the
+        # report's source label see the real source (mirrors the CLI).
+        technical["price_source"] = source
         logger.info("Price data for %s from %s: %.2f as of %s", ticker, source, price, price_as_of)
         return price, price_as_of, technical, price_df
     except PriceDataError as exc:
@@ -459,17 +628,20 @@ def _run_full_pipeline(
     """
     cik, name, normalized, ratios = _run_pipeline(ticker, years, no_cache, as_of)
 
+    _report_stage("price")
     price, _price_as_of, technical, price_df = _fetch_price_and_technical(
         ticker, horizon, no_cache, as_of
     )
 
     metrics = compute_metrics(normalized, ratios, price)
     flags = detect_red_flags(normalized, ratios, metrics, horizon)
+    _report_stage("filings")
     submissions = _fetch_submissions(cik, ticker, no_cache)
     catalyst = _fetch_catalyst(submissions, ticker, as_of)
     # Live runs take the latest DGS10 observation, as-of runs the one on/before
     # the cutoff -- mirrors the CLI's `_fetch_risk_free_asof` (see its docstring
     # for why a live run must not fall through to the archived erp.csv value).
+    _report_stage("macro")
     fred_rate = _fetch_risk_free_asof(as_of, no_cache)
     # Fold sector-relative strength into `technical` and recompute the composite
     # momentum score now that the SIC is known (mirrors the CLI).
@@ -734,6 +906,13 @@ def api_analyze():
             "script"); defaults to ``Config.ANALYZER_PROVIDER`` when
             omitted/None.
         no_cache: Bypass the on-disk raw JSON cache (default False).
+        job: Optional client-generated progress-tracking id, matching
+            ``^[A-Za-z0-9_-]{1,64}$``. When present and valid, this request's
+            stage-by-stage progress is recorded under that id and can be
+            polled via ``GET /api/analyze/progress``. Missing or malformed
+            values are silently treated as "no progress tracking requested"
+            -- this is purely additive UI plumbing, so it must never change
+            this route's behavior or response shape.
 
     The financials pipeline uses the same error handling as
     ``/api/financials``. Price/technical data is fetched best-effort -- if
@@ -766,104 +945,228 @@ def api_analyze():
     if not ticker:
         return jsonify({"ok": False, "error": "JSON field 'ticker' is required."}), 400
 
+    # `job` is validated up front, same as every other body field, but
+    # registration happens only after we know `ticker` (used purely for the
+    # record's diagnostic `ticker` field -- `_run_pipeline` resolves the
+    # canonical name/CIK later, which is exactly why progress is keyed by a
+    # caller-supplied job id rather than the resolved identity). An invalid
+    # or absent id just means this request opts out of progress tracking, so
+    # `job_id` stays None and every `_report_stage`/`_progress_finish` call
+    # below is already a documented no-op in that case.
+    raw_job = body.get("job")
+    job_id = str(raw_job).strip() if isinstance(raw_job, str) and raw_job.strip() else None
+    if job_id is not None and not _JOB_ID_RE.match(job_id):
+        job_id = None
+    if job_id is not None:
+        _progress_begin(job_id, ticker)
+
+    # Everything past this point is wrapped so `_progress_finish()` always
+    # runs -- on the 400s below, on the 404/500s around `_run_full_pipeline`,
+    # and on the final 200 -- even though `_progress_finish` itself is a
+    # no-op when `job_id` is None. `progress_error` is set on the paths that
+    # represent an actual request failure; a degraded/error `analysis` dict
+    # on an otherwise-successful 200 is deliberately NOT treated as a
+    # progress-tracking failure (see the route's docstring: that's not a
+    # request failure either).
+    progress_error: Optional[str] = None
     try:
-        years = int(body.get("years", 12))
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "'years' must be an integer."}), 400
-
-    horizon = str(body.get("horizon") or "1y").strip().lower()
-    if horizon not in _VALID_HORIZONS:
-        horizon = "1y"
-
-    provider = body.get("provider") or None
-    no_cache = bool(body.get("no_cache", False))
-
-    as_of, as_of_error = _parse_as_of_param(body.get("as_of"))
-    if as_of_error:
-        return jsonify({"ok": False, "error": as_of_error}), 400
-
-    try:
-        (
-            cik, name, normalized, ratios, metrics, technical, flags, catalyst, price,
-            submissions, price_df, fred_rate,
-        ) = _run_full_pipeline(ticker, years, no_cache, horizon, as_of)
-
-    except ConfigError as exc:
-        logger.error("Configuration error while analyzing %s: %s", ticker, exc)
-        return jsonify({"ok": False, "error": str(exc)}), 400
-
-    except ValueError as exc:
-        logger.info("Ticker resolution failed for %s: %s", ticker, exc)
-        return jsonify({"ok": False, "error": str(exc)}), 404
-
-    except Exception:  # noqa: BLE001 - last-resort guard, never leak a stack trace to the client
-        logger.exception("Unexpected error fetching financials for %s", ticker)
-        return jsonify(
-            {"ok": False, "error": "An unexpected server error occurred while fetching financials."}
-        ), 500
-
-    # Analyst consensus (yfinance) is undated and cannot be point-in-time, so
-    # it is suppressed in as-of mode (mirrors the CLI's as-of contract). The
-    # earnings-surprise (beat/miss) history is likewise undated and display-only,
-    # so it is suppressed in as-of mode for the same reason.
-    analyst = None if as_of is not None else _fetch_analyst_targets(ticker, no_cache)
-    earnings = None if as_of is not None else _fetch_earnings_history(ticker, no_cache)
-
-    logger.info(
-        "Running %s analysis for %s (horizon=%s%s)",
-        provider or Config.ANALYZER_PROVIDER, ticker, horizon,
-        f", as_of={as_of.isoformat()}" if as_of is not None else "",
-    )
-    analysis = interpret(
-        normalized,
-        ratios,
-        provider=provider,
-        horizon=horizon,
-        metrics=metrics,
-        technical=technical,
-        red_flags=flags,
-        catalyst=catalyst,
-        submissions=submissions,
-        price_df=price_df,
-        as_of=as_of,
-        fred_rate=fred_rate,
-    )
-
-    if isinstance(analysis, dict) and as_of is not None:
-        analysis["as_of"] = as_of.isoformat()
-
-    if isinstance(analysis, dict) and "error" not in analysis:
-        _attach_momentum(analysis, ticker, normalized, technical, as_of)
-        _attach_insider(analysis, cik, ticker, submissions, no_cache, as_of)
-        _attach_macro(analysis, as_of, no_cache)
-        _attach_peers(
-            analysis, ticker, cik, submissions, normalized, ratios, metrics, as_of=as_of
-        )
         try:
-            save_verdict(
-                ticker, cik, horizon, provider or Config.ANALYZER_PROVIDER, price, analysis,
-                db_path=Config.DB_PATH, valuation=analysis.get("valuation"),
-                as_of=as_of.isoformat() if as_of is not None else None,
-                catalyst_date=(catalyst or {}).get("estimate_date"),
-                sic=(submissions or {}).get("sic"),
-            )
-        except Exception:  # noqa: BLE001 - persistence failure must not fail the request
-            logger.warning("Failed to save verdict for %s", ticker, exc_info=True)
+            years = int(body.get("years", 12))
+        except (TypeError, ValueError):
+            progress_error = "'years' must be an integer."
+            return jsonify({"ok": False, "error": progress_error}), 400
 
-    payload = _serialize_financials(normalized, ratios)
+        horizon = str(body.get("horizon") or "1y").strip().lower()
+        if horizon not in _VALID_HORIZONS:
+            horizon = "1y"
+
+        provider = body.get("provider") or None
+        no_cache = bool(body.get("no_cache", False))
+
+        as_of, as_of_error = _parse_as_of_param(body.get("as_of"))
+        if as_of_error:
+            progress_error = as_of_error
+            return jsonify({"ok": False, "error": as_of_error}), 400
+
+        try:
+            (
+                cik, name, normalized, ratios, metrics, technical, flags, catalyst, price,
+                submissions, price_df, fred_rate,
+            ) = _run_full_pipeline(ticker, years, no_cache, horizon, as_of)
+
+        except ConfigError as exc:
+            logger.error("Configuration error while analyzing %s: %s", ticker, exc)
+            progress_error = str(exc)
+            return jsonify({"ok": False, "error": progress_error}), 400
+
+        except ValueError as exc:
+            logger.info("Ticker resolution failed for %s: %s", ticker, exc)
+            progress_error = str(exc)
+            return jsonify({"ok": False, "error": progress_error}), 404
+
+        except Exception:  # noqa: BLE001 - last-resort guard, never leak a stack trace to the client
+            logger.exception("Unexpected error fetching financials for %s", ticker)
+            progress_error = "An unexpected server error occurred while fetching financials."
+            return jsonify({"ok": False, "error": progress_error}), 500
+
+        # Analyst consensus (yfinance) is undated and cannot be point-in-time, so
+        # it is suppressed in as-of mode (mirrors the CLI's as-of contract). The
+        # earnings-surprise (beat/miss) history is likewise undated and display-only,
+        # so it is suppressed in as-of mode for the same reason.
+        _report_stage("market")
+        analyst = None if as_of is not None else _fetch_analyst_targets(ticker, no_cache)
+        earnings = None if as_of is not None else _fetch_earnings_history(ticker, no_cache)
+
+        logger.info(
+            "Running %s analysis for %s (horizon=%s%s)",
+            provider or Config.ANALYZER_PROVIDER, ticker, horizon,
+            f", as_of={as_of.isoformat()}" if as_of is not None else "",
+        )
+        _report_stage("valuation")
+        analysis = interpret(
+            normalized,
+            ratios,
+            provider=provider,
+            horizon=horizon,
+            metrics=metrics,
+            technical=technical,
+            red_flags=flags,
+            catalyst=catalyst,
+            submissions=submissions,
+            price_df=price_df,
+            as_of=as_of,
+            fred_rate=fred_rate,
+        )
+
+        if isinstance(analysis, dict) and as_of is not None:
+            analysis["as_of"] = as_of.isoformat()
+
+        if isinstance(analysis, dict) and "error" not in analysis:
+            _report_stage("context")
+            _attach_momentum(analysis, ticker, normalized, technical, as_of)
+            _attach_insider(analysis, cik, ticker, submissions, no_cache, as_of)
+            _attach_macro(analysis, as_of, no_cache)
+            _attach_peers(
+                analysis, ticker, cik, submissions, normalized, ratios, metrics, as_of=as_of
+            )
+            try:
+                _report_stage("save")
+                save_verdict(
+                    ticker, cik, horizon, provider or Config.ANALYZER_PROVIDER, price, analysis,
+                    db_path=Config.DB_PATH, valuation=analysis.get("valuation"),
+                    as_of=as_of.isoformat() if as_of is not None else None,
+                    catalyst_date=(catalyst or {}).get("estimate_date"),
+                    sic=(submissions or {}).get("sic"),
+                )
+            except Exception:  # noqa: BLE001 - persistence failure must not fail the request
+                logger.warning("Failed to save verdict for %s", ticker, exc_info=True)
+
+        payload = _serialize_financials(normalized, ratios)
+        return jsonify({
+            "ok": True,
+            **payload,
+            "cik": cik,
+            "name": name,
+            "analysis": analysis,
+            "technical": technical,
+            "metrics": metrics,
+            "red_flags": flags,
+            "catalyst": catalyst,
+            "analyst": analyst,
+            "earnings": earnings,
+            "as_of": as_of.isoformat() if as_of is not None else None,
+        })
+    finally:
+        if job_id is not None:
+            _progress_finish(error=progress_error)
+
+
+@app.route("/api/analyze/progress", methods=["GET"])
+def api_analyze_progress():
+    """Report a running/finished ``POST /api/analyze`` request's progress.
+
+    This works with no extra plumbing between the two routes because
+    ``main``'s ``app.run(...)`` leaves Flask's ``threaded`` default (True):
+    the analyze POST keeps executing in its own request thread while this
+    GET is served concurrently on another, and both threads read/write the
+    same `_analyze_progress` dict under `_analyze_lock`.
+
+    Query params:
+        job: The same id the client passed as ``POST /api/analyze``'s JSON
+            ``job`` field (required; must match ``^[A-Za-z0-9_-]{1,64}$``).
+
+    Returns ``200 {"ok": true, "job", "found", "done", "stage", "stage_index",
+    "total", "label", "elapsed", "error", "stages"}``, where ``stages`` is
+    the full :data:`_ANALYZE_STAGES` table annotated with each stage's
+    ``state`` ("done"/"active"/"pending"). An unrecognized/expired job id is
+    NOT an error -- it returns ``found: false`` with every stage "pending",
+    since the client may start polling before ``POST /api/analyze``'s
+    `_progress_begin` call has run, or the record may already have been
+    pruned after the job finished (see `_prune_analyze_progress`). Only a
+    missing/malformed `job` param itself is a 400.
+    """
+    job_id = (request.args.get("job") or "").strip()
+    if not _JOB_ID_RE.match(job_id):
+        return jsonify(
+            {"ok": False, "error": "Query parameter 'job' is required and must be a valid job id."}
+        ), 400
+
+    with _analyze_lock:
+        record = _analyze_progress.get(job_id)
+        record = dict(record) if record is not None else None
+
+    if record is None:
+        return jsonify({
+            "ok": True,
+            "job": job_id,
+            "found": False,
+            "done": False,
+            "stage": None,
+            "stage_index": 0,
+            "total": len(_ANALYZE_STAGES),
+            "label": None,
+            "elapsed": 0,
+            "error": None,
+            "stages": [
+                {"key": key, "label": label, "state": "pending"} for key, label in _ANALYZE_STAGES
+            ],
+        })
+
+    stage_index = record["stage_index"]
+    done = record["done"]
+    error = record["error"]
+
+    stages = []
+    for i, (key, label) in enumerate(_ANALYZE_STAGES):
+        # When the job is done with no error, every stage reads as "done".
+        # When it's done WITH an error, leave the stage it failed on (still
+        # `stage_index` -- a failure never advances the stage) as "active"
+        # rather than "done", so the UI can point at exactly where the run
+        # broke instead of showing a false all-green completion.
+        if done and error is None:
+            state = "done"
+        elif i < stage_index:
+            state = "done"
+        elif i == stage_index:
+            state = "active"
+        else:
+            state = "pending"
+        stages.append({"key": key, "label": label, "state": state})
+
     return jsonify({
         "ok": True,
-        **payload,
-        "cik": cik,
-        "name": name,
-        "analysis": analysis,
-        "technical": technical,
-        "metrics": metrics,
-        "red_flags": flags,
-        "catalyst": catalyst,
-        "analyst": analyst,
-        "earnings": earnings,
-        "as_of": as_of.isoformat() if as_of is not None else None,
+        "job": job_id,
+        "found": True,
+        "done": done,
+        "stage": record["stage"],
+        "stage_index": stage_index,
+        "total": len(_ANALYZE_STAGES),
+        "label": _ANALYZE_STAGE_LABELS.get(record["stage"]),
+        # UI telemetry only (elapsed wall-clock seconds since the job began) --
+        # never fed into any analysis/valuation result.
+        "elapsed": round(time.monotonic() - record["started_at"], 1),
+        "error": error,
+        "stages": stages,
     })
 
 

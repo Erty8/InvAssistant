@@ -1590,6 +1590,75 @@
     margin-right: 8px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---- Analyze-mode live progress card (runAnalyze() polling) -------------
+     Replaces the old frozen one-line "10-40 seconds" spinner: a heading with
+     a locally-ticked timer, a stage counter, and a per-stage checklist whose
+     rows are patched in place by key rather than re-rendered wholesale (a
+     full re-render would tear down and restart the active row's .spinner
+     animation on every ~800ms poll). Left-aligned, dense, terminal-toned --
+     no marketing-spinner styling. */
+  .analyze-progress-head {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .analyze-progress-head .analyze-timer {
+    margin-left: auto;
+    font-family: var(--mono);
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+  .analyze-stage-count {
+    margin-top: 10px;
+    font-size: 0.76rem;
+    color: var(--muted);
+    font-family: var(--mono);
+  }
+  .analyze-stages {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .analyze-stage-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.82rem;
+    font-family: var(--mono);
+  }
+  .analyze-stage-icon {
+    display: inline-flex;
+    width: 16px;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  /* The shared .spinner rule carries margin-right: 8px for its other call
+     sites; inside this fixed-width, center-justified icon slot that margin
+     pushes the active row's spinner off-center versus the plain check mark
+     / middot glyphs in the other rows, and doubles up with the row's own
+     8px gap. Zero it here only -- do not touch the base .spinner rule. */
+  .analyze-stage-icon .spinner {
+    margin-right: 0;
+  }
+  /* Completed: legible but subdued -- a check mark, no strike-through. */
+  .analyze-stage-done { color: var(--muted); }
+  /* Currently running: the one row that should draw the eye. */
+  .analyze-stage-active { color: var(--primary-light); font-weight: 600; }
+  /* Not started yet: dimmed further than "done" so the active row reads
+     as the clear midpoint between finished and not-yet-reached work. */
+  .analyze-stage-pending { color: var(--muted); opacity: 0.5; }
+  .analyze-progress-note {
+    margin-top: 12px;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .analyze-progress-error {
+    margin-top: 8px;
+    font-size: 0.8rem;
+    color: var(--red);
+  }
   .error-banner {
     border: 1px solid rgba(255, 180, 171, 0.5);
     background: rgba(147, 0, 10, 0.18);
@@ -5327,6 +5396,150 @@
       );
     }
 
+    // ---- Live progress card for the in-flight /api/analyze request --------
+    // A run routinely takes far longer than the old "10-40 seconds" claim,
+    // so instead of one frozen line we show a ticker heading + local timer,
+    // a step counter, and a per-stage checklist kept in sync by polling
+    // GET /api/analyze/progress?job=<id>. These handles/state are scoped to
+    // the renderSearchMode() closure (not inside runAnalyze itself) so a
+    // stray re-entrant call -- shouldn't happen since the button is disabled
+    // mid-flight, but this is cheap insurance -- always tears down any prior
+    // interval before a new run starts one.
+    var progressPollHandle = null;
+    var progressTimerHandle = null;
+    var progressStartMs = 0;
+    // Per-stage-key bookkeeping: progressStageEls holds the DOM refs created
+    // the first time a key is seen (stage order/identity is fixed by the
+    // server, so rows are created once and patched thereafter); progressState
+    // remembers the last-applied {state, label} per key so an unchanged
+    // stage is left completely untouched by the next poll -- touching a row
+    // that didn't change would reset its .spinner CSS animation every tick.
+    var progressStageEls = {};
+    var progressStageState = {};
+
+    function stopProgressUpdates() {
+      if (progressPollHandle) { clearInterval(progressPollHandle); progressPollHandle = null; }
+      if (progressTimerHandle) { clearInterval(progressTimerHandle); progressTimerHandle = null; }
+    }
+
+    // ~16-char alphanumeric id, unique enough to correlate this browser run
+    // with its server-side progress record. Not a security token (just a
+    // poll key visible in this tab's own request), so Math.random() is fine.
+    function makeJobId() {
+      var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      var id = "";
+      for (var i = 0; i < 16; i++) {
+        id += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return id;
+    }
+
+    function fmtElapsed(seconds) {
+      var total = Math.max(0, Math.floor(seconds || 0));
+      var m = Math.floor(total / 60);
+      var s = total % 60;
+      return m + ":" + (s < 10 ? "0" : "") + s;
+    }
+
+    function tickProgressTimer() {
+      var el = document.getElementById("analyze-progress-timer");
+      if (!el) return; // card already replaced (final render/error landed)
+      el.textContent = fmtElapsed((Date.now() - progressStartMs) / 1000);
+    }
+
+    // Builds the card's static shell immediately (before the first poll can
+    // possibly resolve) so it "looks right" from frame one: heading + timer
+    // + step counter placeholder, an empty stage list that fills in on the
+    // first poll response, and the calm cold-cache note. escapeHtml() is
+    // used here because ticker is spliced into an innerHTML string; the
+    // per-stage patches below use textContent instead (see applyProgressPoll)
+    // since that needs no escaping and escapeHtml()'s HTML-entity output
+    // would otherwise show up literally (e.g. "&amp;") in plain text.
+    function renderProgressCard(ticker) {
+      progressStageEls = {};
+      progressStageState = {};
+      bodyEl.innerHTML =
+        '<div class="card analyze-progress">' +
+          '<div class="analyze-progress-head">' +
+            '<span class="spinner"></span>' +
+            '<span>' + escapeHtml(ticker) + ' analiz ediliyor…</span>' +
+            '<span class="analyze-timer" id="analyze-progress-timer">0:00</span>' +
+          '</div>' +
+          '<div class="analyze-stage-count" id="analyze-progress-count">Aşama —/—</div>' +
+          '<div class="analyze-stages" id="analyze-progress-stages"></div>' +
+          '<div class="analyze-progress-note">İlk çalıştırmada (soğuk önbellek) birkaç dakika sürebilir; bu sekmeyi açık bırakmanız yeterli.</div>' +
+          '<div class="analyze-progress-error" id="analyze-progress-error" style="display:none"></div>' +
+        '</div>';
+    }
+
+    // Applies one GET /api/analyze/progress response. Called both while
+    // found:false (job not registered server-side yet -- normal for the
+    // first tick or two, since the POST and the first poll race) and once
+    // found:true; either way the response always carries the full `stages`
+    // list per the backend contract, so the checklist renders identically
+    // in both cases and needs no special-casing for "not found yet".
+    function applyProgressPoll(json) {
+      var stagesEl = document.getElementById("analyze-progress-stages");
+      if (!stagesEl) return; // card already replaced by the final render
+
+      var stages = (json && json.stages) || [];
+      var total = Number(json && json.total) || stages.length;
+      var stageIndex = Number(json && json.stage_index) || 0;
+      var countEl = document.getElementById("analyze-progress-count");
+      if (countEl) {
+        // The server's stage_index is a 0-based cursor into _ANALYZE_STAGES
+        // (see app.py's _ANALYZE_STAGE_INDEX), but the counter shown here is
+        // human-facing and 1-based -- do not "simplify" this back to the raw
+        // stage_index, that reintroduces the "Aşama 0/10" off-by-one.
+        if (!total) {
+          countEl.textContent = "Aşama —/—";
+        } else if (!(json && json.found)) {
+          countEl.textContent = "Aşama —/" + total;
+        } else if (json && json.done) {
+          countEl.textContent = "Aşama " + total + "/" + total;
+        } else {
+          countEl.textContent = "Aşama " + Math.min(stageIndex + 1, total) + "/" + total;
+        }
+      }
+
+      stages.forEach(function (stage) {
+        var key = String((stage && stage.key) || "");
+        if (!key) return;
+        var newState = (stage && stage.state) || "pending";
+        var label = (stage && stage.label) || "";
+        var prev = progressStageState[key];
+        if (prev && prev.state === newState && prev.label === label) return; // no change -- leave the DOM alone
+
+        var refs = progressStageEls[key];
+        if (!refs) {
+          var row = document.createElement("div");
+          var icon = document.createElement("span");
+          icon.className = "analyze-stage-icon";
+          var labelEl = document.createElement("span");
+          labelEl.className = "analyze-stage-label";
+          row.appendChild(icon);
+          row.appendChild(labelEl);
+          stagesEl.appendChild(row);
+          refs = { row: row, icon: icon, label: labelEl };
+          progressStageEls[key] = refs;
+        }
+        refs.row.className = "analyze-stage-row analyze-stage-" + newState;
+        refs.icon.innerHTML = newState === "done" ? "&#10003;" : (newState === "active" ? '<span class="spinner"></span>' : "&middot;");
+        refs.label.textContent = label;
+        progressStageState[key] = { state: newState, label: label };
+      });
+
+      // A poll-reported error is shown inline but is advisory only -- the
+      // pending POST's own response is still what decides success/failure
+      // (see the .then/.catch chain below), so this never calls showError().
+      var errorEl = document.getElementById("analyze-progress-error");
+      if (errorEl) {
+        var errText = (json && json.error) ? String(json.error) : "";
+        errorEl.textContent = errText ? "İlerleme uyarısı: " + errText : "";
+        errorEl.style.display = errText ? "" : "none";
+      }
+    }
+
     function runAnalyze() {
       var ticker = tickerInput.value.trim().toUpperCase();
       if (!ticker) {
@@ -5337,9 +5550,25 @@
       tickerInput.disabled = true;
       asofInput.disabled = true;
       updateAsofBanner(null);
-      bodyEl.innerHTML =
-        '<div class="card"><div class="loading-state"><span class="spinner"></span>' +
-        'Running analysis for ' + escapeHtml(ticker) + ' -- this can take 10-40 seconds...</div></div>';
+      stopProgressUpdates(); // insurance -- see the comment on the vars above
+
+      var jobId = makeJobId();
+      renderProgressCard(ticker);
+      progressStartMs = Date.now();
+      tickProgressTimer();
+      progressTimerHandle = setInterval(tickProgressTimer, 1000);
+
+      function pollProgressOnce() {
+        fetch("/api/analyze/progress?job=" + encodeURIComponent(jobId))
+          .then(function (r) { return r.json(); })
+          .then(function (json) { applyProgressPoll(json); })
+          .catch(function () { /* transient network hiccup -- next tick retries, never surfaced as an analysis error */ });
+      }
+      // Fire the first poll immediately (rather than waiting a full 800ms)
+      // so the checklist fills in as soon as possible, same pattern as the
+      // swing screener's pollStatus()/startPolling() above.
+      progressPollHandle = setInterval(pollProgressOnce, 800);
+      pollProgressOnce();
 
       var requestBody = {
         ticker: ticker,
@@ -5347,6 +5576,7 @@
         horizon: state.horizon,
         provider: state.provider,
         no_cache: false,
+        job: jobId,
       };
       // Empty date = normal live analysis (the common case, unchanged from
       // before); a filled-in date is the only switch for point-in-time mode
@@ -5410,6 +5640,13 @@
           showError("Network error: " + err.message);
         })
         .finally(function () {
+          // Every exit path (success, error response, network error) ends
+          // here, so this is the one place that must stop both the poll
+          // interval and the 1s local timer -- otherwise a finished/failed
+          // run keeps firing requests against a job id nothing is polling
+          // for anymore, even after showError()/renderBody() has already
+          // replaced the card those handles were updating.
+          stopProgressUpdates();
           analyzeBtn.disabled = false;
           tickerInput.disabled = false;
           asofInput.disabled = false;

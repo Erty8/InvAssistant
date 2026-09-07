@@ -46,12 +46,44 @@ Treasury fallback) is logged and returns ``None`` so the caller can fall
 back further, to the archived ERP/risk-free values. When fetching a panel
 of several series, one series failing never prevents the others from being
 returned.
+
+Two further pieces of network/IO policy, both added once FRED was observed
+to be entirely unreachable (not just slow) from some networks -- every
+request burning a full 30s timeout, six series fetched one at a time, made
+the ``context`` pipeline stage cost nearly three minutes on its own:
+
+1. A process-level circuit breaker (:func:`_breaker_is_open`,
+   :func:`_trip_breaker`, :func:`_reset_breaker`). After a genuine
+   connectivity failure (a ``requests.RequestException`` -- a timeout,
+   DNS failure, connection refusal, etc.) :func:`_fetch_csv` stops issuing
+   real HTTP requests for :data:`_BREAKER_TTL_SECONDS` and returns ``None``
+   immediately instead, so every downstream caller falls through to the next
+   provider in the chain (stale cache, then Treasury) without waiting out
+   another timeout. A response that *arrives* but has an unusable body does
+   **not** trip the breaker -- the host answered, so the next call is worth
+   retrying at full cost. A successful fetch clears the breaker immediately.
+   The breaker is process-global and lock-guarded because :func:`get_macro_panel`
+   below fetches concurrently and the Flask web server is threaded.
+2. :func:`get_macro_panel` fetches its series concurrently rather than one
+   at a time, so a cold/timed-out host costs one wait, not six.
+
+Both are purely *network/IO scheduling* policy: which provider is tried
+first and how many requests are in flight at once. Neither changes how any
+returned value is computed. The project's determinism rule (same inputs ->
+same outputs) is preserved because the breaker only ever removes FRED from
+consideration in favor of the *same* deterministic fallback chain
+(FRED -> stale cache -> Treasury) this module already had, and the
+concurrent panel fetch keys every result by its own series id before
+returning -- so run-to-run scheduling jitter (which request happens to
+finish first) can never leak into which value ends up under which key.
 """
 
+import concurrent.futures
 import csv
 import io
 import logging
 import os
+import threading
 import time
 from datetime import date
 from typing import Dict, List, Optional, Tuple
@@ -129,6 +161,83 @@ _LATEST_SENTINEL_ISO = "9999-12-31"
 _MIN_PERCENTILE_WINDOW_N = 30
 
 
+def _positive_float_env(name: str, default: float) -> float:
+    """Parse a positive float out of environment variable ``name``.
+
+    Defensive by design: this is operational tuning (a timeout, a breaker
+    TTL), not something that should ever be able to crash module import or
+    silently take on a nonsensical value. A missing, non-numeric, or
+    non-positive value logs a warning and falls back to ``default``.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("fred: invalid %s=%r; using default %s.", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("fred: non-positive %s=%r; using default %s.", name, raw, default)
+        return default
+    return value
+
+
+#: Per-request timeout, in seconds, for the FRED CSV download. A small CSV
+#: over HTTPS either answers in well under a second or the host is not
+#: answering at all -- 30s (the previous hardcoded value) only ever meant
+#: "wait out a dead host", and with six series in :data:`MACRO_PANEL` that
+#: added up to minutes of pure waiting on an unreachable network. Overridable
+#: via the ``FRED_TIMEOUT`` environment variable for networks with a
+#: genuinely slow (not dead) path to fred.stlouisfed.org.
+FRED_TIMEOUT: float = _positive_float_env("FRED_TIMEOUT", 10.0)
+
+#: How long, in seconds, the circuit breaker (see below) stays open after a
+#: genuine connectivity failure before the next call is allowed to try FRED
+#: again. Overridable via the ``FRED_BREAKER_TTL`` environment variable.
+_BREAKER_TTL_SECONDS: float = _positive_float_env("FRED_BREAKER_TTL", 900.0)
+
+#: Guards :data:`_breaker_tripped_at` -- :func:`get_macro_panel` fetches
+#: concurrently and the Flask web server is threaded, so more than one
+#: thread can observe/update the breaker at once.
+_breaker_lock = threading.Lock()
+
+#: ``time.monotonic()`` timestamp of the most recent hard (connectivity)
+#: failure, or ``None`` while the breaker is closed (FRED is being tried
+#: normally). Monotonic rather than wall-clock time so the breaker can never
+#: be confused by a system clock adjustment.
+_breaker_tripped_at: Optional[float] = None
+
+
+def _breaker_is_open() -> bool:
+    """Return True if FRED requests should currently be skipped."""
+    with _breaker_lock:
+        tripped_at = _breaker_tripped_at
+    if tripped_at is None:
+        return False
+    return (time.monotonic() - tripped_at) < _BREAKER_TTL_SECONDS
+
+
+def _trip_breaker() -> None:
+    """Record a hard connectivity failure, opening the breaker."""
+    global _breaker_tripped_at
+    with _breaker_lock:
+        _breaker_tripped_at = time.monotonic()
+
+
+def _reset_breaker() -> None:
+    """Close the breaker immediately.
+
+    Called internally after any successful fetch (so a transient outage
+    does not keep suppressing requests once the host is back), and exposed
+    for tests to force a clean, un-tripped state without waiting out
+    :data:`_BREAKER_TTL_SECONDS` for real.
+    """
+    global _breaker_tripped_at
+    with _breaker_lock:
+        _breaker_tripped_at = None
+
+
 def _cache_path(series: str) -> str:
     """Return the on-disk cache path for a FRED series CSV."""
     return os.path.join(Config.RAW_DIR, f"fred_{series}.csv")
@@ -143,18 +252,37 @@ def _is_cache_fresh(path: str) -> bool:
 
 
 def _fetch_csv(series: str) -> Optional[str]:
-    """Download the raw CSV text for ``series`` from FRED, or ``None`` on failure."""
+    """Download the raw CSV text for ``series`` from FRED, or ``None`` on failure.
+
+    Consults the circuit breaker first: while it is open (a recent genuine
+    connectivity failure -- see the module docstring) this returns ``None``
+    immediately without issuing a request at all, so a dead host costs one
+    :data:`FRED_TIMEOUT` wait, not one per series per call. Only a
+    ``requests.RequestException`` (timeout, DNS failure, connection refused,
+    HTTP error status, ...) trips the breaker; a response that arrives with
+    an unusable body does not, since the host demonstrably answered and the
+    next call is worth retrying at full cost. A successful fetch clears the
+    breaker.
+    """
+    if _breaker_is_open():
+        logger.debug(
+            "fred: circuit breaker open, skipping request for series %s.", series
+        )
+        return None
+
     url = FRED_CSV_URL.format(series=series)
     try:
-        response = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=30)
+        response = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=FRED_TIMEOUT)
         response.raise_for_status()
     except requests.RequestException:
         logger.warning("fred: request failed for series %s", series, exc_info=True)
+        _trip_breaker()
         return None
     text = response.text or ""
     if "," not in text:
         logger.warning("fred: unusable response for series %s (no CSV body).", series)
         return None
+    _reset_breaker()
     return text
 
 
@@ -584,7 +712,19 @@ def get_risk_free_asof(as_of, no_cache: bool = False) -> Optional[dict]:
 def get_macro_panel(
     as_of=None, no_cache: bool = False, series: Tuple[str, ...] = MACRO_PANEL
 ) -> Dict[str, Optional[dict]]:
-    """Fetch a panel of FRED series, each independently.
+    """Fetch a panel of FRED series concurrently, each independently.
+
+    Fetched with a ``ThreadPoolExecutor`` (stdlib only) rather than one
+    series at a time: when FRED is unreachable, a sequential fetch pays a
+    full :data:`FRED_TIMEOUT` (or the breaker's fallback path) once *per
+    series*, six times over for :data:`MACRO_PANEL`; concurrently, all six
+    pay that cost at once. This is scheduling only -- see the module
+    docstring's determinism note. Per-series isolation is unchanged from the
+    old sequential loop: one series raising or failing yields ``None`` for
+    that series alone and never affects any other. Each series is fetched
+    exactly once, and :func:`_cache_path` gives every series its own cache
+    file (``fred_{series}.csv``), so concurrent cache writes from different
+    series can never collide on the same path.
 
     Args:
         as_of: Forwarded to :func:`get_series_asof` for every series in the
@@ -594,22 +734,45 @@ def get_macro_panel(
 
     Returns:
         ``{series_id: result_dict_or_None}`` -- one entry per requested
-        series id. A single series failing (network error, no observation
-        on/before ``as_of``, etc.) never prevents the others from being
-        returned: that series' value is simply ``None``. Each entry's
-        ``"provider"`` key is independent -- e.g. when FRED is unreachable
-        the panel can come back with ``DGS10``/``DGS2``/``DGS30``/``T10YIE``
-        sourced from Treasury while ``BAA10Y``/``BAMLH0A0HYM2`` are ``None``
-        (no Treasury substitute exists for either). Always returns a dict
-        (possibly with every value ``None``), never ``None``, never raises.
+        series id, in the same order as ``series`` (dicts preserve insertion
+        order; this matches the old sequential implementation's key order
+        exactly, regardless of which worker thread happens to finish first).
+        A single series failing (network error, no observation on/before
+        ``as_of``, etc.) never prevents the others from being returned: that
+        series' value is simply ``None``. Each entry's ``"provider"`` key is
+        independent -- e.g. when FRED is unreachable the panel can come back
+        with ``DGS10``/``DGS2``/``DGS30``/``T10YIE`` sourced from Treasury
+        while ``BAA10Y``/``BAMLH0A0HYM2`` are ``None`` (no Treasury
+        substitute exists for either). Always returns a dict (possibly with
+        every value ``None``), never ``None``, never raises.
     """
-    panel: Dict[str, Optional[dict]] = {}
-    for series_id in series or ():
+    series_ids: Tuple[str, ...] = tuple(series or ())
+    if not series_ids:
+        return {}
+
+    def _fetch_one(series_id: str) -> Optional[dict]:
         try:
-            panel[series_id] = get_series_asof(series_id, as_of=as_of, no_cache=no_cache)
+            return get_series_asof(series_id, as_of=as_of, no_cache=no_cache)
         except Exception:  # noqa: BLE001 - one series must never sink the rest
             logger.exception(
                 "get_macro_panel: series %s failed unexpectedly; recording None.", series_id
             )
-            panel[series_id] = None
-    return panel
+            return None
+
+    results: Dict[str, Optional[dict]] = {}
+    try:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(len(series_ids), 6)
+        ) as executor:
+            future_by_series = {
+                executor.submit(_fetch_one, series_id): series_id for series_id in series_ids
+            }
+            for future in concurrent.futures.as_completed(future_by_series):
+                results[future_by_series[future]] = future.result()
+    except Exception:  # noqa: BLE001 - this function must never raise
+        logger.exception("get_macro_panel: unexpected failure fetching the panel concurrently.")
+
+    # Reassemble in the caller's requested order -- as_completed() yields in
+    # completion order, which is nondeterministic run to run, but the
+    # returned dict's key order must match the old sequential loop's.
+    return {series_id: results.get(series_id) for series_id in series_ids}
