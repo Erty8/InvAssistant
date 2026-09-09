@@ -14,7 +14,7 @@ Every backtest output carries :data:`BACKTEST_DISCLAIMER` automatically.
 
 #: Auto-appended to every backtest output (terminal, HTML, snapshots).
 BACKTEST_DISCLAIMER = (
-    "Küçük ve hayatta-kalan yanlılığı olan örneklem; parametre seçim aracı değildir."
+    "Small, survivorship-biased sample; not a parameter-selection tool."
 )
 
 __all__ = ["BACKTEST_DISCLAIMER"]

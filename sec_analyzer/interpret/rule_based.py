@@ -40,7 +40,7 @@ valuation flow (``sec_analyzer/valuation/SPEC.md`` Sec.12; see
   unavailable/unparseable LLM, or a proposal that still fails
   ``valuation.sanity.validate_assumptions`` after one revision round).
 * :func:`commentary` -- the deterministic phase-2 analog to
-  :func:`analyze`: template-based Turkish commentary over an already-
+  :func:`analyze`: template-based commentary over an already-
   computed ``valuation`` dict (from ``valuation.engine.run_valuation``)
   rather than computing its own fair-value band.
 
@@ -100,7 +100,7 @@ _CYCLICAL_STDEV_MODERATE = 0.15
 
 #: Verdict tier boundaries, as a fraction of evaluable checks passed. Used
 #: only for the internal ``score``-derived narrative tier (strong/adequate/
-#: weak), not for the schema's ``fundamental_verdict`` (UCUZ/MAKUL/PAHALI),
+#: weak), not for the schema's ``fundamental_verdict`` (CHEAP/FAIR/EXPENSIVE),
 #: which is driven by price vs. the base-scenario band instead.
 _VERDICT_STRONG_PCT = 0.75
 _VERDICT_ADEQUATE_PCT = 0.50
@@ -181,8 +181,8 @@ def _score(checks: List[dict]) -> Tuple[int, int]:
 def _verdict_label(points: int, max_points: int) -> str:
     """Turn a ``(points, max_points)`` tally into an internal strong/
     adequate/weak narrative tier, used only for the ``summary`` text. This is
-    distinct from the schema's ``fundamental_verdict``, which is UCUZ/MAKUL/
-    PAHALI based on price vs. the base fair-value band.
+    distinct from the schema's ``fundamental_verdict``, which is CHEAP/FAIR/
+    EXPENSIVE based on price vs. the base fair-value band.
     """
     if max_points == 0:
         return "insufficient data (0/0 checks evaluable)"
@@ -573,20 +573,20 @@ def _growth_anchor(
     ni_cagr = _windowed_cagr(series["NetIncome"], latest_fy)
     if ni_cagr is not None:
         raw_g, oldest_fy, n_years = ni_cagr
-        source = f"{n_years} yıllık net kâr CAGR (FY{oldest_fy}->{fy_lbl})"
+        source = f"{n_years}-year net income CAGR (FY{oldest_fy}->{fy_lbl})"
     else:
         rev_cagr_3y = (metrics or {}).get("revenue_cagr_3y")
         if rev_cagr_3y is not None:
             raw_g = rev_cagr_3y
-            source = "3 yıllık gelir CAGR (metrics)"
+            source = "3-year revenue CAGR (metrics)"
         else:
             rev_cagr = _windowed_cagr(series["Revenue"], latest_fy)
             if rev_cagr is not None:
                 raw_g, oldest_fy, n_years = rev_cagr
-                source = f"{n_years} yıllık gelir CAGR (FY{oldest_fy}->{fy_lbl})"
+                source = f"{n_years}-year revenue CAGR (FY{oldest_fy}->{fy_lbl})"
             else:
                 raw_g = 0.0
-                source = "hesaplanabilir büyüme geçmişi yok (varsayılan %0)"
+                source = "no computable growth history (default 0%)"
 
     g = _clamp(raw_g, _GROWTH_ANCHOR_MIN, _GROWTH_ANCHOR_MAX)
     return g, source
@@ -602,12 +602,12 @@ def _fps_anchor(
     ``None`` (no scenario can be computed).
 
     Returns:
-        ``(fps, anchor_label)``, where ``anchor_label`` is ``"FCF/hisse"``
+        ``(fps, anchor_label)``, where ``anchor_label`` is ``"FCF/share"``
         or ``"EPS"``. Both are ``None`` if neither anchor is usable.
     """
     fcf_per_share = (metrics or {}).get("fcf_per_share")
     if fcf_per_share is not None and fcf_per_share > 0:
-        return fcf_per_share, "FCF/hisse"
+        return fcf_per_share, "FCF/share"
 
     eps = series["EPS"].get(latest_fy) if latest_fy is not None else None
     if eps is not None and eps > 0:
@@ -649,15 +649,15 @@ def _scenario(
 
     ``growth`` and ``discount_rate`` are always populated as human-readable
     strings -- even when ``lo``/``hi`` are null -- so every assumption stays
-    visible ("cam kutu" transparency) regardless of whether a fair-value
+    visible ("glass box" transparency) regardless of whether a fair-value
     number could actually be computed.
     """
     growth = g * multiplier
     if growth_clamp_max is not None:
         growth = min(growth, growth_clamp_max)
 
-    growth_str = f"%{growth * 100:.0f} büyüme"
-    discount_rate_str = f"%{discount_rate * 100:.0f}"
+    growth_str = f"{growth * 100:.0f}% growth"
+    discount_rate_str = f"{discount_rate * 100:.0f}%"
 
     if fps is None:
         return {
@@ -666,8 +666,8 @@ def _scenario(
             "growth": growth_str,
             "discount_rate": discount_rate_str,
             "note": (
-                "FCF/hisse pozitif değil ve EPS de pozitif değil; per-share nakit "
-                "akışı çapası bulunamadığından bu senaryo hesaplanamadı."
+                "FCF/share is not positive and EPS is not positive either; this scenario "
+                "could not be computed because no per-share cash-flow anchor was found."
             ),
         }
 
@@ -675,9 +675,9 @@ def _scenario(
     lo = round(0.9 * pv, 2)
     hi = round(1.1 * pv, 2)
     note = (
-        f"{anchor_label} çapası ({fps:.2f}); büyüme kaynağı: {g_source} "
-        f"(uygulanan büyüme {growth_str}); {_PROJECTION_YEARS} yıllık iki aşamalı "
-        f"model + %{_TERMINAL_GROWTH * 100:.1f} terminal büyüme; iskonto oranı "
+        f"{anchor_label} anchor ({fps:.2f}); growth source: {g_source} "
+        f"(applied growth {growth_str}); {_PROJECTION_YEARS}-year two-stage "
+        f"model + {_TERMINAL_GROWTH * 100:.1f}% terminal growth; discount rate "
         f"{discount_rate_str}."
     )
     return {"lo": lo, "hi": hi, "growth": growth_str, "discount_rate": discount_rate_str, "note": note}
@@ -719,35 +719,35 @@ def _fundamental_verdict(price: Optional[float], base_scenario: dict) -> Tuple[s
 
     Returns:
         ``(verdict, price_or_band_missing)`` where ``verdict`` is one of
-        ``"UCUZ"``, ``"MAKUL"``, ``"PAHALI"``, and ``price_or_band_missing``
-        is ``True`` when the classification defaulted to "MAKUL" purely
+        ``"CHEAP"``, ``"FAIR"``, ``"EXPENSIVE"``, and ``price_or_band_missing``
+        is ``True`` when the classification defaulted to "FAIR" purely
         because the price or the base band was unavailable (used to phrase
         ``horizon_note`` accordingly).
     """
     lo, hi = base_scenario.get("lo"), base_scenario.get("hi")
     if price is None or lo is None or hi is None:
-        return "MAKUL", True
+        return "FAIR", True
     if price < lo:
-        return "UCUZ", False
+        return "CHEAP", False
     if price <= hi:
-        return "MAKUL", False
-    return "PAHALI", False
+        return "FAIR", False
+    return "EXPENSIVE", False
 
 
 def _profile_fit() -> dict:
-    """Judge profile fit -- always ``"KISMEN"`` for the deterministic
+    """Judge profile fit -- always ``"PARTIAL"`` for the deterministic
     provider, since it cannot actually interpret free-text profile
     preferences the way an LLM can; the reason differs depending on whether
     ``PROFIL.md`` exists at all.
     """
     if not (Config.PROFIL_PATH and os.path.exists(Config.PROFIL_PATH)):
         return {
-            "verdict": "KISMEN",
-            "reason": "PROFIL.md bulunamadı; nötr profil varsayıldı (dosyayı oluşturmanız önerilir).",
+            "verdict": "PARTIAL",
+            "reason": "PROFIL.md not found; a neutral profile was assumed (creating the file is recommended).",
         }
     return {
-        "verdict": "KISMEN",
-        "reason": "Deterministik modül profil metnini yorumlayamaz; ayrıntılı uyum için LLM provider kullanın.",
+        "verdict": "PARTIAL",
+        "reason": "The deterministic module cannot interpret free-text profile preferences; use an LLM provider for detailed fit.",
     }
 
 
@@ -761,30 +761,30 @@ def _horizon_note(horizon: str, red_flags: Optional[List[dict]], price_or_band_m
 
     if horizon == "3m":
         note = (
-            f"3 aylık ufukta teknik ve momentum sinyalleri öncelikli (fundamental "
-            f"%{fundamental_pct:.0f} / teknik %{technical_pct:.0f}); yaklaşan katalizör kritik önemdedir."
+            f"In the 3-month horizon, technical and momentum signals take priority (fundamental "
+            f"{fundamental_pct:.0f}% / technical {technical_pct:.0f}%); the upcoming catalyst is critically important."
         )
     elif horizon == "5y":
         note = (
-            f"5 yıllık ufukta fundamental sinyaller öncelikli (fundamental "
-            f"%{fundamental_pct:.0f} / teknik %{technical_pct:.0f}); RSI gibi kısa vadeli "
-            "göstergeler önemsizdir."
+            f"In the 5-year horizon, fundamental signals take priority (fundamental "
+            f"{fundamental_pct:.0f}% / technical {technical_pct:.0f}%); short-term indicators "
+            "like RSI are not meaningful."
         )
         cyclical_flag = next(
             (f for f in (red_flags or []) if f.get("code") == "CYCLICAL_TRAP"), None
         )
         if cyclical_flag:
-            note += f" Döngüsel tepe riski kontrolü tetiklendi: {cyclical_flag.get('message', '')}."
+            note += f" Cyclical-peak risk check triggered: {cyclical_flag.get('message', '')}."
         else:
-            note += " Döngüsel tepe riski kontrolü tetiklenmedi."
+            note += " Cyclical-peak risk check did not trigger."
     else:
         note = (
-            f"{horizon} ufkunda fundamental (%{fundamental_pct:.0f}) ve teknik "
-            f"(%{technical_pct:.0f}) sinyaller dengeli şekilde değerlendirilir."
+            f"In the {horizon} horizon, fundamental ({fundamental_pct:.0f}%) and technical "
+            f"({technical_pct:.0f}%) signals are weighted evenly."
         )
 
     if price_or_band_missing:
-        note += " Not: güncel fiyat ve/veya baz değer bandı eksik olduğu için fiyat-bant karşılaştırması yapılamadı."
+        note += " Note: the price-band comparison could not be performed because the current price and/or base fair-value band was missing."
     return note
 
 
@@ -796,17 +796,17 @@ def _key_risks(checks: List[dict], red_flags: Optional[List[dict]]) -> List[str]
 
 
 def _red_flags_comment(red_flags: Optional[List[dict]]) -> str:
-    """``"yok"`` if no red flags fired, otherwise their messages joined."""
+    """``"none"`` if no red flags fired, otherwise their messages joined."""
     if not red_flags:
-        return "yok"
+        return "none"
     return "; ".join(f.get("message", "") for f in red_flags if f.get("message"))
 
 
 def _catalyst_text(catalyst: Optional[dict]) -> str:
-    """The catalyst's human-readable label, or ``"bilinmiyor"`` if none."""
+    """The catalyst's human-readable label, or ``"unknown"`` if none."""
     if catalyst and catalyst.get("label"):
         return catalyst["label"]
-    return "bilinmiyor"
+    return "unknown"
 
 
 def _technical_verdict_text(technical: Optional[dict]) -> str:
@@ -819,7 +819,7 @@ def _technical_verdict_text(technical: Optional[dict]) -> str:
     if technical and technical.get("verdict") is not None:
         detail = technical.get("verdict_detail") or ""
         return f"{technical['verdict']} ({detail})" if detail else technical["verdict"]
-    return "VERİ YOK (fiyat verisi alınamadı)"
+    return "NO DATA (price data unavailable)"
 
 
 def _build_summary(
@@ -889,8 +889,8 @@ def _error_result() -> dict:
         return {
             "lo": None,
             "hi": None,
-            "growth": "%0 büyüme",
-            "discount_rate": f"%{discount_rate * 100:.0f}",
+            "growth": "0% growth",
+            "discount_rate": f"{discount_rate * 100:.0f}%",
             "note": "An internal error prevented a fair-value estimate.",
         }
 
@@ -898,14 +898,14 @@ def _error_result() -> dict:
         "fair_value_range": {
             name: _null_scenario(params["discount_rate"]) for name, params in _SCENARIOS.items()
         },
-        "fundamental_verdict": "MAKUL",
-        "technical_verdict": "VERİ YOK (fiyat verisi alınamadı)",
+        "fundamental_verdict": "FAIR",
+        "technical_verdict": "NO DATA (price data unavailable)",
         "profile_fit": _profile_fit(),
         "cyclical_risk": "insufficient history to assess cyclicality (an internal error occurred).",
-        "horizon_note": "Bir iç hata oluştu; ufuk notu üretilemedi.",
+        "horizon_note": "An internal error occurred; the horizon note could not be generated.",
         "key_risks": [],
-        "red_flags_comment": "yok",
-        "catalyst": "bilinmiyor",
+        "red_flags_comment": "none",
+        "catalyst": "unknown",
         "summary": (
             "An internal error prevented the deterministic screen from completing. "
             "Deterministic rule-based screen of SEC filings; educational use only, "
@@ -1058,16 +1058,16 @@ _DEFAULT_DISCOUNT_RATE_BASE_UNPROFITABLE = 0.12
 _DEFAULT_DISCOUNT_RATE_BEAR_DELTA = 0.02
 _DEFAULT_DISCOUNT_RATE_BULL_DELTA = -0.01
 
-#: Turkish sector labels used in the phase-1 fallback's ``story`` sentences.
-_SECTOR_LABELS_TR = {
-    "cyclical": "döngüsel sektör",
-    "financial": "finansal sektör",
-    "growth_unprofitable": "henüz kâr etmeyen büyüme şirketi",
-    "reit": "GYO",
-    "mature": "olgun sektör",
+#: Sector labels used in the phase-1 fallback's ``story`` sentences.
+_SECTOR_LABELS = {
+    "cyclical": "cyclical sector",
+    "financial": "financial sector",
+    "growth_unprofitable": "growth company not yet profitable",
+    "reit": "REIT",
+    "mature": "mature sector",
 }
 
-_SCENARIO_LABELS_TR = {"bear": "Kötümser (bear)", "base": "Temel (base)", "bull": "İyimser (bull)"}
+_SCENARIO_LABELS = {"bear": "Pessimistic (bear)", "base": "Base (base)", "bull": "Optimistic (bull)"}
 
 
 def _default_growth_anchor(metrics: Optional[dict]) -> Tuple[float, str]:
@@ -1082,14 +1082,14 @@ def _default_growth_anchor(metrics: Optional[dict]) -> Tuple[float, str]:
     metrics = metrics or {}
     raw = metrics.get("revenue_cagr_5y")
     if raw is not None:
-        source = f"5 yıllık gelir CAGR (%{raw * 100:.1f})"
+        source = f"5-year revenue CAGR ({raw * 100:.1f}%)"
     else:
         raw = metrics.get("revenue_cagr_3y")
         if raw is not None:
-            source = f"3 yıllık gelir CAGR (%{raw * 100:.1f})"
+            source = f"3-year revenue CAGR ({raw * 100:.1f}%)"
         else:
             raw = _DEFAULT_GROWTH_FALLBACK
-            source = f"gelir CAGR verisi yok, varsayılan %{_DEFAULT_GROWTH_FALLBACK * 100:.0f}"
+            source = f"no revenue CAGR data, default {_DEFAULT_GROWTH_FALLBACK * 100:.0f}%"
     return _clamp(raw, _DEFAULT_GROWTH_CLAMP_MIN, _DEFAULT_GROWTH_CLAMP_MAX), source
 
 
@@ -1161,7 +1161,7 @@ def _default_story(
     terminal_growth: float = _DEFAULT_TERMINAL_GROWTH,
     terminal_from_risk_free: bool = False,
 ) -> str:
-    """Build the transparent ("cam kutu"), Turkish ``story`` sentence for one
+    """Build the transparent ("glass box") ``story`` sentence for one
     :func:`default_assumptions` scenario, naming the inputs used.
 
     When ``capm`` (the :func:`sec_analyzer.valuation.capm.compute_cost_of_equity`
@@ -1176,35 +1176,35 @@ def _default_story(
     the flat :data:`_DEFAULT_TERMINAL_GROWTH` because no risk-free data was
     available.
     """
-    scenario_label = _SCENARIO_LABELS_TR[scenario]
+    scenario_label = _SCENARIO_LABELS[scenario]
     capm_rate = capm.get("rate") if capm else None
     if isinstance(capm_rate, (int, float)) and not isinstance(capm_rate, bool):
         if scenario == "base" and capm.get("detail"):
-            rate_clause = f"iskonto oranı %{discount_rate * 100:.1f} ({capm['detail']})"
+            rate_clause = f"discount rate {discount_rate * 100:.1f}% ({capm['detail']})"
         else:
             rate_clause = (
-                f"iskonto oranı %{discount_rate * 100:.1f} "
-                f"(CAPM tabanı %{capm_rate * 100:.1f} ± senaryo marjı)"
+                f"discount rate {discount_rate * 100:.1f}% "
+                f"(CAPM base {capm_rate * 100:.1f}% ± scenario margin)"
             )
     else:
-        sector_label = _SECTOR_LABELS_TR.get(sector_type, "belirlenmemiş sektör")
+        sector_label = _SECTOR_LABELS.get(sector_type, "unclassified sector")
         rate_clause = (
-            f"iskonto oranı %{discount_rate * 100:.1f} "
-            f"({sector_label} sınıflandırmasına göre)"
+            f"discount rate {discount_rate * 100:.1f}% "
+            f"(based on {sector_label} classification)"
         )
     if terminal_from_risk_free:
         terminal_clause = (
-            f"terminal büyüme %{terminal_growth * 100:.1f} (risksiz getiri oranına bağlı, üst sınır %4)"
+            f"terminal growth {terminal_growth * 100:.1f}% (tied to the risk-free rate, capped at 4%)"
         )
     else:
         terminal_clause = (
-            f"terminal büyüme %{terminal_growth * 100:.1f} (risksiz getiri verisi yok, sabit varsayılan)"
+            f"terminal growth {terminal_growth * 100:.1f}% (no risk-free rate data, fixed default)"
         )
     return (
-        f"{scenario_label} senaryo: deterministik varsayılan -- büyüme kaynağı {growth_source}, "
-        f"bu senaryoda uygulanan büyüme %{growth * 100:.1f}, {rate_clause}, {terminal_clause}; "
-        "LLM kullanılamadığı veya önerisi doğrulama sınırlarını aşıp geçersiz kaldığı için otomatik "
-        "varsayılan devreye girdi."
+        f"{scenario_label} scenario: deterministic default -- growth source {growth_source}, "
+        f"growth applied in this scenario {growth * 100:.1f}%, {rate_clause}, {terminal_clause}; "
+        "the automatic default kicked in because no LLM was available, or its proposal exceeded "
+        "validation limits and remained invalid."
     )
 
 
@@ -1216,7 +1216,7 @@ def _minimal_safe_assumptions() -> dict:
     formula above being designed to never do so) -- the absolute last
     resort before the valuation engine would otherwise receive nothing.
     """
-    note = "İç bir hata nedeniyle en muhafazakar sabit varsayımlar kullanıldı."
+    note = "The most conservative fixed assumptions were used due to an internal error."
     return {
         "bear": {"growth_5y": -0.01, "terminal_growth": 0.025, "discount_rate": 0.12, "story": note},
         "base": {"growth_5y": 0.04, "terminal_growth": 0.025, "discount_rate": 0.10, "story": note},
@@ -1274,7 +1274,7 @@ def default_assumptions(
     Returns:
         ``{"bear": {...}, "base": {...}, "bull": {...}}`` (SPEC.md Sec.2
         shape) -- ``growth_5y``/``terminal_growth``/``discount_rate`` as
-        decimal fractions, plus a Turkish ``story`` naming the inputs used.
+        decimal fractions, plus a ``story`` naming the inputs used.
         Never raises.
     """
     try:
@@ -1352,7 +1352,7 @@ def _default_assumptions(
 
 #: Map from a triangulation direction signal to the schema's verdict string.
 #: "veri_yok" deliberately has no entry -- there is nothing to map it to.
-_DCF_SIGNAL_TO_VERDICT = {"ucuz": "UCUZ", "makul": "MAKUL", "pahali": "PAHALI"}
+_DCF_SIGNAL_TO_VERDICT = {"ucuz": "CHEAP", "makul": "FAIR", "pahali": "EXPENSIVE"}
 
 
 def _fundamental_verdict_from_valuation(valuation: dict) -> str:
@@ -1362,7 +1362,7 @@ def _fundamental_verdict_from_valuation(valuation: dict) -> str:
     code-enforced cross-check ``interpret_results`` applies to every
     provider, so it's never overridden for its own output."""
     signal = ((valuation.get("triangulation") or {}).get("signals") or {}).get("dcf")
-    return _DCF_SIGNAL_TO_VERDICT.get(signal, "MAKUL")
+    return _DCF_SIGNAL_TO_VERDICT.get(signal, "FAIR")
 
 
 #: Reverse-DCF comment margin (SPEC.md Sec.6), matching
@@ -1371,33 +1371,33 @@ _REVERSE_DCF_COMMENT_MARGIN = 0.03
 
 
 def _reverse_dcf_comment(valuation: dict) -> str:
-    """Template-based Turkish reverse-DCF comment, built from
+    """Template-based reverse-DCF comment, built from
     ``valuation["reverse_dcf"]`` (SPEC.md Sec.6)."""
     reverse = valuation.get("reverse_dcf") or {}
     implied = reverse.get("implied_growth")
     realized = reverse.get("realized_cagr_5y")
-    label = reverse.get("realized_label") or "geçmiş"
+    label = reverse.get("realized_label") or "historical"
 
     if implied is None:
-        return "Ters DCF hesaplanamadı; fiyatın ima ettiği büyüme oranı belirlenemedi."
+        return "Reverse DCF could not be computed; the growth rate implied by the price could not be determined."
 
-    implied_pct = f"%{implied * 100:.1f}"
+    implied_pct = f"{implied * 100:.1f}%"
     if realized is None:
         return (
-            f"Fiyat, 10 yıllık ufukta {implied_pct} büyüme ima ediyor; karşılaştırma için "
-            "gerçekleşen gelir büyümesi verisi yok."
+            f"The price implies {implied_pct} growth over a 10-year horizon; no realized "
+            "revenue-growth data is available for comparison."
         )
 
-    realized_pct = f"%{realized * 100:.1f}"
+    realized_pct = f"{realized * 100:.1f}%"
     diff = implied - realized
     if diff > _REVERSE_DCF_COMMENT_MARGIN:
-        judgment = "piyasa, şirketin geçmiş performansından daha hızlı bir büyümeyi fiyatlıyor -- pahalılık sinyali."
+        judgment = "the market is pricing in faster growth than the company's historical performance -- an expensiveness signal."
     elif diff < -_REVERSE_DCF_COMMENT_MARGIN:
-        judgment = "piyasa, şirketin geçmiş performansından daha kötümser bir senaryo fiyatlıyor -- ucuzluk sinyali."
+        judgment = "the market is pricing in a more pessimistic scenario than the company's historical performance -- a cheapness signal."
     else:
-        judgment = "fiyat, gerçekleşen büyüme trendiyle makul ölçüde uyumlu."
+        judgment = "the price is reasonably consistent with the realized growth trend."
 
-    return f"Fiyat, 10 yıllık ufukta {implied_pct} büyüme ima ediyor (gerçekleşen {label}: {realized_pct}); {judgment}"
+    return f"The price implies {implied_pct} growth over a 10-year horizon (realized {label}: {realized_pct}); {judgment}"
 
 
 def _cyclical_risk_from_valuation(valuation: dict, red_flags: Optional[List[dict]]) -> str:
@@ -1409,31 +1409,31 @@ def _cyclical_risk_from_valuation(valuation: dict, red_flags: Optional[List[dict
 
     if sector_type == "cyclical":
         text = (
-            "Şirket döngüsel bir sektörde sınıflandırıldı; standart DCF'e ek olarak normalize "
-            "edilmiş kazanç senaryosu (tüm yılların FCF marjı medyanı) da hesaplandı."
+            "The company was classified in a cyclical sector; in addition to the standard DCF, "
+            "a normalized-earnings scenario (median FCF margin across all years) was also computed."
         )
     elif sector_type == "growth_unprofitable":
-        text = "Şirket henüz kâr etmiyor; büyüme senaryoları ve ters DCF, P/E çarpanlarından daha belirleyici."
+        text = "The company is not yet profitable; growth scenarios and the reverse DCF are more decisive than P/E multiples."
     elif sector_type == "financial":
         rim = valuation.get("rim")
         if isinstance(rim, dict) and "scenarios" in rim:
             text = (
-                "Finansal sınıflandırma nedeniyle döngüsellik RIM (kazanç-gücü/özkaynak bileşik "
-                "modeli) çapası üzerinden değerlendirildi."
+                "Due to the financial classification, cyclicality was assessed via the RIM "
+                "(earnings-power/equity composite model) anchor."
             )
         else:
-            text = "Finansal sınıflandırma nedeniyle döngüsellik P/B x ROE çapası üzerinden değerlendirildi."
+            text = "Due to the financial classification, cyclicality was assessed via the P/B x ROE anchor."
     elif sector_type == "reit":
         text = (
-            "GYO sınıflandırması nedeniyle döngüsellik FFO tabanlı değerleme "
-            "(net kâr + amortisman) üzerinden değerlendirildi."
+            "Due to the REIT classification, cyclicality was assessed via FFO-based valuation "
+            "(net income + depreciation)."
         )
     else:
-        text = "Olgun sektör sınıflandırması altında döngüsellik riski sınırlı kabul edildi."
+        text = "Under the mature-sector classification, cyclicality risk was treated as limited."
 
     cyclical_flag = next((f for f in (red_flags or []) if f.get("code") == "CYCLICAL_TRAP"), None)
     if cyclical_flag:
-        text += f" Döngüsel tepe riski (cyclical trap) bayrağı tetiklendi: {cyclical_flag.get('message', '')}."
+        text += f" The cyclical-peak (cyclical trap) flag triggered: {cyclical_flag.get('message', '')}."
     return text
 
 
@@ -1445,30 +1445,30 @@ def _horizon_note_from_valuation(horizon: str, valuation: dict, price_or_band_mi
 
     if horizon == "3m":
         note = (
-            f"3 aylık ufukta teknik ve momentum sinyalleri öncelikli (fundamental "
-            f"%{fundamental_pct:.0f} / teknik %{technical_pct:.0f})."
+            f"In the 3-month horizon, technical and momentum signals take priority (fundamental "
+            f"{fundamental_pct:.0f}% / technical {technical_pct:.0f}%)."
         )
     elif horizon == "5y":
         note = (
-            f"5 yıllık ufukta fundamental sinyaller öncelikli (fundamental "
-            f"%{fundamental_pct:.0f} / teknik %{technical_pct:.0f})."
+            f"In the 5-year horizon, fundamental signals take priority (fundamental "
+            f"{fundamental_pct:.0f}% / technical {technical_pct:.0f}%)."
         )
     else:
         note = (
-            f"{horizon} ufkunda fundamental (%{fundamental_pct:.0f}) ve teknik "
-            f"(%{technical_pct:.0f}) sinyaller dengeli şekilde değerlendirilir."
+            f"In the {horizon} horizon, fundamental ({fundamental_pct:.0f}%) and technical "
+            f"({technical_pct:.0f}%) signals are weighted evenly."
         )
 
     if (valuation.get("sensitivity") or {}).get("high_uncertainty"):
-        note += " Duyarlılık matrisi yüksek belirsizlik gösteriyor (bant genişliği baz hücrenin %60'ından fazla)."
+        note += " The sensitivity matrix shows high uncertainty (band width exceeds 60% of the base cell)."
     if price_or_band_missing:
-        note += " Not: güncel fiyat ve/veya adil değer bandı eksik olduğu için karşılaştırma yapılamadı."
+        note += " Note: the comparison could not be performed because the current price and/or fair-value band was missing."
     return note
 
 
-#: Turkish display label for each Altman-Z zone (SPEC.md Sec.8g), mirroring
+#: Display label for each Altman-Z zone (SPEC.md Sec.8g), mirroring
 #: cli.py's ``_ALTMAN_ZONE_LABEL_TR``.
-_ALTMAN_ZONE_LABEL_TR = {"safe": "güvenli", "grey": "gri", "distress": "sıkıntı"}
+_ALTMAN_ZONE_LABEL_TR = {"safe": "safe", "grey": "grey", "distress": "distress"}
 
 #: SGI threshold above which a Beneish flag is caveated as a likely
 #: high-growth artifact (SPEC.md Sec.8j / I2). Mirrors
@@ -1478,7 +1478,7 @@ _BENEISH_HIGH_GROWTH_SGI = 1.40
 
 
 def _distress_risk_from_valuation(valuation: dict) -> Optional[str]:
-    """Turkish risk sentence from the ADVISORY-ONLY distress/quality screens
+    """Risk sentence from the ADVISORY-ONLY distress/quality screens
     (Altman Z-score -- SPEC.md Sec.8g; Beneish M-score -- Sec.8j; Merton
     distance-to-default -- Sec.8k), for ``key_risks``. These screens never
     affect ``fair_value_range``/confidence -- this is the "script" provider's
@@ -1496,7 +1496,7 @@ def _distress_risk_from_valuation(valuation: dict) -> Optional[str]:
     altman = valuation.get("altman_z")
     if isinstance(altman, dict) and altman.get("zone") in ("grey", "distress"):
         zone_tr = _ALTMAN_ZONE_LABEL_TR.get(altman.get("zone"), altman.get("zone"))
-        parts.append(f"Altman Z-skoru {zone_tr} bölgede (Z={altman.get('z_score')}) -- iflas riski sinyali.")
+        parts.append(f"Altman Z-score is in the {zone_tr} zone (Z={altman.get('z_score')}) -- a bankruptcy-risk signal.")
 
     beneish = valuation.get("beneish_m")
     if isinstance(beneish, dict) and beneish.get("flag"):
@@ -1506,16 +1506,16 @@ def _distress_risk_from_valuation(valuation: dict) -> Optional[str]:
         # flag is likely a growth artifact, not a manipulation red flag.
         if isinstance(sgi, (int, float)) and sgi > _BENEISH_HIGH_GROWTH_SGI:
             parts.append(
-                f"Beneish M-skoru işaretlendi (M={beneish.get('m_score')}) ancak satışlar hızlı "
-                f"büyümüş (SGI={sgi:.2f}); Beneish hızlı büyüyenleri yapısal olarak yukarı-yanlı "
-                "işaretler -- bu olasılıkla bir büyüme yan etkisidir, manipülasyon kanıtı değil."
+                f"Beneish M-score flagged (M={beneish.get('m_score')}) but sales grew rapidly "
+                f"(SGI={sgi:.2f}); Beneish structurally over-flags fast growers -- this is "
+                "likely a growth side effect, not evidence of manipulation."
             )
         else:
-            parts.append(f"Beneish M-skoru olası kazanç manipülasyonu sinyali veriyor (M={beneish.get('m_score')}).")
+            parts.append(f"Beneish M-score signals possible earnings manipulation (M={beneish.get('m_score')}).")
 
     merton = valuation.get("merton_dtd")
     if isinstance(merton, dict) and merton.get("zone") in ("elevated", "distress"):
-        parts.append(f"Merton mesafe-temerrüt modeli yükselmiş temerrüt riski gösteriyor (DD={merton.get('distance_to_default')}).")
+        parts.append(f"Merton distance-to-default model shows elevated default risk (DD={merton.get('distance_to_default')}).")
 
     return " ".join(parts) if parts else None
 
@@ -1531,10 +1531,32 @@ def _distress_risk_from_valuation(valuation: dict) -> Optional[str]:
 #: distress sentence for a non-clean reading. A "bankruptcy risk LOW" note is
 #: not a risk; the LBO floor is an opportunity/valuation datum, not a risk.
 _ADVISORY_NOTE_PREFIXES = (
-    "Altman Z-skoru",
-    "Beneish M-skoru",
-    "Merton mesafe-temerrüt",
-    "LBO çapası",
+    "Altman Z-score",
+    "Beneish M-score",
+    "Merton distance-to-default",
+    "LBO anchor",
+)
+
+#: Distinguishing substrings of the engine's headline-selection explanation
+#: notes (SPEC.md Sec.8l -- now packaged structurally into
+#: ``valuation["method_summary"]``) that must NOT ALSO be duplicated verbatim
+#: in ``key_risks``. Unlike :data:`_ADVISORY_NOTE_PREFIXES` these notes don't
+#: share a common prefix at position 0 (each starts with different filer-
+#: specific context, e.g. "In this company...", "Cyclical + capital-
+#: intensive...", "Free cash flow...", "Mid-growth...", "In the financial
+#: sector...", "For a REIT..."), so this matches on an ``in`` substring
+#: instead of ``startswith``. Each substring is copied verbatim from the one
+#: engine.py note sentence it targets (see engine.py's EPV/mature-revenue/
+#: midgrowth-revenue/cyclical-FCFE headline-switch notes and the RIM/FFO
+#: fallback notes) -- kept deliberately specific (not e.g. just "EPV" or
+#: "anchored to" alone) so a genuine, unrelated risk note is never
+#: accidentally swallowed. A "which method and why" explanation is not
+#: itself a risk; it now has its own home in ``method_summary``.
+_HEADLINE_SWITCH_NOTE_SUBSTRINGS = (
+    "anchored to the zero-growth Earnings Power Valuation (EPV) anchor",
+    "anchored to the revenue-first DCF",
+    "anchored to the FCFE anchor",
+    "fell back to P/B x ROE as the anchor",
 )
 
 
@@ -1544,10 +1566,13 @@ def _key_risks_from_valuation(valuation: dict, red_flags: Optional[List[dict]]) 
     reading), plus ``valuation["notes"]`` (Turkish engine warnings) EXCEPT the
     advisory-screen/LBO notes (see :data:`_ADVISORY_NOTE_PREFIXES` -- those are
     surfaced via the gated distress sentence + their own dedicated cards, and a
-    "safe" reading or the LBO floor is not a risk), capped at 5 -- the phase-2
-    analog of :func:`_key_risks`, which instead lists failed checklist item
-    names (unavailable here since :func:`commentary` doesn't run the
-    checklist)."""
+    "safe" reading or the LBO floor is not a risk) and the headline-selection
+    explanation notes (see :data:`_HEADLINE_SWITCH_NOTE_SUBSTRINGS` -- those
+    now have a proper structural home in ``valuation["method_summary"]`` and
+    are "which method, why" explanations, not risks), capped at 5 -- the
+    phase-2 analog of :func:`_key_risks`, which instead lists failed
+    checklist item names (unavailable here since :func:`commentary` doesn't
+    run the checklist)."""
     risks = [f.get("message") for f in (red_flags or []) if f.get("message")]
     distress_risk = _distress_risk_from_valuation(valuation)
     if distress_risk:
@@ -1555,6 +1580,7 @@ def _key_risks_from_valuation(valuation: dict, red_flags: Optional[List[dict]]) 
     risks += [
         note for note in (valuation.get("notes") or [])
         if note and not note.startswith(_ADVISORY_NOTE_PREFIXES)
+        and not any(substring in note for substring in _HEADLINE_SWITCH_NOTE_SUBSTRINGS)
     ]
     return risks[:5]
 
@@ -1563,17 +1589,17 @@ def _commentary_error_result() -> dict:
     """The fixed schema-shaped result returned when :func:`commentary`'s
     implementation raises unexpectedly."""
     return {
-        "fundamental_verdict": "MAKUL",
+        "fundamental_verdict": "FAIR",
         "profile_fit": _profile_fit(),
-        "reverse_dcf_comment": "Ters DCF yorumu üretilemedi (iç hata).",
-        "cyclical_risk": "Döngüsellik değerlendirilemedi (iç hata).",
-        "horizon_note": "Bir iç hata oluştu; ufuk notu üretilemedi.",
+        "reverse_dcf_comment": "Reverse-DCF comment could not be generated (internal error).",
+        "cyclical_risk": "Cyclicality could not be assessed (internal error).",
+        "horizon_note": "An internal error occurred; the horizon note could not be generated.",
         "key_risks": [],
-        "red_flags_comment": "yok",
-        "catalyst": "bilinmiyor",
+        "red_flags_comment": "none",
+        "catalyst": "unknown",
         "summary": (
-            "Bir iç hata nedeniyle deterministik yorum tamamlanamadı. Eğitim amaçlı bir "
-            "değerlendirmedir, yatırım tavsiyesi değildir."
+            "An internal error prevented the deterministic commentary from completing. "
+            "This is an educational assessment, not investment advice."
         ),
     }
 
@@ -1650,18 +1676,18 @@ def _commentary(
     price_or_band_missing = price is None or base.get("lo") is None or base.get("hi") is None
 
     fundamental_verdict = _fundamental_verdict_from_valuation(valuation)
-    confidence = (valuation.get("triangulation") or {}).get("confidence") or "DÜŞÜK"
+    confidence = (valuation.get("triangulation") or {}).get("confidence") or "LOW"
     sector_type = valuation.get("sector_type")
 
     if base.get("lo") is not None and base.get("hi") is not None:
-        band_clause = f"baz senaryoda ${base['lo']:.2f}-{base['hi']:.2f} aralığını işaret ediyor"
+        band_clause = f"points to a ${base['lo']:.2f}-{base['hi']:.2f} range in the base scenario"
     else:
-        band_clause = "baz senaryoda adil değer aralığı hesaplayamadı"
+        band_clause = "could not compute a fair-value range in the base scenario"
 
     summary = (
-        f"Değerleme motoru {band_clause}; üçgenleme güveni {confidence}. "
-        f"Fiyat okuması: {fundamental_verdict}. Sektör sınıflandırması: {sector_type or 'bilinmiyor'}. "
-        "Deterministik, kural tabanlı yorum; eğitim amaçlıdır, yatırım tavsiyesi değildir."
+        f"The valuation engine {band_clause}; triangulation confidence {confidence}. "
+        f"Price read: {fundamental_verdict}. Sector classification: {sector_type or 'unknown'}. "
+        "Deterministic, rule-based commentary; for educational purposes, not investment advice."
     )
 
     return {

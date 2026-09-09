@@ -227,8 +227,8 @@ def _fetch_normalize_store(args: argparse.Namespace) -> Tuple[str, str, dict, Li
 
     if as_of is not None:
         print(
-            f"\nNot: geçmiş tarih (as-of {as_of.isoformat()}) modunda finansallar "
-            "veritabanına yazılmaz."
+            f"\nNote: in historical (as-of {as_of.isoformat()}) mode, financials "
+            "are not written to the database."
         )
     else:
         save_normalized(args.ticker, cik, name, normalized, ratios, db_path=Config.DB_PATH)
@@ -414,7 +414,7 @@ def _fetch_earnings_history(ticker: str, no_cache: bool) -> Optional[dict]:
     """Best-effort fetch of recent quarterly EPS beat/miss history; never raises.
 
     Display-only cross-check (see :mod:`sec_analyzer.fetch.earnings`) -- never
-    feeds the valuation engine; shown only in the HTML report's "Bilanço" tab.
+    feeds the valuation engine; shown only in the HTML report's "Balance sheet" tab.
     Any failure is logged and swallowed so it never blocks the rest of
     ``analyze``.
 
@@ -705,7 +705,7 @@ def _fmt_swing_price(value) -> str:
 
     Unlike :func:`_fmt_money` (which drops decimals for whole numbers in the
     terminal verdict card by deliberate, pre-existing choice), the swing
-    table's Fiyat/Giriş/Stop/Hedef columns must always show exactly 2
+    table's Price/Entry/Stop/Target columns must always show exactly 2
     decimals so the column stays visually aligned across rows (e.g.
     ``"$153.00"``, never ``"$153"``). Returns :data:`_DASH` for
     ``None``/unparseable input.
@@ -722,7 +722,7 @@ def _fmt_swing_price(value) -> str:
 def _dr_suffix(value) -> str:
     """Append a trailing ``" dr"`` to a discount-rate string like ``"%12"``
     -> ``"%12 dr"``, unless it already reads that way. ``discount_rate`` (and
-    ``growth``) values are always already-formatted, human-readable Turkish
+    ``growth``) values are always already-formatted, human-readable
     strings produced upstream (e.g. by
     :mod:`sec_analyzer.interpret.rule_based`) -- this never reformats the
     number itself, only appends the unit label. Returns :data:`_DASH` for
@@ -732,7 +732,7 @@ def _dr_suffix(value) -> str:
         return _DASH
     text = str(value)
     lowered = text.lower()
-    if "dr" in lowered or "iskonto" in lowered:
+    if "dr" in lowered or "discount" in lowered:
         return text
     return f"{text} dr"
 
@@ -743,7 +743,7 @@ def _strip_leading_dollar(text: str) -> str:
 
 
 def _scenario_line(label: str, scenario: Optional[dict]) -> str:
-    """Render one bear/bull scenario, e.g. ``"bear $70–95 (%8 büyüme, %12 dr)"``."""
+    """Render one bear/bull scenario, e.g. ``"bear $70–95 (%8 growth, %12 dr)"``."""
     scenario = scenario or {}
     lo, hi = scenario.get("lo"), scenario.get("hi")
     if lo is None or hi is None:
@@ -757,7 +757,7 @@ def _scenario_line(label: str, scenario: Optional[dict]) -> str:
 
 def _analyst_line(analyst: Optional[dict], price) -> Optional[str]:
     """Render the display-only consensus analyst-target line for the verdict
-    card, e.g. ``"Analist:     $128 ort (34 analist) · +%12 · aralık $95–$160"``.
+    card, e.g. ``"Analyst:     $128 avg (34 analysts) · +%12 · range $95–$160"``.
 
     This is a reference cross-check only (see
     :mod:`sec_analyzer.fetch.analyst`) -- it never feeds the valuation
@@ -775,11 +775,11 @@ def _analyst_line(analyst: Optional[dict], price) -> Optional[str]:
         return None
 
     target_mean = analyst["target_mean"]
-    parts = [f"{_fmt_money(target_mean)} ort"]
+    parts = [f"{_fmt_money(target_mean)} avg"]
 
     num_analysts = analyst.get("num_analysts")
     if num_analysts is not None:
-        parts.append(f"({num_analysts} analist)")
+        parts.append(f"({num_analysts} analysts)")
 
     try:
         price_is_positive = price is not None and float(price) > 0
@@ -791,9 +791,9 @@ def _analyst_line(analyst: Optional[dict], price) -> Optional[str]:
 
     target_low, target_high = analyst.get("target_low"), analyst.get("target_high")
     if target_low is not None and target_high is not None:
-        parts.append(f"· aralık {_fmt_money(target_low)}–{_fmt_money(target_high)}")
+        parts.append(f"· range {_fmt_money(target_low)}–{_fmt_money(target_high)}")
 
-    label = "Analist:".ljust(_CARD_LABEL_WIDTH)
+    label = "Analyst:".ljust(_CARD_LABEL_WIDTH)
     return f"{label}{' '.join(parts)}"
 
 
@@ -803,11 +803,11 @@ def _valuation_method_label(valuation: dict) -> str:
     Checked in order, depending on which anchor actually produced the
     headline fair-value band for this filer (SPEC.md Sec.8/8e/11):
 
-    - ``"Revenue-DCF (hiper-büyüme)"``: the hyper-grower revenue-first DCF is
+    - ``"Revenue-DCF (hyper-growth)"``: the hyper-grower revenue-first DCF is
       the headline (``valuation["hyper_growth"]`` truthy and its
       ``hyper_growth_detail`` present and not suppressed -- SPEC.md Sec.3.5,
       which takes precedence over every anchor below).
-    - ``"FCFE (kazanç+büyüme)"``: the cyclical sustainable-growth FCFE
+    - ``"FCFE (earnings+growth)"``: the cyclical sustainable-growth FCFE
       anchor is the headline (``valuation["cyclical_fcfe_headline"]`` --
       SPEC.md Sec.8e, e.g. Micron-shaped capital-intensive cyclicals whose
       FCF-DCF is suppressed by growth CapEx).
@@ -841,9 +841,9 @@ def _valuation_method_label(valuation: dict) -> str:
     # hyper-headlined filer (e.g. Reddit) would mislabel as "DCF".
     hyper_detail = valuation.get("hyper_growth_detail") or {}
     if valuation.get("hyper_growth") and hyper_detail and not hyper_detail.get("suppressed"):
-        return "Revenue-DCF (hiper-büyüme)"
+        return "Revenue-DCF (hyper-growth)"
     if valuation.get("cyclical_fcfe_headline"):
-        return "FCFE (kazanç+büyüme)"
+        return "FCFE (earnings+growth)"
     if valuation.get("earnings_power_headline"):
         return "EPV"
     if valuation.get("mature_revenue_headline") or valuation.get("midgrowth_revenue_headline"):
@@ -861,7 +861,7 @@ def _valuation_method_label(valuation: dict) -> str:
 
 
 def _format_pct_signed(value) -> str:
-    """Render a decimal-fraction growth rate as a whole-percent Turkish
+    """Render a decimal-fraction growth rate as a whole-percent
     string, e.g. ``0.19 -> "%19"``, ``-0.05 -> "%-5"``. Returns :data:`_DASH`
     for ``None``/non-numeric input."""
     if value is None:
@@ -895,8 +895,8 @@ def _reverse_dcf_line(result: dict, valuation: dict) -> str:
     realized_label = reverse_dcf.get("realized_label") or _DASH
     realized_text = _format_pct_signed(reverse_dcf.get("realized_cagr_5y"))
     return (
-        f"{label}fiyat 10y {_format_pct_signed(implied)} CAGR ima ediyor "
-        f"(gerçekleşen {realized_label}: {realized_text})"
+        f"{label}price implies a 10y {_format_pct_signed(implied)} CAGR "
+        f"(realized {realized_label}: {realized_text})"
     )
 
 
@@ -906,13 +906,13 @@ def _multiples_line(valuation: dict) -> str:
     When a growth-adjusted multiple (PEG in standard mode, growth-adjusted
     EV/Sales in hyper-grower mode) is applicable, renders the compact
     two-component form -- raw percentile · growth-adjusted value (percentile)
-    -- appending "→ karışık sinyal" when the triangulation multiples signal
+    -- appending "→ mixed signal" when the triangulation multiples signal
     is ``"karisik"`` (the two components disagree on direction, VALUATION.md
-    Sec.7), e.g. ``"P/E 88. pctile · PEG 1.4 (45. pctile) → karışık
-    sinyal"``. When the growth-adjusted figure is not applicable, falls back
-    to the original descriptive form (``"P/E kendi Ny medyanının N.
-    yüzdeliğinde"``). ``"veri yetersiz"`` when no raw percentile is usable
-    (fewer than 5 years of price-backed history).
+    Sec.7), e.g. ``"P/E 88. pctile · PEG 1.4 (45. pctile) → mixed
+    signal"``. When the growth-adjusted figure is not applicable, falls back
+    to the original descriptive form (``"P/E is at the Nth percentile of its
+    own Ny-year median"``). ``"insufficient data"`` when no raw percentile is
+    usable (fewer than 5 years of price-backed history).
 
     For ``valuation["sector_type"] == "reit"``, P/E and P/FCF (and the
     P/E-derived PEG) are meaningless -- GAAP depreciation distorts REIT
@@ -928,7 +928,7 @@ def _multiples_line(valuation: dict) -> str:
     multiples_signal = ((valuation.get("triangulation") or {}).get("signals") or {}).get("multiples")
 
     # Leverage-primary (SPEC.md Sec.6/Sec.10): a leveraged non-reit filer's
-    # primary own-history multiple is EV/EBITDA (FD/FAVÖK) ahead of P/E, and
+    # primary own-history multiple is EV/EBITDA ahead of P/E, and
     # the P/E-based PEG line is suppressed -- mirrors triangulate's signal.
     ev_primary = (
         not is_reit
@@ -938,7 +938,7 @@ def _multiples_line(valuation: dict) -> str:
     growth_adjusted = {} if (is_reit or ev_primary) else (multiples.get("growth_adjusted") or {})
 
     # Primary raw multiple. Reit uses P/FFO -> P/S only (P/E and P/FCF are
-    # meaningless for REITs); a leveraged filer leads with FD/FAVÖK; everything
+    # meaningless for REITs); a leveraged filer leads with EV/EBITDA; everything
     # else keeps the P/E -> P/S -> P/FCF fallback order.
     primary = None
     if is_reit:
@@ -948,7 +948,7 @@ def _multiples_line(valuation: dict) -> str:
         )
     elif ev_primary:
         primary_candidates = (
-            ("FD/FAVÖK", multiples.get("ev_ebitda_percentile")),
+            ("EV/EBITDA", multiples.get("ev_ebitda_percentile")),
             ("P/E", multiples.get("pe_percentile")),
             ("P/S", multiples.get("ps_percentile")),
             ("P/FCF", multiples.get("pfcf_percentile")),
@@ -985,19 +985,19 @@ def _multiples_line(valuation: dict) -> str:
         if parts:
             line = " · ".join(parts)
             if multiples_signal == "karisik":
-                line += " → karışık sinyal"
+                line += " → mixed signal"
             return f"{label}{line}"
 
     if primary is not None:
         name, percentile = primary
-        return f"{label}{name} kendi {history_years}y medyanının {percentile:.0f}. yüzdeliğinde"
+        return f"{label}{name} is at the {percentile:.0f}th percentile of its own {history_years}y median"
 
-    return f"{label}veri yetersiz"
+    return f"{label}insufficient data"
 
 
 def _ev_multiples_line(valuation: dict) -> Optional[str]:
-    """Render the informational "EV çarpanları:" card line: current EV/EBITDA
-    (FD/FAVÖK) and EV/EBIT (FD/FVÖK), each with its own historical percentile
+    """Render the informational "EV multiple:" card line: current EV/EBITDA
+    (EV/EBITDA) and EV/EBIT (EV/EBIT), each with its own historical percentile
     when enough price-backed history exists (SPEC.md Sec.6). These are
     capital-structure-neutral earnings multiples reported alongside P/E; the
     verdict/triangulation still keys off P/E. Returns ``None`` (line omitted)
@@ -1006,8 +1006,8 @@ def _ev_multiples_line(valuation: dict) -> Optional[str]:
     current = multiples.get("current") or {}
     fragments = []
     for name, cur_key, pct_key in (
-        ("FD/FAVÖK", "ev_ebitda", "ev_ebitda_percentile"),
-        ("FD/FVÖK", "ev_ebit", "ev_ebit_percentile"),
+        ("EV/EBITDA", "ev_ebitda", "ev_ebitda_percentile"),
+        ("EV/EBIT", "ev_ebit", "ev_ebit_percentile"),
     ):
         value = current.get(cur_key)
         if value is None:
@@ -1020,14 +1020,14 @@ def _ev_multiples_line(valuation: dict) -> Optional[str]:
 
     if not fragments:
         return None
-    label = "FD çarpanı:".ljust(_CARD_LABEL_WIDTH)
+    label = "EV multiple:".ljust(_CARD_LABEL_WIDTH)
     return f"{label}{' · '.join(fragments)}"
 
 
 _CYCLE_FLAG_LABELS = {
-    "peak_cycle_pe_trap": "tepe-döngü F/K tuzağı",
-    "peak_annualization": "tepe-çeyrek yıllıklaştırma",
-    "regime_change_premium": "rejim-değişimi primi",
+    "peak_cycle_pe_trap": "peak-cycle P/E trap",
+    "peak_annualization": "peak-quarter annualization",
+    "regime_change_premium": "regime-change premium",
 }
 
 
@@ -1051,18 +1051,18 @@ def _cycle_lines(valuation: dict) -> List[str]:
     percentile = stats.get("margin_percentile")
     percentile_txt = f"{percentile:.0f}. pctile" if isinstance(percentile, (int, float)) else _DASH
     position = (
-        f"marj {_pct(stats.get('margin_current'))} "
+        f"margin {_pct(stats.get('margin_current'))} "
         f"({stats.get('margin_current_basis', '?')}, {percentile_txt}) · "
-        f"ort {_pct(stats.get('margin_mean'))} · dip {_pct(stats.get('margin_trough'))} "
-        f"/ tepe {_pct(stats.get('margin_peak'))} [{stats.get('years')}y]"
+        f"avg {_pct(stats.get('margin_mean'))} · trough {_pct(stats.get('margin_trough'))} "
+        f"/ peak {_pct(stats.get('margin_peak'))} [{stats.get('years')}y]"
     )
-    lines.append(f"{'Döngü:'.ljust(_CARD_LABEL_WIDTH)}{position}")
+    lines.append(f"{'Cycle:'.ljust(_CARD_LABEL_WIDTH)}{position}")
 
     if all(isinstance(stats.get(k), (int, float)) for k in ("pb_current", "pb_median", "pb_peak")):
         lines.append(
             f"{''.ljust(_CARD_LABEL_WIDTH)}P/B {stats['pb_current']:.2f} "
-            f"(tarihsel dip {stats['pb_trough']:.2f} · medyan {stats['pb_median']:.2f} "
-            f"· tepe {stats['pb_peak']:.2f})"
+            f"(historical trough {stats['pb_trough']:.2f} · median {stats['pb_median']:.2f} "
+            f"· peak {stats['pb_peak']:.2f})"
         )
 
     def _band(regime, label):
@@ -1070,32 +1070,32 @@ def _cycle_lines(valuation: dict) -> List[str]:
             return None
         parts = [
             f"{name} ${regime[key]:,.0f}"
-            for name, key in (("düşük", "low"), ("merkez", "center"), ("yüksek", "high"))
+            for name, key in (("low", "low"), ("center", "center"), ("high", "high"))
             if isinstance(regime.get(key), (int, float))
         ]
         return f"{label}: {' · '.join(parts)}" if parts else None
 
-    for text in (_band(cycle.get("regime_a"), "Rejim A (döngü ortalaması)"),
-                 _band(cycle.get("regime_b"), "Rejim B (yapısal kırılım)")):
+    for text in (_band(cycle.get("regime_a"), "Regime A (cycle average)"),
+                 _band(cycle.get("regime_b"), "Regime B (structural break)")):
         if text:
             lines.append(f"{''.ljust(_CARD_LABEL_WIDTH)}{text}")
 
     blend = cycle.get("blend") or {}
     if blend:
         cells = " · ".join(f"p={p} ${v:,.0f}" for p, v in sorted(blend.items()))
-        lines.append(f"{''.ljust(_CARD_LABEL_WIDTH)}Harman: {cells}")
+        lines.append(f"{''.ljust(_CARD_LABEL_WIDTH)}Blend: {cells}")
 
     lines.append(f"{''.ljust(_CARD_LABEL_WIDTH)}{cycle.get('verdict_sentence', '')}")
 
     fired = [label for key, label in _CYCLE_FLAG_LABELS.items() if (cycle.get("flags") or {}).get(key)]
     if fired:
-        lines.append(f"{''.ljust(_CARD_LABEL_WIDTH)}Bayraklar: {', '.join(fired)}")
+        lines.append(f"{''.ljust(_CARD_LABEL_WIDTH)}Flags: {', '.join(fired)}")
     return lines
 
 
 def _tangible_multiples_line(valuation: dict) -> Optional[str]:
-    """Render the informational "Maddi çarpan:" card line for a financial
-    filer: current P/TBV (F/MDD -- fiyat / maddi defter değeri) with its own
+    """Render the informational "TBV mult.:" card line for a financial
+    filer: current P/TBV (price / tangible book value) with its own
     historical percentile, plus ROTCE (SPEC.md Sec.23e).
 
     Occupies the slot :func:`_ev_multiples_line` fills for other sectors and
@@ -1113,7 +1113,7 @@ def _tangible_multiples_line(valuation: dict) -> Optional[str]:
         return None
 
     pct = multiples.get("ptbv_percentile")
-    fragment = f"F/MDD {ptbv:.2f}×"
+    fragment = f"P/TBV {ptbv:.2f}×"
     if pct is not None:
         fragment += f" ({pct:.0f}. pctile)"
     fragments = [fragment]
@@ -1122,20 +1122,20 @@ def _tangible_multiples_line(valuation: dict) -> Optional[str]:
     if rotce is not None:
         fragments.append(f"ROTCE %{rotce * 100:.1f}")
 
-    # 12 chars, so it still leaves a separating space at _CARD_LABEL_WIDTH
-    # (13) -- and it parallels _ev_multiples_line's "FD çarpanı:".
-    label = "MDD çarpanı:".ljust(_CARD_LABEL_WIDTH)
+    # 10 chars, so it still leaves a separating space at _CARD_LABEL_WIDTH
+    # (13) -- and it parallels _ev_multiples_line's "EV multiple:".
+    label = "TBV mult.:".ljust(_CARD_LABEL_WIDTH)
     return f"{label}{' · '.join(fragments)}"
 
 
 def _triangulation_line(valuation: dict) -> str:
-    """Render the "Üçgenleme:" card line (SPEC.md Sec.13): each of the three
+    """Render the "Triangulation:" card line (SPEC.md Sec.13): each of the three
     valuation methods' cheap/fair/expensive direction signal, plus a
     confidence-derived closing phrase, from ``valuation["triangulation"]``.
-    ``"YÜKSEK"`` confidence reads as "yön net" (clear direction), ``"DÜŞÜK"``
-    as "yön karışık" (mixed signals); anything else (typically ``"ORTA"``)
+    ``"HIGH"`` confidence reads as "clear direction", ``"LOW"``
+    as "mixed direction" (mixed signals); anything else (typically ``"MEDIUM"``)
     falls back to the triangulation's own majority ``direction`` word."""
-    label = "Üçgenleme:".ljust(_CARD_LABEL_WIDTH)
+    label = "Triangulation:".ljust(_CARD_LABEL_WIDTH)
     triangulation = valuation.get("triangulation") or {}
     signals = triangulation.get("signals") or {}
     confidence = triangulation.get("confidence")
@@ -1144,10 +1144,10 @@ def _triangulation_line(valuation: dict) -> str:
     reverse_dcf_signal = signals.get("reverse_dcf") or _DASH
     multiples_signal = signals.get("multiples") or _DASH
 
-    if confidence == "YÜKSEK":
-        suffix = "yön net"
-    elif confidence == "DÜŞÜK":
-        suffix = "yön karışık"
+    if confidence == "HIGH":
+        suffix = "clear direction"
+    elif confidence == "LOW":
+        suffix = "mixed direction"
     else:
         suffix = triangulation.get("direction") or _DASH
 
@@ -1155,12 +1155,12 @@ def _triangulation_line(valuation: dict) -> str:
 
 
 def _sensitivity_line(valuation: dict) -> str:
-    """Render the "Duyarlılık:" card line (SPEC.md Sec.13): the full price
+    """Render the "Sensitivity:" card line (SPEC.md Sec.13): the full price
     range spanned by the base-scenario 3x3 growth/discount-rate sensitivity
-    matrix, from ``valuation["sensitivity"]``, appending a "yüksek
-    belirsizlik" flag when that matrix's own ``high_uncertainty`` bit is
+    matrix, from ``valuation["sensitivity"]``, appending a "high
+    uncertainty" flag when that matrix's own ``high_uncertainty`` bit is
     set (its (hi-lo)/base-cell spread exceeds 60%)."""
-    label = "Duyarlılık:".ljust(_CARD_LABEL_WIDTH)
+    label = "Sensitivity:".ljust(_CARD_LABEL_WIDTH)
     sensitivity = valuation.get("sensitivity") or {}
     lo, hi = sensitivity.get("lo"), sensitivity.get("hi")
     if lo is None or hi is None:
@@ -1169,16 +1169,16 @@ def _sensitivity_line(valuation: dict) -> str:
     range_text = f"{_fmt_money(lo)}–{_fmt_money(hi)}"
     line = f"{label}base {range_text} (g±2pp, r±1pp)"
     if sensitivity.get("high_uncertainty"):
-        line += " — yüksek belirsizlik"
+        line += " — high uncertainty"
     return line
 
 
-#: Turkish display label for each Altman-Z zone (SPEC.md Sec.8g).
-_ALTMAN_ZONE_LABEL_TR = {"safe": "güvenli", "grey": "gri", "distress": "sıkıntı"}
+#: Display label for each Altman-Z zone (SPEC.md Sec.8g).
+_ALTMAN_ZONE_LABEL_TR = {"safe": "safe", "grey": "grey", "distress": "distress"}
 
 
 def _distress_flags_line(valuation: dict) -> Optional[str]:
-    """Render the "Risk skoru:" card line (SPEC.md Sec.8g/8j/8k): a
+    """Render the "Risk score:" card line (SPEC.md Sec.8g/8j/8k): a
     single line summarizing whichever ADVISORY distress/earnings-quality
     screens (Altman Z-score, Beneish M-score, Merton distance-to-default)
     were computable for this filer.
@@ -1210,16 +1210,16 @@ def _distress_flags_line(valuation: dict) -> Optional[str]:
 
     beneish = valuation.get("beneish_m")
     if isinstance(beneish, dict) and beneish.get("m_score") is not None:
-        suffix = " [kısmi]" if beneish.get("partial") else ""
+        suffix = " [partial]" if beneish.get("partial") else ""
         if beneish.get("flag"):
             # I2: caveat the flag as a likely growth artifact when sales grew
             # fast (Beneish over-flags hyper-growers) rather than presenting it
             # as a manipulation signal on the compact card.
             sgi = (beneish.get("components") or {}).get("sgi")
             if isinstance(sgi, (int, float)) and sgi > 1.40:
-                suffix += " — işaretlendi (olasılıkla hızlı büyüme yan etkisi)"
+                suffix += " — flagged (likely a fast-growth side effect)"
             else:
-                suffix += " — olası manipülasyon sinyali"
+                suffix += " — possible manipulation signal"
         parts.append(f"Beneish M {beneish['m_score']:.2f}{suffix}")
 
     merton = valuation.get("merton_dtd")
@@ -1230,11 +1230,11 @@ def _distress_flags_line(valuation: dict) -> Optional[str]:
 
     if not parts:
         return None
-    return f"{'Risk skoru:'.ljust(_CARD_LABEL_WIDTH)}{' · '.join(parts)}"
+    return f"{'Risk score:'.ljust(_CARD_LABEL_WIDTH)}{' · '.join(parts)}"
 
 
 def _lbo_floor_line(valuation: dict) -> Optional[str]:
-    """Render the "LBO çapası:" card line (SPEC.md Sec.8h): the LBO-implied
+    """Render the "LBO anchor:" card line (SPEC.md Sec.8h): the LBO-implied
     per-share value floor -- the highest price a disciplined financial
     (private-equity) buyer could justify today, purely from debt-paydown
     ("deleveraging") returns, with NO organic growth or multiple-expansion
@@ -1248,12 +1248,12 @@ def _lbo_floor_line(valuation: dict) -> Optional[str]:
     detail = valuation.get("lbo_floor_detail")
     if not isinstance(detail, dict) or detail.get("per_share") is None:
         return None
-    label = "LBO çapası:".ljust(_CARD_LABEL_WIDTH)
-    return f"{label}{_fmt_money(detail['per_share'])} (bilgi amaçlı, manşete girmez)"
+    label = "LBO anchor:".ljust(_CARD_LABEL_WIDTH)
+    return f"{label}{_fmt_money(detail['per_share'])} (informational only, not part of the headline)"
 
 
 def _signed_pct_tr(value) -> str:
-    """Turkish signed-percent, sign-first then ``%``: ``4 -> "+%4"``,
+    """Signed-percent, sign-first then ``%``: ``4 -> "+%4"``,
     ``-7.5 -> "-%8"`` (0 decimals, matching the compact card style)."""
     if value is None:
         return _DASH
@@ -1263,28 +1263,28 @@ def _signed_pct_tr(value) -> str:
 
 def _momentum_line(technical: dict) -> Optional[str]:
     """Compact returns/trend sub-line for the technical card, e.g.
-    ``"Getiriler:  1a +%4 · 3a +%13 · 6a -%3 · Trend: yükseliş (GC) · 52h %68"``.
+    ``"Returns:  1m +%4 · 3m +%13 · 6m -%3 · Trend: up (GC) · 52w %68"``.
     ``None`` when no figure is available. (The composite momentum synthesis is
     a separate top-level ``Momentum:`` row -- see :func:`_momentum_synthesis_text`.)"""
     parts: List[str] = []
-    for label, key in (("1a", "return_1m_pct"), ("3a", "return_3m_pct"), ("6a", "return_6m_pct")):
+    for label, key in (("1m", "return_1m_pct"), ("3m", "return_3m_pct"), ("6m", "return_6m_pct")):
         value = technical.get(key)
         if value is not None:
             parts.append(f"{label} {_signed_pct_tr(value)}")
 
     above = technical.get("sma50_above_sma200")
     if above is True:
-        parts.append("Trend: yükseliş" + (" (GC)" if technical.get("golden_cross") else ""))
+        parts.append("Trend: up" + (" (GC)" if technical.get("golden_cross") else ""))
     elif above is False:
-        parts.append("Trend: düşüş" + (" (DC)" if technical.get("death_cross") else ""))
+        parts.append("Trend: down" + (" (DC)" if technical.get("death_cross") else ""))
 
     range_position = technical.get("range_position_pct")
     if range_position is not None:
-        parts.append(f"52h %{range_position:.0f}")
+        parts.append(f"52w %{range_position:.0f}")
 
     if not parts:
         return None
-    return "Getiriler:  " + " · ".join(parts)
+    return "Returns:  " + " · ".join(parts)
 
 
 #: Severity -> glyph for the momentum cross-signal sub-lines.
@@ -1294,12 +1294,12 @@ _CROSS_ICON = {"warn": "⚠", "good": "✓", "info": "•"}
 def _momentum_synthesis_text(momentum: dict) -> str:
     """Top-level ``Momentum:`` row text from ``result["momentum"]``: the
     composite verdict followed by the price / fundamental / verdict-trend
-    sub-reads, e.g. ``"POZİTİF · fiyat: YUKARI MOMENTUM (68/100, hızlanıyor) ·
-    fundamental: POZİTİF · verdict: yakınsama"``."""
+    sub-reads, e.g. ``"POSITIVE · price: STRONG UPWARD MOMENTUM (68/100, accelerating) ·
+    fundamental: POSITIVE · verdict: convergence"``."""
     parts: List[str] = []
     price = momentum.get("price")
     if isinstance(price, dict) and price.get("label"):
-        seg = f"fiyat: {price['label']} ({price.get('score')}/100"
+        seg = f"price: {price['label']} ({price.get('score')}/100"
         seg += f", {price['accel']}" if price.get("accel") else ""
         seg += ")"
         parts.append(seg)
@@ -1323,48 +1323,48 @@ def _rsi_divergence_line(technical: dict) -> Optional[str]:
     rsi_prev, rsi_last = detail.get("rsi_prev"), detail.get("rsi_last")
     if detail.get("type") == "bearish":
         return (
-            f"RSI uyumsuzluğu (ayı): fiyat {price_prev}→{price_last} daha yüksek zirve ama "
-            f"RSI {rsi_prev:.0f}→{rsi_last:.0f} düştü — momentum teyit etmiyor."
+            f"RSI divergence (bear): price {price_prev}→{price_last} made a higher high but "
+            f"RSI {rsi_prev:.0f}→{rsi_last:.0f} fell — momentum is not confirming."
         )
     return (
-        f"RSI uyumsuzluğu (boğa): fiyat {price_prev}→{price_last} daha düşük dip ama "
-        f"RSI {rsi_prev:.0f}→{rsi_last:.0f} yükseldi — satış baskısı azalıyor."
+        f"RSI divergence (bull): price {price_prev}→{price_last} made a lower low but "
+        f"RSI {rsi_prev:.0f}→{rsi_last:.0f} rose — selling pressure is easing."
     )
 
 
 def _signal_volume_line(technical: dict) -> Optional[str]:
     """Compact MACD + volume sub-line, e.g.
-    ``"MACD/Hacim:  MACD boğa (kesişim ↑) · Hacim 1.3× · OBV ↑"``. ``None``
+    ``"MACD/Volume:  MACD bull (cross ↑) · Volume 1.3× · OBV ↑"``. ``None``
     when neither MACD nor volume signals are available."""
     parts: List[str] = []
 
     macd_hist = technical.get("macd_hist")
     if macd_hist is not None:
-        state = "boğa" if macd_hist > 0 else ("ayı" if macd_hist < 0 else "nötr")
+        state = "bull" if macd_hist > 0 else ("bear" if macd_hist < 0 else "neutral")
         segment = f"MACD {state}"
         cross = technical.get("macd_cross")
         if cross == "bullish":
-            segment += " (kesişim ↑)"
+            segment += " (cross ↑)"
         elif cross == "bearish":
-            segment += " (kesişim ↓)"
+            segment += " (cross ↓)"
         parts.append(segment)
 
     rel_volume = technical.get("rel_volume")
     if rel_volume is not None:
-        parts.append(f"Hacim {rel_volume:.1f}×")
+        parts.append(f"Volume {rel_volume:.1f}×")
 
     obv_trend = technical.get("obv_trend")
     if obv_trend:
-        parts.append({"up": "OBV ↑", "down": "OBV ↓", "flat": "OBV yatay"}.get(obv_trend, f"OBV {obv_trend}"))
+        parts.append({"up": "OBV ↑", "down": "OBV ↓", "flat": "OBV flat"}.get(obv_trend, f"OBV {obv_trend}"))
 
     if not parts:
         return None
-    return "MACD/Hacim:  " + " · ".join(parts)
+    return "MACD/Volume:  " + " · ".join(parts)
 
 
 def _support_resistance_line(technical: dict) -> Optional[str]:
     """Compact support/resistance sub-line for the technical card, e.g.
-    ``"Destek/Direnç:  Direnç $108 (+%8), $118 (+%18) | Destek $92.50 (-%8)"``.
+    ``"Support/Resistance:  Resistance $108 (+%8), $118 (+%18) | Support $92.50 (-%8)"``.
     Shows up to two nearest levels per side. ``None`` when none exist."""
     def _range(z: dict) -> str:
         lo, hi = z.get("low"), z.get("high")
@@ -1376,14 +1376,14 @@ def _support_resistance_line(technical: dict) -> Optional[str]:
         touches = z.get("touches") or 0
         parts = []
         if z.get("is_52w_high"):
-            parts.append("52h zirve")
+            parts.append("52w high")
         elif z.get("is_52w_low"):
-            parts.append("52h dip")
+            parts.append("52w low")
         if touches >= 1:
             parts.append(f"{touches}×")
         if z.get("fib"):
             parts.append(f"Fib {z['fib']}")
-        note = " + ".join(parts) or "seviye"
+        note = " + ".join(parts) or "level"
         return f"{_range(z)} ({_signed_pct_tr(z.get('dist_pct'))} · {note})"
 
     def _levels(items: list) -> str:
@@ -1393,12 +1393,12 @@ def _support_resistance_line(technical: dict) -> Optional[str]:
     supports = technical.get("support_levels") or []
     segments: List[str] = []
     if resistances:
-        segments.append(f"Direnç {_levels(resistances)}")
+        segments.append(f"Resistance {_levels(resistances)}")
     if supports:
-        segments.append(f"Destek {_levels(supports)}")
+        segments.append(f"Support {_levels(supports)}")
     if not segments:
         return None
-    return "Destek/Direnç:  " + " | ".join(segments)
+    return "Support/Resistance:  " + " | ".join(segments)
 
 
 def _print_verdict_card(
@@ -1411,7 +1411,7 @@ def _print_verdict_card(
     analyst: Optional[dict] = None,
     as_of=None,
 ) -> None:
-    """Print the compact, Turkish-language terminal verdict card.
+    """Print the compact terminal verdict card.
 
     This is the default (non-``--verbose``) output of ``analyze`` -- it
     replaces the old raw-JSON dump, which is now only shown behind
@@ -1422,10 +1422,10 @@ def _print_verdict_card(
     When ``result["valuation"]`` (the dict from
     :func:`sec_analyzer.valuation.engine.run_valuation`, SPEC.md Sec.13) is
     present, the "Fair Value" line gains a method label (``"DCF"``, ``"FFO"``,
-    or ``"P/B×ROE"`` -- see :func:`_valuation_method_label`) and a "Güven:"
+    or ``"P/B×ROE"`` -- see :func:`_valuation_method_label`) and a "Confidence:"
     confidence suffix, and four extra lines
-    follow the bear/bull line: "Reverse DCF:", "Multiples:", "Üçgenleme:",
-    and "Duyarlılık:". Without a ``"valuation"`` key (e.g. an older stored
+    follow the bear/bull line: "Reverse DCF:", "Multiples:", "Triangulation:",
+    and "Sensitivity:". Without a ``"valuation"`` key (e.g. an older stored
     result, or a phase-2 provider failure that still reached this function)
     the card renders exactly as it did before those additions.
 
@@ -1437,7 +1437,7 @@ def _print_verdict_card(
             error shape).
         metrics: The dict returned by
             :func:`sec_analyzer.normalize.metrics.compute_metrics`; its
-            ``"price"`` field is used for the "Fiyat:" line.
+            ``"price"`` field is used for the "Price:" line.
         flags: The list returned by
             :func:`sec_analyzer.normalize.red_flags.detect_red_flags`, used
             as a fallback "Red flags:" line when ``result`` has no
@@ -1445,13 +1445,13 @@ def _print_verdict_card(
         analyst: The dict returned by
             :func:`sec_analyzer.fetch.analyst.get_analyst_targets`, or
             ``None``. Display-only consensus cross-check, rendered as an
-            "Analist:" line right after the bear/bull scenario line (see
+            "Analyst:" line right after the bear/bull scenario line (see
             :func:`_analyst_line`); never feeds the valuation engine.
 
-    The "Olaylar:" line summarizes ``result["events"]`` (the recent 8-K event
+    The "Events:" line summarizes ``result["events"]`` (the recent 8-K event
     list attached in ``cmd_analyze`` via
     :func:`sec_analyzer.signals.events.detect_events`) using
-    :func:`sec_analyzer.signals.events.summarize_events`; it reads ``"yok"``
+    :func:`sec_analyzer.signals.events.summarize_events`; it reads ``"none"``
     when there are no recent warning/critical events.
     """
     result = result or {}
@@ -1459,30 +1459,30 @@ def _print_verdict_card(
     flags = flags or []
 
     ticker_label = str(ticker).upper()
-    header = f"{ticker_label} — Vade: {horizon} — {date.today().isoformat()}"
+    header = f"{ticker_label} — Horizon: {horizon} — {date.today().isoformat()}"
 
     print()
     print(header)
     print("─" * len(header))
     if as_of is not None:
         print(
-            f"AS-OF {as_of.isoformat()} — geçmiş veri, hindsight içermez "
-            "(analist konsensüsü gösterilmiyor)"
+            f"AS-OF {as_of.isoformat()} — historical data, contains no hindsight "
+            "(analyst consensus not shown)"
         )
         macro_asof = (result.get("valuation") or {}).get("macro_asof") if isinstance(result, dict) else None
         if macro_asof:
             print(
-                f"  Makro: ERP {macro_asof.get('erp_source')} · risksiz faiz "
-                f"{macro_asof.get('risk_free_source')} · çarpan/beta "
+                f"  Macro: ERP {macro_asof.get('erp_source')} · risk-free rate "
+                f"{macro_asof.get('risk_free_source')} · multiple/beta "
                 f"{macro_asof.get('multiples_source', 'multiples.csv')}"
             )
         leak = result.get("hindsight_leak_risk") if isinstance(result, dict) else None
         if leak:
             print(f"  ⚠ {leak}")
-    print(f"Fiyat: {_fmt_money(metrics.get('price'))}")
+    print(f"Price: {_fmt_money(metrics.get('price'))}")
 
     if "error" in result:
-        print(f"Analiz kullanılamıyor ({result['error']}): {result.get('summary', _DASH)}")
+        print(f"Analysis unavailable ({result['error']}): {result.get('summary', _DASH)}")
         return
 
     fv = result.get("fair_value_range") or {}
@@ -1497,7 +1497,7 @@ def _print_verdict_card(
     if valuation:
         method_label = _valuation_method_label(valuation)
         confidence = result.get("confidence") or _DASH
-        print(f"Fair Value (base, {method_label}): {base_range}   Güven: {confidence}")
+        print(f"Fair Value (base, {method_label}): {base_range}   Confidence: {confidence}")
     else:
         print(f"Fair Value (base): {base_range}")
     print(f"  {_scenario_line('bear', fv.get('bear'))} | {_scenario_line('bull', fv.get('bull'))}")
@@ -1533,9 +1533,9 @@ def _print_verdict_card(
     technical_verdict = result.get("technical_verdict") or technical.get("verdict") or _DASH
     verdict_detail = technical.get("verdict_detail")
     technical_line = technical_verdict
-    if verdict_detail and verdict_detail != "yetersiz veri":
+    if verdict_detail and verdict_detail != "insufficient data":
         technical_line = f"{technical_verdict} ({verdict_detail})"
-    print(f"{'Teknik:'.ljust(_CARD_LABEL_WIDTH)}{technical_line}")
+    print(f"{'Technical:'.ljust(_CARD_LABEL_WIDTH)}{technical_line}")
 
     momentum_line = _momentum_line(technical)
     if momentum_line:
@@ -1563,39 +1563,39 @@ def _print_verdict_card(
     profile_verdict = profile.get("verdict") or _DASH
     profile_reason = profile.get("reason")
     profile_line = f"{profile_verdict} — {profile_reason}" if profile_reason else profile_verdict
-    print(f"{'Profil:'.ljust(_CARD_LABEL_WIDTH)}{profile_line}")
+    print(f"{'Profile:'.ljust(_CARD_LABEL_WIDTH)}{profile_line}")
 
     if "red_flags_comment" in result:
-        red_flags_line = result.get("red_flags_comment") or "yok"
+        red_flags_line = result.get("red_flags_comment") or "none"
     elif flags:
-        red_flags_line = "; ".join(f.get("message", "") for f in flags if f.get("message")) or "yok"
+        red_flags_line = "; ".join(f.get("message", "") for f in flags if f.get("message")) or "none"
     else:
-        red_flags_line = "yok"
+        red_flags_line = "none"
     print(f"{'Red flags:'.ljust(_CARD_LABEL_WIDTH)}{red_flags_line}")
 
     events_line = summarize_events(result.get("events") or [])
-    print(f"{'Olaylar:'.ljust(_CARD_LABEL_WIDTH)}{events_line}")
+    print(f"{'Events:'.ljust(_CARD_LABEL_WIDTH)}{events_line}")
 
     insider = result.get("insider")
-    print(f"{'İçeriden:'.ljust(_CARD_LABEL_WIDTH)}{summarize_insider(insider)}")
+    print(f"{'Insider:'.ljust(_CARD_LABEL_WIDTH)}{summarize_insider(insider)}")
     if isinstance(insider, dict) and insider.get("note"):
         print(f"  {insider['note']}")
 
     peers = result.get("peers")
     if isinstance(peers, dict):
-        print(f"{'Emsal:'.ljust(_CARD_LABEL_WIDTH)}{peers.get('note') or _DASH}")
+        print(f"{'Peers:'.ljust(_CARD_LABEL_WIDTH)}{peers.get('note') or _DASH}")
 
     macro = result.get("macro")
     if isinstance(macro, dict):
-        print(f"{'Makro:'.ljust(_CARD_LABEL_WIDTH)}{summarize_macro(macro)}")
+        print(f"{'Macro:'.ljust(_CARD_LABEL_WIDTH)}{summarize_macro(macro)}")
         for note in macro.get("notes") or []:
             print(f"  {note}")
 
-    print(f"{'Katalizör:'.ljust(_CARD_LABEL_WIDTH)}{result.get('catalyst') or _DASH}")
+    print(f"{'Catalyst:'.ljust(_CARD_LABEL_WIDTH)}{result.get('catalyst') or _DASH}")
 
     summary = result.get("summary")
     if summary:
-        print(f"Özet: {summary}")
+        print(f"Summary: {summary}")
 
 
 def cmd_analyze(args: argparse.Namespace) -> None:
@@ -1620,22 +1620,22 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         provider = explicit_provider or Config.ANALYZER_PROVIDER
     if as_of is not None and provider != "script":
         print(
-            f"\nUYARI: as-of modunda AI sağlayıcı ({provider}) kullanılıyor — "
-            "sonuç 'hindsight sızıntısı riski' etiketi taşıyacak.",
+            f"\nWARNING: using AI provider ({provider}) in as-of mode — "
+            "the result will carry a 'hindsight leak risk' label.",
             file=sys.stderr,
         )
     print(f"\nRunning {provider} analysis (horizon={horizon})...")
 
     # Point-in-time no-data guard: if the as-of cutoff predates every filed
-    # fact, there's nothing to analyze -- print a minimal Turkish card and
+    # fact, there's nothing to analyze -- print a minimal card and
     # stop before the rest of the pipeline (which would otherwise divide by
     # missing fundamentals). Never crashes the CLI.
     if as_of is not None and not any((normalized.get("annual") or {}).values()):
         result = {
             "error": "as_of_no_data",
             "summary": (
-                f"{as_of.isoformat()} tarihi itibarıyla dosyalanmış SEC verisi "
-                "bulunamadı; şirketin ilk dosyalaması bu tarihten sonra olabilir."
+                f"No SEC data was filed as of {as_of.isoformat()}; "
+                "the company's first filing may postdate this date."
             ),
         }
         _print_verdict_card(args.ticker, horizon, result, {}, [], None, as_of=as_of)
@@ -1755,7 +1755,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
 
     if getattr(args, "html", False):
         # The earnings beat/miss history is display-only and only shown in the
-        # HTML report's "Bilanço" tab, so it's fetched here (not on plain-text
+        # HTML report's "Balance sheet" tab, so it's fetched here (not on plain-text
         # runs) and, like the analyst consensus, suppressed in as-of mode
         # because it is undated and cannot be made point-in-time.
         earnings = None if as_of is not None else _fetch_earnings_history(args.ticker, args.no_cache)
@@ -1800,7 +1800,7 @@ def cmd_calibrate(args: argparse.Namespace) -> None:
     rows = run_calibration(tickers, years=args.years, no_cache=args.no_cache, as_of=as_of)
     print()
     if as_of is not None:
-        print(f"As-of (geçmiş tarih) modu: {as_of.isoformat()}")
+        print(f"As-of (historical date) mode: {as_of.isoformat()}")
     print_calibration_table(rows)
 
     summary = summarize_ratios(rows)
@@ -1833,12 +1833,12 @@ def _print_swing_table(result: dict, top: int) -> None:
     rows = result.get("rows") or []
     index_label = result.get("universe_label") or result.get("universe") or _DASH
     print(
-        f"\nSwing Tarama — {index_label} — {result.get('generated_at') or _DASH} "
-        f"(fiyat tarihi: {result.get('price_as_of') or _DASH}) — "
-        f"{result.get('count', 0)}/{result.get('total', 0)} hisse tarandı"
+        f"\nSwing Scan — {index_label} — {result.get('generated_at') or _DASH} "
+        f"(price date: {result.get('price_as_of') or _DASH}) — "
+        f"{result.get('count', 0)}/{result.get('total', 0)} stocks scanned"
     )
 
-    headers = ["#", "Hisse", "Skor", "Etiket", "Kurulum", "Fiyat", "Giriş", "Stop", "Hedef", "R:R"]
+    headers = ["#", "Ticker", "Score", "Label", "Setup", "Price", "Entry", "Stop", "Target", "R:R"]
     print("".join(h.ljust(w) for h, w in zip(headers, _SWING_COL_WIDTHS)))
     print("-" * sum(_SWING_COL_WIDTHS))
 
@@ -1861,10 +1861,10 @@ def _print_swing_table(result: dict, top: int) -> None:
     skipped = result.get("skipped") or []
     if skipped:
         sample = ", ".join(str(s.get("ticker") or "?") for s in skipped[:5])
-        more = f" (+{len(skipped) - 5} diğer)" if len(skipped) > 5 else ""
-        print(f"\nAtlanan: {len(skipped)} hisse — {sample}{more}")
+        more = f" (+{len(skipped) - 5} more)" if len(skipped) > 5 else ""
+        print(f"\nSkipped: {len(skipped)} stocks — {sample}{more}")
     else:
-        print("\nAtlanan: yok")
+        print("\nSkipped: none")
 
 
 def cmd_swing(args: argparse.Namespace) -> None:
@@ -1872,7 +1872,7 @@ def cmd_swing(args: argparse.Namespace) -> None:
     ``--limit``) for long-only swing-trade setups (SWING_SPEC.md Sec.8),
     print a ranked table, and persist the result unless ``--no-save``.
 
-    Never raises out to the user: a failed scan prints a Turkish error line
+    Never raises out to the user: a failed scan prints an error line
     to stderr and exits with status 1, so a warmed-cache/network hiccup
     can't crash the CLI (CLAUDE.md: analysis layer never crashes the CLI).
     """
@@ -1883,14 +1883,14 @@ def cmd_swing(args: argparse.Namespace) -> None:
         try:
             universe = load_universe(index=index)
         except OSError as exc:
-            print(f"Evren dosyası okunamadı: {exc}", file=sys.stderr)
+            print(f"Could not read universe file: {exc}", file=sys.stderr)
             sys.exit(1)
             return
         tickers = [row["ticker"] for row in universe[: args.limit]]
 
     def _progress(done: int, total: int, ticker: str) -> None:
         if done % _SWING_PROGRESS_STEP == 0 or done == total:
-            logger.info("Swing tarama ilerlemesi: %d/%d (son: %s)", done, total, ticker)
+            logger.info("Swing scan progress: %d/%d (last: %s)", done, total, ticker)
 
     try:
         result = scan_swing(
@@ -1901,8 +1901,8 @@ def cmd_swing(args: argparse.Namespace) -> None:
             index=index,
         )
     except Exception as exc:  # noqa: BLE001 - a failed scan must not crash the CLI
-        logger.exception("Swing tarama başarısız oldu")
-        print(f"Swing tarama başarısız: {exc}", file=sys.stderr)
+        logger.exception("Swing scan failed")
+        print(f"Swing scan failed: {exc}", file=sys.stderr)
         sys.exit(1)
         return
 
@@ -1911,13 +1911,13 @@ def cmd_swing(args: argparse.Namespace) -> None:
     if not args.no_save:
         scan_id = save_swing_scan(result, db_path=Config.DB_PATH)
         if scan_id:
-            print(f"\nTarama kaydedildi (id {scan_id}): {Config.DB_PATH}")
+            print(f"\nScan saved (id {scan_id}): {Config.DB_PATH}")
         else:
-            print("\nWARNING: swing tarama veritabanına kaydedilemedi.", file=sys.stderr)
+            print("\nWARNING: could not save swing scan to the database.", file=sys.stderr)
 
 
 #: Column widths for the swing-study decile terminal table (SWING_STUDY_SPEC.md
-#: Sec.5): Kova, n, ortalama fazla getiri %, medyan, isabet %, ortalama skor.
+#: Sec.5): bucket, n, mean excess return %, median, hit rate %, mean score.
 _SWING_STUDY_DECILE_COL_WIDTHS = [8, 8, 16, 12, 10, 12]
 
 
@@ -1932,16 +1932,16 @@ def _print_swing_study_report(result: dict) -> None:
     """
     index_label = result.get("index_label") or result.get("index") or _DASH
     print(
-        f"\n=== Swing skor kova (decile) çalışması — {index_label} — "
+        f"\n=== Swing score decile study — {index_label} — "
         f"{result.get('start') or _DASH} .. {result.get('end') or _DASH} ==="
     )
     print(
-        f"Rebalance tarihi: {result.get('rebalance_dates', 0)} · "
-        f"Gözlem: {result.get('observations', 0)} · "
-        f"Taranan hisse: {result.get('tickers_scanned', 0)} · "
-        f"Atlanan: {len(result.get('skipped') or [])} · "
-        f"Skor-yok: {result.get('dropped_no_score', 0)} · "
-        f"Vade-verisi-yok: {result.get('dropped_no_forward', 0)}"
+        f"Rebalance dates: {result.get('rebalance_dates', 0)} · "
+        f"Observations: {result.get('observations', 0)} · "
+        f"Stocks scanned: {result.get('tickers_scanned', 0)} · "
+        f"Skipped: {len(result.get('skipped') or [])} · "
+        f"No-score: {result.get('dropped_no_score', 0)} · "
+        f"No-forward-data: {result.get('dropped_no_forward', 0)}"
     )
 
     deciles = result.get("deciles") or {}
@@ -1949,12 +1949,12 @@ def _print_swing_study_report(result: dict) -> None:
     monotonicity = result.get("monotonicity") or {}
 
     for horizon_key in sorted(deciles, key=lambda k: int(k)):
-        print(f"\n[{horizon_key} işlem günü ileri getiri]")
-        headers = ["Kova", "n", "Ort. fazla getiri", "Medyan", "İsabet %", "Ort. skor"]
+        print(f"\n[{horizon_key} trading-day forward return]")
+        headers = ["Bucket", "n", "Mean excess ret.", "Median", "Hit rate %", "Mean score"]
         print("".join(h.ljust(w) for h, w in zip(headers, _SWING_STUDY_DECILE_COL_WIDTHS)))
         print("-" * sum(_SWING_STUDY_DECILE_COL_WIDTHS))
         for row in deciles.get(horizon_key) or []:
-            flag = "  ⚠ yetersiz örneklem" if row.get("low_sample") else ""
+            flag = "  ⚠ low sample size" if row.get("low_sample") else ""
             cells = [
                 str(row.get("decile")),
                 str(row.get("n")),
@@ -1968,16 +1968,16 @@ def _print_swing_study_report(result: dict) -> None:
         sp = spread.get(horizon_key) or {}
         ci_low, ci_high = sp.get("ci_low"), sp.get("ci_high")
         ci_str = (
-            f" (bootstrap %95 GA: {_fmt_swing_study_pct(ci_low)} .. {_fmt_swing_study_pct(ci_high)})"
+            f" (bootstrap 95% CI: {_fmt_swing_study_pct(ci_low)} .. {_fmt_swing_study_pct(ci_high)})"
             if ci_low is not None and ci_high is not None else ""
         )
-        print(f"Üst-alt kova farkı: {_fmt_swing_study_pct(sp.get('mean_excess_pct'))}{ci_str}")
-        print(f"Monotonluk (Spearman rho): {monotonicity.get(horizon_key, 0.0):.3f}")
+        print(f"Top-minus-bottom bucket spread: {_fmt_swing_study_pct(sp.get('mean_excess_pct'))}{ci_str}")
+        print(f"Monotonicity (Spearman rho): {monotonicity.get(horizon_key, 0.0):.3f}")
 
     by_setup = result.get("by_setup") or {}
     if by_setup:
-        print("\n[Kurulum türüne göre]")
-        print(f"{'Kurulum':<24}{'n':>5}{'Fazla 10g':>12}{'Fazla 21g':>12}{'İsabet 10g':>12}{'İsabet 21g':>12}")
+        print("\n[By setup type]")
+        print(f"{'Setup':<24}{'n':>5}{'Excess 10d':>12}{'Excess 21d':>12}{'Hit 10d':>12}{'Hit 21d':>12}")
         print("-" * 77)
         for setup, row in sorted(by_setup.items()):
             hit_10 = row.get("hit_rate_10_pct")
@@ -1991,7 +1991,7 @@ def _print_swing_study_report(result: dict) -> None:
                 f"{hit_10_str:>12}{hit_21_str:>12}"
             )
 
-    print("\n[Bilinen kısıtlar]")
+    print("\n[Known limitations]")
     for line in result.get("limitations") or []:
         print(f"  - {line}")
     print(f"\n{result.get('disclaimer') or ''}")
@@ -2031,21 +2031,21 @@ def cmd_backtest(args: argparse.Namespace) -> None:
             print("No dates given to --dates.", file=sys.stderr)
             return
         print(
-            f"Backtest grid: {len(tickers)} ticker × {len(dates)} tarih "
-            f"= {len(tickers) * len(dates)} hücre (no-AI, script)."
+            f"Backtest grid: {len(tickers)} tickers × {len(dates)} dates "
+            f"= {len(tickers) * len(dates)} cells (no-AI, script)."
         )
         tally = run_backtest(
             tickers, dates, years=args.years, no_cache=args.no_cache, db_path=Config.DB_PATH
         )
         print(
-            f"\nBitti: {tally['ok']} ok, {tally['no_data']} veri-yok, "
-            f"{tally['error']} hata (of {tally['cells']} hücre)."
+            f"\nDone: {tally['ok']} ok, {tally['no_data']} no-data, "
+            f"{tally['error']} errors (of {tally['cells']} cells)."
         )
         if tally.get("outcomes"):
             o = tally["outcomes"]
             print(
-                f"Outcomes: {o['evaluated']} değerlendirildi, "
-                f"{o['skipped_immature']} vadesi dolmadı, {o['skipped_no_data']} veri-yok."
+                f"Outcomes: {o['evaluated']} evaluated, "
+                f"{o['skipped_immature']} not yet mature, {o['skipped_no_data']} no-data."
             )
         print(f"\n{BACKTEST_DISCLAIMER}")
         return
@@ -2053,9 +2053,9 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     if action == "evaluate":
         summary = evaluate_outcomes(db_path=Config.DB_PATH, no_cache=args.no_cache)
         print(
-            f"Outcomes: {summary['evaluated']} değerlendirildi, "
-            f"{summary['skipped_immature']} vadesi dolmadı, "
-            f"{summary['skipped_no_data']} veri-yok (of {summary['verdicts_seen']} verdict)."
+            f"Outcomes: {summary['evaluated']} evaluated, "
+            f"{summary['skipped_immature']} not yet mature, "
+            f"{summary['skipped_no_data']} no-data (of {summary['verdicts_seen']} verdicts)."
         )
         print(f"\n{BACKTEST_DISCLAIMER}")
         return
@@ -2065,7 +2065,7 @@ def cmd_backtest(args: argparse.Namespace) -> None:
         print(render_terminal(data))
         generated_on = date.today().isoformat()
         path = write_html_report(data, generated_on)
-        print(f"\nHTML backtest raporu: {path}")
+        print(f"\nHTML backtest report: {path}")
         return
 
     if action == "swing":
@@ -2077,7 +2077,7 @@ def cmd_backtest(args: argparse.Namespace) -> None:
 
         def _progress(done: int, total: int, ticker: str) -> None:
             if done % _SWING_PROGRESS_STEP == 0 or done == total:
-                logger.info("Swing çalışması ilerlemesi: %d/%d (son: %s)", done, total, ticker)
+                logger.info("Swing study progress: %d/%d (last: %s)", done, total, ticker)
 
         try:
             result = run_swing_study(
@@ -2088,8 +2088,8 @@ def cmd_backtest(args: argparse.Namespace) -> None:
                 progress_cb=_progress,
             )
         except Exception as exc:  # noqa: BLE001 - a failed study must not crash the CLI
-            logger.exception("Swing skor çalışması başarısız oldu")
-            print(f"Swing skor çalışması başarısız: {exc}", file=sys.stderr)
+            logger.exception("Swing score study failed")
+            print(f"Swing score study failed: {exc}", file=sys.stderr)
             sys.exit(1)
             return
 
@@ -2098,9 +2098,9 @@ def cmd_backtest(args: argparse.Namespace) -> None:
         if not args.no_save:
             study_id = save_swing_study(result, db_path=Config.DB_PATH)
             if study_id:
-                print(f"\nÇalışma kaydedildi (id {study_id}): {Config.DB_PATH}")
+                print(f"\nStudy saved (id {study_id}): {Config.DB_PATH}")
             else:
-                print("\nWARNING: swing çalışması veritabanına kaydedilemedi.", file=sys.stderr)
+                print("\nWARNING: could not save swing study to the database.", file=sys.stderr)
         return
 
     print("Usage: backtest {run|evaluate|report|swing} ...", file=sys.stderr)
@@ -2146,7 +2146,7 @@ def _default_model_for(provider: Optional[str]) -> Optional[str]:
 
 
 def _fmt_frac_pct(value) -> str:
-    """Format a decimal fraction (0.105) as a Turkish percent string ('%10.5')."""
+    """Format a decimal fraction (0.105) as a percent string ('%10.5')."""
     if not isinstance(value, (int, float)):
         return _DASH
     return f"%{value * 100:.1f}"
@@ -2194,14 +2194,14 @@ def _print_assumptions_review(
     divergence is information, not an error.
     """
     model_str = f" ({source_model})" if source_model else ""
-    print(f"\n=== {ticker} — Varsayım Önerisi (taslak #{set_id}) ===")
-    print(f"Sektör tipi: {sector_type}   |   Kaynak: {source_provider}{model_str}")
-    print(f"\n{'Senaryo':<6} {'Alan':<16} {'Öneri':>9} {'Script':>9} {'Δ':>9}")
+    print(f"\n=== {ticker} — Assumption Proposal (draft #{set_id}) ===")
+    print(f"Sector type: {sector_type}   |   Source: {source_provider}{model_str}")
+    print(f"\n{'Scenario':<6} {'Field':<16} {'Proposed':>9} {'Script':>9} {'Δ':>9}")
     print("-" * 52)
     field_labels = {
-        "growth_5y": "büyüme 5y",
+        "growth_5y": "growth 5y",
         "terminal_growth": "terminal",
-        "discount_rate": "iskonto",
+        "discount_rate": "discount",
     }
     for scenario in _ASSUMPTION_SCENARIOS:
         prop = (clamped or {}).get(scenario) or {}
@@ -2219,9 +2219,9 @@ def _print_assumptions_review(
             )
     base_story = ((clamped or {}).get("base") or {}).get("story")
     if base_story:
-        print(f"\nHikaye (base): {base_story}")
+        print(f"\nStory (base): {base_story}")
     if sanity_notes:
-        print("\nClamp/sanity notları:")
+        print("\nClamp/sanity notes:")
         for note in sanity_notes:
             print(f"  - {note}")
 
@@ -2239,7 +2239,7 @@ def _cmd_assumptions_propose(args: argparse.Namespace) -> None:
         cik, _name, normalized, ratios, metrics, sector_hint, capm, risk_free_pct
     ) = _assumptions_resolve_inputs(args)
 
-    print(f"\n'{provider}' ile varsayım önerisi hazırlanıyor (phase 1)...")
+    print(f"\nPreparing assumption proposal with '{provider}' (phase 1)...")
     phase1 = propose_assumptions(
         normalized, ratios, metrics, sector_hint=sector_hint,
         provider=provider, model=getattr(args, "model", None),
@@ -2281,16 +2281,16 @@ def _cmd_assumptions_propose(args: argparse.Namespace) -> None:
         clamped, script_baseline, clamp_notes,
     )
     if set_id is None:
-        print("\nUYARI: taslak veritabanına kaydedilemedi (log'a bakın).", file=sys.stderr)
+        print("\nWARNING: could not save draft to the database (see log).", file=sys.stderr)
         return
     print(
-        f"\nGözden geçir, sonra dondur:  assumptions freeze {args.ticker}"
-        f"\nDüzeltmek için:              assumptions edit {args.ticker} --set base.growth_5y=0.12"
+        f"\nReview, then freeze:  assumptions freeze {args.ticker}"
+        f"\nTo edit:               assumptions edit {args.ticker} --set base.growth_5y=0.12"
     )
 
 
 def _freshness_label(cik: str, row: Optional[dict], args: argparse.Namespace) -> str:
-    """Turkish freshness label for a stored set vs. the current fundamentals."""
+    """Freshness label for a stored set vs. the current fundamentals."""
     if row is None:
         return _DASH
     try:
@@ -2301,10 +2301,10 @@ def _freshness_label(cik: str, row: Optional[dict], args: argparse.Namespace) ->
         metrics = compute_metrics(normalized, ratios, None)
     except Exception:  # noqa: BLE001 - freshness is best-effort; never crash `show`
         logger.warning("Could not fetch current fundamentals for freshness check", exc_info=True)
-        return "bilinmiyor (finansallar getirilemedi)"
+        return "unknown (could not fetch financials)"
     if assumptions_store.is_fresh(row, normalized, metrics):
-        return "GÜNCEL"
-    return "BAYAT — yeni dosyalama var; yeniden 'propose' önerilir"
+        return "CURRENT"
+    return "STALE — a new filing exists; re-running 'propose' is recommended"
 
 
 def _cmd_assumptions_show(args: argparse.Namespace) -> None:
@@ -2315,19 +2315,19 @@ def _cmd_assumptions_show(args: argparse.Namespace) -> None:
     frozen = assumptions_store.load_active(cik, assumptions_store.STATUS_FROZEN, db_path=Config.DB_PATH)
     history = assumptions_store.load_history(cik, db_path=Config.DB_PATH)
 
-    print(f"\n=== {args.ticker} — Varsayım Setleri ===")
+    print(f"\n=== {args.ticker} — Assumption Sets ===")
 
     if frozen is not None:
         freshness = _freshness_label(cik, frozen, args)
         model_str = f" ({frozen.get('source_model')})" if frozen.get("source_model") else ""
         print(
-            f"\nDONDURULMUŞ (aktif) #{frozen['id']}  |  {freshness}"
-            f"\n  Kaynak: {frozen.get('source_provider')}{model_str}"
-            f"  |  önerilme: {frozen.get('proposed_at')}  |  dondurma: {frozen.get('frozen_at')}"
-            f"\n  Sektör: {frozen.get('sector_type')}  |  fundamental FY: {frozen.get('fundamental_fy')}"
+            f"\nFROZEN (active) #{frozen['id']}  |  {freshness}"
+            f"\n  Source: {frozen.get('source_provider')}{model_str}"
+            f"  |  proposed: {frozen.get('proposed_at')}  |  frozen: {frozen.get('frozen_at')}"
+            f"\n  Sector: {frozen.get('sector_type')}  |  fundamental FY: {frozen.get('fundamental_fy')}"
         )
         if frozen.get("review_note"):
-            print(f"  Not: {frozen['review_note']}")
+            print(f"  Note: {frozen['review_note']}")
         _print_assumptions_review(
             args.ticker, frozen["id"], frozen.get("sector_type"),
             frozen.get("source_provider"), frozen.get("source_model"),
@@ -2335,22 +2335,22 @@ def _cmd_assumptions_show(args: argparse.Namespace) -> None:
             frozen.get("sanity_notes") or [],
         )
     else:
-        print("\nDondurulmuş set yok.")
+        print("\nNo frozen set.")
 
     if draft is not None:
         print(
-            f"\nTASLAK #{draft['id']} (henüz dondurulmadı)  |  "
-            f"kaynak: {draft.get('source_provider')}  |  önerilme: {draft.get('proposed_at')}"
+            f"\nDRAFT #{draft['id']} (not yet frozen)  |  "
+            f"source: {draft.get('source_provider')}  |  proposed: {draft.get('proposed_at')}"
         )
-        print(f"  Dondurmak için: assumptions freeze {args.ticker}")
+        print(f"  To freeze: assumptions freeze {args.ticker}")
 
     superseded = [r for r in history if r.get("status") == assumptions_store.STATUS_SUPERSEDED]
     if superseded:
-        print("\nGeçmiş (supersede edilmiş):")
+        print("\nHistory (superseded):")
         for r in superseded:
             print(
                 f"  #{r['id']}  {r.get('source_provider')}  "
-                f"dondurma: {r.get('frozen_at')} → supersede: {r.get('superseded_at')}"
+                f"frozen: {r.get('frozen_at')} → superseded: {r.get('superseded_at')}"
             )
 
 
@@ -2361,7 +2361,7 @@ def _cmd_assumptions_edit(args: argparse.Namespace) -> None:
     draft = assumptions_store.load_active(cik, assumptions_store.STATUS_DRAFT, db_path=Config.DB_PATH)
     if draft is None:
         print(
-            f"'{args.ticker}' için taslak yok. Önce: assumptions propose {args.ticker}",
+            f"No draft for '{args.ticker}'. First run: assumptions propose {args.ticker}",
             file=sys.stderr,
         )
         return
@@ -2370,13 +2370,13 @@ def _cmd_assumptions_edit(args: argparse.Namespace) -> None:
     for expr in args.set or []:
         path, sep, raw_value = expr.partition("=")
         if not sep:
-            print(f"Geçersiz --set '{expr}'; beklenen biçim PATH=VALUE.", file=sys.stderr)
+            print(f"Invalid --set '{expr}'; expected the form PATH=VALUE.", file=sys.stderr)
             return
         scenario, _, field = path.strip().partition(".")
         if scenario not in _ASSUMPTION_SCENARIOS or field not in _ASSUMPTION_FIELDS:
             print(
-                f"Geçersiz yol '{path}'. Senaryo ∈ {_ASSUMPTION_SCENARIOS}, "
-                f"alan ∈ {_ASSUMPTION_FIELDS}.",
+                f"Invalid path '{path}'. Scenario ∈ {_ASSUMPTION_SCENARIOS}, "
+                f"field ∈ {_ASSUMPTION_FIELDS}.",
                 file=sys.stderr,
             )
             return
@@ -2386,7 +2386,7 @@ def _cmd_assumptions_edit(args: argparse.Namespace) -> None:
             try:
                 value = float(raw_value)
             except ValueError:
-                print(f"'{path}' için sayısal değer beklendi (ondalık kesir), '{raw_value}' verildi.", file=sys.stderr)
+                print(f"Expected a numeric value (decimal fraction) for '{path}', got '{raw_value}'.", file=sys.stderr)
                 return
         assumptions.setdefault(scenario, {})[field] = value
 
@@ -2395,7 +2395,7 @@ def _cmd_assumptions_edit(args: argparse.Namespace) -> None:
         db_path=Config.DB_PATH,
     )
     if updated is None:
-        print("UYARI: taslak güncellenemedi (log'a bakın).", file=sys.stderr)
+        print("WARNING: could not update draft (see log).", file=sys.stderr)
         return
     _print_assumptions_review(
         args.ticker, updated["id"], updated.get("sector_type"),
@@ -2403,7 +2403,7 @@ def _cmd_assumptions_edit(args: argparse.Namespace) -> None:
         updated.get("assumptions"), updated.get("script_baseline"),
         updated.get("sanity_notes") or [],
     )
-    print(f"\nDondurmak için: assumptions freeze {args.ticker}")
+    print(f"\nTo freeze: assumptions freeze {args.ticker}")
 
 
 def _cmd_assumptions_freeze(args: argparse.Namespace) -> None:
@@ -2413,7 +2413,7 @@ def _cmd_assumptions_freeze(args: argparse.Namespace) -> None:
     draft = assumptions_store.load_active(cik, assumptions_store.STATUS_DRAFT, db_path=Config.DB_PATH)
     if draft is None:
         print(
-            f"'{args.ticker}' için dondurulacak taslak yok. Önce: assumptions propose {args.ticker}",
+            f"No draft to freeze for '{args.ticker}'. First run: assumptions propose {args.ticker}",
             file=sys.stderr,
         )
         return
@@ -2426,20 +2426,20 @@ def _cmd_assumptions_freeze(args: argparse.Namespace) -> None:
         is_unprofitable=(draft.get("sector_type") == "growth_unprofitable"),
     )
     if violations:
-        print("Dondurulamadı — sanity ihlalleri var:", file=sys.stderr)
+        print("Could not freeze — sanity violations found:", file=sys.stderr)
         for v in violations:
             print(f"  - {v}", file=sys.stderr)
-        print(f"Düzeltin: assumptions edit {args.ticker} --set ...", file=sys.stderr)
+        print(f"Fix with: assumptions edit {args.ticker} --set ...", file=sys.stderr)
         return
 
     frozen = assumptions_store.freeze_draft(cik, getattr(args, "note", None), db_path=Config.DB_PATH)
     if frozen is None:
-        print("UYARI: dondurma başarısız (log'a bakın).", file=sys.stderr)
+        print("WARNING: freeze failed (see log).", file=sys.stderr)
         return
     print(
-        f"\n{args.ticker} için varsayım seti donduruldu (#{frozen['id']}, "
+        f"\nAssumption set frozen for {args.ticker} (#{frozen['id']}, "
         f"{frozen.get('frozen_at')}).\n"
-        f"Artık 'analyze {args.ticker}' (varsayılan --assumptions auto) bu seti kullanır."
+        f"'analyze {args.ticker}' (default --assumptions auto) will now use this set."
     )
 
 
@@ -2461,7 +2461,7 @@ def _resolve_analyze_phase1(
       (from a fresh frozen set, or a deterministic script build), or ``None``
       to let ``interpret`` run its ordinary phase-1 (legacy ``llm`` mode, and
       every as-of case).
-    * ``note``: a Turkish line to print explaining what happened, or ``None``.
+    * ``note``: a line to print explaining what happened, or ``None``.
     * ``stop``: ``True`` only for strict ``--assumptions frozen`` when no fresh
       frozen set exists -- the caller prints an error card and does not analyze.
     * ``verdict_provider``: ``"cached:<src>"`` when a frozen set is used (so the
@@ -2480,8 +2480,8 @@ def _resolve_analyze_phase1(
         note = None
         if strategy in ("auto", "frozen"):
             note = (
-                "as-of modunda dondurulmuş varsayım seti kullanılmaz (hindsight "
-                "riski); deterministik varsayımlarla devam edildi."
+                "a frozen assumption set is not used in as-of mode (hindsight "
+                "risk); continuing with deterministic assumptions."
             )
         return None, note, False, None
 
@@ -2507,14 +2507,14 @@ def _resolve_analyze_phase1(
             "_provider": f"cached:{src}",
             "_assumption_set_id": frozen.get("id"),
         }
-        note = f"Dondurulmuş varsayım seti #{frozen.get('id')} kullanıldı (kaynak: {src})."
+        note = f"Used frozen assumption set #{frozen.get('id')} (source: {src})."
         return override, note, False, f"cached:{src}"
 
-    reason = "yok" if frozen is None else "bayat (yeni dosyalama var)"
+    reason = "none" if frozen is None else "stale (a new filing exists)"
     if strategy == "frozen":
         note = (
-            f"--assumptions frozen: kullanılabilir güncel dondurulmuş set {reason}; "
-            f"analiz durduruldu. Öneri: assumptions propose {args.ticker}"
+            f"--assumptions frozen: no usable current frozen set ({reason}); "
+            f"analysis stopped. Suggestion: assumptions propose {args.ticker}"
         )
         return None, note, True, None
 
@@ -2523,8 +2523,8 @@ def _resolve_analyze_phase1(
         normalized, ratios, metrics, sector_hint, sic_description, fred_rate=fred_rate
     )
     note = (
-        f"Dondurulmuş varsayım seti {reason}; deterministik (script) varsayımlar "
-        f"kullanıldı. Öneri: assumptions propose {args.ticker}"
+        f"Frozen assumption set {reason}; used deterministic (script) assumptions "
+        f"instead. Suggestion: assumptions propose {args.ticker}"
     )
     return override, note, False, None
 
@@ -2547,13 +2547,13 @@ def cmd_assumptions(args: argparse.Namespace) -> None:
 #: Column widths for the portfolio-overview terminal table: ticker, sector,
 #: verdict, price, fair value (base band mid), gap %, confidence, momentum,
 #: insider, age. The verdict column is sized for the longest label the engine
-#: actually emits ("MODEL-PİYASA AYRIŞMASI"); the valuation route is not a
+#: actually emits ("MODEL-PRICE DIVERGENCE"); the valuation route is not a
 #: column here because it already has its own summary table above.
 _OVERVIEW_COL_WIDTHS = [8, 19, 24, 11, 11, 9, 8, 10, 12, 5]
 
 #: Column widths for the pre-earnings briefing tables: ticker, date, days,
 #: verdict, gap %, momentum, beat record, verdict age. The verdict column is
-#: sized for the longest label the engine emits ("MODEL-PİYASA AYRIŞMASI").
+#: sized for the longest label the engine emits ("MODEL-PRICE DIVERGENCE").
 _PREEARNINGS_COL_WIDTHS = [8, 13, 7, 24, 10, 10, 9, 6]
 
 #: Cap on how many per-name observation blocks the briefing prints before
@@ -2584,15 +2584,15 @@ def _print_overview_table(overview: dict) -> None:
     """
     rows = overview.get("rows") or []
     print(
-        f"\nPortföy Genel Bakış — {overview.get('today') or _DASH} — "
-        f"{overview.get('count', 0)} hisse "
-        f"(medyan makul-değer/fiyat farkı: {_fmt_pct(overview.get('median_fv_vs_price_pct'))})"
+        f"\nPortfolio Overview — {overview.get('today') or _DASH} — "
+        f"{overview.get('count', 0)} stocks "
+        f"(median fair-value/price gap: {_fmt_pct(overview.get('median_fv_vs_price_pct'))})"
     )
 
     sectors = overview.get("sectors") or []
     if sectors:
-        print("\n[Sektör ısı haritası]")
-        print(f"{'Sektör':<28}{'n':>4}{'Medyan fark':>14}{'Ucuz':>7}{'Makul':>7}{'Pahalı':>8}{'Bayat':>7}")
+        print("\n[Sector heat map]")
+        print(f"{'Sector':<28}{'n':>4}{'Median gap':>14}{'Cheap':>7}{'Fair':>7}{'Expensive':>8}{'Stale':>7}")
         print("-" * 75)
         for sector in sectors:
             print(
@@ -2607,8 +2607,8 @@ def _print_overview_table(overview: dict) -> None:
 
     routes = overview.get("routes") or []
     if routes:
-        print("\n[Değerleme yoluna göre]")
-        print(f"{'Yol':<22}{'n':>4}{'Medyan fark':>14}{'Ucuz':>7}{'Makul':>7}{'Pahalı':>8}")
+        print("\n[By valuation route]")
+        print(f"{'Route':<22}{'n':>4}{'Median gap':>14}{'Cheap':>7}{'Fair':>7}{'Expensive':>8}")
         print("-" * 62)
         for route in routes:
             print(
@@ -2621,18 +2621,18 @@ def _print_overview_table(overview: dict) -> None:
             )
 
     if not rows:
-        print("\nKayıtlı analiz bulunamadı — önce `analyze TICKER` çalıştırın.")
+        print("\nNo stored analysis found — run `analyze TICKER` first.")
         return
 
-    print("\n[Hisseler — makul değer / fiyat farkına göre]")
-    headers = ["Hisse", "Sektör", "Karar", "Fiyat", "Makul", "Fark", "Güven", "Momentum", "İçeriden", "Yaş"]
+    print("\n[Stocks — by fair value / price gap]")
+    headers = ["Ticker", "Sector", "Verdict", "Price", "Fair", "Gap", "Confidence", "Momentum", "Insider", "Age"]
     print("".join(h.ljust(w) for h, w in zip(headers, _OVERVIEW_COL_WIDTHS)))
     print("-" * sum(_OVERVIEW_COL_WIDTHS))
     for row in rows:
         age = row.get("age_days")
         cells = [
             str(row.get("ticker") or _DASH),
-            str(row.get("sector") or "Sınıflandırılmamış")[:18],
+            str(row.get("sector") or "Unclassified")[:18],
             str(row.get("fundamental_verdict") or _DASH)[:23],
             _fmt_price(row.get("price")),
             _fmt_price(row.get("fv_base_mid")),
@@ -2640,49 +2640,49 @@ def _print_overview_table(overview: dict) -> None:
             str(row.get("confidence") or _DASH),
             str(row.get("momentum_verdict") or _DASH)[:9],
             str(row.get("insider_verdict") or _DASH)[:11],
-            (f"{age}g" if age is not None else _DASH),
+            (f"{age}d" if age is not None else _DASH),
         ]
         print("".join(c.ljust(w) for c, w in zip(cells, _OVERVIEW_COL_WIDTHS)))
 
     upcoming = overview.get("upcoming_earnings") or []
     if upcoming:
         window = overview.get("earnings_window_days")
-        print(f"\n[Yaklaşan bilançolar — {window} gün]")
+        print(f"\n[Upcoming earnings — {window} days]")
         for row in upcoming:
             print(
                 f"  {str(row.get('ticker') or _DASH):<8}"
                 f"{row.get('catalyst_date') or _DASH}  "
-                f"({row.get('days_until_earnings')} gün) — "
+                f"({row.get('days_until_earnings')} days) — "
                 f"{row.get('fundamental_verdict') or _DASH}"
             )
 
     # The engine's own verdict asks WHERE IN THE BAND the price sits (inside
-    # the base band -> MAKUL); this dashboard's bucket asks HOW FAR the band's
+    # the base band -> FAIR); this dashboard's bucket asks HOW FAR the band's
     # MIDPOINT is from the price. On a wide band those two can disagree while
     # both being right, which is why the disagreement is worth naming: it
     # isolates the names whose midpoint leans hard one way but whose band is
     # too wide for the engine to commit.
     drift = overview.get("drift") or []
     if drift:
-        print("\n[Karar ile band ortası arasında gerilim]")
-        print("  (fiyat baz bandın içinde kaldığı için karar MAKUL; band geniş olduğundan orta nokta uzakta)")
+        print("\n[Tension between verdict and band midpoint]")
+        print("  (price stays inside the base band so the verdict is FAIR; the band is wide so the midpoint is far off)")
         for row in drift[:10]:
             lo, hi = row.get("fv_base_lo"), row.get("fv_base_hi")
             band = f"{_fmt_price(lo)}–{_fmt_price(hi)}" if lo is not None and hi is not None else _DASH
             print(
                 f"  {str(row.get('ticker') or _DASH):<8}"
-                f"karar: {str(row.get('fundamental_verdict') or _DASH):<9}"
-                f"band ortası: {str(row.get('value_bucket') or _DASH):<8}"
-                f"fark: {_fmt_pct(row.get('fv_vs_price_pct')):<9}"
+                f"verdict: {str(row.get('fundamental_verdict') or _DASH):<9}"
+                f"band mid: {str(row.get('value_bucket') or _DASH):<8}"
+                f"gap: {_fmt_pct(row.get('fv_vs_price_pct')):<9}"
                 f"band: {band:<22}"
-                f"güven: {row.get('confidence') or _DASH}"
+                f"confidence: {row.get('confidence') or _DASH}"
             )
 
     stale = overview.get("stale") or []
     if stale:
         names = ", ".join(str(r.get("ticker") or "?") for r in stale[:12])
-        more = f" (+{len(stale) - 12} diğer)" if len(stale) > 12 else ""
-        print(f"\nBayat analiz ({overview.get('stale_days')} günden eski): {len(stale)} — {names}{more}")
+        more = f" (+{len(stale) - 12} more)" if len(stale) > 12 else ""
+        print(f"\nStale analysis (older than {overview.get('stale_days')} days): {len(stale)} — {names}{more}")
 
 
 def cmd_overview(args: argparse.Namespace) -> None:
@@ -2696,8 +2696,8 @@ def cmd_overview(args: argparse.Namespace) -> None:
     try:
         rows = load_latest_verdicts(db_path=Config.DB_PATH)
     except Exception as exc:  # noqa: BLE001 - a read failure must not crash the CLI
-        logger.exception("Portföy genel bakış verisi okunamadı")
-        print(f"Genel bakış okunamadı: {exc}", file=sys.stderr)
+        logger.exception("Could not read portfolio overview data")
+        print(f"Could not read overview: {exc}", file=sys.stderr)
         sys.exit(1)
         return
 
@@ -2725,7 +2725,7 @@ def _preearnings_row_cells(row: dict) -> List[str]:
         _fmt_pct(row.get("fv_vs_price_pct")),
         str(row.get("momentum_verdict") or _DASH)[:9],
         (f"{beat}/{len(surprises)}" if beat is not None and surprises else _DASH),
-        (f"{age}g" if age is not None else _DASH),
+        (f"{age}d" if age is not None else _DASH),
     ]
 
 
@@ -2734,7 +2734,7 @@ def _print_preearnings_table(rows: List[dict], date_header: str) -> None:
     column means -- the two sections below carry different dates (an upcoming
     estimate vs. the estimate for the quarter AFTER the one just published),
     and one shared header would misstate the second."""
-    headers = ["Hisse", date_header, "Gün", "Karar", "Fark", "Momentum", "Sürpriz", "Yaş"]
+    headers = ["Ticker", date_header, "Days", "Verdict", "Gap", "Momentum", "Surprise", "Age"]
     print("".join(h.ljust(w) for h, w in zip(headers, _PREEARNINGS_COL_WIDTHS)))
     print("-" * sum(_PREEARNINGS_COL_WIDTHS))
     for row in rows:
@@ -2756,26 +2756,26 @@ def _print_preearnings_briefing(result: dict, include_all: bool = False) -> None
     upcoming = [r for r in rows if not r.get("just_reported")]
 
     # With --all the window is not applied, so naming it in the header would
-    # contradict the rows below it (names months out under a "14 gün" title).
-    window_text = "tüm takvim" if include_all else f"önümüzdeki {result.get('within_days')} gün"
+    # contradict the rows below it (names months out under a "14 days" title).
+    window_text = "entire calendar" if include_all else f"next {result.get('within_days')} days"
     print(
-        f"\nBilanço Öncesi Brifing — {result.get('today') or _DASH} — "
+        f"\nPre-Earnings Briefing — {result.get('today') or _DASH} — "
         f"{window_text} — "
-        f"{result.get('count', 0)}/{result.get('requested', 0)} hisse"
+        f"{result.get('count', 0)}/{result.get('requested', 0)} stocks"
     )
 
     if not rows:
-        print("\nBu pencerede bilanço açıklayacak isim yok.")
+        print("\nNo names reporting earnings in this window.")
 
     if upcoming:
-        print(f"\n[Yaklaşan bilançolar — {len(upcoming)} hisse]")
-        _print_preearnings_table(upcoming, "Bilanço")
+        print(f"\n[Upcoming earnings — {len(upcoming)} stocks]")
+        _print_preearnings_table(upcoming, "Earnings")
     elif rows:
-        print("\n[Yaklaşan bilançolar] yok — aşağıdaki isimler bilançosunu yeni açıkladı.")
+        print("\n[Upcoming earnings] none — the names below just reported earnings.")
 
     if reported:
-        print(f"\n[Yeni açıklananlar — {len(reported)} hisse · tarih sütunu SONRAKİ çeyreğin tahmini]")
-        _print_preearnings_table(reported, "Sonraki")
+        print(f"\n[Just reported — {len(reported)} stocks · date column is the estimate for the NEXT quarter]")
+        _print_preearnings_table(reported, "Next")
 
     # Observations: upcoming names first -- they are the ones a reader can
     # still act on before the print.
@@ -2793,20 +2793,20 @@ def _print_preearnings_briefing(result: dict, include_all: bool = False) -> None
                 f"{q.get('period') or _DASH}: {format_surprise_pct(q.get('surprise_pct'))}"
                 for q in surprises
             )
-            print(f"  Geçmiş sürprizler: {cells}")
+            print(f"  Past surprises: {cells}")
     if len(ordered) > _PREEARNINGS_MAX_NOTE_BLOCKS:
         print(
-            f"\n(+{len(ordered) - _PREEARNINGS_MAX_NOTE_BLOCKS} hissenin notları gösterilmedi — "
-            "daraltmak için --within kullanın veya tam veri için --json)"
+            f"\n(+{len(ordered) - _PREEARNINGS_MAX_NOTE_BLOCKS} stocks' notes not shown — "
+            "use --within to narrow it down, or --json for the full data)"
         )
 
     skipped = result.get("skipped") or []
     if skipped:
-        print(f"\nAtlanan: {len(skipped)} hisse")
+        print(f"\nSkipped: {len(skipped)} stocks")
         for entry in skipped[:10]:
             print(f"  {entry.get('ticker') or '?'}: {entry.get('reason') or _DASH}")
         if len(skipped) > 10:
-            print(f"  (+{len(skipped) - 10} diğer)")
+            print(f"  (+{len(skipped) - 10} more)")
 
 
 def cmd_preearnings(args: argparse.Namespace) -> None:
@@ -2829,22 +2829,22 @@ def cmd_preearnings(args: argparse.Namespace) -> None:
                     if line.strip() and not line.strip().startswith("#")
                 ]
         except OSError as exc:
-            print(f"İzleme listesi dosyası okunamadı: {exc}", file=sys.stderr)
+            print(f"Could not read watchlist file: {exc}", file=sys.stderr)
             sys.exit(1)
             return
     else:
         tickers = load_watchlist_tickers(db_path=Config.DB_PATH)
         if not tickers:
             print(
-                "İzleme listesi boş: kayıtlı analiz yok. Önce `analyze TICKER` "
-                "çalıştırın veya --tickers / --tickers-file verin.",
+                "Watchlist is empty: no stored analysis. First run `analyze TICKER` "
+                "or provide --tickers / --tickers-file.",
                 file=sys.stderr,
             )
             sys.exit(1)
             return
 
     def _progress(done: int, total: int, ticker: str) -> None:
-        logger.info("Bilanço brifingi ilerlemesi: %d/%d (son: %s)", done, total, ticker)
+        logger.info("Pre-earnings briefing progress: %d/%d (last: %s)", done, total, ticker)
 
     include_all = getattr(args, "all", False)
     result = scan_preearnings(
@@ -2863,41 +2863,41 @@ def cmd_preearnings(args: argparse.Namespace) -> None:
 
 #: Metrics shown, in this order, by the `peers` command's sector table.
 _PEER_TABLE_METRICS = [
-    ("net_margin", "Net marj"),
-    ("operating_margin", "Faaliyet marjı"),
-    ("gross_margin", "Brüt marj"),
-    ("fcf_margin", "FCF marjı"),
+    ("net_margin", "Net Profit Margin"),
+    ("operating_margin", "Operating margin"),
+    ("gross_margin", "Gross margin"),
+    ("fcf_margin", "FCF margin"),
     ("roe", "ROE"),
     ("roa", "ROA"),
-    ("debt_to_equity", "Borç/Özkaynak"),
-    ("revenue_growth", "Gelir büyümesi"),
+    ("debt_to_equity", "Debt/Equity"),
+    ("revenue_growth", "Revenue growth"),
 ]
 
 
 def _fmt_ratio(value: Optional[float]) -> str:
-    """Render a decimal-fraction metric as a Turkish-style percentage."""
+    """Render a decimal-fraction metric as a percentage."""
     if value is None:
         return _DASH
-    return f"%{value * 100:.1f}".replace(".", ",")
+    return f"%{value * 100:.1f}"
 
 
 def _print_peer_snapshot(snapshot: dict) -> None:
     """Print a built/stored peer snapshot: coverage, then per-sector medians."""
     print(
-        f"\nEmsal Kesiti — {snapshot.get('year')} mali yılı — "
-        f"{snapshot.get('covered', 0)}/{snapshot.get('universe_size', 0)} şirket "
+        f"\nPeer Snapshot — FY {snapshot.get('year')} — "
+        f"{snapshot.get('covered', 0)}/{snapshot.get('universe_size', 0)} companies "
         f"({', '.join(snapshot.get('indexes') or []) or _DASH})"
     )
     missing = snapshot.get("frames_missing") or []
     if missing:
-        print(f"Çekilemeyen frame'ler: {', '.join(str(m) for m in missing)}")
+        print(f"Frames that could not be fetched: {', '.join(str(m) for m in missing)}")
 
     sectors = snapshot.get("sectors") or {}
     if not sectors:
-        print("\nSektör verisi yok.")
+        print("\nNo sector data.")
         return
 
-    print(f"\n{'Sektör':<26}{'n':>4}" + "".join(f"{label:>16}" for _k, label in _PEER_TABLE_METRICS))
+    print(f"\n{'Sector':<26}{'n':>4}" + "".join(f"{label:>16}" for _k, label in _PEER_TABLE_METRICS))
     print("-" * (30 + 16 * len(_PEER_TABLE_METRICS)))
     for sector in sorted(sectors):
         data = sectors[sector] or {}
@@ -2909,8 +2909,8 @@ def _print_peer_snapshot(snapshot: dict) -> None:
         print(f"{str(sector)[:25]:<26}{data.get('n', 0):>4}{cells}")
 
     print(
-        "\nNot: bu kesit bağlam katmanıdır — makul değer hesabına, üçgenlemeye "
-        "veya sektör çarpanı sinyaline GİRMEZ."
+        "\nNote: this snapshot is a context layer only — it does NOT feed the "
+        "fair value calculation, the triangulation, or the sector multiple signal."
     )
 
 
@@ -2932,27 +2932,27 @@ def cmd_peers(args: argparse.Namespace) -> None:
             # snapshot built from them would compare a handful of early
             # filers against each other rather than a sector.
             year = date.today().year - 1
-        print(f"{year} mali yılı için emsal kesiti oluşturuluyor (SEC Frames)...")
+        print(f"Building peer snapshot for FY {year} (SEC Frames)...")
         try:
             snapshot = build_peer_snapshot(year, SecHttpClient(), no_cache=args.no_cache)
         except Exception as exc:  # noqa: BLE001 - a failed build must not crash the CLI
-            logger.exception("Emsal kesiti oluşturulamadı")
-            print(f"Emsal kesiti oluşturulamadı: {exc}", file=sys.stderr)
+            logger.exception("Could not build peer snapshot")
+            print(f"Could not build peer snapshot: {exc}", file=sys.stderr)
             sys.exit(1)
             return
         _print_peer_snapshot(snapshot)
         if not args.no_save:
             snapshot_id = save_peer_snapshot(snapshot, db_path=Config.DB_PATH)
             if snapshot_id:
-                print(f"\nKesit kaydedildi (id {snapshot_id}): {Config.DB_PATH}")
+                print(f"\nSnapshot saved (id {snapshot_id}): {Config.DB_PATH}")
             else:
-                print("\nWARNING: emsal kesiti veritabanına kaydedilemedi.", file=sys.stderr)
+                print("\nWARNING: could not save peer snapshot to the database.", file=sys.stderr)
         return
 
     snapshot = load_latest_peer_snapshot(db_path=Config.DB_PATH, year=year)
     if not snapshot:
         print(
-            "Kayıtlı emsal kesiti yok. Oluşturmak için: "
+            "No stored peer snapshot. To build one: "
             "python -m sec_analyzer.cli peers --refresh",
             file=sys.stderr,
         )
@@ -3296,7 +3296,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Evaluation (not optimization) tool: run an as-of grid, evaluate "
             "forward outcomes, and report hit-rate/calibration/divergence. "
-            "See ROADMAP.md 'Backtest — tasarım ilkesi'."
+            "See ROADMAP.md 'Backtest — design principle'."
         ),
     )
     backtest_sub = backtest_parser.add_subparsers(dest="backtest_action", required=True)

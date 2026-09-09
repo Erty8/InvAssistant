@@ -58,17 +58,19 @@ _MAX_SURPRISE_QUARTERS = 4
 #: (see ``sec_analyzer.signals.momentum``); anything else is unrecognized
 #: and contributes no note.
 _MOMENTUM_SIGN = {
-    "GÜÇLÜ+": 1,
-    "POZİTİF": 1,
-    "NÖTR": 0,
-    "NEGATİF": -1,
+    "STRONG+": 1,
+    "POSITIVE": 1,
+    "NEUTRAL": 0,
+    "NEGATIVE": -1,
 }
 
-#: Marker filings.py's label always embeds right after the Turkish-formatted
-#: last-report date when ``recently_reported`` is True (see
-#: ``fetch/filings.py::_build_result``) -- used to pull that date back out
-#: for the "just reported" note without duplicating the date-formatting
-#: logic here.
+#: Marker filings.py's label always embeds right after the last-report date
+#: when ``recently_reported`` is True (see ``fetch/filings.py::_build_result``)
+#: -- used to pull that date back out for the "just reported" note without
+#: duplicating the date-formatting logic here. NOTE: ``fetch/filings.py`` is
+#: outside this module's ownership and still renders this marker (and the
+#: date before it) in Turkish; left untranslated here so the substring match
+#: keeps working until that module is translated separately.
 _JUST_REPORTED_MARKER = " tarihinde açıklandı"
 
 
@@ -77,14 +79,14 @@ def _is_num(value) -> bool:
 
 
 def format_surprise_pct(value: Optional[float]) -> str:
-    """Render a signed EPS-surprise percentage, Turkish-decimal style.
+    """Render a signed EPS-surprise percentage.
 
     Args:
         value: A surprise percentage (e.g. ``8.4`` for a beat, ``-2.1`` for
             a miss), or ``None``.
 
     Returns:
-        ``"+%8,4"`` / ``"-%2,1"`` for a usable number, or ``"—"`` (em-dash)
+        ``"+8.4%"`` / ``"-2.1%"`` for a usable number, or ``"—"`` (em-dash)
         for ``None``/non-finite input -- never the strings "None" or "nan".
     """
     if not _is_num(value):
@@ -93,8 +95,8 @@ def format_surprise_pct(value: Optional[float]) -> str:
     if math.isnan(v) or math.isinf(v):
         return "—"
     sign = "+" if v >= 0 else "-"
-    formatted = f"{abs(v):.1f}".replace(".", ",")
-    return f"{sign}%{formatted}"
+    formatted = f"{abs(v):.1f}"
+    return f"{sign}{formatted}%"
 
 
 def _parse_analyzed_at(value: Optional[str]) -> Optional[datetime]:
@@ -117,19 +119,22 @@ def _verdict_age_days(analyzed_at: Optional[str], today: date) -> Optional[int]:
 
 
 def _extract_just_reported_date(catalyst_label: Optional[str]) -> str:
-    """Pull the Turkish-formatted report date back out of a
+    """Pull the already-formatted report date back out of a
     ``recently_reported`` catalyst label (``"29 Tem tarihinde açıklandı ·
     sonraki: ..."``) for reuse in the "just reported" note, without
-    duplicating filings.py's date-formatting logic here."""
+    duplicating filings.py's date-formatting logic here. The date text
+    itself may still render in filings.py's Turkish locale (see
+    ``_JUST_REPORTED_MARKER``'s note) until that module is translated
+    separately."""
     label = catalyst_label or ""
     idx = label.find(_JUST_REPORTED_MARKER)
     if idx == -1:
-        return "Bilanço"
+        return "Earnings"
     return label[:idx]
 
 
 def _build_notes(row: dict) -> List[str]:
-    """Assemble the deterministic Turkish observation list for one row.
+    """Assemble the deterministic observation list for one row.
 
     Each rule below contributes at most one sentence, in the fixed order
     given in the feature spec. Pure function of ``row`` -- no I/O, no
@@ -148,56 +153,56 @@ def _build_notes(row: dict) -> List[str]:
     # Rule 1: no stored opinion at all -- ``verdict_date`` is only ever set
     # when a live verdict row exists, so its absence is the signal.
     if verdict_date is None:
-        notes.append("Bu isim için kayıtlı analiz yok — bilanço öncesi bir analiz çalıştırın.")
+        notes.append("No analysis on file for this name — run one before earnings.")
 
     # Rule 2: a stored opinion exists but is old enough that price/data may
     # have moved past it. Only meaningful when a verdict exists at all (rule
     # 1 already covers the no-verdict case), so this is naturally exclusive
     # of it since verdict_age_days is None with no verdict.
     if _is_num(verdict_age_days) and verdict_age_days > DEFAULT_STALE_DAYS:
-        notes.append(f"Kayıtlı analiz {verdict_age_days} günlük — bilanço öncesi yenilenmeli.")
+        notes.append(f"Stored analysis is {verdict_age_days} days old — refresh before earnings.")
 
     # Rule 3: the quarter already came out -- the upcoming catalyst is the
     # NEXT one, not the report just published.
     if row.get("just_reported"):
-        tarih = _extract_just_reported_date(row.get("catalyst_label"))
-        notes.append(f"{tarih} tarihinde açıklandı; sıradaki katalizör bir sonraki çeyrek.")
+        reported_date = _extract_just_reported_date(row.get("catalyst_label"))
+        notes.append(f"Reported on {reported_date}; the next catalyst is the following quarter.")
 
     # Rule 4: earnings is imminent (and hasn't just happened) -- a timing
     # risk worth calling out for anyone considering a new position now.
     days_until = row.get("days_until")
     if not row.get("just_reported") and _is_num(days_until) and days_until <= 3:
-        notes.append(f"Bilanço {days_until} gün içinde — yeni pozisyon açmak için zamanlama riski yüksek.")
+        notes.append(f"Earnings in {days_until} days — timing risk is high for opening a new position.")
 
     # Rule 5: value x momentum cross -- only meaningful when both the
     # fundamental verdict and the momentum label are known and recognized.
     momentum_sign = _MOMENTUM_SIGN.get(momentum)
     if verdict is not None and momentum_sign is not None:
-        if verdict == "UCUZ" and momentum_sign < 0:
-            notes.append("Model UCUZ diyor ama momentum negatif; bilanço bu ayrışmayı çözebilecek katalizör.")
-        elif verdict == "UCUZ" and momentum_sign > 0:
-            notes.append("UCUZ değerleme ile pozitif momentum aynı yönde — bilanço teyit edici olabilir.")
-        elif verdict == "PAHALI" and momentum_sign > 0:
-            notes.append("PAHALI değerleme momentumla taşınıyor; bilanço bir kırılma noktası.")
+        if verdict == "CHEAP" and momentum_sign < 0:
+            notes.append("The model says CHEAP but momentum is negative; earnings could be the catalyst that resolves this divergence.")
+        elif verdict == "CHEAP" and momentum_sign > 0:
+            notes.append("A CHEAP valuation lines up with positive momentum — earnings could be confirmatory.")
+        elif verdict == "EXPENSIVE" and momentum_sign > 0:
+            notes.append("An EXPENSIVE valuation is being carried by momentum; earnings is a potential inflection point.")
 
     # Rule 6: beat/miss record, only shown with a reasonably sized sample.
     if len(surprises) >= 3:
         beat_count = row.get("beat_count") or 0
         if beat_count == 0:
-            notes.append(f"Son {len(surprises)} çeyrekte hiç beklentiyi aşamadı.")
+            notes.append(f"Missed consensus in all of the last {len(surprises)} quarters.")
         else:
             avg_txt = format_surprise_pct(row.get("avg_surprise_pct"))
-            notes.append(f"Son {len(surprises)} çeyrekte {beat_count} kez beklentiyi aştı (ort. {avg_txt}).")
+            notes.append(f"Beat consensus {beat_count} times in the last {len(surprises)} quarters (avg. {avg_txt}).")
 
     # Rule 7: material recent filing activity.
     if events:
-        first_category = (events[0].get("categories") or ["olay"])[0]
-        notes.append(f"Son {_EVENTS_LOOKBACK_DAYS} günde materyal dosyalama olayı var: {first_category}.")
+        first_category = (events[0].get("categories") or ["event"])[0]
+        notes.append(f"Material filing event in the last {_EVENTS_LOOKBACK_DAYS} days: {first_category}.")
 
     # Rule 8: low confidence in the stored valuation -- a band that may move
     # once the print lands.
-    if row.get("confidence") == "DÜŞÜK":
-        notes.append("Değerleme güveni DÜŞÜK; bilanço sonrası bandın kayması olası.")
+    if row.get("confidence") == "LOW":
+        notes.append("Valuation confidence is LOW; the band may shift after earnings.")
 
     return notes
 
@@ -329,7 +334,7 @@ def _process_ticker(
 
     catalyst = estimate_next_earnings(submissions, today=today)
     if catalyst is None:
-        return "skip", "kazanç tarihi tahmin edilemedi"
+        return "skip", "could not estimate earnings date"
 
     days_until = catalyst.get("days_until")
     just_reported = bool(catalyst.get("recently_reported"))
@@ -337,7 +342,7 @@ def _process_ticker(
     if not include_all:
         in_window = just_reported or (_is_num(days_until) and 0 <= days_until <= within_days)
         if not in_window:
-            return "skip", f"bilanço {days_until} gün sonra (pencere: {within_days})"
+            return "skip", f"earnings in {days_until} days (window: {within_days})"
 
     verdict_rows = load_verdicts(ticker, db_path=db_path, limit=1, live_only=True)
     verdict = verdict_rows[0] if verdict_rows else None
@@ -491,5 +496,5 @@ def scan_preearnings(
             "count": 0,
             "requested": len(ticker_list),
             "rows": [],
-            "skipped": [{"ticker": None, "reason": "tarama sırasında beklenmeyen hata"}],
+            "skipped": [{"ticker": None, "reason": "unexpected error during scan"}],
         }

@@ -8,7 +8,7 @@ already-validated assumption set and returns the ``valuation`` dict
 documented in ``sec_analyzer/valuation/SPEC.md`` Sec.11.
 
 This module never raises for missing or malformed *data* -- every
-unavailable piece becomes ``None`` plus a Turkish note in the returned
+unavailable piece becomes ``None`` plus a note in the returned
 ``notes`` list. It can only raise for a genuine programmer error (wrong
 argument types entirely outside the documented contract), and even then the
 top-level :func:`run_valuation` wraps everything in a catch-all so a bug
@@ -95,11 +95,11 @@ _SECTORS_WITHOUT_FCF_DCF = ("financial", "reit")
 #: NOT here -- EV multiples are standard practice for them.
 _SECTORS_WITHOUT_EV = ("financial",)
 
-#: Turkish note emitted when EV multiples are suppressed (SPEC.md Sec.20b).
+#: note emitted when EV multiples are suppressed (SPEC.md Sec.20b).
 _EV_SUPPRESSED_NOTE = (
-    "Finansal kuruluşlarda firma değeri (FD) tanımsızdır — mevduat ve borçlanma "
-    "işin hammaddesidir, sermaye yapısı düzeltmesi değil. FD/FAVÖK, FD/FVÖK ve "
-    "FD/Satış çarpanları hesaplanmadı."
+    "Enterprise value (EV) is undefined for financial institutions -- deposits and borrowing are the "
+    "raw material of the business, not a capital-structure adjustment. EV/EBITDA, EV/EBIT, and "
+    "EV/Sales multiples were not computed."
 )
 
 # --- Hyper-grower revenue-first DCF wiring (SPEC.md Sec.3 / VALUATION.md Sec.4a) ---
@@ -158,7 +158,7 @@ _STANDARD_DCF_HIGH_GROWTH_FLAG = 0.40
 #: margin -- NOT an applied ceiling. ``_hyper_target_base`` no longer clamps
 #: its derived value (half the latest-FY gross margin, floored at today's
 #: FCF margin) to this number; when the derived value exceeds it, the
-#: caller (``_build_hyper_growth``) attaches a Turkish note and a
+#: caller (``_build_hyper_growth``) attaches a note and a
 #: ``target_margin_flag`` instead of silently truncating the real,
 #: gross-margin-derived economics of a genuinely high-margin business.
 _HYPER_TARGET_BASE_CAP = 0.30
@@ -177,8 +177,8 @@ _HYPER_TARGET_MARGIN_CEILING_FALLBACK = 0.20
 _HYPER_DILUTION_CAP = 0.05
 
 #: Reverse-DCF "arrival point" (revenue-multiple) flag thresholds (Sec.3.3):
-#: base-scenario revenue_multiple <= 8 -> "makul"; 8 < m <= 15 -> "agresif";
-#: m > 15 -> "asiri_agresif".
+#: base-scenario revenue_multiple <= 8 -> "fair"; 8 < m <= 15 -> "aggressive";
+#: m > 15 -> "excessively_aggressive".
 _HYPER_ARRIVAL_AGGRESSIVE_MULTIPLE = 8
 _HYPER_ARRIVAL_EXTREME_MULTIPLE = 15
 
@@ -235,7 +235,7 @@ _MATURE_HIST_UPLIFT = 1.5
 #: applied ceiling. ``_mature_target_fcf_margin`` no longer clamps its
 #: ``min(nopat, hist_anchor)`` result to this number; the caller
 #: (``_build_mature_revenue_dcf``) compares the returned value against this
-#: constant itself and attaches a Turkish note plus a ``target_margin_flag``
+#: constant itself and attaches a note plus a ``target_margin_flag``
 #: when it's exceeded, instead of silently truncating it.
 _MATURE_TARGET_CAP = 0.15
 
@@ -272,7 +272,7 @@ _MIDGROWTH_MIN_GROWTH = 0.12
 #: mid-grower's defensible steady-state margin isn't expected to be modeled
 #: as high as a proven hyper-grower's, but when the gross-margin-derived
 #: value exceeds this anyway, ``_build_midgrowth_revenue_dcf`` attaches a
-#: Turkish note plus ``target_margin_flag`` instead of silently truncating.
+#: note plus ``target_margin_flag`` instead of silently truncating.
 _MIDGROWTH_TARGET_CAP = 0.20
 
 #: Full-convergence ("steady state") year for the mid-growth fade -- between
@@ -321,7 +321,7 @@ def _non_sbc_dilution(
     Returns:
         A ``(rate, note, sbc_dilution_excluded)`` tuple. ``rate`` is the
         dilution rate to feed into the DCF (clamped to
-        ``[0.0, _HYPER_DILUTION_CAP]``). ``note`` is a Turkish string to
+        ``[0.0, _HYPER_DILUTION_CAP]``). ``note`` is a string to
         append to the caller's ``notes`` list when the SBC adjustment
         actually changed something, else ``None``. ``sbc_dilution_excluded``
         is the raw SBC-implied share-issuance rate that was subtracted (0.0
@@ -342,8 +342,9 @@ def _non_sbc_dilution(
 
     if sbc_dilution > 0.0 and shares_yoy > 0.0:
         note = (
-            "SBC ihraçları marjda gider olarak zaten fiyatlandığı için dilüsyon projeksiyonundan "
-            "çıkarıldı (çift sayım önlendi); kalan dilüsyon yalnızca SBC-dışı ihraçları yansıtır."
+            "SBC-driven issuance was excluded from the dilution projection since it's already priced as "
+            "an expense in the margin (avoiding double counting); the remaining dilution reflects only "
+            "non-SBC issuance."
         )
         return rate, note, sbc_dilution
     return rate, None, 0.0
@@ -405,9 +406,9 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
         },
         "sensitivity": None,
         "triangulation": {
-            "signals": {"dcf": "veri_yok", "reverse_dcf": "veri_yok", "multiples": "veri_yok"},
-            "confidence": "DÜŞÜK",
-            "direction": "belirsiz",
+            "signals": {"dcf": "no_data", "reverse_dcf": "no_data", "multiples": "no_data"},
+            "confidence": "LOW",
+            "direction": "unclear",
             "divergence": None,
         },
         "hyper_growth": False,
@@ -422,8 +423,9 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
         "beneish_m": None,
         "merton_dtd": None,
         "lbo_floor_detail": None,
+        "method_summary": [],
         "assumptions": assumptions or {},
-        "notes": ["Değerleme motoru beklenmeyen bir hatayla karşılaştı; sonuçlar eksik olabilir."],
+        "notes": ["The valuation engine encountered an unexpected error; results may be incomplete."],
     }
 
 
@@ -512,7 +514,7 @@ def _select_fcf0(
     fallback is only reachable when it is itself usable (positive); if it
     isn't, a positive ttm figure is still preferred over giving up
     entirely. Returns ``(fcf0, source, note)`` where ``source`` is
-    ``"ttm"``/``"3y_avg"``/``None`` and ``note`` is a Turkish string to
+    ``"ttm"``/``"3y_avg"``/``None`` and ``note`` is a string to
     surface, or ``None``. Both the ttm figure and the 3y window it's
     compared against are SBC-adjusted, so the deviation/monotonic checks
     below compare like with like.
@@ -561,16 +563,17 @@ def _select_fcf0(
 
     if ttm_usable and deviates and monotonic:
         note = (
-            "Son yılın FCF'i (SBC düşülmüş) 3 yıllık ortalamadan %50'den fazla saptı; ancak FCF istikrarlı "
-            "bir trend izlediği için (tek seferlik bir sıçrama değil, yapısal bir artış/azalış) DCF için "
-            "başlangıç FCF (fcf0) olarak yine de son yılın rakamı kullanıldı."
+            "The latest year's FCF (net of SBC) deviated more than 50% from the 3-year average; but since "
+            "FCF follows a stable trend (a structural rise/fall, not a one-off spike) the latest year's "
+            "figure was still used as the starting FCF (fcf0) for the DCF."
         )
         return ttm_fcf, "ttm", note
 
     if avg_usable:
         note = (
-            "DCF için başlangıç FCF (fcf0) olarak son yılın rakamı yerine 3 yıllık ortalama FCF (SBC düşülmüş) "
-            "kullanıldı (son yıl verisi eksik, negatif ya da 3 yıllık ortalamadan %50'den fazla saptı)."
+            "The 3-year average FCF (net of SBC) was used as the starting FCF (fcf0) for the DCF instead of "
+            "the latest year's figure (the latest year's data is missing, negative, or deviated more than "
+            "50% from the 3-year average)."
         )
         return avg_fcf, "3y_avg", note
 
@@ -580,7 +583,7 @@ def _select_fcf0(
         # than discarding perfectly usable data.
         return ttm_fcf, "ttm", None
 
-    return None, None, "Pozitif bir başlangıç FCF (fcf0) hesaplanamadı; DCF bu şirket için üretilemiyor."
+    return None, None, "A positive starting FCF (fcf0) could not be computed; the DCF cannot be produced for this company."
 
 
 def _band(per_share: float) -> "tuple[float, float]":
@@ -660,7 +663,7 @@ def _build_dcf_scenarios(
     :data:`_STANDARD_DCF_HIGH_GROWTH_FLAG` (0.40) -- this standard two-stage
     DCF path has no arrival-point/implied-revenue-multiple safety net (unlike
     the hyper-grower and mid-growth revenue-first paths), so the flag is a
-    reporting-only signal (one Turkish note naming the triggering
+    reporting-only signal (one note naming the triggering
     scenario(s), appended to ``notes``); it never changes any computed value
     or which scenario is used."""
     notes: List[str] = []
@@ -680,14 +683,14 @@ def _build_dcf_scenarios(
 
         if not all(_is_number(v) for v in (growth_5y, terminal_growth, discount_rate)):
             scenarios[key] = {"per_share": None, "lo": None, "hi": None}
-            notes.append(f"{key.capitalize()} senaryosu için DCF varsayımları eksik veya geçersiz.")
+            notes.append(f"DCF assumptions for the {key.capitalize()} scenario are missing or invalid.")
             continue
 
         try:
             result = dcf_per_share(fcf0, growth_5y, terminal_growth, discount_rate, shares, dilution_rate)
         except ValueError as exc:
             scenarios[key] = {"per_share": None, "lo": None, "hi": None}
-            notes.append(f"{key.capitalize()} senaryosu için DCF hesaplanamadı: {exc}")
+            notes.append(f"DCF could not be computed for the {key.capitalize()} scenario: {exc}")
             continue
 
         per_share = round(result["per_share"], 2)
@@ -696,22 +699,22 @@ def _build_dcf_scenarios(
         )
         if used_fallback:
             notes.append(
-                f"{key.capitalize()} senaryosu için duyarlılık bandı hesaplanamadı; "
-                "nokta tahminin +/-%10'u fallback olarak kullanıldı."
+                f"The sensitivity band for the {key.capitalize()} scenario could not be computed; "
+                "used +/-10% of the point estimate as a fallback."
             )
         scenarios[key] = {"per_share": per_share, "lo": lo, "hi": hi}
 
     if high_growth_keys:
         names = [key.capitalize() for key in high_growth_keys]
         if len(names) == 1:
-            scenario_phrase = f"{names[0]} senaryosunda"
+            scenario_phrase = f"in the {names[0]} scenario"
         else:
-            scenario_phrase = f"{', '.join(names[:-1])} ve {names[-1]} senaryolarında"
+            scenario_phrase = f"in the {', '.join(names[:-1])} and {names[-1]} scenarios"
         notes.append(
-            f"{scenario_phrase} 5 yıllık büyüme varsayımı %40'ı aşıyor; standart iki-aşamalı DCF'in "
-            "(hyper/orta-büyüme revenue-first modellerinin aksine) bir varış noktası (TAM payı/gelir "
-            "çarpanı) güvenlik kontrolü yoktur -- bu senaryoyu revenue-first / reverse-DCF çapraz "
-            "kontrolüyle karşılaştırmak faydalı olabilir."
+            f"The 5-year growth assumption {scenario_phrase} exceeds 40%; unlike the hyper/mid-growth "
+            "revenue-first models, the standard two-stage DCF has no arrival-point (TAM share/revenue "
+            "multiple) safety check -- it may help to cross-check this scenario against the revenue-first "
+            "/ reverse-DCF."
         )
 
     return scenarios, notes, bool(high_growth_keys)
@@ -730,7 +733,7 @@ def _normalized_fcf0(normalized: dict, metrics: dict) -> "tuple[Optional[float],
     7yr window) approximates through-cycle earning power rather than
     trough earning power. If that upper-half average margin is itself
     non-positive, the variant is considered not meaningful and this
-    returns ``None`` plus a Turkish note rather than a nonsensical
+    returns ``None`` plus a note rather than a nonsensical
     negative "normalized" valuation.
 
     Per-year margin (F2): ``(ocf - capex - sbc) / revenue``, treating a
@@ -750,7 +753,7 @@ def _normalized_fcf0(normalized: dict, metrics: dict) -> "tuple[Optional[float],
 
     latest_revenue = revenue_series.get(latest_fy)
     if latest_revenue is None or latest_revenue <= 0:
-        notes.append("Döngüsel normalize edilmiş FCF hesaplanamadı: son yılın geliri eksik veya negatif.")
+        notes.append("Cyclical normalized FCF could not be computed: the latest year's revenue is missing or negative.")
         return None, notes
 
     margins = []
@@ -765,7 +768,7 @@ def _normalized_fcf0(normalized: dict, metrics: dict) -> "tuple[Optional[float],
         margins.append((ocf - capex - sbc) / revenue)
 
     if not margins:
-        notes.append("Döngüsel normalize edilmiş FCF hesaplanamadı: yeterli FCF marjı geçmişi yok.")
+        notes.append("Cyclical normalized FCF could not be computed: not enough FCF margin history.")
         return None, notes
 
     # Mid-to-upper cycle: average the top ceil(N/2) margins rather than
@@ -777,8 +780,8 @@ def _normalized_fcf0(normalized: dict, metrics: dict) -> "tuple[Optional[float],
 
     if normalized_margin <= 0:
         notes.append(
-            "Döngüsel normalize edilmiş FCF anlamlı değil: üst yarı (mid/tepe döngü) ortalama FCF "
-            "marjı pozitif değil."
+            "Cyclical normalized FCF is not meaningful: the upper-half (mid/peak cycle) average FCF "
+            "margin is not positive."
         )
         return None, notes
 
@@ -825,7 +828,7 @@ def _build_pb_roe(
     degrading to the no-growth ``ROE / r`` form when ``g`` is missing or
     degenerate (see :func:`_justified_pb`). The raw multiple is no longer
     clamped to ``[_PB_CLAMP_LO, _PB_CLAMP_HI]``; instead, a base ``fair_pb``
-    outside that reference band appends a Turkish note and sets the returned
+    outside that reference band appends a note and sets the returned
     ``justified_pb_flag`` (``"above_reference"``/``"below_reference"``) so
     the report layer can surface the signal instead of it being silently
     clipped.
@@ -845,7 +848,7 @@ def _build_pb_roe(
     terminal_growth_base = base_assumptions.get("terminal_growth")
 
     if not shares or shares <= 0 or not _is_number(discount_rate_base) or discount_rate_base <= 0:
-        notes.append("P/B x ROE çapası hesaplanamadı: eksik veya geçersiz girdi (hisse sayısı/iskonto oranı).")
+        notes.append("P/B x ROE anchor could not be computed: missing or invalid input (share count/discount rate).")
         return None, notes
 
     equity_series = to_annual_series(normalized, "StockholdersEquity")
@@ -860,14 +863,14 @@ def _build_pb_roe(
             break
 
     if selected_fy is None:
-        notes.append("P/B x ROE çapası hesaplanamadı: ROE veya özkaynak verisi eksik.")
+        notes.append("P/B x ROE anchor could not be computed: ROE or equity data is missing.")
         return None, notes
 
     latest_fy = resolve_fundamental_fy(metrics)
     if latest_fy is not None and selected_fy != latest_fy:
         notes.append(
-            f"P/B x ROE çapası için {selected_fy} mali yılının özkaynak/ROE verisi kullanıldı "
-            "(en son mali yılın temel verileriyle hisse sayısı hizalı değildi)."
+            f"Used fiscal year {selected_fy}'s equity/ROE data for the P/B x ROE anchor "
+            "(the latest fiscal year's fundamentals weren't aligned with the share count)."
         )
 
     fair_pb_base = _justified_pb(roe, discount_rate_base, terminal_growth_base)
@@ -888,15 +891,15 @@ def _build_pb_roe(
     if fair_pb_base <= 0 or book_value_per_share <= 0:
         if fair_pb_base <= 0:
             notes.append(
-                f"P/D x ROE çapası hesaplanamadı: adil P/D (justified P/B) {fair_pb_base:.2f}x "
-                f"pozitif değil (ROE %{roe * 100:.1f} ≤ büyüme %{(terminal_growth_base or 0) * 100:.1f}); "
-                "zarar eden veya büyümesinin altında getiri üreten bir şirket için anlamlı "
-                "P/D x ROE adil değeri yoktur."
+                f"P/B x ROE anchor could not be computed: justified P/B {fair_pb_base:.2f}x "
+                f"is not positive (ROE {roe * 100:.1f}% <= growth {(terminal_growth_base or 0) * 100:.1f}%); "
+                "there is no meaningful justified P/B x ROE value for a loss-making company or one earning "
+                "below its growth rate."
             )
         else:
             notes.append(
-                f"P/D x ROE çapası hesaplanamadı: hisse başına defter değeri {book_value_per_share:.2f} "
-                "pozitif değil (negatif özkaynak); P/D çapası anlamsız."
+                f"P/B x ROE anchor could not be computed: book value per share {book_value_per_share:.2f} "
+                "is not positive (negative equity); the P/B anchor is meaningless."
             )
         return None, notes
 
@@ -907,10 +910,10 @@ def _build_pb_roe(
         justified_pb_flag = "below_reference"
     if justified_pb_flag is not None:
         notes.append(
-            f"Adil P/D (justified P/B) {fair_pb_base:.2f}x olağan [{_PB_CLAMP_LO:.1f}, "
-            f"{_PB_CLAMP_HI:.1f}] referans aralığının dışında (ROE %{roe * 100:.1f}, "
-            f"iskonto oranı %{discount_rate_base * 100:.1f}); yüksek/düşük ROE bunu meşru "
-            "kılabilir -- sabit sınırla kırpılmadı."
+            f"Justified P/B {fair_pb_base:.2f}x is outside the usual [{_PB_CLAMP_LO:.1f}, "
+            f"{_PB_CLAMP_HI:.1f}] reference band (ROE {roe * 100:.1f}%, "
+            f"discount rate {discount_rate_base * 100:.1f}%); a high/low ROE can legitimately justify "
+            "this -- not clamped to a fixed bound."
         )
 
     scenarios = {}
@@ -921,8 +924,8 @@ def _build_pb_roe(
         )
         if used_fallback:
             notes.append(
-                f"{key.capitalize()} senaryosu için P/B x ROE duyarlılık bandı hesaplanamadı; "
-                "nokta tahminin +/-%10'u fallback olarak kullanıldı."
+                f"The P/B x ROE sensitivity band for the {key.capitalize()} scenario could not be computed; "
+                "used +/-10% of the point estimate as a fallback."
             )
         scenarios[key] = {"per_share": per_share, "lo": lo, "hi": hi}
 
@@ -1034,30 +1037,30 @@ def _ttm_staleness_notes(metrics: dict) -> List[str]:
         return []
 
     ttm_ni, pe_ttm, pe_fy = metrics.get("ttm_net_income"), metrics.get("pe_ttm"), metrics.get("pe")
-    direction = "üzerinde" if ratio > 1 else "altında"
+    direction = "above" if ratio > 1 else "below"
     note = (
-        f"Son 12 ay (TTM) verisi, değerleme çapalarının kullandığı mali yıl bazının "
-        f"belirgin {direction}: TTM net kâr {_format_usd_short(ttm_ni)} "
-        f"(mali yılın {ratio:.1f} katı, dönem sonu {metrics.get('ttm_period_end')}). "
-        "Tüm çapalar yıllık seriden hesaplandığı için bu çeyrekleri henüz görmüyor."
+        f"The trailing-12-month (TTM) figure is markedly {direction} the fiscal-year basis the valuation "
+        f"anchors use: TTM net income is {_format_usd_short(ttm_ni)} "
+        f"({ratio:.1f}x the fiscal year, period ending {metrics.get('ttm_period_end')}). "
+        "Every anchor is computed from the annual series, so it doesn't yet see these quarters."
     )
     if _is_number(pe_ttm) and _is_number(pe_fy):
-        note += f" F/K mali yıl bazında {pe_fy:.1f}, TTM bazında {pe_ttm:.1f}."
+        note += f" P/E is {pe_fy:.1f} on a fiscal-year basis, {pe_ttm:.1f} on a TTM basis."
     return [note]
 
 
 def _format_usd_short(value: float) -> str:
-    """Compact USD magnitude for a Turkish note, e.g. ``"32.8 Mr$"``.
+    """Compact USD magnitude for a note, e.g. ``"$32.8B"``.
 
     Uses a decimal POINT, matching every other number engine.py formats into
-    a Turkish note (``%{x:.1f}`` percentages, per-share dollar figures), so a
+    a note (``{x:.1f}%`` percentages, per-share dollar figures), so a
     single sentence never mixes separators.
     """
     if abs(value) >= 1e9:
-        return f"{value / 1e9:.1f} Mr$"
+        return f"${value / 1e9:.1f}B"
     if abs(value) >= 1e6:
-        return f"{value / 1e6:.0f} Mn$"
-    return f"{value:.0f} $"
+        return f"${value / 1e6:.0f}M"
+    return f"${value:.0f}"
 
 
 def _rim_tangible(ratio_by_fy: dict, selected_fy: Optional[int], key: str) -> Optional[float]:
@@ -1083,7 +1086,7 @@ def _build_rim_external_growth(
     internal-funding cap suppressed, so the reader can see whether the
     discarded growth assumption would have HELPED or HURT.
 
-    Never raises: an invalid input degrades to ``(None, [Turkish note])``.
+    Never raises: an invalid input degrades to ``(None, [note])``.
     """
     try:
         result = dcf.rim_external_growth_per_share(
@@ -1091,7 +1094,7 @@ def _build_rim_external_growth(
             terminal_roe=discount_rate,
         )
     except ValueError as exc:
-        return None, [f"Dış finansmanlı büyüme senaryosu hesaplanamadı: {exc}"]
+        return None, [f"The externally-funded-growth scenario could not be computed: {exc}"]
 
     return (
         {
@@ -1160,7 +1163,7 @@ def _build_rim(
     notes: List[str] = []
     shares = metrics.get("shares")
     if not shares or shares <= 0:
-        notes.append("RIM çapası hesaplanamadı: geçerli hisse sayısı yok.")
+        notes.append("RIM anchor could not be computed: no valid share count.")
         return None, notes
 
     equity_series = to_annual_series(normalized, "StockholdersEquity")
@@ -1178,18 +1181,18 @@ def _build_rim(
             break
 
     if selected_fy is None:
-        notes.append("RIM çapası hesaplanamadı: özkaynak, net kâr veya ROE verisi eksik.")
+        notes.append("RIM anchor could not be computed: equity, net income, or ROE data is missing.")
         return None, notes
 
     latest_fy = resolve_fundamental_fy(metrics)
     if latest_fy is not None and selected_fy != latest_fy:
         notes.append(
-            f"RIM çapası için {selected_fy} mali yılının özkaynak/net kâr/ROE verisi kullanıldı "
-            "(en son mali yılın temel verileriyle hisse sayısı hizalı değildi)."
+            f"Used fiscal year {selected_fy}'s equity/net income/ROE data for the RIM anchor "
+            "(the latest fiscal year's fundamentals weren't aligned with the share count)."
         )
 
     if roe <= 0:
-        notes.append(f"RIM çapası hesaplanamadı: ROE (%{roe * 100:.1f}) pozitif değil.")
+        notes.append(f"RIM anchor could not be computed: ROE ({roe * 100:.1f}%) is not positive.")
         return None, notes
 
     book_value_per_share = bve0 / shares
@@ -1210,7 +1213,7 @@ def _build_rim(
             or discount_rate <= terminal_growth
         ):
             scenarios[key] = {"per_share": None, "lo": None, "hi": None}
-            notes.append(f"{key.capitalize()} senaryosu için RIM varsayımları eksik veya geçersiz.")
+            notes.append(f"RIM assumptions for the {key.capitalize()} scenario are missing or invalid.")
             continue
 
         try:
@@ -1220,7 +1223,7 @@ def _build_rim(
             )
         except ValueError as exc:
             scenarios[key] = {"per_share": None, "lo": None, "hi": None}
-            notes.append(f"{key.capitalize()} senaryosu için RIM hesaplanamadı: {exc}")
+            notes.append(f"RIM could not be computed for the {key.capitalize()} scenario: {exc}")
             continue
 
         # SPEC.md Sec.22c: the base scenario drives the disclosure, since it
@@ -1241,8 +1244,8 @@ def _build_rim(
         )
         if used_fallback:
             notes.append(
-                f"{key.capitalize()} senaryosu için RIM duyarlılık bandı hesaplanamadı; "
-                "nokta tahminin +/-%10'u fallback olarak kullanıldı."
+                f"The RIM sensitivity band for the {key.capitalize()} scenario could not be computed; "
+                "used +/-10% of the point estimate as a fallback."
             )
         scenarios[key] = {"per_share": per_share, "lo": lo, "hi": hi}
 
@@ -1251,19 +1254,18 @@ def _build_rim(
 
     if growth_capped and _is_number(assumed_growth_5y) and _is_number(effective_growth_5y):
         note = (
-            f"RIM büyüme varsayımı içsel finansman kısıtına takıldı: varsayılan "
-            f"%{assumed_growth_5y * 100:.1f} büyüme yerine %{effective_growth_5y * 100:.1f} "
-            f"uygulandı (g = b x ROE, ROE %{roe * 100:.1f} — şirket, kârının tamamını "
-            "yeniden yatırsa bile ROE'sinden hızlı büyümeyi kendi kaynağıyla fonlayamaz)."
+            f"The RIM growth assumption hit the internal-funding constraint: applied "
+            f"{effective_growth_5y * 100:.1f}% growth instead of the assumed {assumed_growth_5y * 100:.1f}% "
+            f"(g = b x ROE, ROE {roe * 100:.1f}% -- even reinvesting all of its earnings, the company "
+            "can't self-fund growth faster than its ROE)."
         )
         if external_growth:
             note += (
-                f" Büyümenin tamamen dışarıdan özkaynak ihracıyla fonlandığı varsayılsa "
-                f"(10 yılda ~{_format_usd_short(external_growth['external_funding_total'])} "
-                f"yeni özkaynak), ROE özkaynak maliyetinin altında olduğu için hisse başına "
-                f"değer {external_growth['per_share_internal']:.2f} $ değil "
-                f"{external_growth['per_share']:.2f} $ olurdu — hızlı büyüme bu getiri "
-                "seviyesinde değer yaratmaz, yok eder."
+                f" If the growth were assumed to be funded entirely by external equity issuance "
+                f"(~{_format_usd_short(external_growth['external_funding_total'])} in new equity over 10 "
+                f"years), per-share value would be ${external_growth['per_share']:.2f} instead of "
+                f"${external_growth['per_share_internal']:.2f}, since ROE is below the cost of equity -- "
+                "growth at this return level destroys value rather than creating it."
             )
         notes.append(note)
 
@@ -1298,9 +1300,9 @@ def _build_rim(
 
 
 _ALTMAN_ZONE_NOTE = {
-    "safe": "Altman Z-skoru güvenli bölgede (iflas riski düşük).",
-    "grey": "Altman Z-skoru gri bölgede (belirsiz iflas riski -- izlenmeli).",
-    "distress": "Altman Z-skoru sıkıntı bölgesinde (yüksek iflas riski sinyali).",
+    "safe": "Altman Z-score is in the safe zone (low bankruptcy risk).",
+    "grey": "Altman Z-score is in the grey zone (uncertain bankruptcy risk -- worth monitoring).",
+    "distress": "Altman Z-score is in the distress zone (high bankruptcy-risk signal).",
 }
 
 
@@ -1341,7 +1343,7 @@ def _build_altman_z(normalized: dict, metrics: dict) -> "tuple[Optional[dict], L
     current_assets = to_annual_series(normalized, "CurrentAssets").get(fy)
     current_liabilities = to_annual_series(normalized, "CurrentLiabilities").get(fy)
     if current_assets is None or current_liabilities is None:
-        notes.append("Altman Z-skoru hesaplanamadı: dönen varlık/kısa vadeli yükümlülük verisi eksik.")
+        notes.append("Altman Z-score could not be computed: current-asset/current-liability data is missing.")
         return None, notes
     working_capital = current_assets - current_liabilities
 
@@ -1357,7 +1359,7 @@ def _build_altman_z(normalized: dict, metrics: dict) -> "tuple[Optional[dict], L
     )
     if result is None:
         notes.append(
-            "Altman Z-skoru hesaplanamadı: gerekli veriler eksik veya toplam varlık/yükümlülük pozitif değil."
+            "Altman Z-score could not be computed: required data is missing, or total assets/liabilities are not positive."
         )
         return None, notes
 
@@ -1430,14 +1432,14 @@ def _build_beneish_m(normalized: dict, metrics: dict) -> "tuple[Optional[dict], 
     result = distress.beneish_m_score(current, prior)
     if result is None:
         notes.append(
-            "Beneish M-skoru hesaplanamadı: iki ardışık mali yıl için gerekli veriler eksik."
+            "Beneish M-score could not be computed: required data for two consecutive fiscal years is missing."
         )
         return None, notes
 
-    partial_note = " (kısmi -- 5 değişkenli model; SG&A/kaldıraç/tahakkuk verisi eksik)" if result["partial"] else ""
+    partial_note = " (partial -- 5-variable model; SG&A/leverage/accrual data is missing)" if result["partial"] else ""
     flag_note = ""
     if result["flag"]:
-        flag_note = " -- olası kazanç manipülasyonu sinyali"
+        flag_note = " -- possible earnings-manipulation signal"
         # I2 caveat: Beneish systematically OVER-flags fast-growing firms --
         # SGI (sales growth index) and DSRI both rise mechanically with rapid
         # growth and carry positive coefficients, so a high-growth filer can
@@ -1447,17 +1449,17 @@ def _build_beneish_m(normalized: dict, metrics: dict) -> "tuple[Optional[dict], 
         sgi = (result.get("components") or {}).get("sgi")
         if _is_number(sgi) and sgi > _BENEISH_HIGH_GROWTH_SGI:
             flag_note += (
-                f" (DİKKAT: satışlar hızlı büyümüş [SGI={sgi:.2f}]; Beneish hızlı büyüyen "
-                "şirketleri yapısal olarak yukarı-yanlı işaretler -- bu bir büyüme yan etkisi olabilir)"
+                f" (NOTE: sales grew rapidly [SGI={sgi:.2f}]; Beneish structurally over-flags fast-growing "
+                "companies -- this may be a growth side effect)"
             )
-    notes.append(f"Beneish M-skoru {result['m_score']}{partial_note}{flag_note}.")
+    notes.append(f"Beneish M-score {result['m_score']}{partial_note}{flag_note}.")
     return result, notes
 
 
 _MERTON_ZONE_NOTE = {
-    "safe": "Merton mesafe-temerrüt modeli güvenli bölgede.",
-    "elevated": "Merton mesafe-temerrüt modeli yükselmiş temerrüt riski gösteriyor -- izlenmeli.",
-    "distress": "Merton mesafe-temerrüt modeli yüksek temerrüt riski sinyali veriyor.",
+    "safe": "Merton distance-to-default model is in the safe zone.",
+    "elevated": "Merton distance-to-default model shows elevated default risk -- worth monitoring.",
+    "distress": "Merton distance-to-default model signals high default risk.",
 }
 
 
@@ -1490,13 +1492,13 @@ def _build_merton_dtd(
     """
     notes: List[str] = []
     if risk_free_pct is None:
-        notes.append("Merton mesafe-temerrüt hesaplanamadı: risksiz getiri oranı yok.")
+        notes.append("Merton distance-to-default could not be computed: no risk-free rate available.")
         return None, notes
 
     equity_vol = distress._annualized_volatility(price_df)
     if equity_vol is None:
         notes.append(
-            "Merton mesafe-temerrüt hesaplanamadı: yeterli fiyat geçmişi yok (özkaynak volatilitesi)."
+            "Merton distance-to-default could not be computed: not enough price history (equity volatility)."
         )
         return None, notes
 
@@ -1505,14 +1507,14 @@ def _build_merton_dtd(
     )
     if result is None:
         notes.append(
-            "Merton mesafe-temerrüt hesaplanamadı: gerekli veriler eksik/geçersiz veya sayısal "
-            "çözüm yakınsamadı."
+            "Merton distance-to-default could not be computed: required data is missing/invalid, or the "
+            "numerical solver did not converge."
         )
         return None, notes
 
     notes.append(
         f"{_MERTON_ZONE_NOTE[result['zone']]} (DD={result['distance_to_default']}, "
-        f"PD=%{result['probability_of_default'] * 100:.2f})"
+        f"PD={result['probability_of_default'] * 100:.2f}%)"
     )
     return result, notes
 
@@ -1563,13 +1565,15 @@ def _build_lbo_floor(metrics: dict, fcf0: Optional[float]) -> "tuple[Optional[di
     )
     if result is None:
         notes.append(
-            "LBO çapası hesaplanamadı: FAVÖK, FD/FAVÖK çarpanı, toplam borç, FCF veya hisse sayısı eksik/geçersiz."
+            "LBO anchor could not be computed: EBITDA, EV/EBITDA multiple, total debt, FCF, or share count "
+            "is missing/invalid."
         )
         return None, notes
 
     notes.append(
-        f"LBO çapası (bilgi amaçlı, manşete GİRMEZ): %{lbo._LBO_TARGET_IRR * 100:.0f} hedef getiriyle "
-        f"disiplinli bir finansal alıcının bugün ödeyebileceği en yüksek fiyat ~${result['per_share']:.2f}."
+        f"LBO anchor (informational only, NOT part of the headline): at a {lbo._LBO_TARGET_IRR * 100:.0f}% "
+        f"target return, the highest price a disciplined financial buyer could pay today is "
+        f"~${result['per_share']:.2f}."
     )
     return result, notes
 
@@ -1702,7 +1706,7 @@ def _build_ffo(
     (cost of equity / long-run growth). The ``(1 + g) / (r - g)`` factor is
     exactly the scenario's implied fair P/FFO multiple -- no arbitrary
     target-multiple constant is needed, unlike P/B x ROE's ``fair_pb``. A
-    scenario is skipped (with a Turkish note, NOT fabricated)
+    scenario is skipped (with a note, NOT fabricated)
     when its ``r``/``g`` are missing/non-numeric or ``r <= g`` -- Package 1's
     ERP-spread guard makes ``r > g`` the normal case, but this still guards
     defensively rather than dividing by a non-positive spread.
@@ -1732,16 +1736,16 @@ def _build_ffo(
 
     if ffo_per_share is None:
         notes.append(
-            "FFO çapası hesaplanamadı: net kâr ve amortisman (D&A) verisi aynı mali yılda birlikte mevcut "
-            "değil ya da sonuçtaki FFO sıfır/negatif."
+            "FFO anchor could not be computed: net income and depreciation (D&A) data aren't both available "
+            "for the same fiscal year, or the resulting FFO is zero/negative."
         )
         return None, notes
 
     latest_fy = resolve_fundamental_fy(metrics)
     if latest_fy is not None and selected_fy is not None and selected_fy != latest_fy:
         notes.append(
-            f"FFO çapası için {selected_fy} mali yılının net kâr/amortisman verisi kullanıldı "
-            "(en son mali yılın temel verileriyle hisse sayısı hizalı değildi)."
+            f"Used fiscal year {selected_fy}'s net income/depreciation data for the FFO anchor "
+            "(the latest fiscal year's fundamentals weren't aligned with the share count)."
         )
 
     scenarios: Dict[str, dict] = {}
@@ -1753,8 +1757,8 @@ def _build_ffo(
 
         if not _is_number(r) or not _is_number(g) or r <= g:
             notes.append(
-                f"{key.capitalize()} senaryosu için FFO Gordon büyüme modeli hesaplanamadı (iskonto oranı/"
-                "terminal büyüme eksik ya da iskonto oranı terminal büyümeyi aşmıyor)."
+                f"The FFO Gordon-growth model could not be computed for the {key.capitalize()} scenario "
+                "(discount rate/terminal growth is missing, or the discount rate doesn't exceed terminal growth)."
             )
             continue
 
@@ -1763,8 +1767,8 @@ def _build_ffo(
         lo, hi, used_fallback = _ffo_scenario_band(ffo_per_share, r, g, per_share)
         if used_fallback:
             notes.append(
-                f"{key.capitalize()} senaryosu için FFO duyarlılık bandı hesaplanamadı; nokta tahminin "
-                "+/-%10'u fallback olarak kullanıldı."
+                f"The FFO sensitivity band for the {key.capitalize()} scenario could not be computed; "
+                "used +/-10% of the point estimate as a fallback."
             )
         scenarios[key] = {"per_share": per_share, "lo": lo, "hi": hi}
         implied_pffo[key] = round(gordon_multiple, 1)
@@ -1862,11 +1866,11 @@ def _build_earnings_power(
     notes: List[str] = []
     shares = metrics.get("shares")
     if not shares or shares <= 0:
-        return None, ["Kazanç-gücü çapası hesaplanamadı: geçerli hisse sayısı yok."]
+        return None, ["Earnings-power anchor could not be computed: no valid share count."]
 
     dr_base = (assumptions.get("base") or {}).get("discount_rate")
     if not _is_number(dr_base) or dr_base <= 0:
-        return None, ["Kazanç-gücü çapası hesaplanamadı: geçerli iskonto oranı (cost of equity) yok."]
+        return None, ["Earnings-power anchor could not be computed: no valid discount rate (cost of equity)."]
 
     fy = resolve_fundamental_fy(metrics)
     ni_series = to_annual_series(normalized, "NetIncome")
@@ -1876,7 +1880,7 @@ def _build_earnings_power(
     latest_rev = rev_series.get(fy)
 
     if latest_ni is None or latest_ni <= 0:
-        return None, ["Kazanç-gücü çapası hesaplanamadı: son yılın net kârı negatif veya eksik."]
+        return None, ["Earnings-power anchor could not be computed: the latest year's net income is negative or missing."]
 
     # --- Normalize earnings (mandatory margin-median sanity guard) ---
     margins = [
@@ -1895,9 +1899,9 @@ def _build_earnings_power(
             normalized_ni = ref_ni
             sanity_applied = True
             notes.append(
-                f"Kazanç-gücü tabanı için son yılın net kârı ({latest_ni:,.0f}) geçmiş marj medyanından "
-                f"belirgin saptı; tek-seferlik faaliyet-dışı etki olasılığına karşı marj-medyanı bazlı "
-                f"normalize kazanç ({ref_ni:,.0f}) kullanıldı."
+                f"The latest year's net income ({latest_ni:,.0f}) deviated markedly from the historical margin "
+                f"median for the earnings-power base; used a margin-median-based normalized figure "
+                f"({ref_ni:,.0f}) instead, against the possibility of a one-off non-operating effect."
             )
         else:
             normalized_ni = latest_ni
@@ -1911,8 +1915,8 @@ def _build_earnings_power(
         lo, hi, used_fallback = _epv_scenario_band(normalized_ni, dr_base, scale, shares, per_share)
         if used_fallback:
             notes.append(
-                f"{key.capitalize()} senaryosu için kazanç-gücü duyarlılık bandı hesaplanamadı; "
-                "nokta tahminin +/-%10'u fallback olarak kullanıldı."
+                f"The earnings-power sensitivity band for the {key.capitalize()} scenario could not be "
+                "computed; used +/-10% of the point estimate as a fallback."
             )
         scenarios[key] = {"per_share": per_share, "lo": lo, "hi": hi}
 
@@ -1923,8 +1927,8 @@ def _build_earnings_power(
         roe = normalized_ni / eq
         if roe / dr_base > _PB_CLAMP_HI:
             notes.append(
-                "Kazanç-gücü çapası çok yüksek bir örtük getiri/iskonto oranına dayanıyor; bu getirinin "
-                "sürdürülebilirliği belirsizse EPV değerini yukarı-yanlı okumayın."
+                "The earnings-power anchor relies on a very high implied return/discount-rate ratio; don't "
+                "read the EPV value as upward-biased if that return isn't sustainable."
             )
 
     return (
@@ -2077,12 +2081,12 @@ def _build_cyclical_fcfe(
     fy = resolve_fundamental_fy(metrics)
     equity = to_annual_series(normalized, "StockholdersEquity").get(fy)
     if equity is None or equity <= 0:
-        notes.append("Döngüsel FCFE çapası hesaplanamadı: özkaynak verisi eksik/negatif.")
+        notes.append("Cyclical FCFE anchor could not be computed: equity data is missing/negative.")
         return None, notes
 
     roe = ni_norm / equity
     if roe <= 0:
-        notes.append("Döngüsel FCFE çapası hesaplanamadı: normalize edilmiş ROE pozitif değil.")
+        notes.append("Cyclical FCFE anchor could not be computed: normalized ROE is not positive.")
         return None, notes
 
     scenarios: Dict[str, dict] = {}
@@ -2097,7 +2101,7 @@ def _build_cyclical_fcfe(
             or discount_rate <= terminal_growth
         ):
             scenarios[key] = {"per_share": None, "lo": None, "hi": None}
-            notes.append(f"{key.capitalize()} senaryosu için döngüsel FCFE varsayımları eksik veya geçersiz.")
+            notes.append(f"Cyclical FCFE assumptions for the {key.capitalize()} scenario are missing or invalid.")
             continue
 
         try:
@@ -2107,7 +2111,7 @@ def _build_cyclical_fcfe(
             )
         except ValueError as exc:
             scenarios[key] = {"per_share": None, "lo": None, "hi": None}
-            notes.append(f"{key.capitalize()} senaryosu için döngüsel FCFE hesaplanamadı: {exc}")
+            notes.append(f"Cyclical FCFE could not be computed for the {key.capitalize()} scenario: {exc}")
             continue
 
         per_share = round(result["per_share"], 2)
@@ -2116,8 +2120,8 @@ def _build_cyclical_fcfe(
         )
         if used_fallback:
             notes.append(
-                f"{key.capitalize()} senaryosu için döngüsel FCFE duyarlılık bandı hesaplanamadı; "
-                "nokta tahminin +/-%10'u fallback olarak kullanıldı."
+                f"The cyclical FCFE sensitivity band for the {key.capitalize()} scenario could not be "
+                "computed; used +/-10% of the point estimate as a fallback."
             )
         scenarios[key] = {"per_share": per_share, "lo": lo, "hi": hi}
 
@@ -2185,7 +2189,7 @@ def _fcf_dcf_unreliable(
 
     Returns:
         A ``(unreliable, quality_note)`` tuple. ``quality_note`` is a
-        Turkish string to surface (only set on the "suppressed but not
+        string to surface (only set on the "suppressed but not
         cash-backed" branch), or ``None``. Never raises.
     """
     fy = resolve_fundamental_fy(metrics)
@@ -2207,9 +2211,9 @@ def _fcf_dcf_unreliable(
         return True, None
     if fcf_suppressed and not cash_backed:
         return False, (
-            "Serbest nakit akışı düşük ve işletme nakit akışı net kârı yeterince desteklemiyor "
-            "(OCF < 0.8×net kâr); bu bir kazanç-kalitesi/nakde-çevirme uyarısıdır — manşet değerleme "
-            "FCF-DCF'te bırakıldı, kazanç-gücü çapasına geçilmedi."
+            "Free cash flow is low and operating cash flow doesn't sufficiently support net income "
+            "(OCF < 0.8x net income); this is an earnings-quality/cash-conversion warning -- the headline "
+            "valuation was left on FCF-DCF rather than switching to the earnings-power anchor."
         )
     return False, None
 
@@ -2392,7 +2396,7 @@ def _maintenance_adjusted_margin(
         ``maintenance_capex`` (the floored proxy), ``growth_capex``,
         ``raw_current_margin``, ``ops_current_margin`` (the caller adds
         ``upside_per_share``/``upside_lo``/``upside_hi``), and
-        ``maintenance_capex_floor_note`` (only present, Turkish, when the
+        ``maintenance_capex_floor_note`` (only present when the
         sector floor -- not the 5% default -- actually determined
         ``maintenance_capex``).
     """
@@ -2439,8 +2443,8 @@ def _maintenance_adjusted_margin(
     # floor lower than D&A never changes the outcome and shouldn't claim credit.
     if used_sector_floor and maintenance_floor_pct * revenue > dep:
         capex_normalization["maintenance_capex_floor_note"] = (
-            f"Bakım-CapEx tabanı sektör verisine göre %{sector_capex_sales * 100:.1f} olarak alındı "
-            "(Damodaran Cap Ex/Sales), varsayılan %5 yerine."
+            f"The maintenance-CapEx floor was set at {sector_capex_sales * 100:.1f}% based on sector data "
+            "(Damodaran Cap Ex/Sales), instead of the default 5%."
         )
     return ops_margin, capex_normalization
 
@@ -2466,7 +2470,7 @@ def _build_hyper_growth(
     LLM/user-supplied ``hyper_growth_extras`` (target margin, steady-state
     year, probability, TAM). Never raises: any missing/invalid input or
     ``revenue_first_dcf``/bisection failure degrades to ``(None, notes)``
-    with a Turkish note explaining why, so the caller can fall back to
+    with a note explaining why, so the caller can fall back to
     ``hyper_growth = False`` without losing the standard valuation.
 
     Args:
@@ -2520,7 +2524,7 @@ def _build_hyper_growth(
         A ``(detail, notes)`` tuple. ``detail`` matches SPEC Sec.3.4's
         ``hyper_growth_detail`` shape, or ``None`` if the mode couldn't be
         built at all (missing revenue/shares/realized growth, or every
-        scenario failed). ``notes`` are Turkish strings the caller should
+        scenario failed). ``notes`` are strings the caller should
         fold into the top-level ``notes`` list (also echoed into
         ``detail["notes"]`` when ``detail`` is not ``None``). ``detail``
         also carries ``mature_discount_rate`` (rounded to 4 decimals, or
@@ -2534,8 +2538,8 @@ def _build_hyper_growth(
         latest_revenue = revenue_series.get(latest_fy) if latest_fy is not None else None
         if latest_revenue is None or latest_revenue <= 0 or not shares or shares <= 0:
             notes.append(
-                "Hiper-büyüme modu tetiklendi ancak revenue-first DCF için gerekli veriler "
-                "(son yılın geliri veya hisse sayısı) eksik; standart değerleme kullanılıyor."
+                "Hyper-growth mode was triggered but the data required for the revenue-first DCF "
+                "(the latest year's revenue or share count) is missing; using the standard valuation."
             )
             return None, notes
 
@@ -2544,15 +2548,15 @@ def _build_hyper_growth(
             realized_cagr = metrics.get("revenue_cagr_3y")
         if realized_cagr is None:
             notes.append(
-                "Hiper-büyüme modu tetiklendi ancak gerçekleşen gelir büyümesi (CAGR) eksik; "
-                "standart değerleme kullanılıyor."
+                "Hyper-growth mode was triggered but realized revenue growth (CAGR) is missing; using "
+                "the standard valuation."
             )
             return None, notes
 
         if terminal_growth != _HYPER_TERMINAL_GROWTH:
             notes.append(
-                f"Uçtaki (terminal) büyüme risksiz getiri oranına bağlandı (%{terminal_growth * 100:.1f}, "
-                "üst sınır %4); hiper-büyüme kohortu için ayrı düşük terminal oran kullanılmıyor."
+                f"Terminal growth was tied to the risk-free rate ({terminal_growth * 100:.1f}%, capped at "
+                "4%); a separate, lower terminal rate is not used for the hyper-growth cohort."
             )
 
         # --- Start-growth anchor (F4): blend the realized multi-year CAGR
@@ -2568,8 +2572,8 @@ def _build_hyper_growth(
         if latest_yoy is not None:
             growth_anchor = 0.5 * realized_cagr + 0.5 * latest_yoy
             notes.append(
-                "Hiper-büyüme başlangıç büyümesi, gerçekleşen 5y/3y CAGR ile son yılın büyümesinin "
-                "harmanı olarak hesaplandı."
+                "The hyper-growth start growth was computed as a blend of the realized 5y/3y CAGR and "
+                "the latest year's growth."
             )
         else:
             growth_anchor = realized_cagr
@@ -2603,14 +2607,14 @@ def _build_hyper_growth(
         if gm is None:
             if current_margin > 0:
                 notes.append(
-                    "Hiper-büyüme hedef olgun FCF marjı için brüt marj verisi eksik; "
-                    f"%{_HYPER_TARGET_MARGIN_CEILING_FALLBACK * 100:.0f} varsayılan tavan kullanıldı, "
-                    f"bugünkü FCF marjına (%{current_margin * 100:.0f}) tabanlandı."
+                    "Gross-margin data is missing for the hyper-growth target mature FCF margin; used the "
+                    f"{_HYPER_TARGET_MARGIN_CEILING_FALLBACK * 100:.0f}% default ceiling, floored at "
+                    f"today's FCF margin ({current_margin * 100:.0f}%)."
                 )
             else:
                 notes.append(
-                    "Hiper-büyüme hedef olgun FCF marjı için brüt marj verisi eksik; "
-                    f"%{_HYPER_TARGET_MARGIN_CEILING_FALLBACK * 100:.0f} varsayılan tavan kullanıldı."
+                    "Gross-margin data is missing for the hyper-growth target mature FCF margin; used the "
+                    f"{_HYPER_TARGET_MARGIN_CEILING_FALLBACK * 100:.0f}% default ceiling."
                 )
 
         # WP4: target_base is no longer clamped to _HYPER_TARGET_BASE_CAP --
@@ -2619,9 +2623,9 @@ def _build_hyper_growth(
         # genuinely high-margin business's economics.
         if target_base > _HYPER_TARGET_BASE_CAP:
             notes.append(
-                f"Hiper-büyüme hedef olgun FCF marjı %{target_base * 100:.0f}, %30 referans eşiğinin "
-                "üzerinde (kaynak: brüt marj × 0.5); yüksek marj varsayımı bilinçlidir — sabit tavanla "
-                "kırpılmadı."
+                f"The hyper-growth target mature FCF margin is {target_base * 100:.0f}%, above the 30% "
+                "reference threshold (source: gross margin x 0.5); the high-margin assumption is "
+                "deliberate -- not clamped to a fixed ceiling."
             )
             target_margin_flag = "above_reference"
         else:
@@ -2709,9 +2713,9 @@ def _build_hyper_growth(
                 base_ref = decel_cap if decel_cap is not None else raw_start_growth[key]
                 if override_start > base_ref:
                     notes.append(
-                        f"{key.capitalize()} senaryosu başlangıç büyümesi %{override_start * 100:.0f} olarak "
-                        f"açık bir varsayımla (hyper_growth_extras) belirlendi; istatistiksel tabanın "
-                        f"(%{base_ref * 100:.0f}) üzerinde — re-acceleration tezi bilinçli olarak fiyatlanıyor."
+                        f"The {key.capitalize()} scenario's start growth was set to {override_start * 100:.0f}% "
+                        f"by an explicit assumption (hyper_growth_extras); above the statistical base "
+                        f"({base_ref * 100:.0f}%) -- the re-acceleration thesis is being priced in deliberately."
                     )
             elif decel_cap is not None and raw_start_growth[key] > decel_cap:
                 start_growth_by_scenario[key] = decel_cap
@@ -2726,9 +2730,9 @@ def _build_hyper_growth(
         if start_growth_capped_keys:
             names = ", ".join(k.capitalize() for k in start_growth_capped_keys)
             notes.append(
-                f"Yavaşlama koruması: {names} senaryo(lar)ının başlangıç büyümesi, son gerçekleşen yıllık "
-                f"büyüme (%{decel_cap * 100:.0f}) ile sınırlandı — yavaşlayan bir şirketin önce yeniden "
-                "hızlanacağı varsayılmadı (re-acceleration yalnızca AI modunda açık varsayımla girebilir)."
+                f"Deceleration guard: the {names} scenario(s)' start growth was capped at the latest "
+                f"realized annual growth ({decel_cap * 100:.0f}%) -- a decelerating company was not assumed "
+                "to re-accelerate first (re-acceleration can only enter via an explicit assumption in AI mode)."
             )
 
         # --- WP3: hyper-grower discount-rate fade (Damodaran fade) --------
@@ -2750,17 +2754,17 @@ def _build_hyper_growth(
         # parameter existed.
         if mature_discount_rate is not None:
             notes.append(
-                "Hiper-büyüme iskonto oranı sabit tutulmadı: nakit akışları olgunlaştıkça her senaryonun "
-                "kendi kohort iskonto oranından (düşüş: bear %"
-                f"{_HYPER_DISCOUNT_RATE_BY_SCENARIO['bear'] * 100:.0f}, baz %"
-                f"{_HYPER_DISCOUNT_RATE_BY_SCENARIO['base'] * 100:.0f}, boğa %"
-                f"{_HYPER_DISCOUNT_RATE_BY_SCENARIO['bull'] * 100:.0f}) olgun özkaynak maliyetine "
-                f"(%{mature_discount_rate * 100:.1f}) doğru kendi durağan-durum yılına (baz senaryoda "
-                f"{steady_state_by_scenario['base']}. yıl) kadar lineer olarak indirildi (Damodaran fade)."
+                "The hyper-growth discount rate was not held fixed: as the cash flows mature, each "
+                "scenario's own cohort discount rate (bear "
+                f"{_HYPER_DISCOUNT_RATE_BY_SCENARIO['bear'] * 100:.0f}%, base "
+                f"{_HYPER_DISCOUNT_RATE_BY_SCENARIO['base'] * 100:.0f}%, bull "
+                f"{_HYPER_DISCOUNT_RATE_BY_SCENARIO['bull'] * 100:.0f}%) was linearly faded toward the "
+                f"mature cost of equity ({mature_discount_rate * 100:.1f}%) by its own steady-state year "
+                f"(year {steady_state_by_scenario['base']} in the base scenario) (Damodaran fade)."
             )
 
         if target_margin_overridden["base"]:
-            target_margin_source = "LLM/kullanıcı tarafından sağlanan hedef marj (hyper_growth_extras)"
+            target_margin_source = "target margin supplied by the LLM/user (hyper_growth_extras)"
         else:
             # Recompute the ceiling (not the floored target_base itself) just
             # to phrase the source string correctly -- did today's positive
@@ -2773,19 +2777,19 @@ def _build_hyper_growth(
             if gm is not None:
                 if floored_by_current_margin:
                     target_margin_source = (
-                        f"brüt marj %{gm * 100:.0f} × 0.5, bugünkü FCF marjına tabanlanmış"
+                        f"gross margin {gm * 100:.0f}% x 0.5, floored at today's FCF margin"
                     )
                 else:
-                    target_margin_source = "brüt marj × 0.5"
+                    target_margin_source = "gross margin x 0.5"
             else:
                 if floored_by_current_margin:
                     target_margin_source = (
-                        f"brüt marj yok: %{_HYPER_TARGET_MARGIN_CEILING_FALLBACK * 100:.0f} varsayılan tavan, "
-                        f"bugünkü FCF marjına (%{current_margin * 100:.0f}) tabanlanmış"
+                        f"no gross margin: {_HYPER_TARGET_MARGIN_CEILING_FALLBACK * 100:.0f}% default ceiling, "
+                        f"floored at today's FCF margin ({current_margin * 100:.0f}%)"
                     )
                 else:
                     target_margin_source = (
-                        f"brüt marj yok: %{_HYPER_TARGET_MARGIN_CEILING_FALLBACK * 100:.0f} varsayılan tavan"
+                        f"no gross margin: {_HYPER_TARGET_MARGIN_CEILING_FALLBACK * 100:.0f}% default ceiling"
                     )
 
         # --- Financing shares: derived from the base scenario's own
@@ -2799,7 +2803,7 @@ def _build_hyper_growth(
                 mature_discount_rate=mature_discount_rate,
             )
         except ValueError as exc:
-            notes.append(f"Hiper-büyüme revenue-first DCF (baz senaryo) hesaplanamadı: {exc}")
+            notes.append(f"Hyper-growth revenue-first DCF (base scenario) could not be computed: {exc}")
             return None, notes
 
         burn = sum(min(fcf_t, 0.0) for fcf_t in prelim_base["fcf_path"])
@@ -2809,8 +2813,8 @@ def _build_hyper_growth(
             financing_shares = 0.0
             if burn < 0:
                 notes.append(
-                    "Fiyat eksik olduğu için hiper-büyüme finansman (dilution) hisseleri hesaplanamadı; "
-                    "finansman hissesi 0 varsayıldı."
+                    "Hyper-growth financing (dilution) shares could not be computed because the price is "
+                    "missing; assumed zero financing shares."
                 )
 
         scenarios_detail = {}
@@ -2832,7 +2836,7 @@ def _build_hyper_growth(
                     "start_growth": round(start_growth, 4), "target_fcf_margin": round(target, 4),
                     "final_year_revenue": None, "revenue_multiple": None,
                 }
-                notes.append(f"{key.capitalize()} hiper-büyüme senaryosu hesaplanamadı: {exc}")
+                notes.append(f"The {key.capitalize()} hyper-growth scenario could not be computed: {exc}")
                 continue
 
             per_share = round(result["per_share"], 2)
@@ -2843,8 +2847,8 @@ def _build_hyper_growth(
             )
             if used_fallback:
                 notes.append(
-                    f"{key.capitalize()} hiper-büyüme senaryosu için duyarlılık bandı hesaplanamadı; "
-                    "nokta tahminin +/-%10'u fallback olarak kullanıldı."
+                    f"The sensitivity band for the {key.capitalize()} hyper-growth scenario could not be "
+                    "computed; used +/-10% of the point estimate as a fallback."
                 )
             scenarios_detail[key] = {
                 "per_share": per_share, "lo": lo, "hi": hi,
@@ -2863,8 +2867,8 @@ def _build_hyper_growth(
         base_cell = scenarios_detail.get("base")
         if base_cell is None or base_cell.get("revenue_multiple") is None:
             notes.append(
-                "Hiper-büyüme baz senaryosu hesaplanamadığı için varış noktası (arrival) bayrağı "
-                "belirlenemedi; standart değerleme kullanılıyor."
+                "The arrival-point flag could not be determined because the hyper-growth base scenario "
+                "could not be computed; using the standard valuation."
             )
             return None, notes
 
@@ -2883,11 +2887,11 @@ def _build_hyper_growth(
         suppressed_reason = None
         if suppressed:
             suppressed_reason = (
-                "Şirket, gelirinin çok üzerinde büyüme yatırımı (CapEx) yaptığı için bugünkü serbest "
-                "nakit akışı marjı aşırı negatif; revenue-first DCF baz senaryosu negatif özkaynak "
-                "değeri (hisse başı ≤ $0) üretti. Faal ve sermaye toplayabilen bir şirket için "
-                "kullanılabilir bir değer olmadığından DCF manşet aralığı ve üçgenleme oyu devre dışı "
-                "bırakıldı; capex yoğunluğu normalleşene dek revenue-first DCF güvenilir değil."
+                "The company invests in growth (CapEx) far in excess of its revenue, so today's free cash "
+                "flow margin is severely negative; the revenue-first DCF base scenario produced a negative "
+                "equity value (per share <= $0). Since that isn't a usable value for a going, capital-raising "
+                "concern, the DCF headline range and its triangulation vote were disabled; the revenue-first "
+                "DCF isn't reliable until CapEx intensity normalizes."
             )
             notes.append(suppressed_reason)
 
@@ -2924,12 +2928,13 @@ def _build_hyper_growth(
                 capex_normalization["upside_lo"] = None
                 capex_normalization["upside_hi"] = None
             notes.append(
-                "CapEx-yoğun hiper-büyüme: bugünkü serbest nakit akışı büyük büyüme CapEx'iyle bastırıldığı "
-                "için manşet DCF (ham marjla) güvenilir değil ve devre dışı bırakıldı. Ayrıca büyüme CapEx'i "
-                "bakım CapEx'inden (≈ D&A, gelirin en az %5'i tabanıyla) ayrılarak AGRESİF BİR ÜST-SENARYO "
-                f"(baz ${capex_normalization.get('upside_per_share')}/hisse) hesaplandı — bu MANŞET DEĞİL, "
-                "yalnızca capex normalleşirse ima edilen iyimser değeri gösterir. Not: bu üst-senaryo, geliri "
-                "büyütürken o büyümeyi finanse eden CapEx'i tam yansıtmaz, bu yüzden yukarı-yanlıdır."
+                "CapEx-heavy hyper-growth: today's free cash flow is suppressed by heavy growth CapEx, so "
+                "the headline DCF (at the raw margin) isn't reliable and was disabled. Growth CapEx was also "
+                "separated from maintenance CapEx (approx. D&A, floored at 5% of revenue) to compute an "
+                f"AGGRESSIVE UPSIDE SCENARIO (base ${capex_normalization.get('upside_per_share')}/share) -- "
+                "this is NOT THE HEADLINE, it only shows the optimistic value implied if CapEx normalizes. "
+                "Note: this upside scenario doesn't fully reflect the CapEx that funds the revenue growth "
+                "itself, so it is upward-biased."
             )
 
         # --- Prob-weighted expected value: skip failed scenarios and
@@ -2948,14 +2953,14 @@ def _build_hyper_growth(
         # TAM-share thresholds whenever tam_usd is known (Sec.3.3).
         multiple = base_cell["revenue_multiple"]
         if multiple <= _HYPER_ARRIVAL_AGGRESSIVE_MULTIPLE:
-            arrival_flag = "makul"
+            arrival_flag = "fair"
         elif multiple <= _HYPER_ARRIVAL_EXTREME_MULTIPLE:
-            arrival_flag = "agresif"
+            arrival_flag = "aggressive"
         else:
-            arrival_flag = "asiri_agresif"
-        if arrival_flag != "makul":
+            arrival_flag = "excessively_aggressive"
+        if arrival_flag != "fair":
             notes.append(
-                f"Hiper-büyüme varış noktası: baz senaryoda gelir 10 yılda {multiple:.1f} katına çıkıyor "
+                f"Hyper-growth arrival point: in the base scenario, revenue grows {multiple:.1f}x over 10 years "
                 f"({arrival_flag})."
             )
 
@@ -2963,13 +2968,13 @@ def _build_hyper_growth(
         if tam_usd is not None:
             tam_share = base_cell["final_year_revenue"] / tam_usd
             if tam_share > _HYPER_TAM_SHARE_INVALID:
-                arrival_flag = "gecersiz"
-                notes.append("Hiper-büyüme varış noktası TAM'ın %60'ını aşıyor; revizyon gerekli.")
+                arrival_flag = "invalid"
+                notes.append("Hyper-growth arrival point exceeds 60% of TAM; a revision is needed.")
             elif tam_share > _HYPER_TAM_SHARE_AGGRESSIVE:
-                arrival_flag = "agresif"
-                notes.append(f"Hiper-büyüme varış noktası TAM'ın %{tam_share * 100:.0f}'ini kullanıyor (agresif).")
+                arrival_flag = "aggressive"
+                notes.append(f"Hyper-growth arrival point uses {tam_share * 100:.0f}% of TAM (aggressive).")
             else:
-                arrival_flag = "makul"
+                arrival_flag = "fair"
 
         # --- Implied expectations (base discount/margin/steady_state; Sec.3.3).
         base_discount_rate = _HYPER_DISCOUNT_RATE_BY_SCENARIO["base"]
@@ -2998,8 +3003,8 @@ def _build_hyper_growth(
                 implied_revenue_multiple = None
         else:
             notes.append(
-                "Hiper-büyüme: fiyatın ima ettiği başlangıç büyüme oranı hesaplanamadı "
-                "(fiyat, makul büyüme aralığının dışında bir beklenti ima ediyor olabilir)."
+                "Hyper-growth: the price-implied start growth rate could not be computed "
+                "(the price may imply an expectation outside a plausible growth range)."
             )
 
         implied_margin = revenue_dcf.implied_target_margin(
@@ -3051,7 +3056,7 @@ def _build_hyper_growth(
         return detail, notes
     except Exception:  # noqa: BLE001 - never let a hyper-grower bug break the standard valuation.
         logger.warning("_build_hyper_growth: unexpected error; degrading to standard valuation.", exc_info=True)
-        notes.append("Hiper-büyüme modu beklenmeyen bir hatayla karşılaştı; standart değerleme kullanılıyor.")
+        notes.append("Hyper-growth mode encountered an unexpected error; using the standard valuation.")
         return None, notes
 
 
@@ -3205,7 +3210,7 @@ def _mature_start_growth(metrics: dict, normalized: dict) -> Optional[float]:
 #: -- always ends the same way so callers/readers know what happens next
 #: (falls back to the EPV headline, which is already computed by the time
 #: this is attempted, or the raw FCF-DCF if EPV itself isn't available).
-_MATURE_FALLBACK_SUFFIX = "kazanç-gücü (EPV) çapası veya ham FCF-DCF kullanılıyor."
+_MATURE_FALLBACK_SUFFIX = "using the earnings-power (EPV) anchor or the raw FCF-DCF instead."
 
 
 def _build_mature_revenue_dcf(
@@ -3240,7 +3245,7 @@ def _build_mature_revenue_dcf(
 
     Never raises: any missing/invalid input or
     ``revenue_first_dcf``/``_hyper_scenario_band`` failure degrades to
-    ``(None, notes)`` with a Turkish note, mirroring ``_build_hyper_growth``.
+    ``(None, notes)`` with a note, mirroring ``_build_hyper_growth``.
 
     Args:
         assumptions: The phase-1 (already clamped) bear/base/bull assumption
@@ -3279,15 +3284,15 @@ def _build_mature_revenue_dcf(
         revenue0 = revenue_series.get(fy) if fy is not None else None
         if revenue0 is None or revenue0 <= 0 or not shares or shares <= 0:
             notes.append(
-                "Olgun revenue-first DCF için gerekli veriler (son yılın geliri veya hisse sayısı) eksik; "
-                f"{_MATURE_FALLBACK_SUFFIX}"
+                "Data required for the mature revenue-first DCF (the latest year's revenue or share count) "
+                f"is missing; {_MATURE_FALLBACK_SUFFIX}"
             )
             return None, notes
 
         start_growth = _mature_start_growth(metrics, normalized)
         if start_growth is None:
             notes.append(
-                f"Olgun revenue-first DCF için gerçekleşen gelir büyümesi (CAGR) hesaplanamadı; "
+                f"Realized revenue growth (CAGR) could not be computed for the mature revenue-first DCF; "
                 f"{_MATURE_FALLBACK_SUFFIX}"
             )
             return None, notes
@@ -3295,7 +3300,7 @@ def _build_mature_revenue_dcf(
         base_terminal_growth = (assumptions.get("base") or {}).get("terminal_growth")
         if not _is_number(base_terminal_growth):
             notes.append(
-                f"Olgun revenue-first DCF için baz terminal büyüme oranı eksik; {_MATURE_FALLBACK_SUFFIX}"
+                f"The base terminal growth rate is missing for the mature revenue-first DCF; {_MATURE_FALLBACK_SUFFIX}"
             )
             return None, notes
 
@@ -3307,8 +3312,8 @@ def _build_mature_revenue_dcf(
         # headline instead of fabricating a growth story that isn't there.
         if start_growth < _MATURE_REV_DCF_MIN_GROWTH or start_growth <= base_terminal_growth:
             notes.append(
-                f"Gerçekleşen gelir büyümesi (%{start_growth * 100:.1f}) olgun revenue-first DCF için yetersiz "
-                f"(< %{_MATURE_REV_DCF_MIN_GROWTH * 100:.0f} veya terminal büyümenin altında); "
+                f"Realized revenue growth ({start_growth * 100:.1f}%) is insufficient for the mature "
+                f"revenue-first DCF (< {_MATURE_REV_DCF_MIN_GROWTH * 100:.0f}% or below terminal growth); "
                 f"{_MATURE_FALLBACK_SUFFIX}"
             )
             return None, notes
@@ -3316,8 +3321,8 @@ def _build_mature_revenue_dcf(
         target_base = _mature_target_fcf_margin(normalized, metrics, ratios)
         if target_base is None:
             notes.append(
-                "Olgun revenue-first DCF için hedef olgun FCF marjı hesaplanamadı (operasyon marjı ve "
-                f"tarihsel FCF marjı verisi eksik); {_MATURE_FALLBACK_SUFFIX}"
+                "The target mature FCF margin could not be computed for the mature revenue-first DCF "
+                f"(operating margin and historical FCF margin data are missing); {_MATURE_FALLBACK_SUFFIX}"
             )
             return None, notes
 
@@ -3326,8 +3331,9 @@ def _build_mature_revenue_dcf(
         # anchors genuinely derive a higher mature margin.
         if target_base > _MATURE_TARGET_CAP:
             notes.append(
-                f"Olgun hedef FCF marjı %{target_base * 100:.0f}, %15 referans eşiğinin üzerinde (NOPAT ve "
-                "tarihsel-FCF çapalarından türedi); bilinçli — sabit tavan uygulanmadı."
+                f"The mature target FCF margin is {target_base * 100:.0f}%, above the 15% reference "
+                "threshold (derived from the NOPAT and historical-FCF anchors); deliberate -- not "
+                "clamped to a fixed ceiling."
             )
             target_margin_flag = "above_reference"
         else:
@@ -3343,12 +3349,12 @@ def _build_mature_revenue_dcf(
             terminal_growth = scenario_assumptions.get("terminal_growth")
 
             if not _is_number(discount_rate) or not _is_number(terminal_growth):
-                notes.append(f"{key.capitalize()} senaryosu için olgun revenue-first DCF varsayımları eksik.")
+                notes.append(f"Mature revenue-first DCF assumptions for the {key.capitalize()} scenario are missing.")
                 continue
             if discount_rate <= terminal_growth:
                 notes.append(
-                    f"{key.capitalize()} senaryosu için iskonto oranı terminal büyüme oranından büyük değil; "
-                    "senaryo atlandı."
+                    f"The discount rate for the {key.capitalize()} scenario doesn't exceed terminal growth; "
+                    "scenario skipped."
                 )
                 continue
 
@@ -3360,7 +3366,7 @@ def _build_mature_revenue_dcf(
                     target_margin, steady_state_year, shares, 0.0,
                 )
             except ValueError as exc:
-                notes.append(f"{key.capitalize()} senaryosu için olgun revenue-first DCF hesaplanamadı: {exc}")
+                notes.append(f"Mature revenue-first DCF could not be computed for the {key.capitalize()} scenario: {exc}")
                 continue
 
             per_share = round(result["per_share"], 2)
@@ -3370,8 +3376,8 @@ def _build_mature_revenue_dcf(
             )
             if used_fallback:
                 notes.append(
-                    f"{key.capitalize()} senaryosu için duyarlılık bandı hesaplanamadı; "
-                    "nokta tahminin +/-%10'u fallback olarak kullanıldı."
+                    f"The sensitivity band for the {key.capitalize()} scenario could not be computed; "
+                    "used +/-10% of the point estimate as a fallback."
                 )
 
             scenarios[key] = {
@@ -3383,7 +3389,7 @@ def _build_mature_revenue_dcf(
             }
 
         if not scenarios:
-            notes.append(f"Olgun revenue-first DCF hiçbir senaryo için hesaplanamadı; {_MATURE_FALLBACK_SUFFIX}")
+            notes.append(f"The mature revenue-first DCF could not be computed for any scenario; {_MATURE_FALLBACK_SUFFIX}")
             return None, notes
 
         detail = {
@@ -3397,7 +3403,7 @@ def _build_mature_revenue_dcf(
         return detail, notes
     except Exception:  # noqa: BLE001 - never let a mature-revenue-DCF bug break the standard valuation.
         logger.warning("_build_mature_revenue_dcf: unexpected error; degrading to standard valuation.", exc_info=True)
-        notes.append("Olgun revenue-first DCF beklenmeyen bir hatayla karşılaştı; standart değerleme kullanılıyor.")
+        notes.append("The mature revenue-first DCF encountered an unexpected error; using the standard valuation.")
         return None, notes
 
 
@@ -3405,7 +3411,7 @@ def _build_mature_revenue_dcf(
 #: the same way so the reader knows what happens when the method bails out
 #: (the filer falls back to the multiples-only headline it had before this
 #: method existed).
-_MIDGROWTH_FALLBACK_SUFFIX = "çarpan (multiples) bazlı değerlemeye düşülüyor."
+_MIDGROWTH_FALLBACK_SUFFIX = "falling back to a multiples-based valuation."
 
 
 def _build_midgrowth_revenue_dcf(
@@ -3447,7 +3453,7 @@ def _build_midgrowth_revenue_dcf(
     the headline back to multiples rather than publishing a negative band.
 
     Never raises: any missing/invalid input or ``revenue_first_dcf`` failure
-    degrades to ``(None, notes)`` with a Turkish note.
+    degrades to ``(None, notes)`` with a note.
 
     Args:
         assumptions: The phase-1 (already clamped) bear/base/bull assumption
@@ -3479,15 +3485,15 @@ def _build_midgrowth_revenue_dcf(
         revenue0 = revenue_series.get(fy) if fy is not None else None
         if revenue0 is None or revenue0 <= 0 or not shares or shares <= 0:
             notes.append(
-                "Orta-büyüme revenue-first DCF için gerekli veriler (son yılın geliri veya hisse sayısı) "
-                f"eksik; {_MIDGROWTH_FALLBACK_SUFFIX}"
+                "Data required for the mid-growth revenue-first DCF (the latest year's revenue or share "
+                f"count) is missing; {_MIDGROWTH_FALLBACK_SUFFIX}"
             )
             return None, notes
 
         start_growth = _mature_start_growth(metrics, normalized)
         if start_growth is None:
             notes.append(
-                "Orta-büyüme revenue-first DCF için gerçekleşen gelir büyümesi (CAGR) hesaplanamadı; "
+                "Realized revenue growth (CAGR) could not be computed for the mid-growth revenue-first DCF; "
                 f"{_MIDGROWTH_FALLBACK_SUFFIX}"
             )
             return None, notes
@@ -3495,7 +3501,7 @@ def _build_midgrowth_revenue_dcf(
         base_terminal_growth = (assumptions.get("base") or {}).get("terminal_growth")
         if not _is_number(base_terminal_growth):
             notes.append(
-                f"Orta-büyüme revenue-first DCF için baz terminal büyüme oranı eksik; {_MIDGROWTH_FALLBACK_SUFFIX}"
+                f"The base terminal growth rate is missing for the mid-growth revenue-first DCF; {_MIDGROWTH_FALLBACK_SUFFIX}"
             )
             return None, notes
 
@@ -3505,8 +3511,8 @@ def _build_midgrowth_revenue_dcf(
         # multiples rather than fabricating a growth story.
         if start_growth < _MIDGROWTH_MIN_GROWTH or start_growth <= base_terminal_growth:
             notes.append(
-                f"Gerçekleşen gelir büyümesi (%{start_growth * 100:.1f}) orta-büyüme revenue-first DCF için "
-                f"yetersiz (< %{_MIDGROWTH_MIN_GROWTH * 100:.0f} veya terminal büyümenin altında); "
+                f"Realized revenue growth ({start_growth * 100:.1f}%) is insufficient for the mid-growth "
+                f"revenue-first DCF (< {_MIDGROWTH_MIN_GROWTH * 100:.0f}% or below terminal growth); "
                 f"{_MIDGROWTH_FALLBACK_SUFFIX}"
             )
             return None, notes
@@ -3531,8 +3537,8 @@ def _build_midgrowth_revenue_dcf(
         target_base = _hyper_target_base(gm, current_margin)
         if gm is None:
             notes.append(
-                "Orta-büyüme revenue-first DCF hedef olgun FCF marjı için brüt marj verisi eksik; "
-                f"%{_MIDGROWTH_TARGET_CAP * 100:.0f} tavan kullanıldı."
+                "Gross-margin data is missing for the mid-growth revenue-first DCF's target mature FCF "
+                f"margin; used a {_MIDGROWTH_TARGET_CAP * 100:.0f}% ceiling."
             )
 
         # WP4: target_base is no longer clamped to _MIDGROWTH_TARGET_CAP --
@@ -3540,8 +3546,9 @@ def _build_midgrowth_revenue_dcf(
         # derived value genuinely exceeds the reference threshold.
         if target_base > _MIDGROWTH_TARGET_CAP:
             notes.append(
-                f"Orta-büyüme hedef olgun FCF marjı %{target_base * 100:.0f}, %20 referans eşiğinin üzerinde "
-                "(brüt marj × 0.5 kaynaklı); bilinçli — sabit tavan uygulanmadı."
+                f"The mid-growth target mature FCF margin is {target_base * 100:.0f}%, above the 20% "
+                "reference threshold (derived from gross margin x 0.5); deliberate -- not clamped to a "
+                "fixed ceiling."
             )
             target_margin_flag = "above_reference"
         else:
@@ -3574,8 +3581,8 @@ def _build_midgrowth_revenue_dcf(
                     financing_shares = abs(burn) / price
                 elif burn < 0:
                     notes.append(
-                        "Fiyat eksik olduğu için orta-büyüme finansman (dilution) hisseleri hesaplanamadı; "
-                        "finansman hissesi 0 varsayıldı."
+                        "Mid-growth financing (dilution) shares could not be computed because the price is "
+                        "missing; assumed zero financing shares."
                     )
             except ValueError:
                 financing_shares = 0.0
@@ -3587,12 +3594,12 @@ def _build_midgrowth_revenue_dcf(
             terminal_growth = scenario_assumptions.get("terminal_growth")
 
             if not _is_number(discount_rate) or not _is_number(terminal_growth):
-                notes.append(f"{key.capitalize()} senaryosu için orta-büyüme revenue-first DCF varsayımları eksik.")
+                notes.append(f"Mid-growth revenue-first DCF assumptions for the {key.capitalize()} scenario are missing.")
                 continue
             if discount_rate <= terminal_growth:
                 notes.append(
-                    f"{key.capitalize()} senaryosu için iskonto oranı terminal büyüme oranından büyük değil; "
-                    "senaryo atlandı."
+                    f"The discount rate for the {key.capitalize()} scenario doesn't exceed terminal growth; "
+                    "scenario skipped."
                 )
                 continue
 
@@ -3604,7 +3611,7 @@ def _build_midgrowth_revenue_dcf(
                     target_margin, steady_state_year, shares, annual_dilution, financing_shares,
                 )
             except ValueError as exc:
-                notes.append(f"{key.capitalize()} senaryosu için orta-büyüme revenue-first DCF hesaplanamadı: {exc}")
+                notes.append(f"Mid-growth revenue-first DCF could not be computed for the {key.capitalize()} scenario: {exc}")
                 continue
 
             per_share = round(result["per_share"], 2)
@@ -3614,8 +3621,8 @@ def _build_midgrowth_revenue_dcf(
             )
             if used_fallback:
                 notes.append(
-                    f"{key.capitalize()} senaryosu için duyarlılık bandı hesaplanamadı; "
-                    "nokta tahminin +/-%10'u fallback olarak kullanıldı."
+                    f"The sensitivity band for the {key.capitalize()} scenario could not be computed; "
+                    "used +/-10% of the point estimate as a fallback."
                 )
 
             scenarios[key] = {
@@ -3628,7 +3635,7 @@ def _build_midgrowth_revenue_dcf(
 
         if not scenarios:
             notes.append(
-                f"Orta-büyüme revenue-first DCF hiçbir senaryo için hesaplanamadı; {_MIDGROWTH_FALLBACK_SUFFIX}"
+                f"The mid-growth revenue-first DCF could not be computed for any scenario; {_MIDGROWTH_FALLBACK_SUFFIX}"
             )
             return None, notes
 
@@ -3638,8 +3645,8 @@ def _build_midgrowth_revenue_dcf(
         suppressed = base_ps is not None and base_ps <= 0
         if suppressed:
             notes.append(
-                "Orta-büyüme revenue-first DCF baz senaryosu negatif özkaynak değeri (hisse başı ≤ $0) "
-                f"üretti; manşet için kullanılabilir değil, {_MIDGROWTH_FALLBACK_SUFFIX}"
+                "The mid-growth revenue-first DCF base scenario produced a negative equity value (per share "
+                f"<= $0); not usable for the headline, {_MIDGROWTH_FALLBACK_SUFFIX}"
             )
 
         detail = {
@@ -3658,16 +3665,16 @@ def _build_midgrowth_revenue_dcf(
     except Exception:  # noqa: BLE001 - never let a mid-growth-revenue-DCF bug break the standard valuation.
         logger.warning("_build_midgrowth_revenue_dcf: unexpected error; degrading to standard valuation.", exc_info=True)
         notes.append(
-            "Orta-büyüme revenue-first DCF beklenmeyen bir hatayla karşılaştı; standart değerleme kullanılıyor."
+            "The mid-growth revenue-first DCF encountered an unexpected error; using the standard valuation."
         )
         return None, notes
 
 
-#: Turkish labels for the current-multiple fallback notes, keyed by which
+#: labels for the current-multiple fallback notes, keyed by which
 #: multiple was derived.
 _MULTIPLE_LABELS = {
-    "pe": "F/K", "ps": "F/S", "pfcf": "F/FCF",
-    "ev_ebit": "FD/FVÖK", "ev_ebitda": "FD/FAVÖK", "ptbv": "F/MDD",
+    "pe": "P/E", "ps": "P/S", "pfcf": "P/FCF",
+    "ev_ebit": "EV/EBIT", "ev_ebitda": "EV/EBITDA", "ptbv": "P/B",
 }
 
 
@@ -3712,8 +3719,8 @@ def _derive_current_multiples(
 
     def _note(key: str, fy: int) -> None:
         notes.append(
-            f"Güncel {_MULTIPLE_LABELS[key]} oranı en son mali yılın verisiyle hizalanamadığı için "
-            f"{fy} mali yılının verisiyle hesaplandı."
+            f"The current {_MULTIPLE_LABELS[key]} ratio couldn't be aligned with the latest fiscal year's "
+            f"data, so it was computed using fiscal year {fy}'s data."
         )
 
     if current["pe"] is None:
@@ -3853,7 +3860,7 @@ def _build_growth_adjusted(
     base ``growth_5y`` (surfaced as ``base_growth_pct``); the ratio is only
     computed when the raw multiple is positive AND base growth clears the 5%
     floor (:data:`multiples._PEG_MIN_GROWTH`) -- otherwise it degrades to
-    ``applicable=False`` with a Turkish reason, never a negative/exploded
+    ``applicable=False`` with a reason, never a negative/exploded
     figure.
 
     Returns:
@@ -3863,7 +3870,7 @@ def _build_growth_adjusted(
         be ``None``). Never raises.
     """
     if hyper_growth_active:
-        metric, label, raw_label, raw_key = "growth_adj_ps", "Büyüme-ayarlı EV/Satış", "EV/S", "ev_sales"
+        metric, label, raw_label, raw_key = "growth_adj_ps", "Growth-adjusted EV/Sales", "EV/S", "ev_sales"
         market_cap = metrics.get("market_cap")
         net_debt = metrics.get("net_debt")
         ps_current = current.get("ps")
@@ -3886,14 +3893,14 @@ def _build_growth_adjusted(
     if ga_value is None:
         if not _is_number(base_growth) or base_growth < multiples._PEG_MIN_GROWTH:
             block["reason"] = (
-                f"Büyümeye göre ayarlı çarpan ({label}) uygulanamaz: base büyüme %5'in altında "
-                "(payda güvenilir değil)."
+                f"The growth-adjusted multiple ({label}) isn't applicable: base growth is below 5% "
+                "(the denominator isn't reliable)."
             )
         elif raw_current is None or raw_current <= 0:
-            detail = "TTM kâr pozitif değil (P/E yok)" if metric == "peg" else "EV/Satış hesaplanamadı"
-            block["reason"] = f"Büyümeye göre ayarlı çarpan ({label}) uygulanamaz: {detail}."
+            detail = "TTM earnings aren't positive (no P/E)" if metric == "peg" else "EV/Sales could not be computed"
+            block["reason"] = f"The growth-adjusted multiple ({label}) isn't applicable: {detail}."
         else:
-            block["reason"] = f"Büyümeye göre ayarlı çarpan ({label}) uygulanamaz."
+            block["reason"] = f"The growth-adjusted multiple ({label}) isn't applicable."
         return block, raw_pct, None
 
     revenue_series = to_annual_series(normalized, "Revenue")
@@ -3907,18 +3914,18 @@ def _build_growth_adjusted(
 
 
 def _format_growth_pct(value: float) -> str:
-    """Turkish growth string, e.g. ``0.08 -> "%8 büyüme"`` (Sec.4)."""
-    return f"%{value * 100:.0f} büyüme"
+    """growth string, e.g. ``0.08 -> "8% growth"`` (Sec.4)."""
+    return f"{value * 100:.0f}% growth"
 
 
 def _format_discount_rate_pct(value: float) -> str:
-    """Turkish discount-rate string, e.g. ``0.12 -> "%12"`` (Sec.4)."""
-    return f"%{value * 100:.0f}"
+    """discount-rate string, e.g. ``0.12 -> "12%"`` (Sec.4)."""
+    return f"{value * 100:.0f}%"
 
 
-#: Turkish scenario labels used inside the hyper-grower ``fair_value_range``
+#: scenario labels used inside the hyper-grower ``fair_value_range``
 #: note (see ``_hyper_scenario_meta``), keyed the same as ``_SCENARIO_KEYS``.
-_HYPER_SCENARIO_LABEL = {"bear": "kötümser", "base": "temel", "bull": "iyimser"}
+_HYPER_SCENARIO_LABEL = {"bear": "Pessimistic", "base": "Base", "bull": "Optimistic"}
 
 
 def _hyper_scenario_meta(hyper_growth_detail: Optional[dict]) -> dict:
@@ -3950,14 +3957,14 @@ def _hyper_scenario_meta(hyper_growth_detail: Optional[dict]) -> dict:
         # no longer a hardcoded 2.5% -- interpolate the actual value like the
         # mature/midgrowth scenario-meta helpers do.
         terminal_growth = cell.get("terminal_growth")
-        terminal_str = f"%{terminal_growth * 100:.1f}" if _is_number(terminal_growth) else "terminal"
+        terminal_str = f"{terminal_growth * 100:.1f}%" if _is_number(terminal_growth) else "terminal"
         meta[key] = {
-            "growth": f"%{start_growth * 100:.0f} başlangıç → {terminal_str} terminale fade",
-            "discount_rate": f"%{discount_rate * 100:.0f}",
+            "growth": f"{start_growth * 100:.0f}% start -> fading to {terminal_str} terminal",
+            "discount_rate": f"{discount_rate * 100:.0f}%",
             "note": (
-                f"Hiper-büyüme {scenario_label}: başlangıç büyüme %{start_growth * 100:.0f} "
-                f"(10 yılda {terminal_str} terminale fade), olgun FCF marjı %{target_fcf_margin * 100:.0f}, "
-                f"iskonto %{discount_rate * 100:.0f}."
+                f"Hyper-growth {scenario_label}: {start_growth * 100:.0f}% start growth "
+                f"(fading to {terminal_str} terminal over 10 years), {target_fcf_margin * 100:.0f}% mature "
+                f"FCF margin, {discount_rate * 100:.0f}% discount rate."
             ),
         }
     return meta
@@ -3992,16 +3999,16 @@ def _mature_scenario_meta(mature_revenue_detail: Optional[dict]) -> dict:
             continue
 
         scenario_label = _HYPER_SCENARIO_LABEL[key]
-        terminal_str = f"%{terminal_growth * 100:.1f}" if _is_number(terminal_growth) else "terminal"
+        terminal_str = f"{terminal_growth * 100:.1f}%" if _is_number(terminal_growth) else "terminal"
         meta[key] = {
             "growth": (
-                f"gerçekleşen büyüme %{start_growth * 100:.1f}, olgun hedef marj %{target_fcf_margin * 100:.1f}"
+                f"realized growth {start_growth * 100:.1f}%, mature target margin {target_fcf_margin * 100:.1f}%"
             ),
             "discount_rate": _format_discount_rate_pct(discount_rate),
             "note": (
-                f"Olgun revenue-first DCF {scenario_label}: gerçekleşen büyüme %{start_growth * 100:.1f} "
-                f"({_MATURE_STEADY_STATE_YEAR} yılda {terminal_str} terminale fade), olgun FCF marjı "
-                f"%{target_fcf_margin * 100:.1f}, iskonto %{discount_rate * 100:.0f}."
+                f"Mature revenue-first DCF {scenario_label}: realized growth {start_growth * 100:.1f}% "
+                f"(fading to {terminal_str} terminal over {_MATURE_STEADY_STATE_YEAR} years), mature FCF "
+                f"margin {target_fcf_margin * 100:.1f}%, discount rate {discount_rate * 100:.0f}%."
             ),
         }
     return meta
@@ -4012,7 +4019,7 @@ def _midgrowth_scenario_meta(midgrowth_revenue_detail: Optional[dict]) -> dict:
     mid-growth, loss-making revenue-first DCF headline (SPEC Sec.8d),
     mirroring :func:`_mature_scenario_meta` -- same per-scenario
     ``growth``/``discount_rate``/``note`` shape, but with this method's own
-    8-year fade horizon and "orta-büyüme" wording. Any scenario whose cell
+    8-year fade horizon and "mid-growth" wording. Any scenario whose cell
     is missing ``start_growth``/``target_fcf_margin``/``discount_rate`` is
     omitted so :func:`_build_fair_value_range` falls back to the standard
     assumptions-derived value for that field/scenario. Never raises.
@@ -4029,16 +4036,16 @@ def _midgrowth_scenario_meta(midgrowth_revenue_detail: Optional[dict]) -> dict:
             continue
 
         scenario_label = _HYPER_SCENARIO_LABEL[key]
-        terminal_str = f"%{terminal_growth * 100:.1f}" if _is_number(terminal_growth) else "terminal"
+        terminal_str = f"{terminal_growth * 100:.1f}%" if _is_number(terminal_growth) else "terminal"
         meta[key] = {
             "growth": (
-                f"gerçekleşen büyüme %{start_growth * 100:.1f}, olgun hedef marj %{target_fcf_margin * 100:.1f}"
+                f"realized growth {start_growth * 100:.1f}%, mature target margin {target_fcf_margin * 100:.1f}%"
             ),
             "discount_rate": _format_discount_rate_pct(discount_rate),
             "note": (
-                f"Orta-büyüme revenue-first DCF {scenario_label}: gerçekleşen büyüme %{start_growth * 100:.1f} "
-                f"({_MIDGROWTH_STEADY_STATE_YEAR} yılda {terminal_str} terminale fade), olgun FCF marjı "
-                f"%{target_fcf_margin * 100:.1f}, iskonto %{discount_rate * 100:.0f}."
+                f"Mid-growth revenue-first DCF {scenario_label}: realized growth {start_growth * 100:.1f}% "
+                f"(fading to {terminal_str} terminal over {_MIDGROWTH_STEADY_STATE_YEAR} years), mature FCF "
+                f"margin {target_fcf_margin * 100:.1f}%, discount rate {discount_rate * 100:.0f}%."
             ),
         }
     return meta
@@ -4069,11 +4076,12 @@ def _epv_scenario_meta(earnings_power: Optional[dict]) -> dict:
             continue
         scale = _PB_SCENARIO_SCALE.get(key, 1.0)
         meta[key] = {
-            "growth": "sıfır büyüme (kazanç gücü çapası)",
+            "growth": "zero growth (earnings-power anchor)",
             "discount_rate": _format_discount_rate_pct(cost_of_equity),
             "note": (
-                f"Kazanç-gücü çapası ({key}): normalize net kâr / özkaynak maliyeti (%{cost_of_equity * 100:.0f}), "
-                f"ölçek {scale:.1f}x, sıfır büyüme varsayımıyla (büyüme primi kasıtlı olarak dışlandı)."
+                f"Earnings-power anchor ({key}): normalized net income / cost of equity "
+                f"({cost_of_equity * 100:.0f}%), {scale:.1f}x scale, with a zero-growth assumption (the "
+                "growth premium is deliberately excluded)."
             ),
         }
     return meta
@@ -4086,7 +4094,7 @@ def _rim_scenario_meta(rim_detail: Optional[dict], assumptions: dict) -> dict:
 
     Before this existed, ``financial`` had no entry in the ``scenario_meta``
     chain, so its fair-value rows fell through to the raw assumption's
-    ``growth_5y`` -- printing "%25 büyüme" for a filer whose RIM had actually
+    ``growth_5y`` -- printing "25% growth" for a filer whose RIM had actually
     compounded earnings at its 4.6% ROE, because ``g = b x ROE`` caps growth
     at what retained earnings can fund. The label now reports the EFFECTIVE
     rate and names the assumed one as discarded.
@@ -4116,22 +4124,21 @@ def _rim_scenario_meta(rim_detail: Optional[dict], assumptions: dict) -> dict:
         effective_growth = min(growth_5y, roe)
         if effective_growth < growth_5y:
             growth_str = (
-                f"%{effective_growth * 100:.1f} büyüme "
-                f"(varsayılan %{growth_5y * 100:.1f} içsel finansman kısıtıyla sınırlandı)"
+                f"{effective_growth * 100:.1f}% growth "
+                f"(the assumed {growth_5y * 100:.1f}% was capped by the internal-funding constraint)"
             )
             note = (
-                f"Artık gelir (RIM) çapası ({key}): defter değeri + 10 yıllık artık gelirin "
-                f"bugünkü değeri. Varsayılan %{growth_5y * 100:.1f} büyüme yerine ROE'nin "
-                f"fonlayabildiği %{effective_growth * 100:.1f} uygulandı; bu senaryoyu "
-                f"diğerlerinden ayıran tek etken özkaynak maliyeti "
-                f"(%{discount_rate * 100:.1f})."
+                f"Residual income (RIM) anchor ({key}): book value + the present value of 10 years of "
+                f"residual income. Applied the {effective_growth * 100:.1f}% growth ROE can fund instead "
+                f"of the assumed {growth_5y * 100:.1f}%; the only factor distinguishing this scenario from "
+                f"the others is the cost of equity ({discount_rate * 100:.1f}%)."
             )
         else:
-            growth_str = f"%{growth_5y * 100:.1f} büyüme (kazanç + sürdürülebilir büyüme)"
+            growth_str = f"{growth_5y * 100:.1f}% growth (earnings + sustainable growth)"
             note = (
-                f"Artık gelir (RIM) çapası ({key}): defter değeri + 10 yıllık artık gelirin "
-                f"bugünkü değeri; büyüme %{growth_5y * 100:.1f}, özkaynak maliyeti "
-                f"%{discount_rate * 100:.1f}, ROE %{roe * 100:.1f}."
+                f"Residual income (RIM) anchor ({key}): book value + the present value of 10 years of "
+                f"residual income; growth {growth_5y * 100:.1f}%, cost of equity "
+                f"{discount_rate * 100:.1f}%, ROE {roe * 100:.1f}%."
             )
 
         meta[key] = {
@@ -4182,20 +4189,20 @@ def _cyclical_fcfe_scenario_meta(cyclical_fcfe_detail: Optional[dict], assumptio
         effective_growth = min(growth_5y, roe)
         if effective_growth < growth_5y:
             growth_str = (
-                f"%{effective_growth * 100:.1f} büyüme "
-                f"(varsayılan %{growth_5y * 100:.1f} içsel finansman kısıtıyla sınırlandı)"
+                f"{effective_growth * 100:.1f}% growth "
+                f"(the assumed {growth_5y * 100:.1f}% was capped by the internal-funding constraint)"
             )
         else:
-            growth_str = f"%{growth_5y * 100:.1f} büyüme (kazanç + sürdürülebilir büyüme)"
+            growth_str = f"{growth_5y * 100:.1f}% growth (earnings + sustainable growth)"
 
         reinvestment_rate = effective_growth / roe
         meta[key] = {
             "growth": growth_str,
             "discount_rate": _format_discount_rate_pct(discount_rate),
             "note": (
-                f"Sürdürülebilir-büyüme FCFE çapası ({key}): normalize net kâr büyütülür, büyümeyi fonlamak "
-                f"için kârın ~%{reinvestment_rate * 100:.0f}'i (g/ROE, ROE %{roe * 100:.0f}) reinvest edilir, "
-                "kalanı iskonto edilir."
+                f"Sustainable-growth FCFE anchor ({key}): normalized net income is grown; to fund that "
+                f"growth, ~{reinvestment_rate * 100:.0f}% of earnings (g/ROE, ROE {roe * 100:.0f}%) is "
+                "reinvested, and the remainder is discounted."
             ),
         }
     return meta
@@ -4230,7 +4237,7 @@ def _build_fair_value_range(
             not covered by ``scenario_meta``.
         scenario_meta: Optional override, keyed by scenario, of
             ``{"growth": str, "discount_rate": str, "note": str}`` --
-            pre-formatted Turkish strings that should replace the
+            pre-formatted strings that should replace the
             assumptions-derived ones for that scenario (used when the
             headline band's own inputs differ from the standard clamped
             assumptions, e.g. hyper-grower mode's revenue-first DCF; see
@@ -4265,6 +4272,345 @@ def _build_fair_value_range(
             "note": note,
         }
     return result
+
+
+def _entry(role: str, key: str, label_tr: str, reason_tr: str) -> dict:
+    """One ``method_summary`` row (see :func:`_build_method_summary`)."""
+    return {"role": role, "key": key, "label_tr": label_tr, "reason_tr": reason_tr}
+
+
+def _build_method_summary(
+    sector_type: str,
+    hyper_growth_active: bool,
+    hyper_growth_detail: Optional[dict],
+    cyclical_fcfe_headline: bool,
+    cyclical_fcfe_detail: Optional[dict],
+    epv_headline: bool,
+    earnings_power: Optional[dict],
+    normalized_variant: Optional[dict],
+    dcf_scenarios: Optional[dict],
+    mature_revenue_headline: bool,
+    mature_revenue_detail: Optional[dict],
+    midgrowth_revenue_headline: bool,
+    midgrowth_revenue_detail: Optional[dict],
+    rim: Optional[dict],
+    ffo: Optional[dict],
+    output_implied: Optional[float],
+    output_bracket_status: str,
+    multiples_out: dict,
+    altman_z: Optional[dict],
+    beneish_m: Optional[dict],
+    merton_dtd: Optional[dict],
+    lbo_floor_detail: Optional[dict],
+    cycle: Optional[dict],
+) -> List[dict]:
+    """Build the ``method_summary`` output (SPEC.md Sec.8l): a purely
+    additive, packaging-only explanation of WHICH valuation method(s)
+    ``run_valuation`` used for this filer and WHY -- for the report layer's
+    educational "Valuation Methods Used" section.
+
+    This function introduces NO new precedence logic and NO new numeric
+    computation: every classification below re-reads the exact same
+    flags/detail dicts the headline-selection code (immediately above, in
+    ``_run_valuation``) already branched on, in the same order. It is pure
+    packaging of an already-made decision, never a second decision-maker.
+
+    Args:
+        sector_type: The resolved sector bucket (``classify_sector``).
+        hyper_growth_active: Whether the hyper-grower revenue-first DCF is
+            active (``is_hyper_grower and hyper_growth_detail is not None``).
+        hyper_growth_detail: The hyper-grower detail dict, or ``None``.
+        cyclical_fcfe_headline: Whether the cyclical sustainable-growth FCFE
+            anchor won the headline (Sec.8e).
+        cyclical_fcfe_detail: The cyclical FCFE detail dict, or ``None``.
+        epv_headline: Whether the zero-growth EPV anchor won the headline
+            (Sec.8a).
+        earnings_power: The EPV detail dict (mature/cyclical only), or
+            ``None``.
+        normalized_variant: The cyclical cycle-mid normalized FCF-DCF
+            scenarios, or ``None``.
+        dcf_scenarios: The raw (as-reported-FCF) FCF-DCF scenarios, or
+            ``None``.
+        mature_revenue_headline: Whether the mature revenue-first DCF won
+            the headline (Sec.8b).
+        mature_revenue_detail: The mature revenue-first DCF detail dict, or
+            ``None``.
+        midgrowth_revenue_headline: Whether the mid-growth revenue-first DCF
+            won the headline (Sec.8d).
+        midgrowth_revenue_detail: The mid-growth revenue-first DCF detail
+            dict, or ``None``.
+        rim: The financial-sector residual income model detail dict, or
+            ``None``.
+        ffo: The reit-sector FFO Gordon-growth detail dict, or ``None``.
+        output_implied: The (possibly hyper/mature/midgrowth-overridden)
+            reverse-DCF implied growth rate, or ``None``.
+        output_bracket_status: The (possibly overridden) reverse-DCF bracket
+            status string.
+        multiples_out: The already-assembled ``multiples`` output dict (used
+            only to read ``multiples_out["leveraged"]``; not recomputed).
+        altman_z: The Altman Z-score detail dict, or ``None``.
+        beneish_m: The Beneish M-score detail dict, or ``None``.
+        merton_dtd: The Merton distance-to-default detail dict, or ``None``.
+        lbo_floor_detail: The LBO-implied floor detail dict, or ``None``.
+        cycle: The through-cycle/two-regime detail dict, or ``None``.
+
+    Returns:
+        A list of ``{"role", "key", "label_tr", "reason_tr"}`` dicts: exactly
+        one ``"headline"`` entry first, then any ``"secondary"`` entries for
+        methods computed but demoted, then the ``"cross_check"`` entries
+        (reverse-DCF, multiples) when data allows, then ``"advisory"``
+        entries for whichever risk/quality screens are non-``None``. Never
+        raises -- degrades to ``[]`` on any unexpected error (the caller
+        wraps this in its own try/except too, per module discipline).
+    """
+    summary: List[dict] = []
+
+    # --- Headline (exactly one) + its directly-demoted secondaries ---------
+    if hyper_growth_active:
+        if hyper_growth_detail and hyper_growth_detail.get("suppressed"):
+            summary.append(_entry(
+                "headline", "hyper_growth_revenue_dcf", "Hyper-Growth Revenue-First DCF",
+                "The base scenario produced a negative equity value because of excessive growth "
+                "investment (CapEx); the headline range was left empty since the revenue-first DCF "
+                "isn't considered reliable.",
+            ))
+        else:
+            summary.append(_entry(
+                "headline", "hyper_growth_revenue_dcf", "Hyper-Growth Revenue-First DCF",
+                "Since hyper-growth was detected, the headline is based on a revenue-first DCF that "
+                "fades revenue growth and converges to a mature target FCF margin.",
+            ))
+            if dcf_scenarios is not None:
+                summary.append(_entry(
+                    "secondary", "raw_fcf_dcf", "Standard FCF-DCF",
+                    "The standard two-stage free-cash-flow DCF was reported as a secondary "
+                    "cross-check.",
+                ))
+    elif sector_type == "cyclical":
+        if cyclical_fcfe_headline:
+            summary.append(_entry(
+                "headline", "cyclical_fcfe", "Sustainable-Growth FCFE Anchor",
+                "Since free cash flow is suppressed by growth investment (heavy CapEx), the headline "
+                "is based on an FCFE anchor that applies sustainable growth (g/ROE) to mid-cycle "
+                "normalized earnings.",
+            ))
+            if earnings_power is not None:
+                summary.append(_entry(
+                    "secondary", "epv", "Earnings Power Valuation (EPV)",
+                    "The zero-growth earnings-power base was reported as a secondary reference "
+                    "against which the FCFE anchor is measured.",
+                ))
+            if normalized_variant is not None:
+                summary.append(_entry(
+                    "secondary", "cycle_mid_normalized_fcf_dcf", "Mid-Cycle Normalized FCF-DCF",
+                    "The DCF based on mid-cycle normalized FCF was reported as a secondary "
+                    "cross-check.",
+                ))
+            if dcf_scenarios is not None:
+                summary.append(_entry(
+                    "secondary", "raw_fcf_dcf", "Standard FCF-DCF",
+                    "The standard FCF-DCF based on the raw (suppressed) year was reported as "
+                    "secondary.",
+                ))
+        elif epv_headline:
+            summary.append(_entry(
+                "headline", "epv", "Earnings Power Valuation (EPV)",
+                "Since the cyclical + capital-intensive structure keeps free cash flow from "
+                "reflecting earning power, the headline is based on the zero-growth earnings-power "
+                "(EPV) anchor.",
+            ))
+            if normalized_variant is not None:
+                summary.append(_entry(
+                    "secondary", "cycle_mid_normalized_fcf_dcf", "Mid-Cycle Normalized FCF-DCF",
+                    "The mid-cycle normalized FCF-DCF was reported as secondary.",
+                ))
+            if dcf_scenarios is not None:
+                summary.append(_entry(
+                    "secondary", "raw_fcf_dcf", "Standard FCF-DCF",
+                    "The raw (suppressed) standard FCF-DCF was reported as secondary.",
+                ))
+            if cyclical_fcfe_detail is not None:
+                summary.append(_entry(
+                    "secondary", "cyclical_fcfe", "Sustainable-Growth FCFE Anchor",
+                    "The growth-inclusive FCFE was also computed but stayed below the zero-growth "
+                    "EPV base, so the headline was kept at EPV; reported as secondary.",
+                ))
+        elif normalized_variant is not None:
+            summary.append(_entry(
+                "headline", "cycle_mid_normalized_fcf_dcf", "Mid-Cycle Normalized FCF-DCF",
+                "In the cyclical sector, the headline range was anchored on mid-cycle normalized FCF "
+                "instead of a single year's (often near-trough) free cash flow.",
+            ))
+            if dcf_scenarios is not None:
+                summary.append(_entry(
+                    "secondary", "raw_fcf_dcf", "Standard FCF-DCF",
+                    "The raw trough-FCF DCF scenarios were reported as secondary.",
+                ))
+        else:
+            summary.append(_entry(
+                "headline", "raw_fcf_dcf", "Standard FCF-DCF",
+                "Since a normalized alternative couldn't be computed for the cyclical sector, the "
+                "headline is based on the standard free-cash-flow DCF.",
+            ))
+    elif sector_type == "mature":
+        if mature_revenue_headline:
+            summary.append(_entry(
+                "headline", "mature_revenue_dcf", "Mature Revenue-First DCF",
+                "Since free cash flow is suppressed by growth investment, but the realized growth is "
+                "real, the headline is based on a growth-inclusive revenue-first DCF that fades revenue.",
+            ))
+            if earnings_power is not None:
+                summary.append(_entry(
+                    "secondary", "epv", "Earnings Power Valuation (EPV)",
+                    "The zero-growth EPV base was reported as a secondary cross-check.",
+                ))
+            if dcf_scenarios is not None:
+                summary.append(_entry(
+                    "secondary", "raw_fcf_dcf", "Standard FCF-DCF",
+                    "The raw FCF-DCF scenarios were reported as secondary.",
+                ))
+        elif epv_headline:
+            summary.append(_entry(
+                "headline", "epv", "Earnings Power Valuation (EPV)",
+                "Since free cash flow doesn't reflect earning power because of heavy growth investment "
+                "(high CapEx), the headline is based on the zero-growth earnings-power (EPV) anchor.",
+            ))
+            if dcf_scenarios is not None:
+                summary.append(_entry(
+                    "secondary", "raw_fcf_dcf", "Standard FCF-DCF",
+                    "The raw FCF-DCF scenarios were reported as secondary.",
+                ))
+            if mature_revenue_detail is not None:
+                summary.append(_entry(
+                    "secondary", "mature_revenue_dcf", "Mature Revenue-First DCF",
+                    "The growth-inclusive revenue-first DCF was also computed but stayed below the "
+                    "zero-growth EPV base, so the headline was kept at EPV; reported as a secondary "
+                    "cross-check.",
+                ))
+        else:
+            summary.append(_entry(
+                "headline", "raw_fcf_dcf", "Standard FCF-DCF",
+                "Since free cash flow reliably reflects earning power, the headline is based on the "
+                "standard FCF-DCF.",
+            ))
+    elif sector_type == "growth_unprofitable":
+        if midgrowth_revenue_headline:
+            summary.append(_entry(
+                "headline", "midgrowth_revenue_dcf", "Mid-Growth Revenue-First DCF",
+                "Since realized growth is below the hyper-growth threshold but still real (in the "
+                "12-20% band), the headline is based on a revenue-first DCF that fades revenue.",
+            ))
+            if dcf_scenarios is not None:
+                summary.append(_entry(
+                    "secondary", "raw_fcf_dcf", "Standard FCF-DCF",
+                    "The raw FCF-DCF was reported as secondary.",
+                ))
+        else:
+            summary.append(_entry(
+                "headline", "raw_fcf_dcf", "Standard FCF-DCF",
+                "Since the loss-making growth company doesn't clear the revenue-first DCF's growth "
+                "gate, the headline falls back to the standard FCF-DCF whenever it can be computed.",
+            ))
+    elif sector_type == "financial":
+        if rim is not None:
+            summary.append(_entry(
+                "headline", "rim", "Residual Income Model (RIM)",
+                "Since the free-cash-flow DCF isn't reliable in the financial sector, the headline is "
+                "based on the RIM anchor, which combines book value with the present value of residual "
+                "income.",
+            ))
+        else:
+            summary.append(_entry(
+                "headline", "pb_roe", "P/B x ROE Anchor",
+                "Since RIM couldn't be computed in the financial sector, the headline/triangulation "
+                "anchor fell back to P/B x ROE.",
+            ))
+    elif sector_type == "reit":
+        if ffo is not None:
+            summary.append(_entry(
+                "headline", "ffo", "FFO Gordon-Growth Anchor",
+                "Since the free-cash-flow DCF isn't reliable for REITs, the headline is based on the "
+                "FFO (funds from operations)-based Gordon-growth model.",
+            ))
+        else:
+            summary.append(_entry(
+                "headline", "pb_roe", "P/B x ROE Anchor",
+                "Since FFO couldn't be computed for the REIT, the headline/triangulation anchor fell "
+                "back to P/B x ROE.",
+            ))
+    else:
+        summary.append(_entry(
+            "headline", "raw_fcf_dcf", "Standard FCF-DCF",
+            "Since no dedicated alternative method is defined for this sector type, the headline is "
+            "based on the standard FCF-DCF.",
+        ))
+
+    # --- Cross-checks: reverse-DCF + multiples, always attempted ------------
+    if output_implied is not None or output_bracket_status != "no_data":
+        summary.append(_entry(
+            "cross_check", "reverse_dcf", "Reverse DCF (Price-Implied Growth)",
+            "The price-implied growth rate is compared against realized growth to test what the "
+            "market expects from this company.",
+        ))
+
+    leveraged = bool((multiples_out or {}).get("leveraged"))
+    if sector_type == "growth_unprofitable":
+        summary.append(_entry(
+            "cross_check", "multiples", "Multiple Comparison (P/S)",
+            "Since P/E is meaningless for loss-making growth companies, P/S (Price/Sales) was used "
+            "as the primary multiple.",
+        ))
+    elif sector_type == "reit":
+        summary.append(_entry(
+            "cross_check", "multiples", "Multiple Comparison (P/FFO)",
+            "Since GAAP depreciation distorts P/E and book value, P/FFO was used as the primary "
+            "multiple.",
+        ))
+    elif leveraged:
+        summary.append(_entry(
+            "cross_check", "multiples", "Multiple Comparison (EV/EBITDA)",
+            "Since the net-debt/EBITDA ratio is high (leveraged), capital-structure-neutral "
+            "EV/EBITDA was used as the primary multiple.",
+        ))
+    else:
+        summary.append(_entry(
+            "cross_check", "multiples", "Multiple Comparison (P/E)",
+            "P/E was used as the standard primary multiple.",
+        ))
+
+    # --- Advisory screens: informational only, never headline --------------
+    if altman_z is not None:
+        summary.append(_entry(
+            "advisory", "altman_z", "Altman Z-Score",
+            "An informational indicator screening for financial distress/bankruptcy risk; does not "
+            "affect the headline valuation.",
+        ))
+    if beneish_m is not None:
+        summary.append(_entry(
+            "advisory", "beneish_m", "Beneish M-Score",
+            "An informational indicator screening for possible earnings manipulation; does not "
+            "affect the headline valuation.",
+        ))
+    if merton_dtd is not None:
+        summary.append(_entry(
+            "advisory", "merton_dtd", "Merton Distance-to-Default Model",
+            "An informational indicator estimating distance to default from the market price; does "
+            "not affect the headline valuation.",
+        ))
+    if lbo_floor_detail is not None:
+        summary.append(_entry(
+            "advisory", "lbo_floor_detail", "LBO-Implied Floor Value",
+            "Estimates the floor value a leveraged buyout could pay; does not affect the headline "
+            "valuation.",
+        ))
+    if cycle is not None:
+        summary.append(_entry(
+            "advisory", "cycle", "Cycle Position / Two-Regime Valuation",
+            "Shows the company's position in its cycle and a peak/trough two-regime valuation "
+            "reading; does not affect the headline valuation.",
+        ))
+
+    return summary
 
 
 def run_valuation(
@@ -4324,7 +4670,7 @@ def run_valuation(
             the historical archive (see
             :func:`sec_analyzer.valuation.damodaran.load_sector_data`), the
             resulting ``macro_asof`` provenance is copied into the result,
-            and two Turkish notes (macro source + static-multiples caveat)
+            and two notes (macro source + static-multiples caveat)
             are appended. ``None`` leaves behavior unchanged.
         fred_rate: Optional historical risk-free dict (from
             :func:`sec_analyzer.fetch.fred.get_risk_free_asof`), forwarded to
@@ -4338,7 +4684,7 @@ def run_valuation(
 
     Returns:
         The ``valuation`` dict documented in SPEC Sec.11. Every
-        unavailable piece is ``None`` plus a Turkish note in ``notes``.
+        unavailable piece is ``None`` plus a note in ``notes``.
         Never raises.
     """
     try:
@@ -4376,7 +4722,7 @@ def _run_valuation(
 
     is_unprofitable = sector_type == "growth_unprofitable"
     for violation in sanity.validate_assumptions(assumptions, is_unprofitable=is_unprofitable):
-        notes.append(f"Varsayım uyarısı: {violation}")
+        notes.append(f"Assumption warning: {violation}")
 
     # F5: clamp any out-of-range assumption into a sane set and use THAT set
     # for every downstream calculation (DCF, reverse-DCF, sensitivity,
@@ -4424,15 +4770,15 @@ def _run_valuation(
         macro_asof = sector_data["macro_asof"]
         if macro_asof.get("as_of"):
             notes.append(
-                f"Geçmiş tarih (as-of) modu: {macro_asof['as_of']} itibarıyla — "
-                f"ERP kaynağı: {macro_asof['erp_source']}; risksiz faiz kaynağı: "
-                f"{macro_asof['risk_free_source']}; çarpan/beta kaynağı: "
+                f"Historical (as-of) mode: as of {macro_asof['as_of']} -- "
+                f"ERP source: {macro_asof['erp_source']}; risk-free source: "
+                f"{macro_asof['risk_free_source']}; multiple/beta source: "
                 f"{macro_asof.get('multiples_source', 'multiples.csv')}."
             )
         else:
             notes.append(
-                f"Makro kaynaklar — risksiz faiz: {macro_asof['risk_free_source']}; "
-                f"ERP: {macro_asof['erp_source']}; çarpan/beta: "
+                f"Macro sources -- risk-free: {macro_asof['risk_free_source']}; "
+                f"ERP: {macro_asof['erp_source']}; multiple/beta: "
                 f"{macro_asof.get('multiples_source', 'multiples.csv')}."
             )
         # Surface any anachronism warnings (current snapshot substituted for a
@@ -4450,15 +4796,15 @@ def _run_valuation(
     # sector's Cap Ex/Sales ratio -- the multiples-comparison block further
     # down reuses this same `sector_medians_result` instead of recomputing it.
     if sector_data is None:
-        notes.append("Damodaran sektör verisi bulunamadı; sektör medyanları gösterilemiyor.")
+        notes.append("Damodaran sector data not found; sector medians cannot be shown.")
         sector_medians_result = None
     elif not sic_description:
-        notes.append("SIC açıklaması sağlanmadığı için Damodaran sektör medyanları eşleştirilemedi.")
+        notes.append("Damodaran sector medians could not be matched because no SIC description was provided.")
         sector_medians_result = None
     else:
         sector_medians_result = damodaran.sector_medians(sector_data, sic_description)
         if sector_medians_result is None:
-            notes.append("Şirketin SIC açıklaması Damodaran sektörleriyle eşleştirilemedi.")
+            notes.append("The company's SIC description could not be matched to a Damodaran sector.")
 
     sector_capex_sales = (sector_medians_result or {}).get("capex_sales")
 
@@ -4468,7 +4814,7 @@ def _run_valuation(
     # real gap in the multiples-comparison block below -- Damodaran's own
     # multiples.csv carries no EV/EBITDA sector median at all, so a leveraged
     # filer's axis-b comparison was previously always disabled for its
-    # primary (FD/FAVÖK) multiple; precedent-transaction EV/EBITDA medians
+    # primary (EV/EBITDA) multiple; precedent-transaction EV/EBITDA medians
     # can fill that in when the operator has curated the data.
     precedent_deals = precedent_transactions.load_precedent_transactions(
         precedent_transactions_dir if precedent_transactions_dir is not None else Config.PRECEDENT_TRANSACTIONS_DIR
@@ -4490,14 +4836,14 @@ def _run_valuation(
     if not dcf_enabled:
         if sector_type == "reit":
             disabled_reason = (
-                "GYO (REIT) şirketlerde serbest nakit akışı DCF'i güvenilir değildir; bunun yerine FFO "
-                "(funds from operations) bazlı Gordon büyüme modeli kullanılıyor (FFO hesaplanamazsa "
-                "P/B x ROE çapasına geri dönülür)."
+                "The free-cash-flow DCF isn't reliable for REITs; the FFO (funds from operations)-based "
+                "Gordon-growth model is used instead (falling back to the P/B x ROE anchor if FFO can't "
+                "be computed)."
             )
         else:
             disabled_reason = (
-                "Finansal şirketlerde serbest nakit akışı DCF'i güvenilir değildir; "
-                "bunun yerine P/B x ROE çapası kullanılıyor."
+                "The free-cash-flow DCF isn't reliable for financial companies; the P/B x ROE anchor is "
+                "used instead."
             )
 
     dcf_scenarios = None
@@ -4506,7 +4852,7 @@ def _run_valuation(
         dcf_scenarios, dcf_notes, dcf_high_growth_flag = _build_dcf_scenarios(assumptions, fcf0, shares, dilution_rate)
         notes.extend(dcf_notes)
         if dcf_scenarios is None and fcf0 is not None:
-            notes.append("DCF hesaplanamadı: geçerli bir hisse sayısı (shares) yok.")
+            notes.append("DCF could not be computed: no valid share count.")
 
     normalized_variant = None
     normalized_fcf0 = None
@@ -4543,8 +4889,8 @@ def _run_valuation(
             pb_roe, pb_notes = _build_pb_roe(assumptions, normalized, metrics, ratios)
             notes.extend(pb_notes)
             notes.append(
-                "Finansal sektörde RIM (kazanç-gücü/özkaynak bileşik modeli) hesaplanamadı; "
-                "manşet/üçgenleme çapası olarak P/B x ROE'ye geri dönüldü."
+                "RIM (the earnings-power/equity composite model) could not be computed in the financial "
+                "sector; the headline/triangulation anchor fell back to P/B x ROE."
             )
     elif sector_type == "reit":
         ffo, ffo_notes = _build_ffo(assumptions, normalized, metrics, ratios)
@@ -4553,8 +4899,8 @@ def _run_valuation(
             pb_roe, pb_notes = _build_pb_roe(assumptions, normalized, metrics, ratios)
             notes.extend(pb_notes)
             notes.append(
-                "GYO (REIT) için FFO hesaplanamadı; manşet/üçgenleme çapası olarak P/B x ROE'ye "
-                "geri dönüldü."
+                "FFO could not be computed for the REIT; the headline/triangulation anchor fell back "
+                "to P/B x ROE."
             )
 
     # The active anchor for THIS sector's headline/triangulation purposes:
@@ -4643,8 +4989,8 @@ def _run_valuation(
         else:
             primary_dcf_scenarios = hyper_growth_detail["scenarios"]
             notes.append(
-                "Hiper-büyüme modu: manşet aralığı revenue-first DCF'ten (büyüme fade + olgun hedef marj) "
-                "alındı; standart FCF-DCF ikincil olarak 'dcf.scenarios'ta."
+                "Hyper-growth mode: the headline range came from the revenue-first DCF (growth fade + "
+                "mature target margin); the standard FCF-DCF is secondary, in 'dcf.scenarios'."
             )
     elif sector_type == "cyclical":
         # Gate: is the raw (near-trough / capex-suppressed) FCF-DCF unreliable
@@ -4676,10 +5022,11 @@ def _run_valuation(
                 cyclical_fcfe_headline = True
                 notes.extend(cf_notes)
                 notes.append(
-                    "Döngüsel + sermaye-yoğun: serbest nakit akışı büyüme yatırımıyla (yüksek CapEx) "
-                    "bastırıldığı için manşet, döngü-ortası normalize kazanca sürdürülebilir-büyüme "
-                    "(reinvestment=g/ROE) uygulayan bir FCFE çapasına dayandırıldı. Sıfır-büyüme EPV "
-                    "tabanı, döngü-ortası FCF-DCF ve ham FCF-DCF ikincil olarak raporlanır."
+                    "Cyclical + capital-intensive: since free cash flow is suppressed by growth "
+                    "investment (heavy CapEx), the headline is based on an FCFE anchor applying "
+                    "sustainable growth (reinvestment=g/ROE) to mid-cycle normalized earnings. The "
+                    "zero-growth EPV base, the mid-cycle FCF-DCF, and the raw FCF-DCF are reported "
+                    "as secondary."
                 )
             else:
                 # FCFE couldn't clear the EPV floor (or wasn't buildable): headline
@@ -4690,26 +5037,27 @@ def _run_valuation(
                 epv_headline = True
                 notes.extend(ep_notes)
                 notes.append(
-                    "Döngüsel + sermaye-yoğun: serbest nakit akışı büyüme yatırımı nedeniyle kazanç "
-                    "gücünü yansıtmıyor; manşet sıfır-büyüme kazanç-gücü (EPV) çapasına dayandırıldı. "
-                    "Döngü-ortası ve ham FCF-DCF ikincil olarak raporlanır."
+                    "Cyclical + capital-intensive: free cash flow doesn't reflect earning power because "
+                    "of growth investment; the headline is based on the zero-growth earnings-power (EPV) "
+                    "anchor. The mid-cycle and raw FCF-DCF are reported as secondary."
                 )
                 if cyclical_fcfe_detail is not None and _is_number(cf_base_ps) and _is_number(epv_base_ps):
                     notes.append(
-                        f"Not: Büyüme-dahil sürdürülebilir-büyüme FCFE de hesaplandı (baz ${cf_base_ps:,.2f}) ancak "
-                        f"sıfır-büyüme EPV tabanının (${epv_base_ps:,.2f}) altında kaldığı için manşet EPV'de "
-                        "tutuldu; bu, normalize ROE'nin özkaynak maliyetinin ALTINDA olduğunu — yani büyümenin değer "
-                        "YARATMADIĞINI (değer sildiğini) — gösterir. Büyüme-dahil FCFE 'cyclical_fcfe_detail' altında "
-                        "ikincil olarak raporlanır."
+                        f"Note: the growth-inclusive sustainable-growth FCFE was also computed (base "
+                        f"${cf_base_ps:,.2f}) but stayed below the zero-growth EPV base "
+                        f"(${epv_base_ps:,.2f}), so the headline was kept at EPV; this shows that normalized "
+                        "ROE is BELOW the cost of equity -- i.e. growth is NOT CREATING value (it's "
+                        "destroying it). The growth-inclusive FCFE is reported as secondary under "
+                        "'cyclical_fcfe_detail'."
                     )
         elif normalized_variant is not None:
             # FCF is NOT capex-suppressed for this cyclical: keep the existing
             # cycle-mid normalized FCF-DCF headline (unchanged behavior).
             primary_dcf_scenarios = normalized_variant
             notes.append(
-                "Döngüsel sektör: manşet makul değer aralığı, tek bir yılın (çoğu zaman dibe yakın) "
-                "serbest nakit akışı yerine döngü-ortası normalize edilmiş FCF'e dayandırıldı; "
-                "ham dip-FCF DCF senaryoları ayrıca 'dcf.scenarios' altında raporlanıyor."
+                "Cyclical sector: the headline fair-value range was anchored on mid-cycle normalized FCF "
+                "instead of a single year's (often near-trough) free cash flow; the raw trough-FCF DCF "
+                "scenarios are also reported under 'dcf.scenarios'."
             )
     elif sector_type == "mature" and earnings_power is not None:
         unreliable, quality_note = _fcf_dcf_unreliable(dcf_scenarios, earnings_power, normalized, metrics)
@@ -4751,13 +5099,13 @@ def _run_valuation(
                 mature_revenue_headline = True
                 notes.extend(mr_notes)
                 target_pct = mature_revenue_detail.get("target_margin_base")
-                target_pct_str = f"%{target_pct * 100:.1f}" if _is_number(target_pct) else "—"
+                target_pct_str = f"{target_pct * 100:.1f}%" if _is_number(target_pct) else "—"
                 epv_base_str = f"${epv_base_ps:,.2f}" if _is_number(epv_base_ps) else "—"
                 notes.append(
-                    "Serbest nakit akışı büyüme yatırımıyla bastırıldığı için manşet, geliri fade eden ve "
-                    f"FCF marjını olgun bir hedefe ({target_pct_str}) yakınsayan büyüme-dahil bir revenue-first "
-                    f"DCF'e dayandırıldı. Sıfır-büyüme EPV tabanı ({epv_base_str}) ve ham FCF-DCF ikincil "
-                    "olarak raporlanır."
+                    "Since free cash flow is suppressed by growth investment, the headline is based on a "
+                    f"growth-inclusive revenue-first DCF that fades revenue and converges the FCF margin "
+                    f"toward a mature target ({target_pct_str}). The zero-growth EPV base ({epv_base_str}) "
+                    "and the raw FCF-DCF are reported as secondary."
                 )
             else:
                 # Either the growth gate didn't clear / data was missing
@@ -4772,19 +5120,20 @@ def _run_valuation(
                 # noise about a value the reader isn't being shown (reviewer F1).
                 notes.extend(ep_notes)
                 notes.append(
-                    "Bu şirkette serbest nakit akışı büyük büyüme yatırımı (yüksek CapEx) nedeniyle kazanç "
-                    "gücünü yansıtmıyor; manşet makul değer aralığı sıfır-büyüme kazanç-gücü (EPV) çapasına "
-                    "dayandırıldı. Ham FCF-DCF senaryoları ikincil olarak 'dcf.scenarios' altında raporlanıyor. "
-                    "NOT: EPV, büyüme primini KASITLI dışlayan muhafazakâr bir tabandır; fiyatın ima ettiği "
-                    "büyümeyi ters-DCF ölçer."
+                    "For this company, free cash flow doesn't reflect earning power because of heavy "
+                    "growth investment (high CapEx); the headline fair-value range is based on the "
+                    "zero-growth earnings-power (EPV) anchor. The raw FCF-DCF scenarios are reported as "
+                    "secondary under 'dcf.scenarios'. NOTE: EPV is a conservative base that DELIBERATELY "
+                    "excludes the growth premium; the reverse-DCF measures the price-implied growth."
                 )
                 if mature_revenue_detail is not None and _is_number(mr_base_ps) and _is_number(epv_base_ps):
                     notes.append(
-                        f"Not: Büyüme-dahil revenue-first DCF de hesaplandı (baz ${mr_base_ps:,.2f}) ancak "
-                        f"sıfır-büyüme EPV tabanının (${epv_base_ps:,.2f}) altında kaldığı için manşet EPV'de "
-                        "tutuldu; bu, şirketin savunulabilir olgun FCF marjının kapitalize edilen kazancından "
-                        "ince olduğunu gösterir. Revenue-first band 'mature_revenue_detail' altında ikincil "
-                        "çapraz-kontrol olarak raporlanır."
+                        f"Note: the growth-inclusive revenue-first DCF was also computed (base "
+                        f"${mr_base_ps:,.2f}) but stayed below the zero-growth EPV base "
+                        f"(${epv_base_ps:,.2f}), so the headline was kept at EPV; this shows that the "
+                        "company's defensible mature FCF margin is thinner than its capitalized earnings. "
+                        "The revenue-first band is reported as a secondary cross-check under "
+                        "'mature_revenue_detail'."
                     )
     elif sector_type == "growth_unprofitable" and not hyper_growth_active:
         # Mid-growth loss-maker revenue-first DCF (Roadmap Madde 2 / SPEC
@@ -4811,12 +5160,12 @@ def _run_valuation(
             midgrowth_revenue_headline = True
             notes.extend(mg_notes)
             target_pct = midgrowth_revenue_detail.get("target_margin_base")
-            target_pct_str = f"%{target_pct * 100:.1f}" if _is_number(target_pct) else "—"
+            target_pct_str = f"{target_pct * 100:.1f}%" if _is_number(target_pct) else "—"
             notes.append(
-                "Orta-büyüme zarar eden şirket: manşet, geliri fade eden ve FCF marjını olgun bir hedefe "
-                f"({target_pct_str}) yakınsayan bir revenue-first DCF'e dayandırıldı (gerçekleşen büyüme "
-                "%12-20 bandında, hiper-büyüme eşiğinin altında). Ham FCF-DCF ve çarpanlar ikincil olarak "
-                "raporlanır."
+                "Mid-growth loss-making company: the headline is based on a revenue-first DCF that fades "
+                f"revenue and converges the FCF margin toward a mature target ({target_pct_str}) (realized "
+                "growth in the 12-20% band, below the hyper-growth threshold). The raw FCF-DCF and "
+                "multiples are reported as secondary."
             )
         else:
             # Method not built / gate rejected / suppressed: surface its
@@ -4858,13 +5207,13 @@ def _run_valuation(
     # target price entirely rather than just "not converge" -- distinguish
     # that case (and its direction) from a genuine no-data situation.
     if bracket_status in ("above_bracket", "below_bracket"):
-        direction_word = "üzerinde" if bracket_status == "above_bracket" else "altında"
+        direction_word = "above" if bracket_status == "above_bracket" else "below"
         notes.append(
-            f"Fiyat, ters-DCF aralığının (%{reverse_dcf._BRACKET_LO * 100:.0f}.."
-            f"%{reverse_dcf._BRACKET_HI * 100:.0f}) {direction_word} bir büyüme ima ediyor."
+            f"The price implies growth {direction_word} the reverse-DCF bracket "
+            f"({reverse_dcf._BRACKET_LO * 100:.0f}%..{reverse_dcf._BRACKET_HI * 100:.0f}%)."
         )
     elif implied is None:
-        notes.append("Ters DCF (fiyatın ima ettiği büyüme) hesaplanamadı.")
+        notes.append("Reverse DCF (price-implied growth) could not be computed.")
 
     # F6: the reverse-DCF reference growth rate must match what the implied
     # growth rate actually represents -- FCF growth in standard mode (since
@@ -4894,7 +5243,7 @@ def _run_valuation(
 
         output_implied = hyper_implied_growth
         output_realized_cagr = revenue_cagr
-        output_realized_label = f"gelir {revenue_cagr_label}" if revenue_cagr_label else None
+        output_realized_label = f"revenue {revenue_cagr_label}" if revenue_cagr_label else None
         # revenue_dcf.implied_start_growth doesn't expose a bracket-boundary
         # status the way reverse_dcf.implied_growth_with_status does (its
         # bracket is also wider, -20%..+60%); rather than guess the
@@ -4920,13 +5269,13 @@ def _run_valuation(
         )
         if mature_implied_growth is None:
             notes.append(
-                "Olgun revenue-first DCF: fiyatın ima ettiği başlangıç büyüme oranı hesaplanamadı "
-                "(fiyat, makul büyüme aralığının dışında bir beklenti ima ediyor olabilir)."
+                "Mature revenue-first DCF: the price-implied start growth rate could not be computed "
+                "(the price may imply an expectation outside a plausible growth range)."
             )
 
         output_implied = mature_implied_growth
         output_realized_cagr = revenue_cagr
-        output_realized_label = f"gelir {revenue_cagr_label}" if revenue_cagr_label else None
+        output_realized_label = f"revenue {revenue_cagr_label}" if revenue_cagr_label else None
         # Mirrors the hyper-grower branch: no bracket-boundary status is
         # exposed by revenue_dcf.implied_start_growth, so this defaults to
         # "ok" (a missing implied growth already gets its own note above).
@@ -4953,19 +5302,19 @@ def _run_valuation(
         )
         if mg_implied_growth is None:
             notes.append(
-                "Orta-büyüme revenue-first DCF: fiyatın ima ettiği başlangıç büyüme oranı hesaplanamadı "
-                "(fiyat, makul büyüme aralığının dışında bir beklenti ima ediyor olabilir)."
+                "Mid-growth revenue-first DCF: the price-implied start growth rate could not be computed "
+                "(the price may imply an expectation outside a plausible growth range)."
             )
 
         output_implied = mg_implied_growth
         output_realized_cagr = revenue_cagr
-        output_realized_label = f"gelir {revenue_cagr_label}" if revenue_cagr_label else None
+        output_realized_label = f"revenue {revenue_cagr_label}" if revenue_cagr_label else None
         output_bracket_status = "ok"
 
     # --- Multiples ---------------------------------------------------------
     history = multiples.multiples_history(normalized, price_df)
     if price_df is None or getattr(price_df, "empty", True):
-        notes.append("Fiyat geçmişi alınamadığı için çarpan tarihçesi hesaplanamadı.")
+        notes.append("Multiple history could not be computed because price history is unavailable.")
     ev_applicable = sector_type not in _SECTORS_WITHOUT_EV
     current, current_notes = _derive_current_multiples(
         normalized, ratios, metrics, price, suppress_ev=not ev_applicable
@@ -5070,7 +5419,7 @@ def _run_valuation(
         # P/E fallbacks stay in the list only so a filer with no usable
         # EV/EBITDA history still resolves a primary further down.
         _ratio_candidates = (
-            (ev_ebitda_pct, "FD/FAVÖK", current.get("ev_ebitda"), sector_info["ev_ebitda_median"]),
+            (ev_ebitda_pct, "EV/EBITDA", current.get("ev_ebitda"), sector_info["ev_ebitda_median"]),
             (pe_pct, "P/E", current.get("pe"), sector_info["pe_median"]),
             (ps_pct, "P/S", current.get("ps"), sector_info["ps_median"]),
             (pfcf_pct, "P/FCF", current.get("pfcf"), sector_info["pfcf_median"]),
@@ -5125,15 +5474,15 @@ def _run_valuation(
         cycle = cyclical.two_regime_valuation(cycle_stats, metrics, price)
         if cycle is None and cycle_stats is None:
             notes.append(
-                "Döngü konumu hesaplanamadı: through-cycle istatistiği için yeterli "
-                "yıllık net marj verisi yok (en az 6 mali yıl gerekir)."
+                "Cycle position could not be computed: not enough annual net-margin data for a "
+                "through-cycle statistic (at least 6 fiscal years are required)."
             )
         elif cycle is not None:
             if cycle["stats"].get("window_short"):
                 notes.append(
-                    f"Döngü istatistiği yalnızca {cycle['stats']['years']} mali yıl üzerinden "
-                    "hesaplandı; bu pencere bir döngüyü kapsar ama HANGİ döngüyü yakaladığı "
-                    "ortalamayı belirler. Daha geniş bir taban için `--years 12` ile çalıştırın."
+                    f"The cycle statistic was computed over only {cycle['stats']['years']} fiscal years; "
+                    "this window spans one cycle, but WHICH cycle it caught dominates the average. Run "
+                    "with `--years 12` for a wider base."
                 )
             notes.append(cycle["verdict_sentence"])
 
@@ -5169,7 +5518,7 @@ def _run_valuation(
         headline_fcf0 = normalized_fcf0
     sensitivity_out = sensitivity.sensitivity_matrix(base_assumptions, headline_fcf0, shares, dilution_rate)
     if sensitivity_out is None and headline_fcf0 is not None and shares:
-        notes.append("Duyarlılık matrisi hesaplanamadı.")
+        notes.append("The sensitivity matrix could not be computed.")
 
     # F(2026-07 refinement, Fix D): for cyclical filers, `headline_fcf0`
     # above became `normalized_fcf0` (the cycle-mid normalized FCF-DCF base)
@@ -5181,45 +5530,43 @@ def _run_valuation(
     # as the same raw FCF-DCF base.
     if epv_headline and sector_type == "cyclical":
         notes.append(
-            "Duyarlılık tablosu döngü-ortası normalize FCF-DCF tabanını, ters-DCF ise ham (baskılanmış) "
-            "FCF tabanını yansıtır; ikisi de manşet EPV çapasından farklıdır ve serbest nakit akışının "
-            "neden düşük olduğunu gösteren kanıt olarak korunur."
+            "The sensitivity table reflects the mid-cycle normalized FCF-DCF base, and the reverse-DCF "
+            "reflects the raw (suppressed) FCF base; both differ from the headline EPV anchor and are "
+            "kept as evidence showing why free cash flow is low."
         )
         notes.append(
-            "NOT: Bu çapa, kazanç tabanını son temsili (kârlı) yıllardan alır ve şiddetli döngü diplerini "
-            "(ör. bir bellek-glut zarar yılı) tekrar etmeyecek istisna olarak DIŞLAR (yapısal re-rating "
-            "varsayımı). Dipleri döngünün kalıcı parçası sayan tam-döngü ortalaması, değeri belirgin "
-            "biçimde düşürür."
+            "NOTE: this anchor takes the earnings base from the most recent representative (profitable) "
+            "years and EXCLUDES severe cycle troughs (e.g. a memory-glut loss year) as an exception "
+            "unlikely to repeat (a structural re-rating assumption). A full-cycle average that treats "
+            "troughs as a permanent part of the cycle would materially lower the value."
         )
     elif epv_headline:
         notes.append(
-            "Duyarlılık tablosu ve ters-DCF, manşet EPV çapasını değil, ikincil (baskılanmış) FCF-DCF "
-            "tabanını yansıtır; serbest nakit akışının neden düşük olduğunu gösteren kanıt olarak "
-            "korunmuştur."
+            "The sensitivity table and reverse-DCF reflect the secondary (suppressed) FCF-DCF base, not "
+            "the headline EPV anchor; kept as evidence showing why free cash flow is low."
         )
     elif cyclical_fcfe_headline:
         notes.append(
-            "Duyarlılık tablosu döngü-ortası normalize FCF-DCF tabanını, ters-DCF ise ham (baskılanmış) "
-            "FCF tabanını yansıtır; ikisi de manşet FCFE çapasından farklıdır ve serbest nakit akışının "
-            "neden düşük olduğunu gösteren kanıt olarak korunur."
+            "The sensitivity table reflects the mid-cycle normalized FCF-DCF base, and the reverse-DCF "
+            "reflects the raw (suppressed) FCF base; both differ from the headline FCFE anchor and are "
+            "kept as evidence showing why free cash flow is low."
         )
         notes.append(
-            "NOT: Bu çapa, kazanç tabanını son temsili (kârlı) yıllardan alır ve şiddetli döngü diplerini "
-            "(ör. bir bellek-glut zarar yılı) tekrar etmeyecek istisna olarak DIŞLAR (yapısal re-rating "
-            "varsayımı). Dipleri döngünün kalıcı parçası sayan tam-döngü ortalaması, değeri belirgin "
-            "biçimde düşürür."
+            "NOTE: this anchor takes the earnings base from the most recent representative (profitable) "
+            "years and EXCLUDES severe cycle troughs (e.g. a memory-glut loss year) as an exception "
+            "unlikely to repeat (a structural re-rating assumption). A full-cycle average that treats "
+            "troughs as a permanent part of the cycle would materially lower the value."
         )
     elif mature_revenue_headline:
         notes.append(
-            "Duyarlılık tablosu, manşet olgun revenue-first DCF'i değil, ikincil (baskılanmış) FCF-DCF "
-            "tabanını yansıtır; serbest nakit akışının neden düşük olduğunu gösteren kanıt olarak "
-            "korunmuştur."
+            "The sensitivity table reflects the secondary (suppressed) FCF-DCF base, not the headline "
+            "mature revenue-first DCF; kept as evidence showing why free cash flow is low."
         )
     elif midgrowth_revenue_headline:
         notes.append(
-            "Duyarlılık tablosu, manşet orta-büyüme revenue-first DCF'i değil, ikincil FCF-DCF tabanını "
-            "yansıtır; büyüme-fade modeli için standart büyüme±2pp ızgarası uygulanamadığından FCF-DCF "
-            "ızgarası kanıt olarak korunmuştur."
+            "The sensitivity table reflects the secondary FCF-DCF base, not the headline mid-growth "
+            "revenue-first DCF; the standard growth+/-2pp grid doesn't apply to the growth-fade model, so "
+            "the FCF-DCF grid is kept as evidence."
         )
 
     # --- Triangulation -------------------------------------------------------
@@ -5284,6 +5631,26 @@ def _run_valuation(
         lbo_floor_detail, lbo_notes = _build_lbo_floor(metrics, fcf0)
         notes.extend(lbo_notes)
 
+    # --- Method summary (SPEC.md Sec.8l) ------------------------------------
+    # Purely additive packaging of the headline/secondary/cross-check/advisory
+    # decisions already made above -- no new precedence logic, no new numeric
+    # computation. Isolated in its own try/except (rather than relying on
+    # run_valuation's outer catch-all) so a bug here degrades to an empty
+    # list instead of discarding the entire, already-computed valuation.
+    try:
+        method_summary = _build_method_summary(
+            sector_type, hyper_growth_active, hyper_growth_detail,
+            cyclical_fcfe_headline, cyclical_fcfe_detail,
+            epv_headline, earnings_power, normalized_variant, dcf_scenarios,
+            mature_revenue_headline, mature_revenue_detail,
+            midgrowth_revenue_headline, midgrowth_revenue_detail,
+            rim, ffo, output_implied, output_bracket_status, multiples_out,
+            altman_z, beneish_m, merton_dtd, lbo_floor_detail, cycle,
+        )
+    except Exception:  # noqa: BLE001 - method_summary must never crash the CLI
+        logger.exception("method_summary derivation failed unexpectedly; degrading to an empty list.")
+        method_summary = []
+
     return {
         "sector_type": sector_type,
         "fcf0": fcf0,
@@ -5323,6 +5690,7 @@ def _run_valuation(
         "merton_dtd": merton_dtd,
         "lbo_floor_detail": lbo_floor_detail,
         "cycle": cycle,
+        "method_summary": method_summary,
         "assumptions": assumptions,
         "notes": notes,
         # Present on live runs too (``as_of: None`` inside marks them) so the

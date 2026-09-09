@@ -274,13 +274,13 @@ def detect_hyper_grower(metrics: dict, ratios: List[dict], normalized: dict) -> 
     back to 3-year):
 
     - **Strong tier** -- CAGR strictly above 25% AND at least one of:
-        (a) latest-FY FCF is zero or negative ("FCF negatif veya sıfır");
-        (b) latest-FY FCF margin is strictly below 5% ("FCF marjı %5'in
-            altında (bastırılmış nakit akışı)");
+        (a) latest-FY FCF is zero or negative ("FCF is zero or negative");
+        (b) latest-FY FCF margin is strictly below 5% ("FCF margin is below
+            5% (suppressed cash flow)");
         (c) R&D + SBC as a fraction of revenue (an S&M proxy -- no
             standalone S&M line exists in the normalized concepts) is
-            strictly above 40% ("Ar-Ge + SBC / gelir %40'ı aşıyor (agresif
-            büyüme yatırımı)").
+            strictly above 40% ("R&D + SBC / revenue exceeds 40% (aggressive
+            growth investment)").
       Exactly 25% CAGR does NOT qualify for the strong tier (see gray zone
       below); FCF margin exactly 5% and opex intensity exactly 40% do NOT
       trigger their respective clause.
@@ -344,16 +344,16 @@ def detect_hyper_grower(metrics: dict, ratios: List[dict], normalized: dict) -> 
 
         clause_reasons = []
         if clause_a:
-            clause_reasons.append("FCF negatif veya sıfır")
+            clause_reasons.append("FCF is zero or negative")
         if clause_b:
-            clause_reasons.append("FCF marjı %5'in altında (bastırılmış nakit akışı)")
+            clause_reasons.append("FCF margin is below 5% (suppressed cash flow)")
         if clause_c:
-            clause_reasons.append("Ar-Ge + SBC / gelir %40'ı aşıyor (agresif büyüme yatırımı)")
+            clause_reasons.append("R&D + SBC / revenue exceeds 40% (aggressive growth investment)")
 
         if realized_cagr > _HYPER_GROWTH_CAGR_THRESHOLD:
             if not any_clause:
                 return False, []
-            reasons = [f"Gelir CAGR %{realized_cagr * 100:.1f} (>%25)"] + clause_reasons
+            reasons = [f"Revenue CAGR {realized_cagr * 100:.1f}% (>25%)"] + clause_reasons
             return True, reasons
 
         if realized_cagr > _HYPER_GROWTH_CAGR_GRAY_ZONE_MIN:
@@ -362,8 +362,8 @@ def detect_hyper_grower(metrics: dict, ratios: List[dict], normalized: dict) -> 
             if not (any_clause and high_ps):
                 return False, []
             reasons = [
-                f"Gelir CAGR %{realized_cagr * 100:.1f} (gri bölge %20-25) ve yüksek P/S "
-                f"({ps:.1f}x) — piyasa güçlü büyüme fiyatlıyor"
+                f"Revenue CAGR {realized_cagr * 100:.1f}% (gray zone 20-25%) and high P/S "
+                f"({ps:.1f}x) — the market is pricing in strong growth"
             ] + clause_reasons
             return True, reasons
 

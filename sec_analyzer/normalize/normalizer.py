@@ -566,11 +566,13 @@ def _records_to_fy_map(records: Optional[List[dict]]) -> Dict[int, float]:
 
 
 def _format_usd_tr(value: float) -> str:
-    """Format a USD amount for a Turkish user-facing note (comma decimal)."""
+    """Format a USD amount for a user-facing note (decimal-comma grouping is
+    kept unchanged per this translation pass's rule to preserve existing
+    number formatting)."""
     if abs(value) >= 1e9:
-        scaled, suffix = value / 1e9, "Mr$"
+        scaled, suffix = value / 1e9, "B$"
     elif abs(value) >= 1e6:
-        scaled, suffix = value / 1e6, "Mn$"
+        scaled, suffix = value / 1e6, "M$"
     else:
         scaled, suffix = value, "$"
     return f"{scaled:,.2f} {suffix}".replace(",", "\x00").replace(".", ",").replace("\x00", ".")
@@ -695,18 +697,18 @@ def _apply_net_revenue_basis(
         if worst_fy is not None:
             gap_pct = f"{divergence[worst_fy] * 100:.1f}".replace(".", ",")
             result["note"] = (
-                f"Gelir bazı düzeltildi: FY{worst_fy} için raporlanan gelir etiketi "
-                f"{_format_usd_tr(reported[worst_fy])} gösterirken faiz gideri düşülmüş "
-                f"net gelir {_format_usd_tr(net[worst_fy])}; aradaki sapma %{gap_pct}. "
-                "Finansal kuruluşlarda doğru baz net gelirdir; tüm gelir türevli "
-                "oranlar net gelir üzerinden hesaplandı."
+                f"Revenue basis corrected: for FY{worst_fy}, the reported revenue tag "
+                f"shows {_format_usd_tr(reported[worst_fy])} while net revenue (interest "
+                f"expense deducted) is {_format_usd_tr(net[worst_fy])}; the gap is "
+                f"%{gap_pct}. For financial institutions, the correct basis is net "
+                "revenue; all revenue-derived ratios were computed on net revenue."
             )
         else:
             result["note"] = (
-                "Gelir bazı düzeltildi: raporlanan gelir etiketi kullanılabilir veri "
-                "içermediği için faiz gideri düşülmüş net gelir esas alındı. Finansal "
-                "kuruluşlarda doğru baz net gelirdir; tüm gelir türevli oranlar net "
-                "gelir üzerinden hesaplandı."
+                "Revenue basis corrected: since the reported revenue tag contained no "
+                "usable data, net revenue (interest expense deducted) was used instead. "
+                "For financial institutions, the correct basis is net revenue; all "
+                "revenue-derived ratios were computed on net revenue."
             )
         return result
     except Exception:
@@ -913,6 +915,53 @@ def to_quarterly_series(normalized: dict, concept: str) -> List[dict]:
                 out.append({"period_end": q4_pe, "value": q4, "derived": True})
 
     out.sort(key=lambda x: x["period_end"])
+    return out
+
+
+def quarterly_ratio_series(normalized: dict, numerator_concept: str, denominator_concept: str) -> List[dict]:
+    """Quarterly ``numerator/denominator`` ratio (percent) series, aligned by
+    quarter, ascending.
+
+    Generalizes the numerator/``Revenue`` margin-ratio shape (originally
+    hardcoded in ``sec_analyzer.signals.momentum._margin_series``) to an
+    arbitrary denominator, so the same machinery covers margins (denominator
+    ``Revenue``) and ROE (denominator ``StockholdersEquity``) alike. Both
+    series come from :func:`to_quarterly_series`, so a flow numerator (e.g.
+    ``NetIncome``) is reconstructed into true single-quarter values while an
+    instant/balance denominator (e.g. ``StockholdersEquity``) is used as its
+    point-in-time, end-of-quarter value -- matching the annual ratio
+    convention in ``sec_analyzer.normalize.ratios`` (end-of-period equity,
+    not an average).
+
+    Args:
+        normalized: The dict returned by :func:`normalize_facts`.
+        numerator_concept: Canonical concept name for the ratio's numerator
+            (e.g. ``"NetIncome"``, ``"GrossProfit"``).
+        denominator_concept: Canonical concept name for the ratio's
+            denominator (e.g. ``"Revenue"``, ``"StockholdersEquity"``).
+
+    Returns:
+        Ascending ``[{"period_end": str, "value": float}, ...]``, ``value``
+        being the ratio as a percent (e.g. ``23.4`` for 23.4%), rounded to 2
+        decimals. A quarter is only included when both series have a value
+        for that ``period_end`` and the denominator is strictly positive (a
+        zero/negative denominator makes the ratio undefined or meaningless,
+        e.g. negative equity); ``[]`` if either series is missing entirely.
+        Pure and never raises on well-formed input.
+    """
+    numerator = to_quarterly_series(normalized, numerator_concept)
+    denominator = to_quarterly_series(normalized, denominator_concept)
+    denom_by_pe = {q["period_end"]: q["value"] for q in denominator if q.get("period_end") is not None}
+    out: List[dict] = []
+    for q in numerator:
+        pe = q.get("period_end")
+        num_v = q.get("value")
+        if pe is None or num_v is None or pe not in denom_by_pe:
+            continue
+        denom_v = denom_by_pe[pe]
+        if denom_v is None or denom_v <= 0:
+            continue
+        out.append({"period_end": pe, "value": round(float(num_v) / float(denom_v) * 100.0, 2)})
     return out
 
 

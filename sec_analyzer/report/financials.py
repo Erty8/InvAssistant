@@ -1,5 +1,5 @@
 """Serialize normalized SEC financials into the compact payload the report
-template's "Bilanço" (balance-sheet) tab consumes.
+template's "Balance sheet" tab consumes.
 
 This is shared by both entry points that render the unified verdict-card
 template so they stay in sync by construction:

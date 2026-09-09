@@ -89,9 +89,9 @@ logger = logging.getLogger(__name__)
 
 #: Selectable investment horizons shown in the UI, as (value, label) pairs.
 _HORIZONS = [
-    ("3m", "3 ay"),
-    ("1y", "1 yıl"),
-    ("5y", "5 yıl"),
+    ("3m", "3 months"),
+    ("1y", "1 year"),
+    ("5y", "5 years"),
 ]
 
 app = Flask(__name__)
@@ -137,21 +137,21 @@ _swing_state = {
 #: Ordered stage table for the `POST /api/analyze` progress feature (see
 #: `_report_stage` below and `GET /api/analyze/progress`). Keys are English
 #: snake_case identifiers used internally and in the polling route's JSON
-#: contract; labels are the Turkish text shown to the user while that stage
+#: contract; labels are the English text shown to the user while that stage
 #: is the active one. Order matters -- it is also the order the pipeline
 #: actually executes in, which is what lets a stage's index double as a
 #: "done"/"active"/"pending" cursor.
 _ANALYZE_STAGES = [
-    ("resolve", "Şirket kimliği çözümleniyor (CIK)"),
-    ("facts", "SEC finansal verileri indiriliyor"),
-    ("normalize", "Finansallar normalize ediliyor, oranlar hesaplanıyor"),
-    ("price", "Fiyat geçmişi ve teknik göstergeler getiriliyor"),
-    ("filings", "SEC dosyalama geçmişi ve katalizör takvimi hesaplanıyor"),
-    ("macro", "Makro veriler getiriliyor (risksiz faiz)"),
-    ("market", "Analist konsensüsü ve kazanç geçmişi getiriliyor"),
-    ("valuation", "Değerleme motoru çalışıyor (DCF, çarpanlar, triangülasyon)"),
-    ("context", "Momentum, insider işlemleri ve benzer şirketler ekleniyor"),
-    ("save", "Sonuç kaydediliyor"),
+    ("resolve", "Resolving company identity (CIK)"),
+    ("facts", "Downloading SEC financial data"),
+    ("normalize", "Normalizing financials, computing ratios"),
+    ("price", "Fetching price history and technical indicators"),
+    ("filings", "Computing SEC filing history and catalyst calendar"),
+    ("macro", "Fetching macro data (risk-free rate)"),
+    ("market", "Fetching analyst consensus and earnings history"),
+    ("valuation", "Running valuation engine (DCF, multiples, triangulation)"),
+    ("context", "Adding momentum, insider activity, and peer companies"),
+    ("save", "Saving result"),
 ]
 _ANALYZE_STAGE_LABELS = dict(_ANALYZE_STAGES)
 _ANALYZE_STAGE_INDEX = {key: i for i, (key, _label) in enumerate(_ANALYZE_STAGES)}
@@ -737,7 +737,7 @@ def history():
         return render_history_page(ticker, rows, current_price=current_price)
     except Exception:  # noqa: BLE001 - last-resort guard, render a page not a stack trace
         logger.exception("Unexpected error rendering history for %s", ticker)
-        return _error_page("Analiz geçmişi yüklenirken beklenmeyen bir hata oluştu."), 500
+        return _error_page("An unexpected error occurred while loading the analysis history."), 500
 
 
 #: Bounds for the two ``/overview`` tuning knobs, so a hand-edited query
@@ -794,7 +794,7 @@ def overview():
         return render_overview_page(payload)
     except Exception:  # noqa: BLE001 - last-resort guard, render a page not a stack trace
         logger.exception("Unexpected error rendering portfolio overview")
-        return _error_page("Portföy genel bakışı yüklenirken beklenmeyen bir hata oluştu."), 500
+        return _error_page("An unexpected error occurred while loading the portfolio overview."), 500
 
 
 @app.route("/api/overview", methods=["GET"])
@@ -813,7 +813,7 @@ def api_overview():
     except Exception:  # noqa: BLE001 - last-resort guard, never leak a stack trace to the client
         logger.exception("Unexpected error building portfolio overview")
         return jsonify(
-            {"ok": False, "error": "Portföy genel bakışı oluşturulurken beklenmeyen bir hata oluştu."}
+            {"ok": False, "error": "An unexpected error occurred while building the portfolio overview."}
         ), 500
 
 
@@ -843,7 +843,7 @@ def swing():
         return render_swing_page(scan, index=index, indexes=indexes)
     except Exception:  # noqa: BLE001 - last-resort guard, render a page not a stack trace
         logger.exception("Unexpected error rendering swing screener page")
-        return _error_page("Swing tarama sayfası yüklenirken beklenmeyen bir hata oluştu."), 500
+        return _error_page("An unexpected error occurred while loading the swing screener page."), 500
 
 
 @app.route("/api/financials", methods=["GET"])
@@ -1186,7 +1186,7 @@ def api_swing_scan():
     ``threading.Thread(daemon=True)`` and returns immediately with
     ``202 {"ok": true, "status": "running", "total": N, "index": <code>}``.
     If a scan is already running (for this index or another one), returns
-    ``409 {"ok": false, "error": "<label> için bir tarama zaten çalışıyor."}``
+    ``409 {"ok": false, "error": "A scan for <label> is already running."}``
     naming the index actually running, without starting a second one.
     """
     body = request.get_json(silent=True) or {}
@@ -1198,21 +1198,21 @@ def api_swing_scan():
         if _swing_state["running"]:
             running_label = _swing_state["index_label"] or universe_label(_swing_state["index"])
             return jsonify(
-                {"ok": False, "error": f"{running_label} için bir tarama zaten çalışıyor."}
+                {"ok": False, "error": f"A scan for {running_label} is already running."}
             ), 409
 
         try:
             universe = load_universe(index=index)
         except OSError:
             logger.exception("Could not load %s universe for swing scan", index)
-            return jsonify({"ok": False, "error": "Hisse listesi yüklenemedi."}), 500
+            return jsonify({"ok": False, "error": "Could not load the ticker universe."}), 500
 
         tickers = None
         if limit is not None:
             try:
                 limit_n = max(int(limit), 0)
             except (TypeError, ValueError):
-                return jsonify({"ok": False, "error": "'limit' bir tam sayı olmalı."}), 400
+                return jsonify({"ok": False, "error": "'limit' must be an integer."}), 400
             tickers = [row["ticker"] for row in universe[:limit_n]]
 
         total = len(tickers) if tickers is not None else len(universe)
@@ -1279,7 +1279,7 @@ def api_swing_results():
     except Exception:  # noqa: BLE001 - last-resort guard, never leak a stack trace to the client
         logger.exception("Unexpected error loading latest swing scan for %s", index)
         return jsonify(
-            {"ok": False, "error": "Tarama sonuçları yüklenirken beklenmeyen bir hata oluştu."}
+            {"ok": False, "error": "An unexpected error occurred while loading the scan results."}
         ), 500
 
 
@@ -1288,11 +1288,11 @@ def api_swing_results():
 #: palette as ``sec_analyzer.report.template``, so an error looks like a
 #: degraded report rather than a bare Flask error response.
 _ERROR_PAGE_TEMPLATE = """<!DOCTYPE html>
-<html lang="tr">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Rapor Hatası</title>
+<title>Report Error</title>
 <style>
   html, body {{
     margin: 0; padding: 0;
@@ -1311,7 +1311,7 @@ _ERROR_PAGE_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="page"><div class="card">
-  <h1>Rapor oluşturulamadı</h1>
+  <h1>Report could not be generated</h1>
   <p>{message}</p>
 </div></div>
 </body>

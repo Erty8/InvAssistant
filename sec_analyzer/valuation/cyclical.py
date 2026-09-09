@@ -309,7 +309,7 @@ def _regime_a(stats: dict, shares: float) -> Optional[dict]:
         "center": center,
         "high": high,
         "band_crossed": band_crossed,
-        "basis": "through-cycle ortalama marj + tarihsel çarpan bandı",
+        "basis": "through-cycle average margin + historical multiple band",
     }
 
 
@@ -338,7 +338,7 @@ def _regime_b(stats: dict, metrics: dict, shares: float) -> Optional[dict]:
         "low": grid[f"{lo_m:.2f}"][f"{lo_x:.1f}"],
         "center": grid[f"{mid_m:.2f}"][f"{mid_x:.1f}"],
         "high": grid[f"{hi_m:.2f}"][f"{hi_x:.1f}"],
-        "basis": "yapısal kırılım: mevcut TTM gelir kalıcı, yeni-normal marj bandı",
+        "basis": "structural break: current TTM revenue is permanent, new-normal margin band",
     }
 
 
@@ -363,21 +363,21 @@ def _implied_probability(price, fv_a, fv_b):
 def _verdict_sentence(p_implied: Optional[float], status: str) -> str:
     if status == "ok" and p_implied is not None:
         return (
-            f"Mevcut fiyat, yapısal kırılıma ≥ %{p_implied * 100:.0f} olasılık vermeyi "
-            "zorunlu kılıyor. Kendi p tahminin bunun üstünde ise fiyat ucuz, altında ise pahalı."
+            f"The current price requires assigning >= {p_implied * 100:.0f}% probability to the "
+            "structural break. If your own p estimate is above this, the price is cheap; below it, expensive."
         )
     if status == "above_range":
         return (
-            "Mevcut fiyat, yapısal kırılıma %100 olasılık verilse bile iki rejimin "
-            "üstünde kalıyor: fiyatı bu iki rejimin hiçbir olasılık karışımı açıklamıyor "
-            "(kırılım senaryosunun kendisi de fiyattan ucuz)."
+            "The current price stays above both regimes even if the structural break is "
+            "assigned 100% probability: no probability mix of the two regimes explains the "
+            "price (even the break scenario itself is cheap relative to the price)."
         )
     if status == "below_range":
         return (
-            "Mevcut fiyat, döngü-ortalaması rejiminin bile altında: yapısal kırılıma sıfır "
-            "olasılık verilse dahi fiyat iki rejimin altında kalıyor."
+            "The current price sits below even the cycle-average regime: the price stays "
+            "below both regimes even at zero probability for the structural break."
         )
-    return "Fiyatın ima ettiği yapısal-kırılım olasılığı hesaplanamadı (rejim verisi eksik)."
+    return "The price-implied structural-break probability could not be computed (regime data missing)."
 
 
 def _flags(stats: dict, metrics: dict) -> dict:

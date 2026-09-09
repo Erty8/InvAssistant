@@ -21,9 +21,9 @@ That asymmetry drives two design choices here:
 
 1. The verdict ladder needs much less evidence to call a buy "meaningful"
    than a sell: a single priced open-market buy already reads as
-   ``"ALIM"``, while any amount of dollar-value selling alone is
-   deliberately capped at the neutral ``"SATIŞ AĞIRLIKLI"`` -- selling only
-   escalates to the bearish ``"YOĞUN SATIŞ"`` when it clears a *stake-size*
+   ``"BUY"``, while any amount of dollar-value selling alone is
+   deliberately capped at the neutral ``"SELL-WEIGHTED"`` -- selling only
+   escalates to the bearish ``"HEAVY SELLING"`` when it clears a *stake-size*
    bar (see below), not merely a dollar-value or headcount bar.
 2. Dollar value sold is a bad materiality proxy on its own: a $24M sale by
    a director who still holds $2B of stock is trivial, while the same
@@ -76,22 +76,22 @@ _DEFAULT_LOOKBACK_DAYS = 180
 #: scheduled 10b5-1 plans) and must not read as bearish.
 _HEAVY_SELL_STAKE_PCT = 25.0
 
-#: SEC Form 3/4/5 transaction code -> (Turkish label, category).
+#: SEC Form 3/4/5 transaction code -> (label, category).
 #: Categories drive the signal: only `open_market_buy`/`open_market_sell`
 #: carry conviction; awards, option exercises and tax withholding are
 #: compensation mechanics, not a view on the price.
 _CODE_MAP: Dict[str, Tuple[str, str]] = {
-    "P": ("Açık piyasa alımı", "open_market_buy"),
-    "S": ("Açık piyasa satışı", "open_market_sell"),
-    "A": ("Hisse ödülü/tahsisi", "award"),
-    "M": ("Opsiyon/türev kullanımı", "exercise"),
-    "F": ("Vergi için hisse mahsubu", "tax"),
-    "G": ("Bağış/devir", "gift"),
-    "C": ("Türev dönüşümü", "exercise"),
-    "X": ("Opsiyon kullanımı", "exercise"),
-    "D": ("Şirkete geri devir", "other"),
-    "J": ("Diğer edinim/elden çıkarma", "other"),
-    "V": ("Gönüllü erken bildirim", "other"),
+    "P": ("Open market purchase", "open_market_buy"),
+    "S": ("Open market sale", "open_market_sell"),
+    "A": ("Stock award/grant", "award"),
+    "M": ("Option/derivative exercise", "exercise"),
+    "F": ("Tax withholding (shares)", "tax"),
+    "G": ("Gift/transfer", "gift"),
+    "C": ("Derivative conversion", "exercise"),
+    "X": ("Option exercise", "exercise"),
+    "D": ("Return to company", "other"),
+    "J": ("Other acquisition/disposition", "other"),
+    "V": ("Voluntary early report", "other"),
 }
 
 
@@ -110,21 +110,21 @@ def _classify_code(code: Optional[str]) -> Tuple[str, str]:
     a generic label/category for an unrecognized code -- never silently
     dropped, same posture as ``events.py::_classify_item``."""
     if not code:
-        return ("Bilinmeyen işlem", "other")
+        return ("Unknown transaction", "other")
     mapped = _CODE_MAP.get(code)
     if mapped is not None:
         return mapped
-    return (f"Form 4 kodu {code}", "other")
+    return (f"Form 4 code {code}", "other")
 
 
 def _role_label(txn: dict) -> str:
-    """Build a Turkish role label from a transaction's attribution flags.
+    """Build a role label from a transaction's attribution flags.
 
     Precedence: officer with a title -> the title verbatim (an English SEC
-    free-text field, kept as filed); officer without a title -> "Yönetici";
-    director -> "Yönetim Kurulu Üyesi"; ten-percent owner -> "%10 Ortak";
-    nothing set -> "İçeriden". Multiple applicable roles are joined with
-    " · " in that order.
+    free-text field, kept as filed); officer without a title -> "Officer";
+    director -> "Director"; ten-percent owner -> "10% Owner"; nothing set ->
+    "Insider". Multiple applicable roles are joined with " · " in that
+    order.
     """
     parts: List[str] = []
 
@@ -133,16 +133,16 @@ def _role_label(txn: dict) -> str:
     if is_officer and officer_title:
         parts.append(str(officer_title))
     elif is_officer:
-        parts.append("Yönetici")
+        parts.append("Officer")
 
     if txn.get("is_director"):
-        parts.append("Yönetim Kurulu Üyesi")
+        parts.append("Director")
 
     if txn.get("is_ten_percent"):
-        parts.append("%10 Ortak")
+        parts.append("10% Owner")
 
     if not parts:
-        return "İçeriden"
+        return "Insider"
     return " · ".join(parts)
 
 
@@ -159,30 +159,29 @@ def _txn_value(txn: dict) -> Optional[float]:
 
 
 def _fmt_money(value: float) -> str:
-    """Compact Turkish-locale money string, e.g. ``"$2,5M"`` / ``"$840K"``.
+    """Compact money string, e.g. ``"$2.5M"`` / ``"$840K"``.
 
-    Uses a comma as the decimal separator (Turkish convention). Values under
-    $1,000 render as a rounded whole-dollar amount.
+    Values under $1,000 render as a rounded whole-dollar amount.
     """
     sign = "-" if value < 0 else ""
     abs_value = abs(value)
     if abs_value >= 1_000_000:
-        return f"{sign}${abs_value / 1_000_000:.1f}M".replace(".", ",")
+        return f"{sign}${abs_value / 1_000_000:.1f}M"
     if abs_value >= 1_000:
         return f"{sign}${abs_value / 1_000:.0f}K"
     return f"{sign}${abs_value:.0f}"
 
 
 def _fmt_shares(value: float) -> str:
-    """Turkish-locale share count with ``.`` as the thousands separator,
-    e.g. ``"12.000"``. Does not collide with :func:`_fmt_money`'s ``,``
-    decimal separator, so the two can be embedded in the same sentence."""
-    return f"{value:,.0f}".replace(",", ".")
+    """Share count with ``,`` as the thousands separator, e.g. ``"12,000"``.
+    Does not collide with :func:`_fmt_money`'s ``.`` decimal separator, so
+    the two can be embedded in the same sentence."""
+    return f"{value:,.0f}"
 
 
 def _fmt_pct(value: float) -> str:
-    """Turkish-locale percentage, e.g. ``"%3,1"`` (comma decimal separator)."""
-    return f"%{value:.1f}".replace(".", ",")
+    """Percentage with one decimal place, e.g. ``"3.1%"``."""
+    return f"{value:.1f}%"
 
 
 def _stake_details(nd_transactions: List[dict], target_code: str, is_buy: bool) -> List[dict]:
@@ -306,8 +305,8 @@ def detect_insider_activity(
                                    "shares_owned_after", "stake_sold_pct"}, ...],
               "median_stake_sold_pct": 3.1,   # or None if unknown for everyone
               "derivative_buy_count": 0, "derivative_sell_count": 0,
-              "verdict": "GÜÇLÜ ALIM", "severity": "positive",
-              "note": "<one Turkish sentence>",
+              "verdict": "STRONG BUY", "severity": "positive",
+              "note": "<one sentence>",
               "recent": [...],            # enriched transaction dicts
               "transaction_count": 12,
               "truncated": False,         # carried through from `fetched`
@@ -475,30 +474,30 @@ def _classify_verdict(
     """Deterministic verdict rules, first match wins (see module docstring
     for the buy/sell asymmetry rationale):
 
-    1. >= 2 distinct open-market buyers (cluster_buy) -> "GÜÇLÜ ALIM" / positive.
-    2. >= 1 buy and buy_value >= sell_value -> "ALIM" / positive.
-    3. >= 1 buy, but outsold by value -> "KARIŞIK" / neutral.
+    1. >= 2 distinct open-market buyers (cluster_buy) -> "STRONG BUY" / positive.
+    2. >= 1 buy and buy_value >= sell_value -> "BUY" / positive.
+    3. >= 1 buy, but outsold by value -> "MIXED" / neutral.
     4. cluster_sell AND a known median seller stake disposal >=
-       :data:`_HEAVY_SELL_STAKE_PCT` -> "YOĞUN SATIŞ" / negative. Requires a
-       KNOWN median: when no seller's post-transaction holding could be
+       :data:`_HEAVY_SELL_STAKE_PCT` -> "HEAVY SELLING" / negative. Requires
+       a KNOWN median: when no seller's post-transaction holding could be
        parsed, materiality cannot be established, so this must not fire --
        falls through to rule 5 instead of guessing.
-    5. >= 1 sell (any amount, any stake fraction) -> "SATIŞ AĞIRLIKLI" /
+    5. >= 1 sell (any amount, any stake fraction) -> "SELL-WEIGHTED" /
        neutral, NOT negative -- routine selling is the base rate, not a
        bearish event on its own.
-    6. otherwise -> "NÖTR" / neutral.
+    6. otherwise -> "NEUTRAL" / neutral.
     """
     if cluster_buy:
-        return "GÜÇLÜ ALIM", "positive"
+        return "STRONG BUY", "positive"
     if buy_count >= 1 and buy_value >= sell_value:
-        return "ALIM", "positive"
+        return "BUY", "positive"
     if buy_count >= 1:
-        return "KARIŞIK", "neutral"
+        return "MIXED", "neutral"
     if cluster_sell and median_stake_sold_pct is not None and median_stake_sold_pct >= _HEAVY_SELL_STAKE_PCT:
-        return "YOĞUN SATIŞ", "negative"
+        return "HEAVY SELLING", "negative"
     if sell_count >= 1:
-        return "SATIŞ AĞIRLIKLI", "neutral"
-    return "NÖTR", "neutral"
+        return "SELL-WEIGHTED", "neutral"
+    return "NEUTRAL", "neutral"
 
 
 def _derivative_clause(derivative_buy_count: int, derivative_sell_count: int) -> str:
@@ -510,12 +509,12 @@ def _derivative_clause(derivative_buy_count: int, derivative_sell_count: int) ->
     total = derivative_buy_count + derivative_sell_count
     if total <= 0:
         return ""
-    # Turkish nouns don't pluralize after a numeral, so the phrasing is the
-    # same for 1 or many.
+    plural = "s" if total != 1 else ""
     return (
-        f" Ayrıca {total} türev (opsiyon/varant) açık piyasa işlemi var; "
-        f"sözleşme adedi hisse adediyle toplanamayacağı için toplamlara "
-        f"dahil edilmedi."
+        f" There {'are' if total != 1 else 'is'} also {total} derivative "
+        f"(option/warrant) open-market transaction{plural}; contract counts "
+        f"can't be summed with share counts, so they are excluded from the "
+        f"totals."
     )
 
 
@@ -536,7 +535,7 @@ def _build_note(
     derivative_buy_count: int,
     derivative_sell_count: int,
 ) -> str:
-    """One Turkish sentence naming the actual counts (see module docstring).
+    """One sentence naming the actual counts (see module docstring).
 
     Branches on ``verdict`` (rather than re-deriving a condition) so the
     prose always agrees with the verdict :func:`_classify_verdict` chose.
@@ -546,85 +545,84 @@ def _build_note(
     derivative_clause = _derivative_clause(derivative_buy_count, derivative_sell_count)
 
     if compensation_only:
-        return "Açık piyasa işlemi yok; yalnızca hisse ödülü/opsiyon hareketleri var." + derivative_clause
+        return "No open-market activity; only stock award/option movements." + derivative_clause
 
-    if verdict in ("GÜÇLÜ ALIM", "ALIM"):
-        money_clause = f" (≈{_fmt_money(buy_value)})" if buy_value > 0 else ""
-        cluster_clause = " — kümelenmiş alım." if cluster_buy else "."
+    if verdict in ("STRONG BUY", "BUY"):
+        money_clause = f" (~{_fmt_money(buy_value)})" if buy_value > 0 else ""
+        cluster_clause = " — clustered buying." if cluster_buy else "."
         return (
-            f"Son {lookback_days} günde {len(buyers)} farklı yönetici açık "
-            f"piyasadan toplam {_fmt_shares(buy_shares)} hisse{money_clause} aldı"
+            f"In the last {lookback_days} days, {len(buyers)} different executives bought "
+            f"a total of {_fmt_shares(buy_shares)} shares{money_clause} on the open market"
             f"{cluster_clause}"
         ) + derivative_clause
 
-    if verdict == "KARIŞIK":
-        return "Hem alım hem satış var; satışlar değerce ağır basıyor." + derivative_clause
+    if verdict == "MIXED":
+        return "There is both buying and selling; selling is heavier by value." + derivative_clause
 
-    if verdict == "YOĞUN SATIŞ":
-        money_clause = f" (≈{_fmt_money(sell_value)})" if sell_value > 0 else ""
+    if verdict == "HEAVY SELLING":
+        money_clause = f" (~{_fmt_money(sell_value)})" if sell_value > 0 else ""
         # median_stake_sold_pct is guaranteed known here (rule 4's guard).
         return (
-            f"Son {lookback_days} günde {len(sellers)} farklı yönetici açık "
-            f"piyasada toplam {_fmt_shares(sell_shares)} hisse{money_clause} sattı; "
-            f"satıcılar paylarının medyan {_fmt_pct(median_stake_sold_pct)}'ini "
-            f"elden çıkardı — rutin çeşitlendirmenin ötesinde."
+            f"In the last {lookback_days} days, {len(sellers)} different executives sold "
+            f"a total of {_fmt_shares(sell_shares)} shares{money_clause} on the open market; "
+            f"sellers disposed of a median {_fmt_pct(median_stake_sold_pct)} of their stake "
+            f"— beyond routine diversification."
         ) + derivative_clause
 
-    if verdict == "SATIŞ AĞIRLIKLI":
-        money_clause = f" (≈{_fmt_money(sell_value)})" if sell_value > 0 else ""
+    if verdict == "SELL-WEIGHTED":
+        money_clause = f" (~{_fmt_money(sell_value)})" if sell_value > 0 else ""
         stake_clause = (
-            f" medyan olarak paylarının {_fmt_pct(median_stake_sold_pct)}'ini elden çıkardılar;"
+            f" they disposed of a median {_fmt_pct(median_stake_sold_pct)} of their stake;"
             if median_stake_sold_pct is not None
             else ""
         )
         return (
-            f"Son {lookback_days} günde {len(sellers)} farklı yönetici açık "
-            f"piyasada toplam {_fmt_shares(sell_shares)} hisse{money_clause} sattı;{stake_clause} "
-            f"bu seviyedeki satış rutindir (10b5-1 planı / çeşitlendirme) ve tek "
-            f"başına olumsuz sinyal sayılmaz."
+            f"In the last {lookback_days} days, {len(sellers)} different executives sold "
+            f"a total of {_fmt_shares(sell_shares)} shares{money_clause} on the open market;{stake_clause} "
+            f"selling at this level is routine (10b5-1 plan / diversification) and is not "
+            f"a negative signal on its own."
         ) + derivative_clause
 
-    return "İçeriden kayda değer bir işlem bulunamadı." + derivative_clause
+    return "No noteworthy insider activity found." + derivative_clause
 
 
 def summarize_insider(activity: Optional[dict]) -> str:
-    """Compact one-line Turkish summary for the CLI verdict card's
-    "İçeriden:" line.
+    """Compact one-line summary for the CLI verdict card's "Insider:" line.
 
     Mirrors :func:`sec_analyzer.signals.events.summarize_events`'s shape and
-    defensiveness: returns ``"yok"`` for ``None``/empty input, never raises,
-    and never renders ``None``/``nan``. Appends ``" (kısmi)"`` when the
+    defensiveness: returns ``"none"`` for ``None``/empty input, never raises,
+    and never renders ``None``/``nan``. Appends ``" (partial)"`` when the
     underlying fetch was truncated by ``max_filings`` -- silently presenting
     a partial scan as complete would misstate the evidence.
 
-    Example: ``"SATIŞ AĞIRLIKLI — 0 alım / 13 satış (180g) · net -$24,0M ·
-    medyan pay satışı %3,1"``.
+    Example: ``"SELL-WEIGHTED — 0 buys / 13 sells (180d) · net -$24.0M ·
+    median stake sold 3.1%"``.
     """
     try:
         if not activity:
-            return "yok"
+            return "none"
 
-        verdict = activity.get("verdict") or "NÖTR"
+        verdict = activity.get("verdict") or "NEUTRAL"
         buy_count = activity.get("buy_count") or 0
         sell_count = activity.get("sell_count") or 0
         window_days = activity.get("window_days")
         net_value = activity.get("net_value")
         median_stake_sold_pct = activity.get("median_stake_sold_pct")
 
-        window_clause = f" ({window_days}g)" if window_days else ""
-        summary = f"{verdict} — {buy_count} alım / {sell_count} satış{window_clause}"
+        window_clause = f" ({window_days}d)" if window_days else ""
+        summary = f"{verdict} — {buy_count} buys / {sell_count} sells{window_clause}"
 
         if isinstance(net_value, (int, float)) and net_value:
             sign = "+" if net_value >= 0 else "-"
             summary += f" · net {sign}{_fmt_money(abs(net_value))}"
 
         if isinstance(median_stake_sold_pct, (int, float)):
-            summary += f" · medyan pay satışı {_fmt_pct(median_stake_sold_pct)}"
+            summary += f" · median stake sold {_fmt_pct(median_stake_sold_pct)}"
 
         if activity.get("truncated"):
-            summary += " (kısmi)"
+            summary += " (partial)"
 
         return summary
     except Exception:  # noqa: BLE001 - this function must never raise
-        logger.exception("summarize_insider() failed unexpectedly; returning 'yok'.")
-        return "yok"
+        logger.exception("summarize_insider() failed unexpectedly; returning 'none'.")
+        return "none"

@@ -2,14 +2,14 @@
 
 The LLM (or the rule-based fallback) proposes growth/terminal-growth/
 discount-rate ranges per scenario; this module never trusts them blindly.
-Every rule either fires (appending one Turkish violation string) or
+Every rule either fires (appending one violation string) or
 doesn't -- an invalid assumption is never silently "fixed" (e.g. a discount
 rate at or below the terminal growth rate, which would make the DCF's
 Gordon-growth terminal value mathematically undefined), it's just reported
 so the caller can re-prompt the LLM or fall back to a deterministic default.
 
-Throughout this module, ``discount_rate`` is a levered COST OF EQUITY
-(özkaynak maliyeti), never a WACC: the engine's DCF/revenue-DCF are
+Throughout this module, ``discount_rate`` is a levered COST OF EQUITY,
+never a WACC: the engine's DCF/revenue-DCF are
 FCFE-direct (the projected cash flow is already a levered/equity cash flow,
 so no net-debt bridge is applied -- see ``dcf.py``/``revenue_dcf.py``), so
 discounting it at anything other than a cost of equity would be internally
@@ -113,7 +113,7 @@ def validate_assumptions(assumptions: Dict[str, dict], is_unprofitable: bool = F
         return _validate_assumptions(assumptions or {}, is_unprofitable)
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("validate_assumptions() failed unexpectedly.")
-        return ["Varsayımlar doğrulanırken beklenmeyen bir hata oluştu."]
+        return ["An unexpected error occurred while validating assumptions."]
 
 
 def _validate_assumptions(assumptions: Dict[str, dict], is_unprofitable: bool) -> List[str]:
@@ -123,12 +123,12 @@ def _validate_assumptions(assumptions: Dict[str, dict], is_unprofitable: bool) -
     for scenario_key, label in _SCENARIO_LABELS.items():
         scenario = assumptions.get(scenario_key)
         if not isinstance(scenario, dict):
-            violations.append(f"{label}: senaryo verisi eksik veya geçersiz.")
+            violations.append(f"{label}: scenario data is missing or invalid.")
             continue
 
         bad_fields = [f for f in _REQUIRED_FIELDS if not _is_number(scenario.get(f))]
         for field in bad_fields:
-            violations.append(f"{label}: '{field}' alanı eksik veya sayısal değil.")
+            violations.append(f"{label}: field '{field}' is missing or not numeric.")
         if bad_fields:
             # Can't safely compare fields that are missing/non-numeric.
             continue
@@ -139,34 +139,35 @@ def _validate_assumptions(assumptions: Dict[str, dict], is_unprofitable: bool) -
 
         if terminal_growth > _TERMINAL_GROWTH_MAX:
             violations.append(
-                f"{label}: uçtaki büyüme (terminal_growth) %{terminal_growth * 100:.1f}, "
-                f"üst sınır %{_TERMINAL_GROWTH_MAX * 100:.0f}'i aşıyor."
+                f"{label}: terminal growth (terminal_growth) {terminal_growth * 100:.1f}% "
+                f"exceeds the upper bound of {_TERMINAL_GROWTH_MAX * 100:.0f}%."
             )
 
         if discount_rate < min_discount_rate:
-            unprofitable_note = " (zarar eden şirket için)" if is_unprofitable else ""
+            unprofitable_note = " (for an unprofitable company)" if is_unprofitable else ""
             violations.append(
-                f"{label}: iskonto oranı %{discount_rate * 100:.1f}, "
-                f"alt sınır %{min_discount_rate * 100:.0f}'in altında{unprofitable_note}."
+                f"{label}: discount rate {discount_rate * 100:.1f}% is below the lower "
+                f"bound of {min_discount_rate * 100:.0f}%{unprofitable_note}."
             )
 
         if discount_rate <= terminal_growth:
             violations.append(
-                f"{label}: iskonto oranı (%{discount_rate * 100:.1f}) uçtaki büyümeye "
-                f"(%{terminal_growth * 100:.1f}) eşit veya ondan düşük -- Gordon büyüme formülü tanımsız."
+                f"{label}: discount rate ({discount_rate * 100:.1f}%) is equal to or lower "
+                f"than terminal growth ({terminal_growth * 100:.1f}%) -- the Gordon-growth "
+                "formula is undefined."
             )
         elif discount_rate - terminal_growth < _MIN_ERP_SPREAD - _ERP_SPREAD_EPS:
             violations.append(
-                f"{label}: iskonto oranı (%{discount_rate*100:.1f}) ile uçtaki büyüme "
-                f"(%{terminal_growth*100:.1f}) arasındaki fark %{(discount_rate-terminal_growth)*100:.1f}, "
-                f"asgari risk primi %{_MIN_ERP_SPREAD*100:.1f}'in altında (iskonto oranı özkaynak "
-                f"maliyetidir; bu kadar dar bir fark perpetüiteyi aşırı değerler)."
+                f"{label}: the spread between the discount rate ({discount_rate*100:.1f}%) and "
+                f"terminal growth ({terminal_growth*100:.1f}%) is {(discount_rate-terminal_growth)*100:.1f}%, "
+                f"below the minimum equity risk premium of {_MIN_ERP_SPREAD*100:.1f}% (the discount "
+                "rate is a cost of equity; a spread this thin over-values the perpetuity)."
             )
 
         if growth_5y > _GROWTH_5Y_HARD_MAX:
             violations.append(
-                f"{label}: 5 yıllık büyüme %{growth_5y * 100:.1f}, gerçekçi olmayan bir şekilde "
-                f"%{_GROWTH_5Y_HARD_MAX * 100:.0f}'i aşıyor."
+                f"{label}: 5-year growth {growth_5y * 100:.1f}% unrealistically exceeds "
+                f"{_GROWTH_5Y_HARD_MAX * 100:.0f}%."
             )
 
     return violations
@@ -251,25 +252,25 @@ def _clamp_assumptions(
         if _is_number(terminal_growth) and terminal_growth > _TERMINAL_GROWTH_MAX:
             scenario["terminal_growth"] = _TERMINAL_GROWTH_MAX
             notes.append(
-                f"{label}: uçtaki büyüme (terminal_growth) %{terminal_growth * 100:.1f} idi, "
-                f"%{_TERMINAL_GROWTH_MAX * 100:.0f} ile sınırlandırıldı."
+                f"{label}: terminal growth (terminal_growth) was {terminal_growth * 100:.1f}%, "
+                f"capped at {_TERMINAL_GROWTH_MAX * 100:.0f}%."
             )
 
         growth_5y = scenario.get("growth_5y")
         if _is_number(growth_5y) and growth_5y > _GROWTH_5Y_HARD_MAX:
             scenario["growth_5y"] = _GROWTH_5Y_HARD_MAX
             notes.append(
-                f"{label}: 5 yıllık büyüme %{growth_5y * 100:.1f} idi, "
-                f"%{_GROWTH_5Y_HARD_MAX * 100:.0f} ile sınırlandırıldı."
+                f"{label}: 5-year growth was {growth_5y * 100:.1f}%, "
+                f"capped at {_GROWTH_5Y_HARD_MAX * 100:.0f}%."
             )
 
         discount_rate = scenario.get("discount_rate")
         if _is_number(discount_rate) and discount_rate < min_discount_rate:
             scenario["discount_rate"] = min_discount_rate
-            unprofitable_note = " (zarar eden şirket için)" if is_unprofitable else ""
+            unprofitable_note = " (for an unprofitable company)" if is_unprofitable else ""
             notes.append(
-                f"{label}: iskonto oranı %{discount_rate * 100:.1f} idi, "
-                f"%{min_discount_rate * 100:.0f} tabanına yükseltildi{unprofitable_note}."
+                f"{label}: discount rate was {discount_rate * 100:.1f}%, "
+                f"raised to a floor of {min_discount_rate * 100:.0f}%{unprofitable_note}."
             )
 
         # Minimum implied ERP-spread guard: operates on the already-clamped
@@ -282,8 +283,8 @@ def _clamp_assumptions(
             new_dr = tg + _MIN_ERP_SPREAD
             scenario["discount_rate"] = new_dr
             notes.append(
-                f"{label}: iskonto oranı %{dr*100:.1f} idi, uçtaki büyümeyle arasındaki "
-                f"asgari risk primi (%{_MIN_ERP_SPREAD*100:.1f}) için %{new_dr*100:.1f}'e yükseltildi."
+                f"{label}: discount rate was {dr*100:.1f}%, raised to {new_dr*100:.1f}% to "
+                f"maintain the minimum equity risk premium ({_MIN_ERP_SPREAD*100:.1f}%) over terminal growth."
             )
 
     bear_growth = (clamped.get("bear") or {}).get("growth_5y")
@@ -292,8 +293,8 @@ def _clamp_assumptions(
     if all(_is_number(v) for v in (bear_growth, base_growth, bull_growth)):
         if not (bear_growth <= base_growth <= bull_growth):
             notes.append(
-                "Senaryo büyüme sıralaması beklenmedik (kötümser <= temel <= iyimser olmalı): "
-                f"bear=%{bear_growth * 100:.1f}, base=%{base_growth * 100:.1f}, bull=%{bull_growth * 100:.1f}."
+                "Unexpected scenario growth ordering (should be bear <= base <= bull): "
+                f"bear={bear_growth * 100:.1f}%, base={base_growth * 100:.1f}%, bull={bull_growth * 100:.1f}%."
             )
 
     return clamped, notes

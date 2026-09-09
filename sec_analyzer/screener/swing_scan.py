@@ -119,7 +119,7 @@ def _scan_one(entry: dict, spy_close, no_cache: bool) -> dict:
 
     swing = compute_swing_score(indicators)
     if swing is None:
-        raise ValueError("Swing skoru hesaplanamadı (yetersiz veri).")
+        raise ValueError("Could not compute swing score (insufficient data).")
 
     price = indicators.get("price")
     atr14 = indicators.get("atr14")

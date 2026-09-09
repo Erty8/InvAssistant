@@ -5,10 +5,10 @@ realized forward return at +1y and +3y from the verdict's reference date,
 relative to SPY, and records a "hit" flag where the verdict makes a binary
 claim:
 
-* ``UCUZ`` (cheap)     -> hit when the SPY-relative return is positive.
-* ``PAHALI`` (expensive) -> hit when the SPY-relative return is negative.
-* ``MAKUL`` (fair)     -> no hit evaluation (a neutral claim).
-* ``YÜKSEK BEKLENTİ FİYATLANMIŞ`` / ``MODEL-PİYASA AYRIŞMASI`` -> not a binary
+* ``CHEAP``    -> hit when the SPY-relative return is positive.
+* ``EXPENSIVE`` -> hit when the SPY-relative return is negative.
+* ``FAIR``     -> no hit evaluation (a neutral claim).
+* ``HIGH EXPECTATIONS PRICED IN`` / ``MODEL-PRICE DIVERGENCE`` -> not a binary
   hit; the realized return is still recorded and a manual ``referee_note`` field
   is left for the analyst to judge whether the market-priced assumption played
   out.
@@ -40,11 +40,11 @@ _BENCHMARK = "SPY"
 _HORIZONS: Tuple[Tuple[str, int], ...] = (("1y", 1), ("3y", 3))
 
 #: Fundamental-verdict label buckets.
-_CHEAP = "UCUZ"
-_EXPENSIVE = "PAHALI"
-_NEUTRAL = "MAKUL"
+_CHEAP = "CHEAP"
+_EXPENSIVE = "EXPENSIVE"
+_NEUTRAL = "FAIR"
 #: Verdicts whose correctness is NOT a binary hit -- recorded, refereed manually.
-_REFEREE_LABELS = frozenset({"YÜKSEK BEKLENTİ FİYATLANMIŞ", "MODEL-PİYASA AYRIŞMASI"})
+_REFEREE_LABELS = frozenset({"HIGH EXPECTATIONS PRICED IN", "MODEL-PRICE DIVERGENCE"})
 
 
 def _add_years(d: date, years: int) -> date:
@@ -81,8 +81,8 @@ def _close_on_or_before(df, target: date) -> Optional[float]:
 def classify_hit(fundamental_verdict: Optional[str], rel_return: Optional[float]) -> Optional[bool]:
     """Map a fundamental verdict + realized SPY-relative return to a hit flag.
 
-    Returns ``True``/``False`` only for the binary-claim verdicts (``UCUZ`` ->
-    rel>0, ``PAHALI`` -> rel<0); ``None`` for neutral (``MAKUL``), referee
+    Returns ``True``/``False`` only for the binary-claim verdicts (``CHEAP`` ->
+    rel>0, ``EXPENSIVE`` -> rel<0); ``None`` for neutral (``FAIR``), referee
     (high-expectation / divergence), unknown labels, or a missing return.
     """
     if rel_return is None or not fundamental_verdict:

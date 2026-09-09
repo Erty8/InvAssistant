@@ -33,7 +33,7 @@ GIL); a pool that cannot start falls back to a thread pool with a logged
 warning, producing identical results either way since both paths execute the
 exact same module-level worker function.
 
-Per ROADMAP.md's "Backtest -- tasarım ilkesi" and ``sec_analyzer.backtest``:
+Per ROADMAP.md's "Backtest -- design principle" and ``sec_analyzer.backtest``:
 this is an EVALUATION tool, never an OPTIMIZATION tool. The swing weights in
 ``technical/swing.py`` must never be tuned against this study's output.
 """
@@ -70,7 +70,7 @@ BENCHMARK = "SPY"
 
 #: Below this many pooled observations, a decile cell is flagged
 #: ``low_sample`` rather than silently reported as meaningful (extends the
-#: existing ``backtest report`` "yetersiz örneklem" n<10 convention to n<30,
+#: existing ``backtest report`` "insufficient sample" n<10 convention to n<30,
 #: since this study's cells are naturally larger and noisier).
 _LOW_SAMPLE_MIN = 30
 
@@ -90,19 +90,18 @@ _DEFAULT_MAX_WORKERS = 8
 #: the universe is TODAY's index membership, not point-in-time membership,
 #: so every return figure here is optimistic.
 _LIMITATIONS = [
-    "Hayatta kalma yanlılığı (baskın etki): evren bugünkü endeks üyeliğini "
-    "yansıtır, tarihsel (point-in-time) üyeliği değil. Endeksten çıkarılmış "
-    "veya iflas etmiş şirketler örneklemde yok, bu yüzden buradaki her getiri "
-    "rakamı iyimser yönde sapmalıdır.",
-    "Ücretsiz fiyat kaynağı: endeksten düşürülmüş/iflas etmiş hisselerin "
-    "yfinance'te geçmiş verisi hiç yok, bu da hayatta kalma "
-    "yanlılığını güçlendirir.",
-    "Maliyetsiz getiriler: komisyon, kayma (slippage) veya borçlanma "
-    "maliyeti yok -- raporlanan getiriler brüttür.",
-    "Çakışan gözlemler: ardışık rebalance tarihleri aynı fiyat barlarını "
-    "paylaşır, yani gözlemler birbirinden istatistiksel olarak bağımsız "
-    "değildir; herhangi bir güven aralığı gösterge niteliğindedir, biçimsel "
-    "bir anlamlılık testi değildir.",
+    "Survivorship bias (dominant effect): the universe reflects today's index "
+    "membership, not historical (point-in-time) membership. Companies removed "
+    "from the index or that went bankrupt are absent from the sample, so every "
+    "return figure here must be skewed in the optimistic direction.",
+    "Free price source: delisted/bankrupt tickers have no historical data at "
+    "all in yfinance, which further reinforces the survivorship bias.",
+    "Costless returns: no commission, slippage, or borrowing cost is modeled "
+    "-- the reported returns are gross.",
+    "Overlapping observations: consecutive rebalance dates share the same "
+    "price bars, so observations are not statistically independent of one "
+    "another; any confidence interval is indicative, not a formal "
+    "significance test.",
 ]
 
 
@@ -212,7 +211,7 @@ def _score_ticker_task(task: dict) -> dict:
     except Exception as exc:  # noqa: BLE001 - one bad ticker must never abort the study
         logger.warning("swing_study: price fetch failed for %s", ticker, exc_info=True)
         return {
-            "ticker": ticker, "status": "skip", "reason": f"Fiyat verisi alınamadı: {exc}",
+            "ticker": ticker, "status": "skip", "reason": f"Could not fetch price data: {exc}",
             "observations": [], "dropped_no_score": 0, "dropped_no_forward": 0,
         }
 
@@ -578,7 +577,7 @@ def run_swing_study(
                 except Exception as exc:  # noqa: BLE001 - one worker failure must never abort the study
                     logger.warning("swing_study: worker failed for %s", ticker, exc_info=True)
                     result = {
-                        "ticker": ticker, "status": "skip", "reason": f"İşlem hatası: {exc}",
+                        "ticker": ticker, "status": "skip", "reason": f"Processing error: {exc}",
                         "observations": [], "dropped_no_score": 0, "dropped_no_forward": 0,
                     }
 

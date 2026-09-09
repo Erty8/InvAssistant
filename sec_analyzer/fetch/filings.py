@@ -26,10 +26,10 @@ logger = logging.getLogger(__name__)
 #: Date format used throughout SEC submissions data for filing dates.
 _DATE_FMT = "%Y-%m-%d"
 
-#: Turkish 3-letter month abbreviations, indexed 0 (January) to 11 (December).
-_TURKISH_MONTHS = [
-    "Oca", "Şub", "Mar", "Nis", "May", "Haz",
-    "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara",
+#: English 3-letter month abbreviations, indexed 0 (January) to 11 (December).
+_MONTH_ABBREVIATIONS = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ]
 
 #: Minimum number of usable (form, filingDate) pairs required before an
@@ -77,9 +77,9 @@ def _parse_date(value: Optional[str]) -> Optional[date]:
         return None
 
 
-def _turkish_date(d: date) -> str:
-    """Render a date as ``"<day> <Turkish month abbreviation>"``, e.g. ``"27 Ağu"``."""
-    return f"{d.day} {_TURKISH_MONTHS[d.month - 1]}"
+def _month_date(d: date) -> str:
+    """Render a date as ``"<day> <month abbreviation>"``, e.g. ``"27 Aug"``."""
+    return f"{d.day} {_MONTH_ABBREVIATIONS[d.month - 1]}"
 
 
 def _next_quarter_label(pairs: List[Tuple[date, str]]) -> str:
@@ -152,8 +152,8 @@ def estimate_next_earnings(submissions: dict, today: Optional[date] = None) -> O
 
             {
               "estimate_date": "YYYY-MM-DD",  # always the NEXT release
-              "label": "Q3 earnings ~28 Eki",
-              "based_on": "son 8 kazanç açıklamasının medyan aralığı (91 gün)",
+              "label": "Q3 earnings ~28 Oct",
+              "based_on": "median gap of the last 8 earnings releases (91 days)",
               "source": "8-K 2.02" | "10-Q/10-K",
               "last_report_date": "YYYY-MM-DD",
               "days_until": 90,
@@ -163,7 +163,7 @@ def estimate_next_earnings(submissions: dict, today: Optional[date] = None) -> O
         ``estimate_date`` is never the report that was just published: when
         the most recent release is within :data:`_RECENTLY_REPORTED_DAYS` of
         ``today``, ``recently_reported`` is ``True`` and ``label`` leads with
-        that fact ("29 Tem tarihinde açıklandı · sonraki: ...") instead of
+        that fact ("reported on 29 Jul · next: ...") instead of
         presenting a past event as an upcoming catalyst (SPEC.md Sec.21b).
         ``days_until`` is measured against the same ``today`` the projection
         used, so downstream consumers stay deterministic in as-of mode.
@@ -212,21 +212,21 @@ def _build_result(
     recently_reported = 0 <= days_since_last <= _RECENTLY_REPORTED_DAYS
 
     if quarter_label:
-        next_label = f"{quarter_label} earnings ~{_turkish_date(next_date)}"
+        next_label = f"{quarter_label} earnings ~{_month_date(next_date)}"
     else:
-        next_label = f"Sonraki bilanço ~{_turkish_date(next_date)}"
+        next_label = f"Next earnings ~{_month_date(next_date)}"
 
     if recently_reported:
         # Lead with what actually happened; the projection is secondary. A
         # quarter published yesterday must never read as an upcoming event.
-        label = f"{_turkish_date(last_date)} tarihinde açıklandı · sonraki: {next_label}"
+        label = f"Reported on {_month_date(last_date)} · next: {next_label}"
     else:
         label = next_label
 
     return {
         "estimate_date": next_date.strftime(_DATE_FMT),
         "label": label,
-        "based_on": f"son {sample_size} {noun} medyan aralığı ({int(median_gap)} gün)",
+        "based_on": f"median gap of the last {sample_size} {noun} ({int(median_gap)} days)",
         "source": source,
         "last_report_date": last_date.strftime(_DATE_FMT),
         "days_until": (next_date - today).days,
@@ -268,7 +268,7 @@ def _estimate_next_earnings(submissions: dict, today: date) -> Optional[dict]:
             return _build_result(
                 last_date, next_date, median_gap, sample_size,
                 _next_quarter_label_from_releases(releases, last_10k),
-                source="8-K 2.02", noun="kazanç açıklamasının", today=today,
+                source="8-K 2.02", noun="earnings releases", today=today,
             )
 
     # Fallback: periodic-filing cadence. Reached when SEC has not populated
@@ -292,5 +292,5 @@ def _estimate_next_earnings(submissions: dict, today: date) -> Optional[dict]:
     return _build_result(
         last_date, next_date, median_gap, sample_size,
         _next_quarter_label(pairs),
-        source="10-Q/10-K", noun="dosyalamanın", today=today,
+        source="10-Q/10-K", noun="filings", today=today,
     )

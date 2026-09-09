@@ -42,13 +42,13 @@ if sector_etf_for_sic is None:
         "SIC-based sector fallback disabled."
     )
 
-#: Valuation-route code -> Turkish display label.
+#: Valuation-route code -> display label.
 SECTOR_TYPE_LABELS = {
-    "mature": "Olgun",
-    "cyclical": "Döngüsel",
-    "financial": "Finansal",
-    "reit": "GYO",
-    "growth_unprofitable": "Büyüme (zarar eden)",
+    "mature": "Mature",
+    "cyclical": "Cyclical",
+    "financial": "Financial",
+    "reit": "REIT",
+    "growth_unprofitable": "Growth (unprofitable)",
 }
 
 #: A stored verdict older than this many days is flagged stale: the price has
@@ -72,20 +72,20 @@ _HEAT_SATURATION_PCT = 40.0
 
 #: Stored ``fundamental_verdict`` -> the ``value_bucket`` it corresponds to,
 #: used only to detect drift between the two (see :func:`_enrich_row`).
-_VERDICT_TO_BUCKET = {"UCUZ": "ucuz", "MAKUL": "makul", "PAHALI": "pahali"}
+_VERDICT_TO_BUCKET = {"CHEAP": "cheap", "FAIR": "fair", "EXPENSIVE": "expensive"}
 
 #: Known values for each count dict in the top-level result (see
 #: :func:`build_overview`). Every key here is present in the corresponding
-#: count dict with an explicit ``0`` even when no row has that value, plus a
-#: ``"bilinmiyor"`` catch-all for ``None``/unrecognized values.
-_VERDICT_VALUES = ["UCUZ", "MAKUL", "PAHALI"]
-_BUCKET_VALUES = ["ucuz", "makul", "pahali"]
-_CONFIDENCE_VALUES = ["YÜKSEK", "ORTA", "DÜŞÜK"]
-_MOMENTUM_VALUES = ["GÜÇLÜ+", "POZİTİF", "NÖTR", "NEGATİF"]
-_INSIDER_VALUES = ["GÜÇLÜ ALIM", "ALIM", "NÖTR", "SATIŞ", "YOĞUN SATIŞ"]
+#: count dict with an explicit ``0`` even when no row has that value, plus an
+#: ``"unknown"`` catch-all for ``None``/unrecognized values.
+_VERDICT_VALUES = ["CHEAP", "FAIR", "EXPENSIVE"]
+_BUCKET_VALUES = ["cheap", "fair", "expensive"]
+_CONFIDENCE_VALUES = ["HIGH", "MEDIUM", "LOW"]
+_MOMENTUM_VALUES = ["STRONG+", "POSITIVE", "NEUTRAL", "NEGATIVE"]
+_INSIDER_VALUES = ["STRONG BUY", "BUY", "NEUTRAL", "SELL", "HEAVY SELLING"]
 
-#: Turkish label for the sector/route bucket holding rows with no known value.
-_UNCLASSIFIED_SECTOR_LABEL = "Sınıflandırılmamış"
+#: Label for the sector/route bucket holding rows with no known value.
+_UNCLASSIFIED_SECTOR_LABEL = "Unclassified"
 
 #: The bundled index-constituent CSVs do not share a sector vocabulary
 #: (nasdaq100.csv says "Technology"/"Basic Materials"/"Telecommunications"
@@ -167,17 +167,17 @@ def _parse_date_only(value: Optional[str]) -> Optional[date]:
 
 
 def sector_type_label(sector_type: Optional[str]) -> str:
-    """Turkish display label for a valuation-route code.
+    """Display label for a valuation-route code.
 
     Args:
         sector_type: A route code (key of :data:`SECTOR_TYPE_LABELS`), or
             ``None``/an unrecognized string.
 
     Returns:
-        The Turkish label, or ``"Bilinmiyor"`` when ``sector_type`` is
-        ``None`` or not a known route code.
+        The label, or ``"Unknown"`` when ``sector_type`` is ``None`` or not a
+        known route code.
     """
-    return SECTOR_TYPE_LABELS.get(sector_type, "Bilinmiyor")
+    return SECTOR_TYPE_LABELS.get(sector_type, "Unknown")
 
 
 def _build_universe_lookup() -> Dict[str, Tuple[Optional[str], Optional[str]]]:
@@ -274,7 +274,7 @@ def _enrich_row(
     # stored `fundamental_verdict` -- the two measures ask different
     # questions about the very same price/band, and can legitimately
     # disagree: `fundamental_verdict` asks WHERE IN THE BAND the price sits
-    # (inside the base band means MAKUL, regardless of band width), while
+    # (inside the base band means FAIR, regardless of band width), while
     # `value_bucket` asks how far the band's MIDPOINT sits from the price.
     # On a wide, low-confidence band both can be correct simultaneously --
     # price inside the band, midpoint far above/below it. The disagreement
@@ -284,16 +284,16 @@ def _enrich_row(
     if fv_vs_price_pct is None:
         value_bucket = None
     elif fv_vs_price_pct >= CHEAP_THRESHOLD_PCT:
-        value_bucket = "ucuz"
+        value_bucket = "cheap"
     elif fv_vs_price_pct <= EXPENSIVE_THRESHOLD_PCT:
-        value_bucket = "pahali"
+        value_bucket = "expensive"
     else:
-        value_bucket = "makul"
+        value_bucket = "fair"
 
     # `verdict_drift` is NOT an inconsistency or an error: both measures use
     # the same stored price, so price movement since analysis is never the
     # cause. In practice it isolates wide-band, low-conviction names (price
-    # sits inside a wide base band, so the engine committed to MAKUL; the
+    # sits inside a wide base band, so the engine committed to FAIR; the
     # band's midpoint nonetheless leans hard toward one side) -- a signal
     # about band width and confidence, not about which measure is "right".
     mapped_bucket = _VERDICT_TO_BUCKET.get(row.get("fundamental_verdict"))
@@ -356,7 +356,7 @@ def _aggregate(
         rows: Enriched rows (see :func:`_enrich_row`).
         key_fn: Returns the grouping key for a row (e.g. ``sector`` or
             ``sector_type``); may return ``None`` for an "unknown" bucket.
-        label_fn: Turkish display label for a grouping key.
+        label_fn: Display label for a grouping key.
         id_field: Name of the key holding the raw grouping value in each
             summary dict (``"sector"`` or ``"sector_type"``).
 
@@ -385,9 +385,9 @@ def _aggregate(
                 "n": len(group_rows),
                 "median_fv_vs_price_pct": median_pct,
                 "mean_heat": mean_heat,
-                "cheap_n": sum(1 for r in group_rows if r.get("value_bucket") == "ucuz"),
-                "fair_n": sum(1 for r in group_rows if r.get("value_bucket") == "makul"),
-                "expensive_n": sum(1 for r in group_rows if r.get("value_bucket") == "pahali"),
+                "cheap_n": sum(1 for r in group_rows if r.get("value_bucket") == "cheap"),
+                "fair_n": sum(1 for r in group_rows if r.get("value_bucket") == "fair"),
+                "expensive_n": sum(1 for r in group_rows if r.get("value_bucket") == "expensive"),
                 "unknown_n": sum(1 for r in group_rows if r.get("value_bucket") is None),
                 "stale_n": sum(1 for r in group_rows if r.get("stale")),
                 "tickers": tickers,
@@ -399,17 +399,17 @@ def _aggregate(
 
 
 def _empty_counts(values: List[str]) -> Dict[str, int]:
-    """A count dict with every known value at ``0`` plus the ``"bilinmiyor"``
+    """A count dict with every known value at ``0`` plus the ``"unknown"``
     catch-all -- the baseline both :func:`_count_by` and the empty-payload
     fallback build from, so the two can never disagree on which keys exist."""
     counts = {v: 0 for v in values}
-    counts["bilinmiyor"] = 0
+    counts["unknown"] = 0
     return counts
 
 
 def _count_by(rows: List[dict], field: str, values: List[str]) -> Dict[str, int]:
     """Tally ``rows`` by ``row.get(field)`` into a dict with every value in
-    ``values`` present (even at ``0``), plus a ``"bilinmiyor"`` catch-all for
+    ``values`` present (even at ``0``), plus an ``"unknown"`` catch-all for
     ``None``/unrecognized values."""
     counts = _empty_counts(values)
     for row in rows:
@@ -417,7 +417,7 @@ def _count_by(rows: List[dict], field: str, values: List[str]) -> Dict[str, int]
         if value in counts:
             counts[value] += 1
         else:
-            counts["bilinmiyor"] += 1
+            counts["unknown"] += 1
     return counts
 
 

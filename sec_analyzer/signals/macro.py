@@ -5,15 +5,14 @@ observations (level, date, self-anchored percentile) for a small panel of
 yield-curve and credit-spread series. This module turns that raw panel into
 the handful of derived numbers a human (or the report layer) actually wants
 to read -- curve slope, real rate, credit regime -- plus a short list of
-deterministic Turkish notes, without ever touching the network or disk
-itself.
+deterministic notes, without ever touching the network or disk itself.
 
 This is the macro-oriented sibling of :mod:`sec_analyzer.signals.events`:
 pure, deterministic, and fully defensive. Missing series never raise; they
 just make the fields that depend on them ``None``. As with ``events.py``,
 :func:`build_macro_context` is a never-raising public wrapper around a
 ``_``-prefixed implementation, and :func:`summarize_macro` is the one-line
-Turkish formatter for the future "Makro:" row of the verdict card.
+formatter for the future "Macro:" row of the verdict card.
 
 Percentile fields (``risk_free_percentile``, ``ig_spread_percentile``,
 ``hy_spread_percentile``) and :data:`_CREDIT_TIGHT_PERCENTILE` /
@@ -64,9 +63,9 @@ _RISK_FREE_EXTREME_PERCENTILE_LOW = 20.0
 
 
 def _fmt_pct(value: Optional[float], decimals: int = 2) -> str:
-    """Format a percent-like number with a Turkish decimal comma.
+    """Format a percent-like number.
 
-    Trailing zeros are dropped (``3.90`` -> ``"3,9"``, ``4.21`` -> ``"4,21"``)
+    Trailing zeros are dropped (``3.90`` -> ``"3.9"``, ``4.21`` -> ``"4.21"``)
     since the notes in this module quote numbers the way a person would
     write them, not padded to a fixed width. Returns ``"—"`` for ``None`` so
     a missing value never renders as the literal string ``"None"``.
@@ -76,14 +75,14 @@ def _fmt_pct(value: Optional[float], decimals: int = 2) -> str:
     text = f"{value:.{decimals}f}"
     if "." in text:
         text = text.rstrip("0").rstrip(".")
-    return text.replace(".", ",")
+    return text
 
 
 def _fmt_percentile_int(value: Optional[float]) -> Optional[str]:
     """Render a percentile as a whole-number string (``62.5`` -> ``"62"``).
 
-    Notes/summary text quotes percentiles without decimals (e.g. "62.
-    yüzdelik"); the underlying context field keeps 1-decimal precision.
+    Notes/summary text quotes percentiles without decimals (e.g. "62nd
+    percentile"); the underlying context field keeps 1-decimal precision.
     Returns ``None`` for ``None`` input.
     """
     if value is None:
@@ -98,6 +97,18 @@ def _round(value: Optional[float], decimals: int) -> Optional[float]:
     return round(value, decimals)
 
 
+def _ordinal(value: str) -> str:
+    """Append the English ordinal suffix to a whole-number string (``"62"``
+    -> ``"62nd"``). Used to render :func:`_fmt_percentile_int`'s output in
+    the notes/summary text below."""
+    n = int(value)
+    if 10 <= abs(n) % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(abs(n) % 10, "th")
+    return f"{value}{suffix}"
+
+
 def _credit_regime(hy_percentile: Optional[float], ig_percentile: Optional[float]) -> Optional[str]:
     """Classify credit conditions from a spread's self-anchored percentile.
 
@@ -107,22 +118,22 @@ def _credit_regime(hy_percentile: Optional[float], ig_percentile: Optional[float
     is available.
 
     A HIGH percentile means the spread is wide relative to its own recent
-    history, i.e. credit is expensive/stressed -> ``"sıkı"`` (tight). A LOW
+    history, i.e. credit is expensive/stressed -> ``"tight"``. A LOW
     percentile means it is narrow relative to its own recent history, i.e.
-    credit risk is being priced cheaply -> ``"gevşek"`` (loose).
+    credit risk is being priced cheaply -> ``"loose"``.
     """
     percentile = hy_percentile if hy_percentile is not None else ig_percentile
     if percentile is None:
         return None
     if percentile >= _CREDIT_TIGHT_PERCENTILE:
-        return "sıkı"
+        return "tight"
     if percentile <= _CREDIT_LOOSE_PERCENTILE:
-        return "gevşek"
+        return "loose"
     return "normal"
 
 
 def _build_notes(ctx: dict) -> List[str]:
-    """Build the deterministic Turkish observation list for ``ctx``.
+    """Build the deterministic observation list for ``ctx``.
 
     Each rule is independent and self-contained; a rule fires purely off the
     fields already computed in ``ctx`` (never re-reads the raw panel). Order
@@ -135,29 +146,29 @@ def _build_notes(ctx: dict) -> List[str]:
     # 1. Inverted yield curve -- widely cited, poorly timed; keep the hedge.
     if ctx.get("curve_inverted"):
         notes.append(
-            "Verim eğrisi ters (10y-2y: {slope} puan); tarihsel olarak resesyon "
-            "habercisi sayılır ama zamanlaması güvenilir değildir.".format(
+            "Yield curve is inverted (10y-2y: {slope} pts); historically "
+            "considered a recession signal, though its timing is unreliable.".format(
                 slope=_fmt_pct(ctx.get("curve_slope_pct"))
             )
         )
 
     # 2 & 3. Credit regime.
     regime = ctx.get("credit_regime")
-    if regime == "sıkı":
+    if regime == "tight":
         hy_pctl = _fmt_percentile_int(ctx.get("hy_spread_percentile"))
-        pctl_clause = f" ({hy_pctl}. yüzdelik)" if hy_pctl is not None else ""
+        pctl_clause = f" ({_ordinal(hy_pctl)} percentile)" if hy_pctl is not None else ""
         notes.append(
-            "Kredi marjı sıkı: HY spread %{hy}{pctl} — refinansman koşulları "
-            "zorlaşıyor, bu önce kaldıraçlı şirketleri vurur.".format(
+            "Credit spreads are tight: HY spread {hy}%{pctl} — refinancing "
+            "conditions are tightening, which hits leveraged companies first.".format(
                 hy=_fmt_pct(ctx.get("hy_spread_pct")), pctl=pctl_clause
             )
         )
-    elif regime == "gevşek":
+    elif regime == "loose":
         hy_pctl = _fmt_percentile_int(ctx.get("hy_spread_percentile"))
-        pctl_clause = f" ({hy_pctl}. yüzdelik)" if hy_pctl is not None else ""
+        pctl_clause = f" ({_ordinal(hy_pctl)} percentile)" if hy_pctl is not None else ""
         notes.append(
-            "Kredi marjı gevşek: HY spread %{hy}{pctl} kendi son dönem "
-            "aralığının düşük ucunda — kredi riski ucuza fiyatlanıyor.".format(
+            "Credit spreads are loose: HY spread {hy}%{pctl} sits at the low end "
+            "of its own recent range — credit risk is being priced cheaply.".format(
                 hy=_fmt_pct(ctx.get("hy_spread_pct")), pctl=pctl_clause
             )
         )
@@ -170,16 +181,15 @@ def _build_notes(ctx: dict) -> List[str]:
     if diff is not None and terminal_pct is not None:
         if diff > _TERMINAL_VS_INFLATION_DEADBAND_PCT:
             notes.append(
-                "Terminal büyüme (%{tg}) piyasanın fiyatladığı enflasyonun "
-                "(%{be}) belirgin üzerinde — sonsuza dek reel büyüme "
-                "varsayılıyor.".format(
+                "Terminal growth ({tg}%) is notably above the inflation the market "
+                "is pricing in ({be}%) — assuming real growth forever.".format(
                     tg=_fmt_pct(terminal_pct), be=_fmt_pct(ctx.get("breakeven_inflation_pct"))
                 )
             )
         elif diff < 0:
             notes.append(
-                "Terminal büyüme (%{tg}) beklenen enflasyonun (%{be}) altında "
-                "— reel olarak küçülen bir sonsuz dönem varsayılıyor.".format(
+                "Terminal growth ({tg}%) is below expected inflation ({be}%) "
+                "— assuming a perpetuity that shrinks in real terms.".format(
                     tg=_fmt_pct(terminal_pct), be=_fmt_pct(ctx.get("breakeven_inflation_pct"))
                 )
             )
@@ -190,14 +200,14 @@ def _build_notes(ctx: dict) -> List[str]:
     if rf_pctl is not None and (
         rf_pctl >= _RISK_FREE_EXTREME_PERCENTILE_HIGH or rf_pctl <= _RISK_FREE_EXTREME_PERCENTILE_LOW
     ):
-        side = "üst" if rf_pctl >= _RISK_FREE_EXTREME_PERCENTILE_HIGH else "alt"
+        side = "top" if rf_pctl >= _RISK_FREE_EXTREME_PERCENTILE_HIGH else "bottom"
         notes.append(
-            "10 yıllık faiz %{rf} ile kendi 10 yıllık aralığının {side} ucunda "
-            "({pctl}. yüzdelik) — modelin iskonto oranı bu seviyenin üzerine "
-            "kuruluyor.".format(
+            "10-year yield at {rf}% sits at the {side} of its own 10-year range "
+            "({pctl} percentile) — the model's discount rate is built on top of "
+            "this level.".format(
                 rf=_fmt_pct(ctx.get("risk_free_pct")),
                 side=side,
-                pctl=_fmt_percentile_int(rf_pctl),
+                pctl=_ordinal(_fmt_percentile_int(rf_pctl)),
             )
         )
 
@@ -232,9 +242,9 @@ def build_macro_context(panel: Optional[dict], terminal_growth: Optional[float] 
         ``long_slope_pct`` (DGS30-DGS10), ``breakeven_inflation_pct`` (T10YIE),
         ``real_rate_pct`` (DGS10-T10YIE), ``ig_spread_pct`` (BAA10Y),
         ``ig_spread_percentile``, ``hy_spread_pct`` (BAMLH0A0HYM2),
-        ``hy_spread_percentile``, ``credit_regime`` (``"sıkı"``/``"normal"``/
-        ``"gevşek"``/``None``), ``terminal_growth_pct``,
-        ``terminal_vs_inflation_pct``, ``notes`` (list of Turkish sentences),
+        ``hy_spread_percentile``, ``credit_regime`` (``"tight"``/``"normal"``/
+        ``"loose"``/``None``), ``terminal_growth_pct``,
+        ``terminal_vs_inflation_pct``, ``notes`` (list of sentences),
         ``as_of`` (newest observation date across the panel),
         ``series_available``/``series_missing`` (lists of series ids), and
         ``providers`` -- the sorted set of distinct ``"provider"`` values
@@ -333,19 +343,18 @@ def _build_macro_context(panel: dict, terminal_growth: Optional[float]) -> Optio
 
 
 def summarize_macro(context: Optional[dict]) -> str:
-    """Render a compact one-line Turkish summary of a macro context.
+    """Render a compact one-line summary of a macro context.
 
-    Suitable for the verdict card's future "Makro:" row, e.g.::
+    Suitable for the verdict card's future "Macro:" row, e.g.::
 
-        "10y %4,21 (10y içinde 62. yüzdelik) · eğri +0,35 · HY spread %3,18
-        (18. yüzdelik, gevşek)"
+        "10y 4.21% (62nd percentile of 10y) · curve +0.35 · HY spread 3.18%
+        (18th percentile, loose)"
 
     When ``context["providers"]`` shows the FRED-with-Treasury-fallback
     chain (:mod:`sec_analyzer.fetch.fred`) actually used Treasury for one or
-    more series, a trailing ``" (Treasury üzerinden)"`` is appended so a
-    fallback is never silently invisible in the summary line. Nothing is
-    appended in the normal (FRED-only) case, so the everyday line stays
-    uncluttered.
+    more series, a trailing ``" (via Treasury)"`` is appended so a fallback
+    is never silently invisible in the summary line. Nothing is appended in
+    the normal (FRED-only) case, so the everyday line stays uncluttered.
 
     Returns ``"—"`` for ``None``/empty ``context``. Mirrors
     :func:`sec_analyzer.signals.events.summarize_events`'s defensiveness:
@@ -359,36 +368,36 @@ def summarize_macro(context: Optional[dict]) -> str:
 
         risk_free_pct = context.get("risk_free_pct")
         if risk_free_pct is not None:
-            piece = f"10y %{_fmt_pct(risk_free_pct)}"
+            piece = f"10y {_fmt_pct(risk_free_pct)}%"
             pctl = _fmt_percentile_int(context.get("risk_free_percentile"))
             if pctl is not None:
-                piece += f" (10y içinde {pctl}. yüzdelik)"
+                piece += f" ({_ordinal(pctl)} percentile of 10y)"
             parts.append(piece)
 
         curve_slope_pct = context.get("curve_slope_pct")
         if curve_slope_pct is not None:
             sign = "+" if curve_slope_pct >= 0 else ""
-            parts.append(f"eğri {sign}{_fmt_pct(curve_slope_pct)}")
+            parts.append(f"curve {sign}{_fmt_pct(curve_slope_pct)}")
 
         hy_spread_pct = context.get("hy_spread_pct")
         ig_spread_pct = context.get("ig_spread_pct")
         if hy_spread_pct is not None:
-            piece = f"HY spread %{_fmt_pct(hy_spread_pct)}"
+            piece = f"HY spread {_fmt_pct(hy_spread_pct)}%"
             extras = []
             pctl = _fmt_percentile_int(context.get("hy_spread_percentile"))
             if pctl is not None:
-                extras.append(f"{pctl}. yüzdelik")
+                extras.append(f"{_ordinal(pctl)} percentile")
             if context.get("credit_regime") is not None:
                 extras.append(context["credit_regime"])
             if extras:
                 piece += f" ({', '.join(extras)})"
             parts.append(piece)
         elif ig_spread_pct is not None:
-            piece = f"IG spread %{_fmt_pct(ig_spread_pct)}"
+            piece = f"IG spread {_fmt_pct(ig_spread_pct)}%"
             extras = []
             pctl = _fmt_percentile_int(context.get("ig_spread_percentile"))
             if pctl is not None:
-                extras.append(f"{pctl}. yüzdelik")
+                extras.append(f"{_ordinal(pctl)} percentile")
             if context.get("credit_regime") is not None:
                 extras.append(context["credit_regime"])
             if extras:
@@ -400,7 +409,7 @@ def summarize_macro(context: Optional[dict]) -> str:
 
         line = " · ".join(parts)
         if "Treasury" in (context.get("providers") or []):
-            line += " (Treasury üzerinden)"
+            line += " (via Treasury)"
         return line
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("summarize_macro() failed unexpectedly; returning placeholder.")

@@ -53,7 +53,7 @@ _PS_IMPLAUSIBLE_FLOOR = 0.5
 
 
 def _assess_price_reliability(pe: Optional[float], ps: Optional[float]) -> Optional[str]:
-    """Return a Turkish note when the price looks corrupt, else ``None``.
+    """Return a note when the price looks corrupt, else ``None``.
 
     Fires only when both the trailing P/E and P/S are positive and below their
     implausibility floors at once (see :data:`_PE_IMPLAUSIBLE_FLOOR` /
@@ -65,9 +65,9 @@ def _assess_price_reliability(pe: Optional[float], ps: Optional[float]) -> Optio
         return None
     if 0 < pe < _PE_IMPLAUSIBLE_FLOOR and 0 < ps < _PS_IMPLAUSIBLE_FLOOR:
         return (
-            f"Fiyat güvenilmez olabilir: ima edilen F/K {pe:.2f} ve F/S {ps:.2f} "
-            "aynı anda olağandışı düşük (muhtemelen bozuk fiyat verisi); "
-            "fiyat bağımlı oranlar dikkatle yorumlanmalı."
+            f"Price may be unreliable: the implied P/E {pe:.2f} and P/S {ps:.2f} "
+            "are both unusually low at the same time (likely corrupt price data); "
+            "price-dependent ratios should be interpreted with caution."
         )
     return None
 
@@ -159,12 +159,13 @@ def _trend_growth(series: Dict[int, float], latest_fy: Optional[int], years: int
 
 
 def resolve_fundamental_fy(metrics: dict) -> Optional[int]:
-    """En yeni *temel* (finansal-tablo) mali yılı; hisse-sayısı kapak
-    sayfasının kirlettiği ``latest_fy``'den ayrı.
+    """The most recent *fundamental* (financial-statement) fiscal year;
+    distinct from ``latest_fy``, which the share-count cover page can pollute.
 
-    ``metrics["latest_fundamental_fy"]`` yoksa veya ``None`` ise
-    ``metrics["latest_fy"]``'ye düşer. Böylece bu anahtarı üretmeden metrics
-    dict'i kuran çağıranlar (özellikle testler) eski davranışı korur.
+    Falls back to ``metrics["latest_fy"]`` when
+    ``metrics["latest_fundamental_fy"]`` is absent or ``None``. This preserves
+    the old behavior for callers (especially tests) that build a metrics dict
+    without producing this key.
     """
     m = metrics or {}
     fy = m.get("latest_fundamental_fy")
@@ -325,14 +326,15 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
         }
 
     latest_fy = max(fiscal_years)
-    # SharesOutstanding kapak sayfası (dei) nokta-zaman serisidir ve bazı
-    # filer'larda en yeni 10-K'nın finansal tablolarından daha yeni bir mali
-    # yıl taşır (ör. AMZN). Değerleme çapasını bu seriden ayır: fundamental
-    # veriler (gelir tablosu / nakit akışı / bilanço) SharesOutstanding HARİÇ
-    # serilerin en yenisinden okunur. Bu dışlama, mevcut kavram setinde tek
-    # nokta-zaman serisinin SharesOutstanding olması varsayımına dayanır;
-    # gelecekte başka bir kapak-sayfası serisi eklenirse buradaki dışlama
-    # listesi güncellenmelidir.
+    # The SharesOutstanding cover-page (dei) series is a point-in-time series
+    # and for some filers carries a fiscal year newer than the latest 10-K's
+    # financial statements (e.g. AMZN). Keep the valuation anchor separate
+    # from this series: fundamental data (income statement / cash flow /
+    # balance sheet) is read from the latest of the series EXCLUDING
+    # SharesOutstanding. This exclusion relies on the assumption that
+    # SharesOutstanding is the only point-in-time series in the current
+    # concept set; if another cover-page series is added in the future, the
+    # exclusion list here must be updated.
     fundamental_series = (
         eps_series, ltd_series, ltdc_series, cash_series, revenue_series,
         sbc_series, rnd_series, buyback_series, dividends_series,

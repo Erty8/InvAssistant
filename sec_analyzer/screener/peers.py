@@ -184,17 +184,17 @@ _MIN_PEER_SAMPLE = 5
 _STRENGTH_PCT = 75.0
 _WEAKNESS_PCT = 25.0
 
-#: Turkish display labels for the note rendered by :func:`rank_against_peers`.
+#: Display labels for the note rendered by :func:`rank_against_peers`.
 _METRIC_TR_LABELS = {
-    "revenue": "gelir",
-    "net_margin": "net marj",
-    "operating_margin": "faaliyet marjı",
-    "gross_margin": "brüt marj",
-    "fcf_margin": "FCF marjı",
-    "roe": "özkaynak getirisi (ROE)",
-    "roa": "aktif getirisi (ROA)",
-    "debt_to_equity": "borç/özkaynak oranı",
-    "revenue_growth": "gelir büyümesi",
+    "revenue": "revenue",
+    "net_margin": "net margin",
+    "operating_margin": "operating margin",
+    "gross_margin": "gross margin",
+    "fcf_margin": "FCF margin",
+    "roe": "return on equity (ROE)",
+    "roa": "return on assets (ROA)",
+    "debt_to_equity": "debt-to-equity ratio",
+    "revenue_growth": "revenue growth",
 }
 
 
@@ -431,7 +431,7 @@ def build_peer_snapshot(
         logger.exception("build_peer_snapshot() failed unexpectedly; returning an empty snapshot.")
         return _empty_snapshot(
             year, indexes,
-            skipped=[{"ticker": None, "reason": "build_peer_snapshot() beklenmeyen bir hatayla karşılaştı."}],
+            skipped=[{"ticker": None, "reason": "build_peer_snapshot() encountered an unexpected error."}],
         )
 
 
@@ -445,7 +445,7 @@ def _build_peer_snapshot(year: int, client, no_cache: bool, indexes: Optional[Li
     for row in universe_rows:
         cik = _coerce_cik(row.get("cik"))
         if cik is None:
-            skipped.append({"ticker": row.get("ticker"), "reason": "Kullanılabilir CIK yok"})
+            skipped.append({"ticker": row.get("ticker"), "reason": "No usable CIK"})
             continue
         entries.append((cik, row))
 
@@ -563,41 +563,52 @@ def _percentile_rank(history_values: List[Optional[float]], current: Optional[fl
     return round(pct, 1)
 
 
-def _format_tr_pct(pct: float) -> str:
-    """Format a percentile for the Turkish note: an integer value renders
-    without a decimal (``"88"``), a fractional one with a Turkish decimal
-    comma (``"81,3"``)."""
+def _ordinal_suffix(n: int) -> str:
+    """English ordinal suffix for an integer (``1`` -> ``"st"``, ``12`` ->
+    ``"th"``, ``23`` -> ``"rd"``, ...)."""
+    if 10 <= abs(n) % 100 <= 20:
+        return "th"
+    return {1: "st", 2: "nd", 3: "rd"}.get(abs(n) % 10, "th")
+
+
+def _format_pct(pct: float) -> str:
+    """Format a percentile for the note with its English ordinal suffix: an
+    integer value renders as e.g. ``"88th"``, a fractional one keeps one
+    decimal place with the suffix on the integer part (``"81.3rd"``)."""
     if pct == int(pct):
-        return str(int(pct))
-    return f"{pct:.1f}".replace(".", ",")
+        n = int(pct)
+        return f"{n}{_ordinal_suffix(n)}"
+    return f"{pct:.1f}{_ordinal_suffix(int(pct))}"
 
 
-def _join_tr(phrases: List[str]) -> str:
-    """Join phrases Turkish-style: ``"a"``, ``"a ve b"``, ``"a, b ve c"``."""
+def _join_and(phrases: List[str]) -> str:
+    """Join phrases English-style: ``"a"``, ``"a and b"``, ``"a, b, and c"``."""
     if not phrases:
         return ""
     if len(phrases) == 1:
         return phrases[0]
-    return ", ".join(phrases[:-1]) + " ve " + phrases[-1]
+    if len(phrases) == 2:
+        return f"{phrases[0]} and {phrases[1]}"
+    return ", ".join(phrases[:-1]) + ", and " + phrases[-1]
 
 
 def _metric_phrase(key: str, pct: float) -> str:
     label = _METRIC_TR_LABELS.get(key, key)
-    return f"{label} ({_format_tr_pct(pct)}. yüzdelik)"
+    return f"{label} ({_format_pct(pct)} percentile)"
 
 
 def _build_note(sector: str, peer_n: int, strengths: List[str], weaknesses: List[str], metrics: Dict[str, dict]) -> str:
     if not strengths and not weaknesses:
-        return f"{peer_n} emsale göre belirgin bir ayrışma yok."
+        return f"No notable divergence versus {peer_n} peers."
 
     clauses = []
     if strengths:
         phrases = [_metric_phrase(k, metrics[k]["percentile"]) for k in strengths]
-        clauses.append(f"{_join_tr(phrases)} güçlü")
+        clauses.append(f"strong in {_join_and(phrases)}")
     if weaknesses:
         phrases = [_metric_phrase(k, metrics[k]["percentile"]) for k in weaknesses]
-        clauses.append(f"{_join_tr(phrases)} zayıf")
-    return f"{sector} sektöründeki {peer_n} emsale göre " + "; ".join(clauses) + "."
+        clauses.append(f"weak in {_join_and(phrases)}")
+    return f"Versus {peer_n} peers in the {sector} sector, " + "; ".join(clauses) + "."
 
 
 def rank_against_peers(metrics: Optional[Dict[str, Optional[float]]], sector: Optional[str], snapshot: Optional[dict]) -> Optional[dict]:
@@ -625,7 +636,7 @@ def rank_against_peers(metrics: Optional[Dict[str, Optional[float]]], sector: Op
         the peer sample for that metric has fewer than 5 usable values),
         ``strengths`` (percentile >= 75, sorted descending by percentile),
         ``weaknesses`` (percentile <= 25, sorted ascending by percentile),
-        and one Turkish-sentence ``note``.
+        and one plain-language sentence ``note``.
 
         ``debt_to_equity`` is read with the sense inverted for the
         strengths/weaknesses classification only (see :data:`_LOWER_IS_BETTER`):
@@ -637,7 +648,7 @@ def rank_against_peers(metrics: Optional[Dict[str, Optional[float]]], sector: Op
         fiscal year than the one the filer's own metrics were drawn from
         overstates its own precision (a sector's margins move year to
         year) -- this is disclosed, not corrected: when ``fy_mismatch`` is
-        ``True``, ``note`` gets a trailing Turkish caveat naming both years
+        ``True``, ``note`` gets a trailing caveat naming both years
         rather than silently presenting the percentile as if the periods
         matched. This module stays a context layer either way; it does not
         re-derive the filer's metrics for the snapshot's year.
@@ -715,7 +726,7 @@ def _rank_against_peers(metrics: Dict[str, Optional[float]], sector: Optional[st
     company_fy = metrics.get("fy")
     fy_mismatch = bool(company_fy is not None and peer_year is not None and company_fy != peer_year)
     if fy_mismatch:
-        note = f"{note} (şirket FY{company_fy}, emsal kesiti FY{peer_year} — yıllar farklı)."
+        note = f"{note} (company FY{company_fy}, peer snapshot FY{peer_year} — different years)."
 
     return {
         "sector": sector,

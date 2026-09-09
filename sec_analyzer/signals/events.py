@@ -13,8 +13,8 @@ happen to this company recently?" -- is available with **zero** extra network
 requests, zero document parsing, and no LLM: we only classify the item codes
 SEC has already assigned. This module is the event-oriented sibling of
 :mod:`sec_analyzer.normalize.red_flags`: each recognized item code maps to a
-Turkish category label and a severity, and :func:`detect_events` returns the
-recent filings that carry them.
+category label and a severity, and :func:`detect_events` returns the recent
+filings that carry them.
 
 Like ``detect_red_flags``, this module is fully defensive: malformed or
 missing submissions data simply yields no events, and :func:`detect_events`
@@ -43,7 +43,7 @@ _SEVERITY_RANK = {"critical": 3, "warning": 2, "info": 1}
 #: are considered "recent" enough to surface.
 _DEFAULT_LOOKBACK_DAYS = 180
 
-#: SEC Form 8-K item code -> (Turkish label, severity). Severity buckets:
+#: SEC Form 8-K item code -> (label, severity). Severity buckets:
 #:   critical -- bankruptcy, delisting, restatement, control change, debt
 #:               acceleration: an event that can invalidate the numbers or
 #:               the going-concern assumption the valuation rests on.
@@ -54,45 +54,45 @@ _DEFAULT_LOOKBACK_DAYS = 180
 #:               events, exhibits) that carry little standalone signal.
 _ITEM_MAP: Dict[str, Tuple[str, str]] = {
     # 1.xx -- Registrant's business and operations
-    "1.01": ("Materyal sözleşme imzalandı", "warning"),
-    "1.02": ("Materyal sözleşme sona erdi", "warning"),
-    "1.03": ("İflas veya kayyum atanması", "critical"),
-    "1.04": ("Maden güvenliği bildirimi", "info"),
-    "1.05": ("Materyal siber güvenlik olayı", "critical"),
+    "1.01": ("Material agreement signed", "warning"),
+    "1.02": ("Material agreement terminated", "warning"),
+    "1.03": ("Bankruptcy or receivership", "critical"),
+    "1.04": ("Mine safety disclosure", "info"),
+    "1.05": ("Material cybersecurity incident", "critical"),
     # 2.xx -- Financial information
-    "2.01": ("Varlık alımı/satışı tamamlandı", "warning"),
-    "2.02": ("Kazanç/finansal sonuç açıklaması", "info"),
-    "2.03": ("Yeni doğrudan finansal yükümlülük", "warning"),
-    "2.04": ("Borç hızlandırma/covenant tetikleyici", "critical"),
-    "2.05": ("Yeniden yapılanma / çıkış maliyetleri", "warning"),
-    "2.06": ("Materyal değer düşüklüğü (impairment)", "warning"),
+    "2.01": ("Completion of acquisition or disposition of assets", "warning"),
+    "2.02": ("Results of operations / earnings announcement", "info"),
+    "2.03": ("Creation of a direct financial obligation", "warning"),
+    "2.04": ("Debt acceleration / covenant trigger", "critical"),
+    "2.05": ("Restructuring / exit costs", "warning"),
+    "2.06": ("Material impairment", "warning"),
     # 3.xx -- Securities and trading markets
-    "3.01": ("Borsadan çıkarma / kotasyon uyarısı", "critical"),
-    "3.02": ("Kayıtsız hisse satışı", "info"),
-    "3.03": ("Menkul kıymet haklarında materyal değişiklik", "warning"),
+    "3.01": ("Delisting / listing non-compliance notice", "critical"),
+    "3.02": ("Unregistered sale of equity securities", "info"),
+    "3.03": ("Material modification of security holder rights", "warning"),
     # 4.xx -- Matters related to accountants and financial statements
-    "4.01": ("Bağımsız denetçi değişikliği", "warning"),
-    "4.02": ("Önceki finansal tablolara güvenilemez (restatement)", "critical"),
+    "4.01": ("Change in independent auditor", "warning"),
+    "4.02": ("Non-reliance on previously issued financials (restatement)", "critical"),
     # 5.xx -- Corporate governance and management
-    "5.01": ("Şirket kontrolünde değişiklik", "critical"),
-    "5.02": ("Üst düzey yönetici/kurul değişikliği", "warning"),
-    "5.03": ("Ana sözleşme/tüzük veya mali yıl değişikliği", "info"),
-    "5.04": ("Çalışan planlarında geçici işlem durdurma", "info"),
-    "5.05": ("Etik kuralları değişikliği", "info"),
-    "5.06": ("Kabuk şirket statüsünde değişiklik", "warning"),
-    "5.07": ("Genel kurul oylama sonuçları", "info"),
-    "5.08": ("Hissedar yönetim adaylıkları", "info"),
+    "5.01": ("Change in control of registrant", "critical"),
+    "5.02": ("Departure/appointment of officers or directors", "warning"),
+    "5.03": ("Amendment to articles/bylaws or change in fiscal year", "info"),
+    "5.04": ("Temporary suspension of trading under employee plans", "info"),
+    "5.05": ("Amendment to code of ethics", "info"),
+    "5.06": ("Change in shell company status", "warning"),
+    "5.07": ("Submission of matters to a vote of security holders", "info"),
+    "5.08": ("Shareholder director nominations", "info"),
     # 6.xx -- Asset-backed securities (niche)
-    "6.01": ("ABS bilgilendirme", "info"),
-    "6.02": ("Servis sağlayıcı/varlık değişikliği (ABS)", "info"),
-    "6.03": ("Kredi geliştirme değişikliği (ABS)", "info"),
-    "6.04": ("Menkul kıymet yükümlülüklerinde başarısızlık (ABS)", "warning"),
-    "6.05": ("Menkul kıymetleştirme derecelendirme değişikliği (ABS)", "info"),
+    "6.01": ("ABS informational and computational material", "info"),
+    "6.02": ("Change of servicer or trustee (ABS)", "info"),
+    "6.03": ("Change in credit enhancement (ABS)", "info"),
+    "6.04": ("Failure to make a required distribution (ABS)", "warning"),
+    "6.05": ("Securities rating change (ABS)", "info"),
     # 7.xx / 8.xx -- Regulation FD and other events
-    "7.01": ("Regülasyon FD açıklaması", "info"),
-    "8.01": ("Diğer olaylar", "info"),
+    "7.01": ("Regulation FD disclosure", "info"),
+    "8.01": ("Other events", "info"),
     # 9.xx -- Financial statements and exhibits
-    "9.01": ("Finansal tablolar ve ekler", "info"),
+    "9.01": ("Financial statements and exhibits", "info"),
 }
 
 #: Fallback classification for an item code SEC assigns that isn't in
@@ -128,7 +128,7 @@ def _classify_item(code: str) -> Tuple[str, str]:
     mapped = _ITEM_MAP.get(code)
     if mapped is not None:
         return mapped
-    return (f"8-K madde {code}", _UNKNOWN_SEVERITY)
+    return (f"8-K item {code}", _UNKNOWN_SEVERITY)
 
 
 def _max_severity(severities: List[str]) -> str:
@@ -175,7 +175,7 @@ def detect_events(
               "date": "2026-07-01",        # filing date, YYYY-MM-DD
               "form": "8-K",
               "items": ["5.02"],           # SEC item codes on this filing
-              "categories": ["Üst düzey yönetici/kurul değişikliği"],
+              "categories": ["Departure/appointment of officers or directors"],
               "severity": "warning",       # max over the filing's items
               "accession": "0000002488-26-000115",
               "primary_doc": "amd-20260626.htm",
@@ -269,27 +269,27 @@ def _detect_events(
 
 
 def summarize_events(events: List[dict], max_shown: int = 3) -> str:
-    """Render a compact one-line Turkish summary of the most material events,
-    suitable for the verdict card's future "Olaylar:" line.
+    """Render a compact one-line summary of the most material events,
+    suitable for the verdict card's future "Events:" line.
 
-    Leads with a severity tally (e.g. ``"1 kritik, 2 uyarı"``) and then lists
-    up to ``max_shown`` events (most severe first, then most recent) as
-    ``"<ilk kategori> <gün Ay>"``. Returns ``"yok"`` for an empty list.
+    Leads with a severity tally (e.g. ``"1 critical, 2 warning"``) and then
+    lists up to ``max_shown`` events (most severe first, then most recent)
+    as ``"<first category> (<date>)"``. Returns ``"none"`` for an empty list.
 
     This helper is pure and does not touch any other module; it exists so the
     eventual CLI/report integration has a single, tested formatter to call.
     """
     if not events:
-        return "yok"
+        return "none"
 
     counts = {"critical": 0, "warning": 0, "info": 0}
     for event in events:
         counts[event.get("severity", "info")] = counts.get(event.get("severity", "info"), 0) + 1
 
     tally_parts = []
-    for sev, tr in (("critical", "kritik"), ("warning", "uyarı"), ("info", "bilgi")):
+    for sev, label in (("critical", "critical"), ("warning", "warning"), ("info", "info")):
         if counts.get(sev):
-            tally_parts.append(f"{counts[sev]} {tr}")
+            tally_parts.append(f"{counts[sev]} {label}")
     tally = ", ".join(tally_parts)
 
     ranked = sorted(
@@ -299,7 +299,7 @@ def summarize_events(events: List[dict], max_shown: int = 3) -> str:
     )
     shown = []
     for event in ranked[:max_shown]:
-        category = (event.get("categories") or ["olay"])[0]
+        category = (event.get("categories") or ["event"])[0]
         shown.append(f"{category} ({event.get('date', '')})")
 
     return f"{tally} — " + " · ".join(shown) if shown else tally

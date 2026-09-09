@@ -76,7 +76,7 @@ _VERDICTS_EXTRA_COLUMNS: List[Tuple[str, str]] = [
     # backtests distinguish "analyzed today with today's data" from "analyzed
     # as of a past date".
     ("as_of", "TEXT"),
-    # Composite momentum label ("GÜÇLÜ+" / "POZİTİF" / "NÖTR" / "NEGATİF")
+    # Composite momentum label ("STRONG+" / "POSITIVE" / "NEUTRAL" / "NEGATIVE")
     # from result["momentum"]["verdict"]; the full momentum dict lives in
     # result_json. Context layer only -- never feeds the fair value.
     ("momentum_verdict", "TEXT"),
@@ -84,8 +84,8 @@ _VERDICTS_EXTRA_COLUMNS: List[Tuple[str, str]] = [
     # assumptions for this run (ASSUMPTIONS_CACHE_SPEC.md Sec.1); NULL for
     # legacy rows and for live/script runs that did not use a cached set.
     ("assumption_set_id", "INTEGER"),
-    # Insider (SEC Form 4) activity label ("GÜÇLÜ ALIM" / "ALIM" / "NÖTR" /
-    # "SATIŞ" / "YOĞUN SATIŞ") from result["insider"]["verdict"]; the full
+    # Insider (SEC Form 4) activity label ("STRONG BUY" / "BUY" / "NEUTRAL" /
+    # "SELL" / "HEAVY SELLING") from result["insider"]["verdict"]; the full
     # activity dict lives in result_json. Context layer only -- like momentum,
     # it never feeds the fair value.
     ("insider_verdict", "TEXT"),
@@ -157,8 +157,8 @@ def get_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
 
 def init_db(db_path: Optional[str] = None) -> None:
     """Create the ``companies``, ``financials``, ``ratios``, ``prices``,
-    ``verdicts``, ``verdict_outcomes``, ``swing_scans``, and ``swing_studies``
-    tables.
+    ``verdicts``, ``verdict_outcomes``, ``swing_scans``, ``swing_studies``,
+    ``assumption_sets``, and ``thesis_anchors`` tables.
 
     Safe to call any number of times: every statement is
     ``CREATE TABLE IF NOT EXISTS``, and any columns added to ``financials``,
@@ -349,6 +349,13 @@ def init_db(db_path: Optional[str] = None) -> None:
             # this one (get_connection/init_db) from being a cycle.
             from sec_analyzer.store import assumptions as _assumptions
             _assumptions.init_assumptions_table(conn)
+
+            # The thesis-validation-metric day-1 anchor table (METODOLOJI.md
+            # Sec.7's quarterly-invalidation rule) shares this database file
+            # too. Its DDL lives in store.thesis_anchors; same lazy-import
+            # rationale as assumptions above.
+            from sec_analyzer.store import thesis_anchors as _thesis_anchors
+            _thesis_anchors.init_thesis_anchors_table(conn)
         logger.debug("Schema ensured at %s", db_path or Config.DB_PATH)
     finally:
         conn.close()

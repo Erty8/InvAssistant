@@ -59,14 +59,14 @@ _WEIGHTS = {
 # than scored on too little evidence.
 _MIN_COVERAGE_WEIGHT = 0.60
 
-#: Turkish display labels for each component (screener table / card readout).
+#: Display labels for each component (screener table / card readout).
 _COMPONENT_LABELS = {
     "trend": "Trend",
-    "setup": "Kurulum kalitesi",
-    "trigger": "Tetikleyici",
-    "rel_strength": "Relatif güç",
-    "volume": "Hacim",
-    "risk_reward": "Risk/Ödül",
+    "setup": "Setup quality",
+    "trigger": "Trigger",
+    "rel_strength": "Relative strength",
+    "volume": "Volume",
+    "risk_reward": "Risk/Reward",
 }
 
 # --- Trend sub-score scales (SWING_SPEC.md Sec.3.2): SMA slope % over their
@@ -355,32 +355,32 @@ def _classify_setup(ind: dict, trend_sub: "float | None") -> str:
 
     dist50 = ind.get("dist_sma50_pct")
     if t >= _PULLBACK_TREND_MIN and _is_num(dist50) and _PULLBACK_DIST_SMA50_LO <= dist50 <= _PULLBACK_DIST_SMA50_HI:
-        return "TRENDDE GERİ ÇEKİLME"
+        return "TREND PULLBACK"
 
     squeeze = ind.get("bb_squeeze")
     if isinstance(squeeze, dict) and squeeze.get("active") is True and t >= _SQUEEZE_SETUP_TREND_MIN:
-        return "SIKIŞMA"
+        return "SQUEEZE"
 
     rsi_reclaim = ind.get("rsi_reclaim")
     rsi14 = ind.get("rsi14")
     rsi_divergence = ind.get("rsi_divergence")
     if rsi_reclaim == "bullish" or (_is_num(rsi14) and rsi14 < _OVERSOLD_RSI_MAX and rsi_divergence == "bullish"):
-        return "AŞIRI SATIM TEPKİSİ"
+        return "OVERSOLD BOUNCE"
 
     if t >= _CONTINUATION_TREND_MIN:
-        return "MOMENTUM DEVAM"
+        return "MOMENTUM CONTINUATION"
 
-    return "KURULUM YOK"
+    return "NO SETUP"
 
 
 def _badges(ind: dict) -> "list[str]":
-    """Short Turkish badge strings (SWING_SPEC.md Sec.3.9), emitted in this
+    """Short badge strings (SWING_SPEC.md Sec.3.9), emitted in this
     fixed order whenever their condition holds. Possibly empty."""
     badges = []
 
     rel_volume = ind.get("rel_volume")
     if _is_num(rel_volume) and rel_volume >= _VOLUME_BADGE_REL_MIN:
-        badges.append("HACİM")
+        badges.append("VOLUME")
 
     climax = ind.get("volume_climax")
     if (
@@ -390,33 +390,33 @@ def _badges(ind: dict) -> "list[str]":
         and _is_num(climax.get("bars_ago"))
         and climax["bars_ago"] <= _CAPITULATION_BADGE_MAX_BARS_AGO
     ):
-        badges.append("KAPİTÜLASYON")
+        badges.append("CAPITULATION")
 
     squeeze = ind.get("bb_squeeze")
     if isinstance(squeeze, dict) and squeeze.get("active") is True:
-        badges.append("SIKIŞMA")
+        badges.append("SQUEEZE")
 
     if ind.get("golden_cross") is True:
         badges.append("GOLDEN CROSS")
 
     if ind.get("rsi_divergence") == "bullish":
-        badges.append("RSI UYUMSUZLUK")
+        badges.append("RSI DIVERGENCE")
 
     return badges
 
 
 def _label_for_score(score: int) -> str:
-    """Map the 0-100 display ``score`` to its Turkish grade label (5 bands,
+    """Map the 0-100 display ``score`` to its grade label (5 bands,
     SWING_SPEC.md Sec.3.10)."""
     if score >= _SCORE_STRONG_OPPORTUNITY:
-        return "GÜÇLÜ FIRSAT"
+        return "STRONG OPPORTUNITY"
     if score >= _SCORE_OPPORTUNITY:
-        return "FIRSAT"
+        return "OPPORTUNITY"
     if score >= _SCORE_NEUTRAL:
-        return "NÖTR"
+        return "NEUTRAL"
     if score >= _SCORE_WEAK:
-        return "ZAYIF"
-    return "KAÇIN"
+        return "WEAK"
+    return "AVOID"
 
 
 def _trade_levels(ind: dict) -> dict:
@@ -490,18 +490,18 @@ def _trade_levels(ind: dict) -> dict:
 
 
 def _build_summary(score: int, label: str, setup: str, components: "list[dict]") -> str:
-    """One-line Turkish readout (SWING_SPEC.md Sec.3.12): the score/label/
-    setup headline, plus the strongest positive and strongest negative
-    driver components (by ``points``), when present."""
+    """One-line readout (SWING_SPEC.md Sec.3.12): the score/label/setup
+    headline, plus the strongest positive and strongest negative driver
+    components (by ``points``), when present."""
     head = f"{score}/100 {label.lower()} — {setup.lower()}"
     ordered = sorted(components, key=lambda c: c["points"])
     strongest = ordered[-1] if ordered else None
     weakest = ordered[0] if ordered else None
     tail = ""
     if strongest and strongest["points"] > 0:
-        tail += f"; en güçlü: {strongest['label']}"
+        tail += f"; strongest: {strongest['label']}"
     if weakest and weakest["points"] < 0 and weakest is not strongest:
-        tail += f", en zayıf: {weakest['label']}"
+        tail += f", weakest: {weakest['label']}"
     return head + tail
 
 
@@ -529,9 +529,9 @@ def compute_swing_score(indicators: "dict | None") -> "dict | None":
 
         * ``score``: 0-100 display score (``50`` == neutral).
         * ``s``: the raw ``[-1, 1]`` score, 3dp.
-        * ``label``: Turkish grade label (5 bands, Sec.3.10).
-        * ``setup``: Turkish setup classification (Sec.3.8).
-        * ``badges``: list of short Turkish badge strings (Sec.3.9), possibly
+        * ``label``: grade label (5 bands, Sec.3.10).
+        * ``setup``: setup classification (Sec.3.8).
+        * ``badges``: list of short badge strings (Sec.3.9), possibly
           empty.
         * ``components``: list of ``{key, label, sub, weight, points}`` for
           the contributing components only, in ``_WEIGHTS`` declaration
@@ -539,7 +539,7 @@ def compute_swing_score(indicators: "dict | None") -> "dict | None":
         * ``entry`` / ``stop`` / ``stop_pct`` / ``target`` / ``target_pct`` /
           ``rr``: trade levels (Sec.3.11), each independently ``None`` when
           its inputs are missing.
-        * ``summary``: a one-line Turkish readout (Sec.3.12).
+        * ``summary``: a one-line readout (Sec.3.12).
 
     Never raises: any unexpected failure is logged and treated as "not
     computable" (returns ``None``), matching the rest of the technical layer

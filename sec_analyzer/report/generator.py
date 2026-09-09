@@ -172,7 +172,7 @@ def render_report_html(
         financials: The serialized financials payload (annual/quarterly
             concept series + ratios) produced by
             :func:`sec_analyzer.report.financials.serialize_financials`, or
-            ``None``. Feeds the client-side "Bilanço" (balance-sheet) tab;
+            ``None``. Feeds the client-side "Balance sheet" tab;
             when absent that tab simply renders an empty state.
         earnings: The dict returned by
             :func:`sec_analyzer.fetch.earnings.get_earnings_history`, or
@@ -232,7 +232,7 @@ def render_search_page(
 
     Args:
         horizons: ``(value, label)`` pairs for the horizon selector, e.g.
-            ``[("3m", "3 ay"), ("1y", "1 yıl"), ("5y", "5 yıl")]``.
+            ``[("3m", "3 months"), ("1y", "1 year"), ("5y", "5 years")]``.
         providers: ``(value, label)`` pairs for the analysis-provider
             selector.
         default_horizon: The horizon value pre-selected on page load.
@@ -439,7 +439,7 @@ def generate_report(
             an ``_asof-<date>`` segment is added to the saved filename so a
             backtest report never overwrites the same-day live report.
         financials: The serialized financials payload feeding the report's
-            "Bilanço" (balance-sheet) tab, or ``None`` -- see
+            "Balance sheet" tab, or ``None`` -- see
             :func:`render_report_html`.
         earnings: Display-only quarterly EPS beat/miss history, or ``None``
             -- see :func:`render_report_html`.

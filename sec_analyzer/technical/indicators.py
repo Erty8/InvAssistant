@@ -114,9 +114,9 @@ _FIB_RATIOS = (0.236, 0.382, 0.5, 0.618, 0.786)
 #: Zone-strength scoring weights. A 52-week extreme outranks everything else
 #: when it's still near price (it is more important than a Fibonacci level),
 #: touches accumulate, and a Fibonacci confluence adds a smaller boost -- so
-#: ranking prefers 52w > heavily-tested swing > fib, and combining sources
-#: ("farklı değerler") strengthens a zone. The 52w bonus is not unconditional,
-#: though -- see :data:`_SR_52W_FAR_THRESHOLD_PCT`.
+#: ranking prefers 52w > heavily-tested swing > fib, and combining evidence
+#: from different sources strengthens a zone. The 52w bonus is not
+#: unconditional, though -- see :data:`_SR_52W_FAR_THRESHOLD_PCT`.
 _SR_SCORE_52W = 100
 _SR_SCORE_PER_TOUCH = 10
 _SR_SCORE_FIB = 5

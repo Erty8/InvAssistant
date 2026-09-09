@@ -3252,6 +3252,130 @@ or whose solve doesn't converge, degrades to `merton_dtd: None` plus an
 explanatory note, exactly like every other engine anchor's missing-data
 behavior.
 
+## 8l. Method summary (`method_summary`) — `engine._entry` / `engine._build_method_summary`
+
+A purely additive, packaging-only explanation of WHICH valuation method(s)
+`run_valuation` used for this filer and WHY, for the report layer's
+educational "Kullanılan Değerleme Yöntemleri" section. **No new precedence
+logic, no new numeric computation, no chain participation**: every row below
+re-reads a flag/detail dict that the headline-selection code earlier in
+`_run_valuation` already branched on (Sec.8a's EPV-vs-FCF-DCF gate, Sec.8b's
+mature revenue-first switch, Sec.8d's mid-growth revenue-first switch,
+Sec.8e's cyclical FCFE anchor, Sec.8f's RIM/pb_roe fallback, Sec.8c's
+FFO/pb_roe fallback, and the leverage-based multiples axis routing) — it is
+pure packaging of an already-made decision, never a second decision-maker.
+Never headlines/feeds `fair_value_range`, never participates in
+`triangulate.triangulate`'s confidence vote — identical non-interference
+contract to Sec.8g/8h/8j/8k's advisory overlays, extended here to cover the
+headline/secondary/cross-check rows too.
+
+### `engine._entry(role, key, label_tr, reason_tr) -> dict`
+
+Trivial constructor for one `method_summary` row:
+`{"role": role, "key": key, "label_tr": label_tr, "reason_tr": reason_tr}`.
+
+### `engine._build_method_summary(sector_type, hyper_growth_active, hyper_growth_detail, cyclical_fcfe_headline, cyclical_fcfe_detail, epv_headline, earnings_power, normalized_variant, dcf_scenarios, mature_revenue_headline, mature_revenue_detail, midgrowth_revenue_headline, midgrowth_revenue_detail, rim, ffo, output_implied, output_bracket_status, multiples_out, altman_z, beneish_m, merton_dtd, lbo_floor_detail, cycle) -> list[dict]`
+
+Every argument is a flag or detail dict `_run_valuation` already computed
+earlier in the same call — nothing is recomputed. Returns a list of
+`{"role": "headline"|"secondary"|"cross_check"|"advisory", "key": str,
+"label_tr": str, "reason_tr": str}` rows, in this exact order:
+
+1. **Exactly one `"headline"` entry**, chosen by re-reading the same
+   sector-routing + headline-switch flags Sec.8a/8b/8d/8e/8f/8c already
+   branched on (hyper-grower revenue-first DCF → cyclical FCFE/EPV/
+   normalized-FCF-DCF/raw-FCF-DCF → mature revenue-first DCF/EPV/raw-FCF-DCF
+   → mid-growth revenue-first DCF/raw-FCF-DCF → RIM/pb_roe → FFO/pb_roe →
+   raw-FCF-DCF default), each with a Turkish `reason_tr` sentence naming why
+   that anchor won for this filer's shape (e.g. "aşırı büyüme yatırımı
+   (CapEx)", "döngüsel + sermaye-yoğun yapı"). The hyper-grower branch also
+   distinguishes the Sec.5 base-case-negative-equity suppression case (its
+   own distinct `reason_tr`) from the normal case.
+2. **Zero or more `"secondary"` entries** for methods that were computed but
+   demoted by that same headline decision (e.g. the raw FCF-DCF and/or EPV
+   floor reported alongside a revenue-first or cyclical-FCFE headline) —
+   each gated on the corresponding detail dict being non-`None`, never
+   fabricated.
+3. **`"cross_check"` entries, always attempted regardless of headline**:
+   reverse-DCF (Sec.9, gated on `output_implied is not None or
+   output_bracket_status != "no_data"`) and exactly one multiples row whose
+   `label_tr` names the sector-appropriate primary multiple — P/S for
+   `growth_unprofitable` (Sec.8d's P/E-is-meaningless carve-out), P/FFO for
+   `reit` (Sec.8c), FD/FAVÖK (EV/EBITDA) for a leveraged filer
+   (`multiples_out["leveraged"]`, Sec.9's axis-b routing), else P/E.
+4. **`"advisory"` entries, one per non-`None` advisory detail dict**, in
+   `altman_z` (Sec.8g) → `beneish_m` (Sec.8j) → `merton_dtd` (Sec.8k) →
+   `lbo_floor_detail` (Sec.8h) → `cycle` order, each `reason_tr` explicitly
+   stating it does not affect the headline valuation.
+
+Never raises — wrapped in its own `try`/`except` at the call site (below),
+degrading to `[]` on any unexpected error, so a bug here can never discard
+an otherwise-successfully-computed valuation.
+
+### Engine integration (`run_valuation`) — computed once, near the end of `_run_valuation`
+
+```python
+try:
+    method_summary = _build_method_summary(
+        sector_type, hyper_growth_active, hyper_growth_detail,
+        cyclical_fcfe_headline, cyclical_fcfe_detail,
+        epv_headline, earnings_power, normalized_variant, dcf_scenarios,
+        mature_revenue_headline, mature_revenue_detail,
+        midgrowth_revenue_headline, midgrowth_revenue_detail,
+        rim, ffo, output_implied, output_bracket_status, multiples_out,
+        altman_z, beneish_m, merton_dtd, lbo_floor_detail, cycle,
+    )
+except Exception:
+    logger.exception("method_summary derivation failed unexpectedly; degrading to an empty list.")
+    method_summary = []
+```
+
+Called after `lbo_floor_detail` (Sec.8h) and `cycle` are resolved, so every
+input it reads already has its final value for this run.
+
+### Interaction with `interpret/rule_based.py`'s `_key_risks_from_valuation`
+
+Before this section, the engine's headline-selection explanation notes
+(the same "hangi yöntem, neden" sentences now packaged above) lived only as
+free-text `notes` entries, and `_key_risks_from_valuation` had no way to
+tell them apart from genuine risk notes — they leaked into `key_risks`
+mislabeled as risks. `_HEADLINE_SWITCH_NOTE_SUBSTRINGS` (a tuple of
+verbatim substrings copied from those specific engine.py note sentences,
+matched via `in` rather than `startswith` since — unlike
+`_ADVISORY_NOTE_PREFIXES` — they don't share a common prefix) now excludes
+those notes from `key_risks` the same way `_ADVISORY_NOTE_PREFIXES` already
+excluded the advisory-screen/LBO notes: a "which method and why"
+explanation is not a risk, and now has its own structural home in
+`method_summary`. This changes no existing note string and no other
+`key_risks` entry — a pure exclusion-list addition.
+
+### Output shape additions (Sec.11)
+
+```python
+"method_summary": [
+    {"role": "headline"|"secondary"|"cross_check"|"advisory",
+     "key": str, "label_tr": str, "reason_tr": str},
+    ...
+],  # exactly one "headline" row first, then "secondary" rows (if any),
+    # then "cross_check" rows, then "advisory" rows. [] on unexpected
+    # derivation failure (never raises, never omitted from the return dict).
+```
+
+`_empty_valuation` (Sec.11) also gains `"method_summary": []`.
+
+### Confidence ceiling (`triangulate.triangulate`, Sec.10)
+
+**N/A — no parameter, no interaction**, identical to Sec.8g/8h/8j/8k.
+
+### Scope
+
+Purely additive: does not change `dcf`, `earnings_power`, `rim`, `ffo`,
+`altman_z`, `beneish_m`, `merton_dtd`, `lbo_floor_detail`, `fair_value_range`,
+`sensitivity`, `multiples`, `triangulation`, `notes`, or any other existing
+output key's meaning or value — it only reads already-computed flags/detail
+dicts and repackages the decisions they represent. A derivation error
+degrades to `method_summary: []`, never to a discarded valuation.
+
 ## 12. Two-phase interpret (`interpret/analyzer.py` refactor)
 
 New public functions (keep module import-safe without `anthropic` installed;

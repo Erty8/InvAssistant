@@ -510,7 +510,7 @@
     margin: 10px 0 14px 46px;
   }
 
-  /* ---- Hyper-grower "Fiyatın iması" / expected-value note ----------------*/
+  /* ---- Hyper-grower "What the price implies" / expected-value note ----------------*/
   .hyper-note {
     margin: 12px 0 0 46px;
     font-size: 0.76rem;
@@ -689,6 +689,54 @@
     border-top: 1px solid var(--border);
   }
 
+  /* ---- Method summary card: which valuation method(s) were used, and why -
+     Four stacked groups (headline / secondary / cross_check / advisory) --
+     the headline group is the emphasized entry that actually produced
+     fair_value_range, the rest read progressively more muted since they
+     never touch the headline number. */
+  .msum {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .msum-group + .msum-group {
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .msum-group-title {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .msum-item + .msum-item {
+    margin-top: 8px;
+  }
+  .msum-label {
+    font-weight: 700;
+    font-size: 0.8rem;
+  }
+  .msum-headline-badge {
+    font-size: 0.86rem;
+    padding: 4px 13px;
+  }
+  .msum-reason {
+    font-size: 0.78rem;
+    color: var(--outline);
+    line-height: 1.45;
+    margin-top: 3px;
+  }
+  .msum-item-headline .msum-reason {
+    font-size: 0.82rem;
+    color: var(--text);
+  }
+  /* Advisory: informational risk/quality screens that never affect the
+     headline number -- deliberately the most muted group in the card. */
+  .msum-group-advisory .msum-label { color: var(--muted); font-weight: 400; }
+  .msum-group-advisory .msum-reason { color: var(--muted); }
+
   /* ---- Pills: the one tinted-chip primitive -----------------------------
      Every badge, tag and marker chip in the report is this shape. A
      component picks one size and one tone; it does not re-declare padding
@@ -745,9 +793,9 @@
   .setup-grade.grade-b {
     background: var(--fill-warn); color: var(--amber); border-color: var(--line-warn);
   }
-  /* Distinct "caution" bucket for the hyper-grower YÜKSEK BEKLENTİ FİYATLANMIŞ
-     verdict -- deliberately a different hue from both the neutral MAKUL
-     amber and the PAHALI red, since it signals a different kind of risk
+  /* Distinct "caution" bucket for the hyper-grower HIGH EXPECTATIONS PRICED IN
+     verdict -- deliberately a different hue from both the neutral FAIR
+     amber and the EXPENSIVE red, since it signals a different kind of risk
      (price implies an aggressive-but-not-yet-disqualified growth path). */
   .badge-caution {
     background: var(--fill-caution); color: var(--caution); border-color: var(--line-caution);
@@ -1008,7 +1056,7 @@
   .mom-quad-end { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); white-space: nowrap; }
   .mom-quad-axis-caption { font-size: 0.66rem; color: var(--muted); flex: 1; text-align: center; }
   .mom-quad-legend { font-size: 0.62rem; color: var(--muted); text-align: center; margin-top: 6px; line-height: 1.4; }
-  /* ---- Değer seyri (verdict-momentum) context strip ----------------------- */
+  /* ---- Value trajectory (verdict-momentum) context strip ----------------------- */
   .mom-vt-strip { margin-top: 10px; padding: 9px 11px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); }
   .mom-vt-title { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; margin-bottom: 6px; }
   .mom-vt-body { font-size: 0.8rem; line-height: 1.4; color: var(--outline); }
@@ -1186,6 +1234,39 @@
   .pchart-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .pchart-sw { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
 
+  /* ---- Staged entry-plan overlay (opt-in toggle on the price chart) -----
+     Bands reuse the fan's green/red hexes via inline fill (set in JS with
+     hexToRgba), so only the stroke/text rules live here. */
+  .pchart-entry-band { stroke: none; }
+  .pchart-entry-marker { stroke: var(--bg); stroke-width: 1.2; }
+  .pchart-entry-marker-label { font-size: 9px; font-weight: 700; fill: var(--bg); }
+  .pchart-entry-invalidation-line { stroke: var(--red); stroke-width: 1.3; stroke-dasharray: 5 3; fill: none; opacity: 0.9; }
+  .pchart-entry-invalidation-label { font-size: 9px; fill: var(--red); }
+
+  /* ---- Entry-plan overlay toggle: a separate on/off control, deliberately
+     shaped differently (rounded-rect, always-bordered) from the 3m/1y/5y
+     .horizon-pill segmented group so it never reads as a 4th range option. */
+  .pchart-head-controls { display: flex; align-items: center; gap: 10px; }
+  .entry-plan-toggle-btn {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    font-weight: 600;
+    padding: 6px 12px;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .entry-plan-toggle-btn.active {
+    background: rgba(224, 226, 234, 0.14);
+    color: var(--text);
+    border-color: var(--text);
+  }
+
   /* ---- Sensitivity table -------------------------------------------------*/
   .uncertainty-tag {
     display: inline-block;
@@ -1301,7 +1382,7 @@
     align-items: start;
   }
 
-  /* ---- View tabs (Değerleme / Zamanlama / Risk / Bilanço) ----------------*/
+  /* ---- View tabs (Valuation / Timing / Risk / Balance sheet) ----------------*/
   .view-tabs {
     display: inline-flex;
     max-width: 100%;
@@ -1364,6 +1445,38 @@
     color: var(--amber);
     font-family: var(--sans);
     font-size: 0.72rem;
+  }
+  /* Per-tranche note row can now stack up to three lines: the original
+     alert-toned t.note, then the newer trigger_reason/invalidation_reason
+     "why" sentences -- those two get a distinct muted tone (higher
+     specificity than the base row rule above) so they read as reference
+     explanation, not as another alert. */
+  .entry-plan-table tr.entry-note-row .entry-note-line + .entry-note-line {
+    margin-top: 4px;
+  }
+  .entry-plan-table tr.entry-note-row .entry-reason-line {
+    color: var(--outline);
+    font-weight: 400;
+  }
+  /* Plan-level legend (target_reason/size_reason): shown once below the
+     table since both values are identical on every tranche. */
+  .entry-legend {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .entry-legend-line {
+    font-size: 0.72rem;
+    color: var(--outline);
+    line-height: 1.5;
+    text-align: left;
+  }
+  .entry-legend-line + .entry-legend-line {
+    margin-top: 4px;
+  }
+  .entry-legend-line b {
+    color: var(--muted);
+    font-weight: 700;
   }
   .card-sub {
     font-size: 0.72rem;
@@ -1452,6 +1565,11 @@
   }
   .spark-dot { fill: var(--muted); }
   .spark-dot-last { fill: var(--primary-light); }
+  /* Trough/peak dots pick up the SAME neutral hues as .cycle-end-lo/-hi below,
+     so the sparkline's shape and the cycle bar's range endpoints read as one
+     visual pair -- deliberately not green/red (see .cycle-block note). */
+  .spark-dot-peak { fill: var(--primary); }
+  .spark-dot-trough { fill: none; stroke: var(--outline); stroke-width: 1.6; }
   .spark-fy { fill: var(--muted); font-size: 11px; font-family: var(--mono); }
 
   /* Cycle-position bar: where the anchor metric's latest value sits inside
@@ -1470,7 +1588,23 @@
     letter-spacing: 0.05em;
     color: var(--muted);
     font-weight: 700;
-    margin-bottom: 12px;
+    margin-bottom: 16px;
+  }
+  /* Floating readout above the marker -- the current value used to live only
+     in .cycle-caption below the track, forcing a look-down to read it. */
+  .cycle-marker-label {
+    position: absolute;
+    top: -22px;
+    transform: translateX(-50%);
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    white-space: nowrap;
   }
   /* Shape/marker from the shared track-meter rules -- this reading needs no
      zone tint at all, which is what "deliberately neutral" above asks for. */
@@ -1494,6 +1628,11 @@
     margin-top: 9px;
   }
   .cycle-ends span:nth-child(2) { opacity: 0.65; }
+  /* Same neutral pair as .spark-dot-peak/-trough -- ties the range endpoints
+     here to the matching points on the sparkline above, without a colour
+     that would read as a verdict (see block comment above). */
+  .cycle-end-lo { color: var(--outline); }
+  .cycle-end-hi { color: var(--primary-light); }
   .cycle-caption {
     font-size: 0.76rem;
     color: var(--outline);
@@ -1501,6 +1640,41 @@
     margin-top: 9px;
   }
   .cycle-thin { color: var(--amber); font-style: italic; }
+
+  /* Quarterly-invalidation check (METODOLOJI.md Sec.7): one tick per recent
+     quarter, colored by agreement with the day-1 thesis direction. UNLIKE
+     .cycle-block right above (deliberately neutral -- see its comment),
+     this check genuinely IS a pass/fail signal, so it reuses the same
+     ALERT green/red tokens as .badge-green/.badge-red. */
+  .qcheck-block {
+    margin: 12px 0 4px;
+    padding: 12px 0 0;
+    border-top: 1px solid var(--border);
+  }
+  .qcheck-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .qcheck-label {
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    font-weight: 700;
+  }
+  .qcheck-pill { font-size: 0.6rem; padding: 1px 7px; }
+  .qcheck-baseline { stroke: var(--border); stroke-width: 1; }
+  .qcheck-tick-pos { fill: var(--green); stroke: var(--line-pos); stroke-width: 1.4; }
+  .qcheck-tick-neg { fill: var(--red); stroke: var(--line-neg); stroke-width: 1.4; }
+  .qcheck-tick-neutral { fill: var(--track-bg); stroke: var(--border); stroke-width: 1.2; }
+  .qcheck-caption {
+    font-size: 0.76rem;
+    color: var(--outline);
+    line-height: 1.5;
+    margin-top: 4px;
+  }
 
   /* ---- Alert-style boxes (red flags / stop-adding) -----------------------*/
   .alert-box ul {
@@ -1527,7 +1701,7 @@
     color: var(--muted);
   }
 
-  /* ---- LLM Kullanım Raporu (result.llm_report) ---------------------------
+  /* ---- LLM Usage Report (result.llm_report) ---------------------------
      Reuses .card/.card-title/.card-sub/.sensitivity-table/.sens-base/
      .uncertainty-tag/.verdict-note/.mom-chip/.alert-box/.tech-section-title
      wholesale; only the table's left-aligned row-label column and the small
@@ -1974,7 +2148,7 @@
   }
 
   // Compact dollar formatting for large revenue figures (e.g. 25378308623.19
-  // -> "$25.4B") -- used only by the hyper-grower "Fiyatın iması" line, where
+  // -> "$25.4B") -- used only by the hyper-grower "What the price implies" line, where
   // fmtMoney's full-precision output would be unreadable.
   function fmtCompactMoney(v) {
     if (!isNum(v)) return "—";
@@ -1989,31 +2163,30 @@
     return sign + "$" + scaled.toFixed(1) + suffix;
   }
 
-  // Renders a decimal fraction in the Turkish percent-first convention
-  // (0.481 -> "%48.1") -- matches the style already used by the engine's
-  // own Turkish strings (e.g. hyper_growth_detail.reasons' "Gelir CAGR
-  // %48.9"); fmtPct/fmtRawPct above are English-style (number-then-%) and
-  // stay as-is for their existing (non-Turkish-prose) call sites.
+  // Renders a decimal fraction as a percentage in the English number-then-%
+  // convention (0.481 -> "48.1%"); used by every prose sentence this
+  // template builds itself. fmtPct/fmtRawPct above serve the same
+  // convention for their own (non-prose) call sites.
   function fmtPctTr(v, decimals) {
     if (!isNum(v)) return "—";
     var pct = Number(v) * 100;
     var d = decimals === undefined ? 1 : decimals;
-    return "%" + pct.toFixed(d);
+    return pct.toFixed(d) + "%";
   }
 
-  // Same Turkish percent-first convention as fmtPctTr, but for a value that
-  // is ALREADY a percentage (not a decimal fraction) and needs an explicit
+  // Same number-then-% convention as fmtPctTr, but for a value that is
+  // ALREADY a percentage (not a decimal fraction) and needs an explicit
   // +/- sign -- used for the history screen's "vs. last analysis" delta.
   function fmtSignedPctTr(v) {
     if (!isNum(v)) return "—";
     var num = Number(v);
     var sign = num < 0 ? "-" : "+";
-    return "%" + sign + Math.abs(num).toFixed(1);
+    return sign + Math.abs(num).toFixed(1) + "%";
   }
 
   // growth/discount_rate/note arrive as ready-made, human-readable strings
-  // (often Turkish, e.g. "%8 büyüme") from every provider -- never reformat
-  // or translate them, just guard against missing values.
+  // (e.g. "8% growth") from every provider -- never reformat or translate
+  // them, just guard against missing values.
   function safeText(v) {
     return v === null || v === undefined || v === "" ? "—" : String(v);
   }
@@ -2027,62 +2200,62 @@
   }
 
   // Maps a verdict/label string onto one of four color buckets. Order
-  // matters: the "YÜKSEK BEKLENTİ" (hyper-grower) check runs before the red
+  // matters: the "HIGH EXPECTATIONS" (hyper-grower) check runs before the red
   // check so its distinct caution styling is never swallowed by a
   // coincidental substring match, red-bucket keywords are checked before
-  // falling back to amber, so e.g. "AŞIRI ALIM" (contains "ALIM") is never
-  // mistaken for something else, and unrecognized/empty text defaults to
-  // the neutral amber bucket.
-  // UCUZ/AŞIRI SATIM/UYUMLU -> green, MAKUL/NÖTR/KISMEN -> amber,
-  // YÜKSEK BEKLENTİ FİYATLANMIŞ -> caution (distinct amber/orange),
-  // PAHALI/AŞIRI ALIM/UYUMSUZ -> red.
+  // falling back to amber, so e.g. "OVERBOUGHT" (contains "BUY"... no, but
+  // mirrors the same ordering concern) is never mistaken for something else,
+  // and unrecognized/empty text defaults to the neutral amber bucket.
+  // CHEAP/OVERSOLD/ALIGNED -> green, FAIR/NEUTRAL/PARTIAL -> amber,
+  // HIGH EXPECTATIONS PRICED IN -> caution (distinct amber/orange),
+  // EXPENSIVE/OVERBOUGHT/MISALIGNED -> red.
   function bucketColor(text) {
     if (!text) return "amber";
     var s = String(text).toUpperCase();
-    if (s.indexOf("UCUZ") !== -1 || s.indexOf("AŞIRI SATIM") !== -1 || s.indexOf("UYUMLU") !== -1) return "green";
-    if (s.indexOf("YÜKSEK BEKLENTİ") !== -1 || s.indexOf("YUKSEK BEKLENTI") !== -1) return "caution";
-    if (s.indexOf("PAHALI") !== -1 || s.indexOf("AŞIRI ALIM") !== -1 || s.indexOf("UYUMSUZ") !== -1) return "red";
+    if (s.indexOf("CHEAP") !== -1 || s.indexOf("OVERSOLD") !== -1 || s.indexOf("ALIGNED") !== -1) return "green";
+    if (s.indexOf("HIGH EXPECTATIONS") !== -1) return "caution";
+    if (s.indexOf("EXPENSIVE") !== -1 || s.indexOf("OVERBOUGHT") !== -1 || s.indexOf("MISALIGNED") !== -1) return "red";
     return "amber";
   }
 
-  // Confidence-badge color: YÜKSEK -> green, ORTA -> amber, DÜŞÜK -> red.
+  // Confidence-badge color: HIGH -> green, MEDIUM -> amber, LOW -> red.
   function confidenceColor(text) {
     if (!text) return "amber";
     var s = String(text).toUpperCase();
-    if (s.indexOf("YÜKSEK") !== -1 || s.indexOf("YUKSEK") !== -1) return "green";
-    if (s.indexOf("DÜŞÜK") !== -1 || s.indexOf("DUSUK") !== -1) return "red";
+    if (s.indexOf("HIGH") !== -1) return "green";
+    if (s.indexOf("LOW") !== -1) return "red";
     return "amber";
   }
 
   // ---- Overview-mode colour mappings (mode: "overview") -------------------
   // Distinct from bucketColor() above: that one defaults an unrecognized
   // verdict to amber (a neutral "fair" reading), which is wrong for the
-  // overview table's "Karar" column -- a long outlier label like "MODEL-
-  // PİYASA AYRIŞMASI" is not a fair-value claim at all, so it must fall back
+  // overview table's "Verdict" column -- a long outlier label like "MODEL-
+  // PRICE DIVERGENCE" is not a fair-value claim at all, so it must fall back
   // to muted, not amber (see sec_analyzer/screener/overview.py's
   // fundamental_verdict values).
   function overviewVerdictColor(v) {
     var s = String(v || "").toUpperCase();
-    if (s.indexOf("UCUZ") !== -1) return "green";
-    if (s.indexOf("PAHALI") !== -1) return "red";
-    if (s.indexOf("MAKUL") !== -1) return "amber";
+    if (s.indexOf("CHEAP") !== -1) return "green";
+    if (s.indexOf("EXPENSIVE") !== -1) return "red";
+    if (s.indexOf("FAIR") !== -1) return "amber";
     return "muted";
   }
 
-  // Exact-match against overview.py's _INSIDER_VALUES ("GÜÇLÜ ALIM", "ALIM",
-  // "NÖTR", "SATIŞ", "YOĞUN SATIŞ") -- an unrecognized/missing value (the
-  // "bilinmiyor" catch-all) falls back to muted.
+  // Exact-match against overview.py's _INSIDER_VALUES ("STRONG BUY", "BUY",
+  // "NEUTRAL", "SELL", "HEAVY SELLING") -- an unrecognized/missing value (the
+  // "unknown" catch-all) falls back to muted.
   function overviewInsiderColor(v) {
-    if (v === "GÜÇLÜ ALIM" || v === "ALIM") return "green";
-    if (v === "SATIŞ" || v === "YOĞUN SATIŞ") return "red";
-    if (v === "NÖTR") return "amber";
+    if (v === "STRONG BUY" || v === "BUY") return "green";
+    if (v === "SELL" || v === "HEAVY SELLING") return "red";
+    if (v === "NEUTRAL") return "amber";
     return "muted";
   }
 
-  var OV_BUCKET_COLOR = { ucuz: "green", makul: "amber", pahali: "red" };
-  var OV_BUCKET_LABEL = { ucuz: "Ucuz", makul: "Makul", pahali: "Pahalı", bilinmiyor: "Bilinmiyor" };
+  var OV_BUCKET_COLOR = { cheap: "green", fair: "amber", expensive: "red" };
+  var OV_BUCKET_LABEL = { cheap: "Cheap", fair: "Fair", expensive: "Expensive", unknown: "Unknown" };
   function overviewBucketColor(b) { return OV_BUCKET_COLOR[b] || "muted"; }
-  function overviewBucketLabel(b) { return OV_BUCKET_LABEL[b] || "Bilinmiyor"; }
+  function overviewBucketLabel(b) { return OV_BUCKET_LABEL[b] || "Unknown"; }
 
   var GAUGE_POSITION = { green: 10, amber: 50, caution: 72, red: 90 };
   var SCENARIO_LABEL = { bear: "BEAR", base: "BASE", bull: "BULL" };
@@ -2091,7 +2264,7 @@
   // Chrome-level labels for the raw triangulation signal codes
   // (valuation.triangulation.signals -- lowercase internal codes, not
   // free-text meant for direct display).
-  var SIGNAL_LABEL = { ucuz: "CHEAP", makul: "FAIR", yuksek_beklenti: "HIGH EXP", pahali: "EXPENSIVE", karisik: "MIXED", veri_yok: "NO DATA" };
+  var SIGNAL_LABEL = { cheap: "CHEAP", fair: "FAIR", high_expectations: "HIGH EXP", expensive: "EXPENSIVE", mixed: "MIXED", no_data: "NO DATA" };
   var HORIZON_SHORT = { "3m": "3M", "1y": "1Y", "5y": "5Y" };
   // Calendar-day windows the price chart slices its (up-to-5y) series by for
   // each range, and the year counts used to annualize the "if price converges
@@ -2150,22 +2323,22 @@
     }
 
     var countHtml = isNum(a.num_analysts)
-      ? ' <span class="ac-count">(' + Math.round(Number(a.num_analysts)) + ' analist)</span>'
+      ? ' <span class="ac-count">(' + Math.round(Number(a.num_analysts)) + ' analysts)</span>'
       : "";
 
     var rangeHtml = (isNum(a.target_low) && isNum(a.target_high))
-      ? ' <span class="ac-range">· aralık ' + fmtMoney(a.target_low) + '–' + fmtMoney(a.target_high) + '</span>'
+      ? ' <span class="ac-range">· range ' + fmtMoney(a.target_low) + '–' + fmtMoney(a.target_high) + '</span>'
       : "";
 
-    var sourceText = a.source ? escapeHtml(String(a.source)) : "yfinance / analist konsensüsü";
+    var sourceText = a.source ? escapeHtml(String(a.source)) : "yfinance / analyst consensus";
 
     return (
       '<div class="analyst-consensus">' +
-        '<span class="ac-label">Analist Hedefi (konsensüs):</span>' +
-        '<span class="ac-mean">' + meanText + '</span> <span class="muted">ort</span>' +
+        '<span class="ac-label">Analyst Target (consensus):</span>' +
+        '<span class="ac-mean">' + meanText + '</span> <span class="muted">avg</span>' +
         upsideHtml + countHtml + rangeHtml +
-        '<div class="ac-caption">Dış kaynak: ' + sourceText +
-          ' — bu, modelin kendi adil değeri DEĞİLDİR; yalnızca karşılaştırma amaçlı bir dış referanstır.</div>' +
+        '<div class="ac-caption">External source: ' + sourceText +
+          ' — this is NOT the model\'s own fair value; it is an external reference for comparison only.</div>' +
       '</div>'
     );
   }
@@ -2191,8 +2364,8 @@
     // live payload without it.
     var macroAsof = ((payload.result || {}).valuation || {}).macro_asof;
     var macroNote = (macroAsof && (macroAsof.erp_source || macroAsof.risk_free_source))
-      ? " · Makro: ERP " + escapeHtml(macroAsof.erp_source || "—") +
-        ", risksiz faiz " + escapeHtml(macroAsof.risk_free_source || "—")
+      ? " · Macro: ERP " + escapeHtml(macroAsof.erp_source || "—") +
+        ", risk-free rate " + escapeHtml(macroAsof.risk_free_source || "—")
       : "";
     // Name the price source actually used. It was hardcoded to "Stooq", which
     // silently mislabelled every yfinance run even before the Stooq path was
@@ -2206,9 +2379,9 @@
     var isStale = /^stale-cache/.test(rawSource);
     var upstream = (rawSource.match(/\(([^)]+)\)/) || [null, rawSource])[1];
     // "unknown" is what a cache written before source markers existed reports.
-    var priceSource = upstream === "unknown" ? "kaynak kaydı yok" : upstream;
+    var priceSource = upstream === "unknown" ? "no source recorded" : upstream;
     var staleWarning = isStale
-      ? ' <span class="bs-neg">⚠ fiyat kaynakları erişilemedi, önbellekteki eski fiyat kullanıldı</span>'
+      ? ' <span class="bs-neg">⚠ price sources unreachable, used a stale cached price</span>'
       : "";
     // Sources whose closes are split-adjusted but NOT dividend-adjusted are
     // used for technicals only; the valuation layer is handed no price frame
@@ -2217,8 +2390,8 @@
     var TOTAL_RETURN_SOURCES = ["yfinance", "yahoo-chart"];
     var basisWarning = (upstream && upstream !== "unknown" &&
                         TOTAL_RETURN_SOURCES.indexOf(upstream) === -1)
-      ? ' <span class="bs-neg">⚠ yedek fiyat kaynağı: temettü düzeltmesi yok, ' +
-        'tarihsel çarpan yüzdelikleri hesaplanmadı (teknik göstergeler etkilenmedi)</span>'
+      ? ' <span class="bs-neg">⚠ fallback price source: no dividend adjustment, ' +
+        'historical multiple percentiles not computed (technical indicators unaffected)</span>'
       : "";
     var sourceNote = "SEC EDGAR + " + escapeHtml(priceSource) +
       (payload.as_of ? " · as of " + escapeHtml(payload.as_of) : "") + macroNote +
@@ -2292,7 +2465,7 @@
     return { minV: minV, maxV: maxV };
   }
 
-  // ---- Hyper-grower "Fiyatın iması" + expected-value note (Milestone E) --
+  // ---- Hyper-grower "What the price implies" + expected-value note (Milestone E) --
   // Only rendered when valuation.hyper_growth is true; every existing
   // non-hyper render path is unaffected since this returns "" otherwise.
   // Degrades through the three tiers HYPER_SPEC.md Sec.6 describes,
@@ -2312,12 +2485,12 @@
     var rawText = fmtPctTr(capexNorm.raw_current_margin);
     var opsText = fmtPctTr(capexNorm.ops_current_margin);
     var upsideText = isNum(capexNorm.upside_per_share) ? fmtMoney(capexNorm.upside_per_share) : "—";
-    var noteText = "CapEx-yoğun agresif ÜST-SENARYO (MANŞET DEĞİL): büyüme CapEx'i bakım CapEx'inden " +
-      "(D&A, gelirin en az %5'i tabanıyla) ayrıştırılınca başlangıç FCF marjı ham " + rawText + " → " +
-      opsText + " olur (CapEx/gelir yoğunluğu " + intensityText + "). Bu iyimser senaryoda baz değer " +
-      upsideText + "/hisse. Manşet DCF, bugünkü gerçek (düzeltilmemiş) nakit akışıyla hesaplanır ve " +
-      "bastırılmıştır; bu üst-senaryo geliri büyütürken onu finanse eden CapEx'i tam yansıtmadığından " +
-      "yukarı-yanlıdır -- ihtiyatla değerlendirin.";
+    var noteText = "CapEx-heavy aggressive UPSIDE SCENARIO (NOT THE HEADLINE): once growth CapEx is " +
+      "separated from maintenance CapEx (D&A, floored at 5% of revenue), the starting FCF margin goes " +
+      "from raw " + rawText + " to " + opsText + " (CapEx/revenue intensity " + intensityText + "). Under this " +
+      "optimistic scenario, the base fair value is " + upsideText + "/share. The headline DCF is computed " +
+      "with today's actual (unadjusted) cash flow and is suppressed; this upside scenario is skewed " +
+      "upward because it grows revenue without fully reflecting the CapEx that funds it -- weigh it with caution.";
     return '<div class="capex-note">' + escapeHtml(noteText) + '</div>';
   }
 
@@ -2342,25 +2515,25 @@
         '<td class="divergence-market">' + fmtPctTr(marketVal) + '</td></tr>';
     }
     var rows = "";
-    rows += row("Başlangıç büyüme", isNum(base.start_growth) ? fmtPctTr(base.start_growth) : "—", implied.growth);
-    rows += row("Olgun FCF marjı", isNum(base.target_fcf_margin) ? fmtPctTr(base.target_fcf_margin) : "—", implied.steady_state_margin);
+    rows += row("Starting growth", isNum(base.start_growth) ? fmtPctTr(base.start_growth) : "—", implied.growth);
+    rows += row("Mature FCF margin", isNum(base.target_fcf_margin) ? fmtPctTr(base.target_fcf_margin) : "—", implied.steady_state_margin);
     var modelDr = isNum(detail.base_discount_rate)
       ? (fmtPctTr(detail.base_discount_rate) +
          (isNum(detail.mature_discount_rate) ? " → " + fmtPctTr(detail.mature_discount_rate) : ""))
       : "—";
-    rows += row("İskonto oranı", modelDr, implied.discount_rate);
+    rows += row("Discount rate", modelDr, implied.discount_rate);
     if (!rows) return "";
 
     return (
       '<div class="divergence-box">' +
-        '<div class="divergence-title">MODEL ↔ PİYASA AYRIŞMASI</div>' +
+        '<div class="divergence-title">MODEL-PRICE DIVERGENCE</div>' +
         '<table class="divergence-table">' +
-          '<thead><tr><th>Varsayım</th><th>Model</th><th>Piyasa fiyatlıyor</th></tr></thead>' +
+          '<thead><tr><th>Assumption</th><th>Model</th><th>Market is pricing</th></tr></thead>' +
           '<tbody>' + rows + '</tbody>' +
         '</table>' +
-        '<div class="divergence-referee">Üç yöntem de aynı büyüme/marj varsayımından beslendiği için ' +
-          'oybirliği bağımsız bir doğrulama değil. Model büyümenin sürdüğünü, piyasa bittiğini fiyatlıyor; ' +
-          'hakem önümüzdeki çeyreklerin gerçekleşen büyümesidir.</div>' +
+        '<div class="divergence-referee">All three methods draw on the same growth/margin assumption, ' +
+          'so their agreement is not independent confirmation. The model is pricing continued growth; ' +
+          'the market is pricing an end to it -- the referee is the actual growth realized over the coming quarters.</div>' +
       '</div>'
     );
   }
@@ -2370,7 +2543,7 @@
     var detail = valuation.hyper_growth_detail || {};
     if (detail.suppressed) {
       var suppressedReason = detail.suppressed_reason ||
-        "Revenue-first DCF bu şirket için güvenilir bir değer üretemedi; DCF devre dışı bırakıldı.";
+        "Revenue-first DCF could not produce a reliable value for this company; DCF was disabled.";
       // Capex-heavy names are always suppressed for the headline but still
       // carry an aggressive capex-normalized upside -- render it here too.
       return (
@@ -2385,20 +2558,20 @@
     if (isNum(implied.growth) && isNum(implied.revenue_10y)) {
       var revText = fmtCompactMoney(implied.revenue_10y);
       var multText = isNum(implied.revenue_multiple) ? Number(implied.revenue_multiple).toFixed(1) : "—";
-      impliedText = "Fiyatın iması: 10 yılda " + revText + " revenue (bugünün " + multText + " katı), ~" +
-        fmtPctTr(implied.growth) + " büyüme, " + fmtPctTr(implied.steady_state_margin) + " olgun FCF marjı";
+      impliedText = "What the price implies: " + revText + " revenue in 10 years (" + multText + "x today's), ~" +
+        fmtPctTr(implied.growth) + " growth, " + fmtPctTr(implied.steady_state_margin) + " mature FCF margin";
       if (isNum(implied.tam_share)) {
-        impliedText += " = TAM'ın " + fmtPctTr(implied.tam_share) + "'si";
+        impliedText += " = " + fmtPctTr(implied.tam_share) + " of TAM";
       }
     } else if (isNum(implied.steady_state_margin)) {
-      impliedText = "Fiyatın iması: %40 büyümede bile ~" + fmtPctTr(implied.steady_state_margin) +
-        " olgun FCF marjı gerektiriyor (makul büyüme aralığının çok üstünde)";
+      impliedText = "What the price implies: even at 40% growth, requires ~" + fmtPctTr(implied.steady_state_margin) +
+        " mature FCF margin (well above the reasonable growth range)";
     } else {
-      impliedText = "Fiyat, makul büyüme aralığının belirgin şekilde dışında bir beklenti ima ediyor.";
+      impliedText = "The price implies an expectation clearly outside the reasonable growth range.";
     }
 
     var evHtml = isNum(detail.expected_value)
-      ? '<div class="hyper-ev-line">Olasılık-ağırlıklı beklenen değer: ' + fmtMoney(detail.expected_value) + '</div>'
+      ? '<div class="hyper-ev-line">Probability-weighted expected value: ' + fmtMoney(detail.expected_value) + '</div>'
       : "";
     var capexHtml = capexNormalizationHtml(detail.capex_normalization);
 
@@ -2423,7 +2596,7 @@
     var detail = valuation.midgrowth_revenue_detail || {};
     if (detail.suppressed) {
       var suppressedReason = detail.suppressed_reason ||
-        "Orta-büyüme gelir bazlı DCF bu şirket için güvenilir bir değer üretemedi; DCF devre dışı bırakıldı.";
+        "Mid-growth revenue-based DCF could not produce a reliable value for this company; DCF was disabled.";
       return (
         '<div class="hyper-note">' +
           '<div class="hyper-implied-line">' + escapeHtml(suppressedReason) + '</div>' +
@@ -2434,12 +2607,12 @@
     var base = scenarios.base || {};
     var startGrowthText = fmtPctTr(detail.start_growth);
     var targetMarginText = fmtPctTr(detail.target_margin_base);
-    var fadeText = isNum(detail.steady_state_year) ? Number(detail.steady_state_year) + " yıl" : "—";
+    var fadeText = isNum(detail.steady_state_year) ? Number(detail.steady_state_year) + " years" : "—";
     var basePerShareText = fmtMoney(base.per_share);
 
-    var headlineText = "Orta-büyüme (%12-20) gelir bazlı DCF: gerçekleşen büyüme " + startGrowthText +
-      ", olgun FCF marjı hedefi " + targetMarginText + ", " + fadeText + " içinde olgunlaşma; " +
-      "baz senaryo hisse başı değer " + basePerShareText;
+    var headlineText = "Mid-growth (12-20%) revenue-based DCF: realized growth " + startGrowthText +
+      ", target mature FCF margin " + targetMarginText + ", maturing within " + fadeText + "; " +
+      "base-scenario per-share value " + basePerShareText;
 
     var capexHtml = capexNormalizationHtml(detail.capex_normalization);
 
@@ -2571,34 +2744,34 @@
   // simpler result dicts simply skip this card.
 
   // Badge color for one method's OWN signal (independent of consensus):
-  // ucuz -> green, makul -> amber, yuksek_beklenti -> caution, pahali ->
-  // red, veri_yok/unknown -> muted (no-data is not a point on the
+  // cheap -> green, fair -> amber, high_expectations -> caution, expensive ->
+  // red, no_data/unknown -> muted (no-data is not a point on the
   // cheap<->expensive spectrum, so it gets a neutral bucket, not amber).
   function signalBadgeColor(sig) {
     var s = sig ? String(sig).toLowerCase() : "";
-    if (s === "ucuz") return "green";
-    if (s === "makul") return "amber";
-    if (s === "yuksek_beklenti") return "caution";
-    if (s === "pahali") return "red";
-    if (s === "karisik") return "caution";
+    if (s === "cheap") return "green";
+    if (s === "fair") return "amber";
+    if (s === "high_expectations") return "caution";
+    if (s === "expensive") return "red";
+    if (s === "mixed") return "caution";
     return "muted";
   }
 
   // Agreement-marker kind for one method against the overall consensus
   // direction. Deliberately distinguishes "no consensus" from "this method
-  // dissents": a veri_yok method, or any method when tri.direction is
-  // "belirsiz" (no real consensus), gets a neutral "muted" marker rather
+  // dissents": a no_data method, or any method when tri.direction is
+  // "uncertain" (no real consensus), gets a neutral "muted" marker rather
   // than a red X -- showing X on every method when there simply isn't an
   // agreed direction reads as "all methods are wrong", which is false.
   function triAgreementKind(sig, direction) {
     var s = sig ? String(sig).toLowerCase() : "";
-    if (!s || s === "veri_yok") return "muted";
-    // "karisik" is an ambiguity, not a dissent-against-consensus: show it
+    if (!s || s === "no_data") return "muted";
+    // "mixed" is an ambiguity, not a dissent-against-consensus: show it
     // neutral rather than a red ✗ (the raw multiple and its growth-adjusted
     // counterpart simply point different ways).
-    if (s === "karisik") return "muted";
+    if (s === "mixed") return "muted";
     var dir = direction ? String(direction).toLowerCase() : "";
-    if (!dir || dir === "belirsiz") return "muted";
+    if (!dir || dir === "uncertain") return "muted";
     return s === dir ? "agree" : "disagree";
   }
 
@@ -2610,29 +2783,29 @@
   // signal itself reads "MIXED". Renders nothing when no sector median
   // matched (comparison numbers absent).
   var SECTOR_BUCKET_WORD = {
-    pahali: "sektöre göre pahalı",
-    ucuz: "sektöre göre ucuz",
-    makul: "sektör medyanıyla uyumlu",
+    expensive: "expensive vs. sector",
+    cheap: "cheap vs. sector",
+    fair: "in line with sector median",
   };
   function sectorComparisonLineHtml(valuation) {
     var cmp = (((valuation || {}).multiples || {}).sector || {}).comparison;
     if (!cmp || !isNum(cmp.current) || !isNum(cmp.median) || !isNum(cmp.ratio)) return "";
     var word = SECTOR_BUCKET_WORD[cmp.bucket] || "";
-    var cls = cmp.bucket === "pahali" ? "sector-cmp-red"
-            : cmp.bucket === "ucuz" ? "sector-cmp-green"
+    var cls = cmp.bucket === "expensive" ? "sector-cmp-red"
+            : cmp.bucket === "cheap" ? "sector-cmp-green"
             : "sector-cmp-muted";
-    var label = cmp.label || "Çarpan";
+    var label = cmp.label || "Multiple";
     return (
       '<div class="tri-sector ' + cls + '">' +
-        '<span class="tri-sector-label">Sektör</span>' +
+        '<span class="tri-sector-label">Sector</span>' +
         escapeHtml(label) + " " + Number(cmp.current).toFixed(1) +
-        " vs medyan " + Number(cmp.median).toFixed(1) +
+        " vs median " + Number(cmp.median).toFixed(1) +
         " (" + Number(cmp.ratio).toFixed(2) + "×" + (word ? " → " + word : "") + ")" +
       '</div>'
     );
   }
 
-  // Informational EV/EBITDA (FD/FAVÖK) + EV/EBIT (FD/FVÖK) line under the
+  // Informational EV/EBITDA (EV/EBITDA) + EV/EBIT (EV/EBIT) line under the
   // MULTIPLES method (SPEC.md Sec.6): capital-structure-neutral earnings
   // multiples reported alongside P/E. Verdict/triangulation still keys off
   // P/E; this is context, not a signal. Empty string when neither is present.
@@ -2640,8 +2813,8 @@
     var m = (valuation || {}).multiples || {};
     var cur = m.current || {};
     var specs = [
-      { label: "FD/FAVÖK", value: cur.ev_ebitda, pct: m.ev_ebitda_percentile },
-      { label: "FD/FVÖK", value: cur.ev_ebit, pct: m.ev_ebit_percentile },
+      { label: "EV/EBITDA", value: cur.ev_ebitda, pct: m.ev_ebitda_percentile },
+      { label: "EV/EBIT", value: cur.ev_ebit, pct: m.ev_ebit_percentile },
     ];
     var frags = [];
     specs.forEach(function (s) {
@@ -2653,7 +2826,7 @@
     if (!frags.length) return "";
     return (
       '<div class="tri-sector sector-cmp-muted">' +
-        '<span class="tri-sector-label">FD</span>' + frags.join(" · ") +
+        '<span class="tri-sector-label">EV</span>' + frags.join(" · ") +
       '</div>'
     );
   }
@@ -2670,7 +2843,7 @@
     var ptbv = (m.current || {}).ptbv;
     if (!isNum(ptbv)) return "";
 
-    var txt = "F/MDD " + Number(ptbv).toFixed(2) + "×";
+    var txt = "P/TBV " + Number(ptbv).toFixed(2) + "×";
     if (isNum(m.ptbv_percentile)) txt += " (" + Math.round(Number(m.ptbv_percentile)) + "p)";
     var frags = [txt];
 
@@ -2679,7 +2852,7 @@
 
     return (
       '<div class="tri-sector sector-cmp-muted">' +
-        '<span class="tri-sector-label">MDD</span>' + frags.join(" · ") +
+        '<span class="tri-sector-label">TBV</span>' + frags.join(" · ") +
       '</div>'
     );
   }
@@ -2773,6 +2946,74 @@
     );
   }
 
+  // ---- Method summary card: which method(s) were used, and why -----------
+  // (SPEC.md Sec.8l) -- purely educational: the software teaches the reader
+  // how the headline number was actually built, before showing what the
+  // downstream signals concluded about it. `source.method_summary` is a
+  // server-built, already-ordered list (engine.run_valuation for valuation;
+  // technical.verdict.technical_verdict for technical analysis); this only
+  // groups entries by role for a compact layout -- it never re-sorts or
+  // re-derives anything. Shared by both the valuation and technical-analysis
+  // method-summary cards (see call sites in renderBody) so the two stay
+  // visually identical rather than inventing a second layout.
+  var METHOD_SUMMARY_GROUPS = [
+    { role: "headline", title: "Headline Method" },
+    { role: "secondary", title: "Secondary / Computed as Cross-Checks" },
+    { role: "cross_check", title: "Always-On Independent Checks" },
+    { role: "advisory", title: "Informational Additional Indicators" },
+  ];
+
+  function methodSummaryItemHtml(entry, isHeadline) {
+    var label = escapeHtml(entry.label_tr || "—");
+    var reason = entry.reason_tr ? escapeHtml(entry.reason_tr) : "";
+    var labelHtml = isHeadline
+      ? '<span class="badge badge-caution msum-headline-badge">' + label + '</span>'
+      : '<span class="msum-label">' + label + '</span>';
+    return (
+      '<div class="msum-item' + (isHeadline ? " msum-item-headline" : "") + '">' +
+        labelHtml +
+        (reason ? '<div class="msum-reason">' + reason + '</div>' : "") +
+      '</div>'
+    );
+  }
+
+  function methodSummaryCardHtml(source, title) {
+    var list = (source || {}).method_summary;
+    // Defensive fallback: older stored verdicts predate this field, so a
+    // missing/non-array/empty method_summary just skips the whole card
+    // rather than rendering a broken/empty box (same pattern as the
+    // tri.rationale fallback above).
+    if (!source || !Array.isArray(list) || !list.length) return "";
+
+    var byRole = {};
+    list.forEach(function (entry) {
+      if (!entry || !entry.role) return;
+      (byRole[entry.role] = byRole[entry.role] || []).push(entry);
+    });
+
+    var groupsHtml = METHOD_SUMMARY_GROUPS.map(function (g) {
+      var entries = byRole[g.role] || [];
+      if (!entries.length) return "";
+      var items = entries.map(function (entry) {
+        return methodSummaryItemHtml(entry, g.role === "headline");
+      }).join("");
+      return (
+        '<div class="msum-group msum-group-' + g.role + '">' +
+          '<div class="msum-group-title">' + g.title + '</div>' +
+          items +
+        '</div>'
+      );
+    }).join("");
+    if (!groupsHtml) return "";
+
+    return (
+      '<div class="card">' +
+        '<div class="card-title">' + escapeHtml(title || "") + '</div>' +
+        '<div class="msum">' + groupsHtml + '</div>' +
+      '</div>'
+    );
+  }
+
   // ---- Price chart: close line + S/R range bands + fair-value bands -------
   // Self-contained inline SVG (no libraries -- CSP blocks them), same
   // hand-rolled approach as the fan chart. Overlays only what the user asked
@@ -2850,9 +3091,9 @@
     var retCls = isNum(s.ret) ? (s.ret >= 0 ? "tech-pos" : "tech-neg") : "";
     var volTxt = isNum(s.vol) ? Math.round(s.vol * 100) + "%" : "—";
     return '<div class="tech-stats" style="margin-bottom:12px;">' +
-      '<div class="tech-stat"><div class="tech-stat-label">Getiri (' + escapeHtml(horizonLabel(range)) + ')</div>' +
+      '<div class="tech-stat"><div class="tech-stat-label">Return (' + escapeHtml(horizonLabel(range)) + ')</div>' +
         '<div class="tech-stat-val ' + retCls + '">' + retTxt + '</div></div>' +
-      '<div class="tech-stat"><div class="tech-stat-label">Volatilite (yıl.)</div>' +
+      '<div class="tech-stat"><div class="tech-stat-label">Volatility (ann.)</div>' +
         '<div class="tech-stat-val">' + volTxt + '</div></div>' +
       '</div>';
   }
@@ -2870,14 +3111,55 @@
 
   // The SVG price chart + fan for one range, plus its legend and caption.
   // `slice` is the range-windowed series; `range` drives the horizon label and
-  // the annualized-return figures on the fan endpoints.
-  function priceChartSvg(t, result, range, slice, analyst) {
+  // the annualized-return figures on the fan endpoints. `showEntryPlan`
+  // (default false, so older call sites are unaffected) overlays
+  // result.entry_plan's tranche bands/markers -- see the "entry-plan overlay"
+  // block below for the full drawing logic.
+  function priceChartSvg(t, result, range, slice, analyst, showEntryPlan) {
     var W = 760, H = 340, PL = 48, PR = 112, PT = 14, PB = 28;
     var plotW = W - PL - PR, plotH = H - PT - PB;
 
     var supports = (t.support_levels || []).filter(function (z) { return isNum(z.low) && isNum(z.high); });
     var resistances = (t.resistance_levels || []).filter(function (z) { return isNum(z.low) && isNum(z.high); });
     var fv = (result || {}).fair_value_range || {};
+
+    // Staged entry-plan overlay data (opt-in, default off -- see
+    // priceRangeBodyHtml/priceChartCardHtml/wirePriceRange for the toggle
+    // state machine). Only tranches with a numeric price_zone are drawable;
+    // older/degraded payloads may have none, or result.entry_plan may be
+    // missing/empty/absent entirely -- all render identically to the
+    // overlay-off case.
+    var rawEntryPlan = (showEntryPlan && Array.isArray((result || {}).entry_plan)) ? result.entry_plan : [];
+    var entryPlan = rawEntryPlan.filter(function (tr) {
+      var z = (tr || {}).price_zone || {};
+      return isNum(z.lo) && isNum(z.hi);
+    });
+    // Dip tranches share one structural invalidation level (see
+    // planning.compute_entry_plan's docstring) -- read it off the first dip
+    // tranche that carries a numeric one rather than drawing one line per
+    // tranche (explicitly ruled out as too cluttered).
+    var entryDipInvalidation = null;
+    for (var edi = 0; edi < entryPlan.length; edi++) {
+      if (entryPlan[edi].kind === "dip" && isNum(entryPlan[edi].invalidation)) {
+        entryDipInvalidation = Number(entryPlan[edi].invalidation);
+        break;
+      }
+    }
+    // Entry-plan's shared upside target, by construction equal to whichever
+    // of bullTop/baseMid the fan below resolves to -- read off the first
+    // tranche carrying a numeric target so the fan-endpoint label can be
+    // annotated instead of drawing a duplicate line (see the hasFan block).
+    var entryTarget = null;
+    for (var eti = 0; eti < entryPlan.length; eti++) {
+      if (isNum(entryPlan[eti].target)) { entryTarget = Number(entryPlan[eti].target); break; }
+    }
+    // Green/red hexes reused verbatim from the fan's own upside/downside
+    // tint (.pchart-fan-up / .pchart-fan-down below) so breakout ("teyit")
+    // and dip ("birikim") bands match this codebase's existing
+    // entry-kind-breakout/entry-kind-dip color convention.
+    var ENTRY_BREAKOUT_HEX = "#4de082";
+    var ENTRY_DIP_HEX = "#ffb4ab";
+    function entryKindHex(kind) { return kind === "breakout" ? ENTRY_BREAKOUT_HEX : ENTRY_DIP_HEX; }
 
     // Analyst consensus price target (external reference, not the model's
     // own fair value) -- drawn as a distinct amber dashed line + faint band,
@@ -2913,6 +3195,12 @@
       if (atLow !== null) vals.push(atLow);
       if (atHigh !== null) vals.push(atHigh);
     }
+    // Entry-plan overlay only affects the y-axis domain when it's actually
+    // shown, so toggling it off restores the exact original scale/render.
+    entryPlan.forEach(function (tr) {
+      vals.push(Number(tr.price_zone.lo), Number(tr.price_zone.hi));
+    });
+    if (entryDipInvalidation !== null) vals.push(entryDipInvalidation);
     var vmin = Math.min.apply(null, vals), vmax = Math.max.apply(null, vals);
     if (vmax <= vmin) vmax = vmin + 1;
     var padY = (vmax - vmin) * 0.06;
@@ -2947,6 +3235,18 @@
       svg += '<line class="pchart-analyst-line" x1="' + PL + '" y1="' + yAtMean.toFixed(1) + '" x2="' + xEnd.toFixed(1) + '" y2="' + yAtMean.toFixed(1) + '"/>';
       svg += '<text class="pchart-analyst-label" x="' + (xEnd + 5) + '" y="' + (yAtMean + 3).toFixed(1) + '">Analist ' + fmtMoney(atMean) + '</text>';
     }
+
+    // Entry-plan tranche bands: translucent, full-width (PL->xEnd, like the
+    // analyst band above) so the reader can see both whether a level was
+    // tested historically and where it sits relative to the forward fan.
+    // Drawn early/behind (background context), same as the analyst band.
+    entryPlan.forEach(function (tr) {
+      var zLo = Number(tr.price_zone.lo), zHi = Number(tr.price_zone.hi);
+      var yZHi = yOf(zHi), yZLo = yOf(zLo);
+      svg += '<rect class="pchart-entry-band" x="' + PL + '" y="' + Math.min(yZHi, yZLo).toFixed(1) +
+        '" width="' + (xEnd - PL).toFixed(1) + '" height="' + Math.max(0.5, Math.abs(yZLo - yZHi)).toFixed(1) +
+        '" fill="' + hexToRgba(entryKindHex(tr.kind), 0.18) + '"/>';
+    });
 
     for (var g = 0; g <= 4; g++) {
       var vy = lo + (hi - lo) * g / 4;
@@ -3004,9 +3304,26 @@
         return ann === null ? "" :
           '<text class="pchart-fv-ann" x="' + (xEnd + 5) + '" y="' + (y + 11).toFixed(1) + '">' + fmtSignedPct(ann * 100) + '/y</text>';
       }
-      svg += '<text class="pchart-fv-label" x="' + (xEnd + 5) + '" y="' + (yBull + 1).toFixed(1) + '" fill="var(--green)">Bull ' + fmtMoney(bullTop) + '</text>' + annLine(yBull, annBull);
-      svg += '<text class="pchart-fv-label" x="' + (xEnd + 5) + '" y="' + (yBase + 1).toFixed(1) + '" fill="#5aa7ff">Base ' + fmtMoney(baseMid) + '</text>' + annLine(yBase, annBase);
-      svg += '<text class="pchart-fv-label" x="' + (xEnd + 5) + '" y="' + (yBear + 1).toFixed(1) + '" fill="var(--red)">Bear ' + fmtMoney(bearBot) + '</text>' + annLine(yBear, annBear);
+      // Entry-plan's shared target is, by construction, always equal to
+      // whichever of bullTop/baseMid _resolve_target() picked (bull.hi
+      // preferred, base.hi fallback) -- so instead of a duplicate line,
+      // append a short suffix to whichever fan-endpoint label it matches
+      // (small numeric tolerance for float round-tripping). Falls back to
+      // checking bearBot defensively; matches neither in the normal case
+      // where entryTarget is null or the overlay is off, so this is a no-op
+      // then.
+      var entryTargetSuffix = "";
+      if (entryTarget !== null && Math.abs(entryTarget - bullTop) < 0.01) {
+        entryTargetSuffix = "bull";
+      } else if (entryTarget !== null && Math.abs(entryTarget - baseMid) < 0.01) {
+        entryTargetSuffix = "base";
+      } else if (entryTarget !== null && Math.abs(entryTarget - bearBot) < 0.01) {
+        entryTargetSuffix = "bear";
+      }
+      var ENTRY_TARGET_SUFFIX_TXT = " · entry plan target";
+      svg += '<text class="pchart-fv-label" x="' + (xEnd + 5) + '" y="' + (yBull + 1).toFixed(1) + '" fill="var(--green)">Bull ' + fmtMoney(bullTop) + (entryTargetSuffix === "bull" ? ENTRY_TARGET_SUFFIX_TXT : "") + '</text>' + annLine(yBull, annBull);
+      svg += '<text class="pchart-fv-label" x="' + (xEnd + 5) + '" y="' + (yBase + 1).toFixed(1) + '" fill="#5aa7ff">Base ' + fmtMoney(baseMid) + (entryTargetSuffix === "base" ? ENTRY_TARGET_SUFFIX_TXT : "") + '</text>' + annLine(yBase, annBase);
+      svg += '<text class="pchart-fv-label" x="' + (xEnd + 5) + '" y="' + (yBear + 1).toFixed(1) + '" fill="var(--red)">Bear ' + fmtMoney(bearBot) + (entryTargetSuffix === "bear" ? ENTRY_TARGET_SUFFIX_TXT : "") + '</text>' + annLine(yBear, annBear);
 
       svg += '<text class="pchart-tick" x="' + ((xToday + xEnd) / 2).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle">' + escapeHtml(horizonLabel(range)) + ' →</text>';
     }
@@ -3024,6 +3341,27 @@
         svg += '<text class="pchart-now-label" x="' + (xEnd + 5) + '" y="' + (yp + 3).toFixed(1) + '">' + fmtMoney(t.price) + '</text>';
       }
     }
+
+    // Entry-plan overlay: shared dip-invalidation line + numbered tranche
+    // markers, drawn last so they sit on top of the price line/fan/grid
+    // (mirrors where the "now" marker/label are drawn, for the same reason).
+    // The chart shows WHERE (this marker's number); the "Staged Entry Plan"
+    // table below (already rendered) explains WHY via that same number --
+    // no reason text is duplicated onto the chart itself.
+    if (entryDipInvalidation !== null) {
+      var yEntryInv = yOf(entryDipInvalidation);
+      svg += '<line class="pchart-entry-invalidation-line" x1="' + PL + '" y1="' + yEntryInv.toFixed(1) + '" x2="' + xEnd.toFixed(1) + '" y2="' + yEntryInv.toFixed(1) + '"/>';
+      svg += '<text class="pchart-entry-invalidation-label" x="' + (xEnd + 5) + '" y="' + (yEntryInv + 3).toFixed(1) + '">Stop ' + fmtMoney(entryDipInvalidation) + '</text>';
+    }
+    entryPlan.forEach(function (tr) {
+      var zLo = Number(tr.price_zone.lo), zHi = Number(tr.price_zone.hi);
+      var yMid = yOf((zLo + zHi) / 2);
+      var hexCol = entryKindHex(tr.kind);
+      var nLabel = isNum(tr.n) ? escapeHtml(String(tr.n)) : "?";
+      svg += '<circle class="pchart-entry-marker" cx="' + xToday.toFixed(1) + '" cy="' + yMid.toFixed(1) + '" r="7" fill="' + hexCol + '"/>';
+      svg += '<text class="pchart-entry-marker-label" x="' + xToday.toFixed(1) + '" y="' + (yMid + 3).toFixed(1) + '" text-anchor="middle">' + nLabel + '</text>';
+    });
+
     svg += '</svg>';
 
     var legend =
@@ -3033,14 +3371,17 @@
         (hasFan ? '<span><span class="pchart-sw" style="background:' + hexToRgba("#4de082", 0.5) + '"></span>Upside</span>' +
                   '<span><span class="pchart-sw" style="background:' + hexToRgba("#ffb4ab", 0.5) + '"></span>Downside</span>' +
                   (sensLo !== null && sensHi !== null ? '<span><span class="pchart-sw" style="background:' + hexToRgba("#8b919d", 0.35) + '"></span>Sensitivity</span>' : "") : "") +
-        (atMean !== null ? '<span><span class="pchart-sw" style="background:' + hexToRgba("#ffb953", 0.5) + '"></span>Analist hedefi</span>' : "") +
+        (atMean !== null ? '<span><span class="pchart-sw" style="background:' + hexToRgba("#ffb953", 0.5) + '"></span>Analyst target</span>' : "") +
+        (entryPlan.some(function (tr) { return tr.kind === "dip"; }) ? '<span><span class="pchart-sw" style="background:' + hexToRgba(ENTRY_DIP_HEX, 0.5) + '"></span>Accumulation (dip)</span>' : "") +
+        (entryPlan.some(function (tr) { return tr.kind === "breakout"; }) ? '<span><span class="pchart-sw" style="background:' + hexToRgba(ENTRY_BREAKOUT_HEX, 0.5) + '"></span>Confirmation (breakout)</span>' : "") +
+        (entryDipInvalidation !== null ? '<span><span class="pchart-sw" style="background:' + hexToRgba(ENTRY_DIP_HEX, 0.5) + '"></span>Stop (entry plan)</span>' : "") +
       '</div>';
 
     var caption = hasFan
-      ? '<div class="pchart-caption">Yelpaze bugünkü fiyattan senaryo değerlerine (ayı · baz · boğa) açılır; sağdaki ' +
-        '<b>%/yıl</b>, fiyat ufuk sonunda o senaryoya yakınsarsa ima edilen yıllık getiridir — bir tahmin ya da ' +
-        'fiyat yörüngesi değildir.' +
-        (highUncertainty ? ' <span class="uncertainty-tag">Yüksek belirsizlik</span>' : "") +
+      ? '<div class="pchart-caption">The fan fans out from today\'s price to the scenario values (bear · base · bull); the ' +
+        '<b>%/yr</b> on the right is the annualized return implied if price converges to that scenario by the end of the ' +
+        'horizon — it is not a forecast or a price trajectory.' +
+        (highUncertainty ? ' <span class="uncertainty-tag">High uncertainty</span>' : "") +
         '</div>'
       : "";
 
@@ -3048,12 +3389,27 @@
   }
 
   // Body of the price card for one range: stat tiles + chart. Re-rendered in
-  // place by wirePriceRange() when the user flips the range toggle.
-  function priceRangeBodyHtml(technical, result, range, analyst) {
+  // place by wirePriceRange() when the user flips the range toggle or the
+  // entry-plan overlay toggle. `showEntryPlan` defaults to false so any
+  // other/older call site renders exactly as before.
+  function priceRangeBodyHtml(technical, result, range, analyst, showEntryPlan) {
     var t = technical || {};
     var series = t.price_series || [];
     var slice = sliceSeriesByHorizon(series, range);
-    return rangeStatsTilesHtml(slice, range) + priceChartSvg(t, result, range, slice, analyst);
+    return rangeStatsTilesHtml(slice, range) + priceChartSvg(t, result, range, slice, analyst, !!showEntryPlan);
+  }
+
+  // The entry-plan overlay toggle: a separate on/off pill, visually distinct
+  // from the 3m/1y/5y .horizon-pill group (see .entry-plan-toggle-btn CSS),
+  // only rendered when result.entry_plan actually has drawable tranches --
+  // an absent/null/empty entry_plan (older stored verdicts predate this
+  // field) renders no button at all, so the chart looks exactly as it did
+  // before this feature.
+  function entryPlanToggleHtml(entryPlan) {
+    if (!Array.isArray(entryPlan) || entryPlan.length === 0) return "";
+    return '<button type="button" class="entry-plan-toggle-btn" data-entry-plan-toggle' +
+      ' title="Show/hide the staged entry plan on the chart">' +
+      '<span aria-hidden="true">📍</span>Entry Plan</button>';
   }
 
   function priceChartCardHtml(technical, result, horizon, analyst) {
@@ -3064,30 +3420,55 @@
     return '<div class="card pchart">' +
       '<div class="pchart-head">' +
         '<div class="card-title">Price &amp; Fair-Value Fan</div>' +
-        rangeToggleHtml(defRange) +
+        '<div class="pchart-head-controls">' +
+          rangeToggleHtml(defRange) +
+          entryPlanToggleHtml((result || {}).entry_plan) +
+        '</div>' +
       '</div>' +
-      '<div id="price-range-body">' + priceRangeBodyHtml(technical, result, defRange, analyst) + '</div>' +
+      '<div id="price-range-body">' + priceRangeBodyHtml(technical, result, defRange, analyst, false) + '</div>' +
       '</div>';
   }
 
-  // Wire the client-side range toggle: flipping 3m/1y/5y re-slices the chart
-  // window and recomputes the stat tiles + annualized-return figures with no
-  // server round-trip (valuation is horizon-independent). This is a chart
-  // *lens*, separate from the analyzed horizon shown in the header pill.
+  // Wire the client-side range toggle and the entry-plan overlay toggle.
+  // Flipping 3m/1y/5y re-slices the chart window and recomputes the stat
+  // tiles + annualized-return figures with no server round-trip (valuation
+  // is horizon-independent); this is a chart *lens*, separate from the
+  // analyzed horizon shown in the header pill. The entry-plan toggle's
+  // on/off state lives in `state.showEntryPlan` below, alongside
+  // `state.range` -- both toggles share one `render()` that reads the
+  // current combined state, so flipping the range while the overlay is on
+  // keeps it on (and vice versa), exactly like a single shared closure.
   function wirePriceRange(technical, result, analyst) {
     var toggle = bodyEl.querySelector(".range-toggle");
+    var entryToggle = bodyEl.querySelector("[data-entry-plan-toggle]");
     var body = document.getElementById("price-range-body");
     if (!toggle || !body) return;
+    var activePill = toggle.querySelector(".horizon-pill.active");
+    var state = {
+      range: (activePill && activePill.getAttribute("data-range")) || "1y",
+      showEntryPlan: false
+    };
+    function render() {
+      body.innerHTML = priceRangeBodyHtml(technical, result, state.range, analyst, state.showEntryPlan);
+    }
     toggle.addEventListener("click", function (e) {
       var btn = e.target.closest ? e.target.closest(".horizon-pill") : null;
       if (!btn) return;
       var range = btn.getAttribute("data-range");
       if (!range) return;
+      state.range = range;
       toggle.querySelectorAll(".horizon-pill").forEach(function (p) {
         p.classList.toggle("active", p === btn);
       });
-      body.innerHTML = priceRangeBodyHtml(technical, result, range, analyst);
+      render();
     });
+    if (entryToggle) {
+      entryToggle.addEventListener("click", function () {
+        state.showEntryPlan = !state.showEntryPlan;
+        entryToggle.classList.toggle("active", state.showEntryPlan);
+        render();
+      });
+    }
   }
 
   // ---- Verdict cards (fundamental/technical/profile fit) ------------------
@@ -3122,13 +3503,13 @@
   // recency of the last test (used only in the collapsed detail section).
   function srReason(lvl, withLast) {
     var parts = [];
-    if (lvl.is_52w_high) parts.push("52h tepe");
-    else if (lvl.is_52w_low) parts.push("52h dip");
+    if (lvl.is_52w_high) parts.push("52w high");
+    else if (lvl.is_52w_low) parts.push("52w low");
     else if ((lvl.touches || 0) >= 1) parts.push(lvl.touches + "× test");
     if (lvl.fib) parts.push("Fib " + lvl.fib);
     if (lvl.ma) parts.push(lvl.ma);
-    var base = parts.length ? parts.join(" + ") : "seviye";
-    if (withLast && lvl.last_touch) base += " · son " + lvl.last_touch;
+    var base = parts.length ? parts.join(" + ") : "level";
+    if (withLast && lvl.last_touch) base += " · last " + lvl.last_touch;
     return base;
   }
   // Strength: a 52-week extreme, a repeatedly-tested swing, or a swing that
@@ -3157,15 +3538,15 @@
   // -- that's the whole point: a close through a moving average flips the trend
   // regime, not just a horizontal shelf.
   function resistanceEffect(lvl, regimeDir) {
-    if (lvl.ma && /200/.test(lvl.ma)) return "uzun vadeli UPTREND onayı";
-    if (lvl.ma && /50/.test(lvl.ma)) return regimeDir === "up" ? "uptrend güçlenir" : "düşüş trendi kırılır";
-    return "direnç aşılır, yukarı alan açılır";
+    if (lvl.ma && /200/.test(lvl.ma)) return "long-term UPTREND confirmation";
+    if (lvl.ma && /50/.test(lvl.ma)) return regimeDir === "up" ? "uptrend strengthens" : "downtrend breaks";
+    return "resistance broken, upside opens up";
   }
   function supportEffect(lvl, regimeDir) {
-    if (lvl.is_52w_low) return "yeni 52 hafta dibi";
-    if (lvl.ma && /200/.test(lvl.ma)) return "uzun vadeli trend desteği kırılır";
-    if (lvl.ma && /50/.test(lvl.ma)) return regimeDir === "up" ? "uptrend zayıflar" : "düşüş hızlanır";
-    return "düşüş hızlanır";
+    if (lvl.is_52w_low) return "new 52-week low";
+    if (lvl.ma && /200/.test(lvl.ma)) return "long-term trend support breaks";
+    if (lvl.ma && /50/.test(lvl.ma)) return regimeDir === "up" ? "uptrend weakens" : "downtrend accelerates";
+    return "downtrend accelerates";
   }
 
   // ---- Momentum synthesis: adapter over the Python-computed composite ------
@@ -3224,11 +3605,11 @@
   // TARGET stays the fair-value anchor and is never horizon-scaled.
   function swingHorizonTuning(horizon) {
     if (horizon === "3m") return { volMin: 1.3, strongConfirm: 1, wideStopPct: 8,
-      note: "Zamanlama ufku 3 ay: hızlı teyit (1 sinyal), dar stop (>%8 geniş sayılır)." };
+      note: "3-month timing horizon: fast confirmation (1 signal), tight stop (>8% counts as wide)." };
     if (horizon === "5y") return { volMin: 1.8, strongConfirm: 3, wideStopPct: 18,
-      note: "Zamanlama ufku 5 yıl: güçlü teyit (3 sinyal) beklenir, geniş stop toleransı (>%18)." };
+      note: "5-year timing horizon: strong confirmation (3 signals) expected, wide stop tolerance (>18%)." };
     return { volMin: 1.5, strongConfirm: 2, wideStopPct: 12,
-      note: "Zamanlama ufku 1 yıl: dengeli teyit (2 sinyal), orta stop (>%12 geniş sayılır)." };
+      note: "1-year timing horizon: balanced confirmation (2 signals), moderate stop (>12% counts as wide)." };
   }
   function computeReversal(t, momentum, horizon) {
     if (!momentum || (momentum.dirKind !== "up" && momentum.dirKind !== "down")) return null;
@@ -3240,32 +3621,32 @@
     // 1. RSI reclaim of the extreme line.
     var rsi = isNum(t.rsi14) ? Number(t.rsi14) : null;
     if (bull) {
-      if (t.rsi_reclaim === "bullish") row("ok", "RSI aşırı satımdan çıktı (30 üstünü geri aldı)");
-      else if (rsi !== null && rsi < 30) row("pending", "RSI aşırı satımda (" + rsi.toFixed(0) + ") — henüz 30 üstünü geri almadı");
-      else row("none", "RSI aşırı satım dönüşü yok");
+      if (t.rsi_reclaim === "bullish") row("ok", "RSI exited oversold (reclaimed above 30)");
+      else if (rsi !== null && rsi < 30) row("pending", "RSI oversold (" + rsi.toFixed(0) + ") — not yet reclaimed above 30");
+      else row("none", "No RSI oversold reversal");
     } else {
-      if (t.rsi_reclaim === "bearish") row("ok", "RSI aşırı alımdan döndü (70 altına indi)");
-      else if (rsi !== null && rsi > 70) row("pending", "RSI aşırı alımda (" + rsi.toFixed(0) + ") — henüz 70 altına inmedi");
-      else row("none", "RSI aşırı alım dönüşü yok");
+      if (t.rsi_reclaim === "bearish") row("ok", "RSI turned back from overbought (dropped below 70)");
+      else if (rsi !== null && rsi > 70) row("pending", "RSI overbought (" + rsi.toFixed(0) + ") — not yet dropped below 70");
+      else row("none", "No RSI overbought reversal");
     }
 
     // 2. MACD signal-line crossover.
-    if (t.macd_cross === (bull ? "bullish" : "bearish")) row("ok", "MACD " + (bull ? "yukarı" : "aşağı") + " kesişim (taze)");
-    else if (t.macd_cross === (bull ? "bearish" : "bullish")) row("bad", "MACD ters yönde kesişti");
-    else row("none", "MACD kesişimi yok");
+    if (t.macd_cross === (bull ? "bullish" : "bearish")) row("ok", "MACD " + (bull ? "bullish" : "bearish") + " crossover (fresh)");
+    else if (t.macd_cross === (bull ? "bearish" : "bullish")) row("bad", "MACD crossed the opposite way");
+    else row("none", "No MACD crossover");
 
     // 3. OBV money flow.
-    if (t.obv_trend === (bull ? "up" : "down")) row("ok", "OBV " + (bull ? "para girişi (toplama)" : "para çıkışı (dağıtım)"));
-    else if (t.obv_trend === (bull ? "down" : "up")) row("bad", "OBV ters yönde (" + (bull ? "dağıtım" : "toplama") + ")");
-    else row("none", "OBV yatay");
+    if (t.obv_trend === (bull ? "up" : "down")) row("ok", "OBV " + (bull ? "money flowing in (accumulation)" : "money flowing out (distribution)"));
+    else if (t.obv_trend === (bull ? "down" : "up")) row("bad", "OBV the opposite way (" + (bull ? "distribution" : "accumulation") + ")");
+    else row("none", "OBV flat");
 
     // 4. Volume participation at the turn (rel_volume = last vol / 20d avg). A
     // reversal on elevated volume is far more trustworthy than one on thin
     // trade; direction-neutral, so it reads the same for a bullish/bearish turn.
     var rv = isNum(t.rel_volume) ? Number(t.rel_volume) : null;
     if (rv !== null) {
-      if (rv >= tuning.volMin) row("ok", "Hacim ortalamanın belirgin üstünde (" + rv.toFixed(1) + "×) — dönüşe katılım var");
-      else row("none", "Hacim sıradan (" + rv.toFixed(1) + "×) — dönüşe güçlü katılım yok");
+      if (rv >= tuning.volMin) row("ok", "Volume notably above average (" + rv.toFixed(1) + "×) — there is participation in the turn");
+      else row("none", "Volume unremarkable (" + rv.toFixed(1) + "×) — no strong participation in the turn");
     }
 
     // 5. Volume climax / capitulation bar in the last ~10 sessions. A
@@ -3274,21 +3655,21 @@
     // exhaustion -- a classic reversal tell. Adds a row only when detected.
     var vc = t.volume_climax;
     if (vc && vc.detected && vc.direction === (bull ? "down" : "up")) {
-      var ago = vc.bars_ago === 0 ? "bugün" : vc.bars_ago + " gün önce";
-      row("ok", (bull ? "Kapitülasyon mumu" : "Alım klimaksı") + " (" + ago + ", " + Number(vc.rel_volume).toFixed(1) + "× hacim) — tükeniş");
+      var ago = vc.bars_ago === 0 ? "today" : vc.bars_ago + " days ago";
+      row("ok", (bull ? "Capitulation candle" : "Buying climax") + " (" + ago + ", " + Number(vc.rel_volume).toFixed(1) + "× volume) — exhaustion");
     }
 
     // 6. RSI divergence (bonus corroboration; only adds a row when present).
     if (t.rsi_divergence === (bull ? "bullish" : "bearish")) {
-      row("ok", (bull ? "Boğa uyumsuzluğu (fiyat yeni dip, RSI değil)" : "Ayı uyumsuzluğu (fiyat yeni zirve, RSI değil)"));
+      row("ok", (bull ? "Bullish divergence (price makes a new low, RSI doesn't)" : "Bearish divergence (price makes a new high, RSI doesn't)"));
     }
 
     var confirmed = rows.filter(function (r) { return r.state === "ok"; }).length;
     var total = rows.length;
     var verdict, vcls;
-    if (confirmed === 0) { verdict = (bull ? "Dönüş teyidi yok — düşen trend sürüyor" : "Dönüş teyidi yok — yükseliş sürüyor"); vcls = "rev-none"; }
-    else if (confirmed < tuning.strongConfirm) { verdict = "Erken dönüş sinyali — teyit zayıf, bekle"; vcls = "rev-early"; }
-    else { verdict = (bull ? "Dönüş teyitleniyor — boğa tarafı güçleniyor" : "Dönüş teyitleniyor — ayı tarafı güçleniyor"); vcls = "rev-strong"; }
+    if (confirmed === 0) { verdict = (bull ? "No reversal confirmation — downtrend continues" : "No reversal confirmation — uptrend continues"); vcls = "rev-none"; }
+    else if (confirmed < tuning.strongConfirm) { verdict = "Early reversal signal — confirmation weak, wait"; vcls = "rev-early"; }
+    else { verdict = (bull ? "Reversal confirming — bulls strengthening" : "Reversal confirming — bears strengthening"); vcls = "rev-strong"; }
 
     // Watch line: nearest resistance is the trigger to reclaim for a bullish
     // turn (nearest support the invalidation), mirrored for a bearish turn.
@@ -3297,9 +3678,9 @@
     var inval = bull ? t.nearest_support : t.nearest_resistance;
     if (isNum(trig) || isNum(inval)) {
       var parts = [];
-      if (isNum(trig)) parts.push((bull ? "$" + Number(trig).toFixed(2) + " direncini geri alması dönüşü teyit eder" : "$" + Number(trig).toFixed(2) + " desteğini kaybetmesi dönüşü teyit eder"));
-      if (isNum(inval)) parts.push((bull ? "$" + Number(inval).toFixed(2) + " desteği kırılırsa senaryo bozulur" : "$" + Number(inval).toFixed(2) + " direnci aşılırsa senaryo bozulur"));
-      watchHtml = '<div class="rev-watch"><span class="rev-watch-label">İzle</span>' + escapeHtml(parts.join("; ")) + '.</div>';
+      if (isNum(trig)) parts.push((bull ? "Reclaiming $" + Number(trig).toFixed(2) + " resistance confirms the reversal" : "Losing $" + Number(trig).toFixed(2) + " support confirms the reversal"));
+      if (isNum(inval)) parts.push((bull ? "Breaking $" + Number(inval).toFixed(2) + " support invalidates the scenario" : "Breaking above $" + Number(inval).toFixed(2) + " resistance invalidates the scenario"));
+      watchHtml = '<div class="rev-watch"><span class="rev-watch-label">Watch</span>' + escapeHtml(parts.join("; ")) + '.</div>';
     }
 
     // ATR-based risk readout: how far the invalidation stop sits from price,
@@ -3315,9 +3696,9 @@
       var wide = riskPct > tuning.wideStopPct; // horizon-scaled: tighter for a short swing, wider for a long hold
       riskHtml = '<div class="rev-risk' + (wide ? " rev-risk-wide" : "") + '">' +
         '<span class="rev-watch-label">Risk</span>' +
-        escapeHtml("Stop $" + Number(inval).toFixed(2) + " ≈ girişten %" + riskPct.toFixed(1) +
-          " uzakta (" + atrMult.toFixed(1) + "× ATR); ATR $" + atr.toFixed(2) +
-          (wide ? " — geniş stop, pozisyonu küçült" : "")) + '.</div>';
+        escapeHtml("Stop $" + Number(inval).toFixed(2) + " ≈ " + riskPct.toFixed(1) +
+          "% away from entry (" + atrMult.toFixed(1) + "× ATR); ATR $" + atr.toFixed(2) +
+          (wide ? " — wide stop, size the position down" : "")) + '.</div>';
     }
 
     var tuneHtml = '<div class="rev-tune">' + escapeHtml(tuning.note) + '</div>';
@@ -3329,7 +3710,7 @@
   // momentum badge itself flags "a reversal is building" at a glance.
   function reversalBadgeMarkerHtml(rev) {
     if (!rev || rev.confirmed < 2) return "";
-    var word = rev.bull ? "dönüş yakın ⤴" : "dönüş riski ⤵";
+    var word = rev.bull ? "reversal near ⤴" : "reversal risk ⤵";
     var cls = rev.bull ? "rev-mark-up" : "rev-mark-down";
     return '<span class="rev-badge-mark ' + cls + '">↺ ' + word + '</span>';
   }
@@ -3340,7 +3721,7 @@
   function squeezeBadgeHtml(t) {
     var sq = t.bb_squeeze;
     if (!sq || !sq.active) return "";
-    return '<span class="rev-badge-mark sq-mark">⇉ SIKIŞMA (' + Math.round(Number(sq.percentile)) + 'p)</span>';
+    return '<span class="rev-badge-mark sq-mark">⇉ SQUEEZE (' + Math.round(Number(sq.percentile)) + 'p)</span>';
   }
 
   function reversalBlockHtml(rev) {
@@ -3349,12 +3730,12 @@
     var rowsHtml = rev.rows.map(function (r) {
       return '<li class="rev-row rev-' + r.state + '"><span class="rev-icon">' + ICON[r.state] + '</span>' + escapeHtml(r.text) + '</li>';
     }).join("");
-    var help = "Değerleme 'ne alınır'ı, bu liste 'ne zaman'ı gösterir: kaç bağımsız gösterge " +
-      "trendin döndüğünü teyit ediyor. ✓ arttıkça sinyal güçlenir; tek başına 'ucuz' + düşen trend " +
-      "genelde erkendir. 'İzle' satırı giriş/geçersizlik seviyesini verir.";
+    var help = "Valuation shows 'what to buy', this list shows 'when': how many independent indicators " +
+      "confirm the trend is turning. More ✓'s means a stronger signal; 'cheap' alone plus a falling trend " +
+      "is usually early. The 'Watch' line gives the entry/invalidation levels.";
     return (
       '<div class="rev-block">' +
-        '<div class="rev-head"><span class="rev-title">Dönüş Teyidi</span>' +
+        '<div class="rev-head"><span class="rev-title">Reversal Confirmation</span>' +
           '<span class="rev-verdict ' + rev.vcls + '">' + rev.confirmed + '/' + rev.total + ' · ' + escapeHtml(rev.verdict) + '</span>' +
         '</div>' +
         '<div class="rev-help">' + escapeHtml(help) + '</div>' +
@@ -3396,21 +3777,21 @@
     // 1. Value (0-2): triangulation direction.
     var dir = (valuation && valuation.triangulation) ? valuation.triangulation.direction : null;
     maxScore += 2;
-    if (dir === "ucuz") { score += 2; parts.push({ state: "ok", label: "Değer", text: "ucuz" }); }
-    else if (dir === "makul") { score += 1; parts.push({ state: "pending", label: "Değer", text: "makul" }); }
-    else if (dir === "pahali" || dir === "yuksek_beklenti") { parts.push({ state: "bad", label: "Değer", text: "pahalı" }); }
-    else if (dir === "karisik") { parts.push({ state: "none", label: "Değer", text: "karışık" }); }
-    else parts.push({ state: "none", label: "Değer", text: "—" });
+    if (dir === "cheap") { score += 2; parts.push({ state: "ok", label: "Value", text: "cheap" }); }
+    else if (dir === "fair") { score += 1; parts.push({ state: "pending", label: "Value", text: "fair" }); }
+    else if (dir === "expensive" || dir === "high_expectations") { parts.push({ state: "bad", label: "Value", text: "expensive" }); }
+    else if (dir === "mixed") { parts.push({ state: "none", label: "Value", text: "mixed" }); }
+    else parts.push({ state: "none", label: "Value", text: "—" });
 
     // 2. Timing (0-2): bullish reversal confirmation (long-biased).
     maxScore += 2;
     if (reversal && reversal.bull) {
-      if (reversal.confirmed >= 2) { score += 2; parts.push({ state: "ok", label: "Zamanlama", text: "dönüş teyitli (" + reversal.confirmed + "/" + reversal.total + ")" }); }
-      else if (reversal.confirmed === 1) { score += 1; parts.push({ state: "pending", label: "Zamanlama", text: "erken dönüş (" + reversal.confirmed + "/" + reversal.total + ")" }); }
-      else parts.push({ state: "bad", label: "Zamanlama", text: "dönüş yok, düşüyor" });
+      if (reversal.confirmed >= 2) { score += 2; parts.push({ state: "ok", label: "Timing", text: "reversal confirmed (" + reversal.confirmed + "/" + reversal.total + ")" }); }
+      else if (reversal.confirmed === 1) { score += 1; parts.push({ state: "pending", label: "Timing", text: "early reversal (" + reversal.confirmed + "/" + reversal.total + ")" }); }
+      else parts.push({ state: "bad", label: "Timing", text: "no reversal, falling" });
     } else if (reversal && !reversal.bull) {
-      parts.push({ state: "pending", label: "Zamanlama", text: "yükselişte — geri çekilme bekle" });
-    } else parts.push({ state: "none", label: "Zamanlama", text: "—" });
+      parts.push({ state: "pending", label: "Timing", text: "rising — wait for a pullback" });
+    } else parts.push({ state: "none", label: "Timing", text: "—" });
 
     // 3. Reward (0-2): best tranche risk/reward.
     maxScore += 2;
@@ -3418,14 +3799,14 @@
     if (rr !== null) {
       if (rr >= 2.5) { score += 2; parts.push({ state: "ok", label: "R/R", text: rr.toFixed(1) + "×" }); }
       else if (rr >= 1.5) { score += 1; parts.push({ state: "pending", label: "R/R", text: rr.toFixed(1) + "×" }); }
-      else parts.push({ state: "bad", label: "R/R", text: rr.toFixed(1) + "× (düşük)" });
+      else parts.push({ state: "bad", label: "R/R", text: rr.toFixed(1) + "× (low)" });
     } else parts.push({ state: "none", label: "R/R", text: "—" });
 
     var ratio = maxScore ? score / maxScore : 0;
     var grade, gcls, gnote;
-    if (ratio >= 0.8) { grade = "A"; gcls = "grade-a"; gnote = "Değer + zamanlama + getiri hizalı — güçlü swing kurulumu."; }
-    else if (ratio >= 0.5) { grade = "B"; gcls = "grade-b"; gnote = "Kısmi hizalanma — bir bacak eksik, teyit bekle."; }
-    else { grade = "C"; gcls = "grade-c"; gnote = "Zayıf hizalanma — şu an net bir swing kurulumu yok."; }
+    if (ratio >= 0.8) { grade = "A"; gcls = "grade-a"; gnote = "Value + timing + reward aligned — strong swing setup."; }
+    else if (ratio >= 0.5) { grade = "B"; gcls = "grade-b"; gnote = "Partial alignment — one leg missing, wait for confirmation."; }
+    else { grade = "C"; gcls = "grade-c"; gnote = "Weak alignment — no clear swing setup right now."; }
 
     // Earnings proximity (Feature 5): warn if the estimated next-earnings date
     // is within ~3 weeks of the price as-of date.
@@ -3433,8 +3814,8 @@
     var eDate = result.catalyst_estimate_date;
     var dU = eDate ? daysUntil(eDate, payload.as_of || payload.generated_on) : null;
     if (dU !== null && dU >= 0 && dU <= 21) {
-      earnHtml = '<div class="setup-earn"><span class="setup-earn-badge">⚠ ~' + dU + ' gün içinde earnings</span> ' +
-        escapeHtml("(tahmini " + eDate + ") — pozisyonu bu tarih üzerinden taşımak ekstra risk.") + '</div>';
+      earnHtml = '<div class="setup-earn"><span class="setup-earn-badge">⚠ earnings in ~' + dU + ' days</span> ' +
+        escapeHtml("(estimated " + eDate + ") — carrying the position through this date is extra risk.") + '</div>';
     }
 
     var PICON = { ok: "✓", pending: "◦", bad: "✗", none: "–" };
@@ -3446,39 +3827,37 @@
 
     return (
       '<div class="card setup-card">' +
-        '<div class="card-title">Swing Kurulumu</div>' +
+        '<div class="card-title">Swing Setup</div>' +
         '<div class="setup-head">' +
           '<span class="setup-grade ' + gcls + '">' + grade + '</span>' +
           '<span class="setup-note">' + escapeHtml(gnote) + '</span>' +
         '</div>' +
         '<div class="setup-parts">' + partsHtml + '</div>' +
         earnHtml +
-        '<div class="setup-disc">Bileşik gösterge (değer + momentum dönüşü + R/R), long-yönlü. Karar-destek; yatırım tavsiyesi değil.</div>' +
+        '<div class="setup-disc">Composite indicator (value + momentum reversal + R/R), long-biased. Decision support; not investment advice.</div>' +
       '</div>'
     );
   }
 
-  // Plain-language Turkish sentence built from the same raw numbers used by
+  // Plain-language sentence built from the same raw numbers used by
   // computeMomentum (not from the score itself), so it stays legible even in
   // the sparse case where a score exists (e.g. RSI-only) but returns don't.
   function momentumSentence(m) {
-    if (!m) return "Momentum için yeterli veri yok.";
-    // Turkish sign-then-percent style ("+%12.3" / "-%12.3"): the sign has to
-    // be placed before the "%" explicitly, since simple concatenation of a
-    // signed number after "%" would instead put the "-" after the "%".
+    if (!m) return "Not enough data for momentum.";
+    // English sign-then-percent style ("+12.3%" / "-12.3%").
     function signedPct(v) {
       var r = Math.round(v * 10) / 10;
-      return (r >= 0 ? "+" : "-") + "%" + Math.abs(r);
+      return (r >= 0 ? "+" : "-") + Math.abs(r) + "%";
     }
     var longTermClause = null;
-    if (m.r6 !== null) longTermClause = "Son 6 ayda " + signedPct(m.r6);
-    else if (m.r3 !== null) longTermClause = "Son 3 ayda " + signedPct(m.r3);
+    if (m.r6 !== null) longTermClause = "Over the last 6 months " + signedPct(m.r6);
+    else if (m.r3 !== null) longTermClause = "Over the last 3 months " + signedPct(m.r3);
 
     var sentence1 = "";
     if (longTermClause !== null) {
       sentence1 = longTermClause;
       if (m.r1 !== null) {
-        sentence1 += ", son 1 ayda " + signedPct(m.r1);
+        sentence1 += ", over the last month " + signedPct(m.r1);
         if (m.accelWord) sentence1 += " — momentum " + m.accelWord.toLowerCase();
       }
       sentence1 += ".";
@@ -3487,14 +3866,14 @@
     var oscParts = [];
     if (m.rsi !== null) oscParts.push("RSI " + Math.round(m.rsi));
     if (m.mh !== null || m.mc) {
-      var macdWord = m.mh > 0 ? "pozitif" : (m.mh < 0 ? "negatif" : "nötr");
-      macdWord += m.mc === "bullish" ? " (yukarı kesişim)" : (m.mc === "bearish" ? " (aşağı kesişim)" : "");
+      var macdWord = m.mh > 0 ? "positive" : (m.mh < 0 ? "negative" : "neutral");
+      macdWord += m.mc === "bullish" ? " (bullish crossover)" : (m.mc === "bearish" ? " (bearish crossover)" : "");
       oscParts.push("MACD " + macdWord);
     }
     var sentence2 = oscParts.length ? oscParts.join(", ") + "." : "";
 
     var full = [sentence1, sentence2].filter(function (s) { return s; }).join(" ");
-    return full || "Momentum için yeterli veri yok.";
+    return full || "Not enough data for momentum.";
   }
 
   // ---- MOMENTUM card: three-layer synthesis (result.momentum) -------------
@@ -3507,9 +3886,9 @@
   // no data); each of the three sub-layers renders "—" independently when
   // its own layer is missing, so a partial payload never crashes the card.
   function momentumVerdictColor(v) {
-    if (v === "GÜÇLÜ+" || v === "POZİTİF") return "green";
-    if (v === "NEGATİF") return "red";
-    if (v === "NÖTR") return "amber";
+    if (v === "STRONG+" || v === "POSITIVE") return "green";
+    if (v === "NEGATIVE") return "red";
+    if (v === "NEUTRAL") return "amber";
     return "muted";
   }
 
@@ -3554,15 +3933,15 @@
   // map s=0 to the center line).
   function momentumQuadrantZone(priceS, fundS) {
     var priceUp = priceS >= 0, fundUp = fundS >= 0;
-    if (priceUp && fundUp) return { key: "confirmed", label: "TEYİTLİ İVME" };
-    if (!priceUp && fundUp) return { key: "opportunity", label: "FIRSAT BÖLGESİ" };
-    if (priceUp && !fundUp) return { key: "trap", label: "MOMENTUM TUZAĞI" };
-    return { key: "weak", label: "ZAYIF" };
+    if (priceUp && fundUp) return { key: "confirmed", label: "CONFIRMED MOMENTUM" };
+    if (!priceUp && fundUp) return { key: "opportunity", label: "OPPORTUNITY ZONE" };
+    if (priceUp && !fundUp) return { key: "trap", label: "MOMENTUM TRAP" };
+    return { key: "weak", label: "WEAK" };
   }
 
   // The price x fundamental momentum quadrant -- self-contained inline SVG.
   // X = price.s (-1..+1, left->right), Y = fundamental.s (-1..+1, bottom->top).
-  // Four background-tinted zones with a short Turkish label each, crosshair
+  // Four background-tinted zones with a short label each, crosshair
   // axes through the center, and one dot for the security's current reading
   // (clamped into the box so an out-of-range s never draws outside it).
   function momentumQuadrantSvg(priceS, fundS, zoneKey) {
@@ -3589,21 +3968,21 @@
       return '<text x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" text-anchor="middle" class="mom-quad-label ' + cls + '">' + text + '</text>';
     }
     var labels =
-      zoneLabel(cx + halfW / 2, pad + halfH / 2, "mom-quad-label-confirmed", "TEYİTLİ İVME") +
-      zoneLabel(pad + halfW / 2, pad + halfH / 2, "mom-quad-label-opportunity", "FIRSAT BÖLGESİ") +
-      zoneLabel(cx + halfW / 2, cy + halfH / 2 + 3, "mom-quad-label-trap", "MOMENTUM TUZAĞI") +
-      zoneLabel(pad + halfW / 2, cy + halfH / 2 + 3, "mom-quad-label-weak", "ZAYIF");
+      zoneLabel(cx + halfW / 2, pad + halfH / 2, "mom-quad-label-confirmed", "CONFIRMED MOMENTUM") +
+      zoneLabel(pad + halfW / 2, pad + halfH / 2, "mom-quad-label-opportunity", "OPPORTUNITY ZONE") +
+      zoneLabel(cx + halfW / 2, cy + halfH / 2 + 3, "mom-quad-label-trap", "MOMENTUM TRAP") +
+      zoneLabel(pad + halfW / 2, cy + halfH / 2 + 3, "mom-quad-label-weak", "WEAK");
 
     var dot = '<circle cx="' + dotX.toFixed(1) + '" cy="' + dotY.toFixed(1) + '" r="5.5" class="mom-quad-dot mom-quad-dot-' + (zoneKey || "weak") + '"/>';
 
     return '<svg class="mom-quad-svg" viewBox="0 0 ' + W + ' ' + H +
-      '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Fiyat ve fundamental momentum dörtgeni">' +
+      '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Price and fundamental momentum quadrant">' +
       zones + axes + labels + dot + '</svg>';
   }
 
-  // Wraps the quadrant SVG with its axis captions ("← Fiyat momentumu →" /
+  // Wraps the quadrant SVG with its axis captions ("← Price momentum →" /
   // "Fundamental ↑") and a legend line carrying the raw 0-100 scores (50 =
-  // nötr) plus the zone the dot landed in.
+  // neutral) plus the zone the dot landed in.
   function momentumQuadrantBlockHtml(price, fund, zone) {
     var svg = momentumQuadrantSvg(Number(price.s), Number(fund.s), zone.key);
     var pScore = isNum(price.score) ? Math.round(Number(price.score)) + "/100" : "—";
@@ -3615,22 +3994,22 @@
           '<div class="mom-quad-box">' + svg + '</div>' +
         '</div>' +
         '<div class="mom-quad-axis-row">' +
-          '<span class="mom-quad-end">zayıf</span>' +
-          '<span class="mom-quad-axis-caption">← Fiyat momentumu →</span>' +
-          '<span class="mom-quad-end">güçlü</span>' +
+          '<span class="mom-quad-end">weak</span>' +
+          '<span class="mom-quad-axis-caption">← Price momentum →</span>' +
+          '<span class="mom-quad-end">strong</span>' +
         '</div>' +
-        '<div class="mom-quad-legend">Fiyat ' + escapeHtml(pScore) + ' · Fundamental ' + escapeHtml(fScore) +
-          ' · 0-100 ölçek, 50 = nötr · ● mevcut konum (' + escapeHtml(zone.label) + ')</div>' +
+        '<div class="mom-quad-legend">Price ' + escapeHtml(pScore) + ' · Fundamental ' + escapeHtml(fScore) +
+          ' · 0-100 scale, 50 = neutral · ● current position (' + escapeHtml(zone.label) + ')</div>' +
       '</div>'
     );
   }
 
-  // Fallback "Fiyat" sub-row body (used only when the quadrant can't be
+  // Fallback "Price" sub-row body (used only when the quadrant can't be
   // drawn because fundamental.s is missing -- e.g. quarterly fundamentals
   // too sparse). Same content the quadrant's legend would otherwise carry.
   function momentumPriceBodyHtml(price) {
     if (!price) return '<span class="muted">—</span>';
-    var scoreTxt = isNum(price.score) ? Math.round(Number(price.score)) + "/100 (50=nötr)" : "—";
+    var scoreTxt = isNum(price.score) ? Math.round(Number(price.score)) + "/100 (50=neutral)" : "—";
     var accelTxt = price.accel ? " · " + escapeHtml(price.accel) : "";
     var pCls = price.direction === "up" ? "mom-badge-up" : (price.direction === "down" ? "mom-badge-down" : "mom-badge-flat");
     return '<span class="mom-badge ' + pCls + '">' + escapeHtml(price.arrow || "") + ' ' + escapeHtml(price.label || "—") + '</span> ' +
@@ -3643,14 +4022,14 @@
   // requirement -- a bare sparkline with no caption reads as decoration.
   function momentumFundamentalBodyHtml(fund) {
     if (!fund) return '<span class="muted">—</span>';
-    var scoreTxt = isNum(fund.score) ? Math.round(Number(fund.score)) + "/100 (50=nötr)" : "";
+    var scoreTxt = isNum(fund.score) ? Math.round(Number(fund.score)) + "/100 (50=neutral)" : "";
     var scoreHtml = scoreTxt ? ' <span class="mom-sub-score">(' + scoreTxt + ')</span>' : "";
     var yoy = fund.revenue_accel && fund.revenue_accel.yoy_series;
     var sparkHtml = "";
     if (Array.isArray(yoy) && yoy.length >= 2) {
       var vals = yoy.map(function (y) { return y.yoy_pct; }).filter(isNum);
       if (vals.length >= 2) {
-        var caption = "YoY büyüme: " + fmtSignedPct(vals[0]) + "→" + fmtSignedPct(vals[vals.length - 1]);
+        var caption = "YoY growth: " + fmtSignedPct(vals[0]) + "→" + fmtSignedPct(vals[vals.length - 1]);
         sparkHtml = '<div class="mom-mini-spark-wrap">' + miniSparkSvg(vals) +
           '<div class="mom-spark-caption">' + escapeHtml(caption) + '</div></div>';
       }
@@ -3658,7 +4037,7 @@
     return escapeHtml(fund.detail || "—") + scoreHtml + sparkHtml;
   }
 
-  // Değer seyri (verdict momentum) -- the model's OWN fair-value/price
+  // Value trajectory (verdict momentum) -- the model's OWN fair-value/price
   // trajectory across stored analyses. A different axis from the security's
   // own price/fundamental momentum above, so it's rendered as a separate
   // context strip below the quadrant rather than folded into it. Labels its
@@ -3672,7 +4051,7 @@
       if (Array.isArray(series) && series.length >= 2) {
         var ratios = series.map(function (p) { return p.ratio; }).filter(isNum);
         if (ratios.length >= 2) {
-          var caption = "FV/fiyat: " + ratios[0].toFixed(2) + "→" + ratios[ratios.length - 1].toFixed(2);
+          var caption = "FV/price: " + ratios[0].toFixed(2) + "→" + ratios[ratios.length - 1].toFixed(2);
           sparkHtml = '<div class="mom-mini-spark-wrap">' + miniSparkSvg(ratios) +
             '<div class="mom-spark-caption">' + escapeHtml(caption) + '</div></div>';
         }
@@ -3683,7 +4062,7 @@
     }
     return (
       '<div class="mom-vt-strip">' +
-        '<div class="mom-vt-title">Değer seyri</div>' +
+        '<div class="mom-vt-title">Value trajectory</div>' +
         '<div class="mom-vt-body">' + body + '</div>' +
       '</div>'
     );
@@ -3700,7 +4079,7 @@
     var leadParts = [];
     if (price && price.label) {
       var pScore = isNum(price.score) ? Math.round(Number(price.score)) : null;
-      leadParts.push("Fiyat momentumu " + price.label + (pScore !== null ? " (" + pScore + "/100)" : ""));
+      leadParts.push("Price momentum " + price.label + (pScore !== null ? " (" + pScore + "/100)" : ""));
     }
     if (fund && fund.label) {
       var fScore = isNum(fund.score) ? Math.round(Number(fund.score)) : null;
@@ -3711,10 +4090,10 @@
     var zoneClause = "";
     if (price && isNum(price.s) && fund && isNum(fund.s)) {
       var zone = momentumQuadrantZone(Number(price.s), Number(fund.s));
-      if (zone.key === "confirmed") zoneClause = "fiyat ve iş performansı aynı yönde: trend teyitli";
-      else if (zone.key === "opportunity") zoneClause = "iş hızlanıyor ama fiyat henüz teyit etmedi";
-      else if (zone.key === "trap") zoneClause = "fiyat yükseliyor ama iş yavaşlıyor — momentum tuzağı riski";
-      else zoneClause = "fiyat ve iş performansı ikisi de zayıf";
+      if (zone.key === "confirmed") zoneClause = "price and business performance point the same way: trend confirmed";
+      else if (zone.key === "opportunity") zoneClause = "the business is accelerating but price hasn't confirmed yet";
+      else if (zone.key === "trap") zoneClause = "price is rising but the business is slowing — momentum-trap risk";
+      else zoneClause = "both price and business performance are weak";
     }
 
     var sentence1 = lead;
@@ -3724,7 +4103,7 @@
     var sentence2 = (vt && vt.detail) ? vt.detail : "";
 
     var full = [sentence1, sentence2].filter(function (s) { return s; }).join(" ");
-    return full || "Momentum sentezi için yeterli veri yok.";
+    return full || "Not enough data for a momentum synthesis.";
   }
 
   // Price-score breakdown: one signed bar per component (the same
@@ -3755,7 +4134,7 @@
     }).join("");
     return (
       '<div class="mom-bd-col">' +
-        '<div class="mom-bd-title">FİYAT <b>' + escapeHtml(String(scoreTxt)) + '/100</b> · katkılar</div>' +
+        '<div class="mom-bd-title">PRICE <b>' + escapeHtml(String(scoreTxt)) + '/100</b> · contributions</div>' +
         rows +
       '</div>'
     );
@@ -3773,8 +4152,8 @@
       return '<span class="mom-bd-icon ' + g + '">' + ch + '</span>';
     }
     function trendKind(word) {
-      if (word === "hızlanıyor" || word === "iyileşiyor") return "ok";
-      if (word === "yavaşlıyor" || word === "bozuluyor") return "bad";
+      if (word === "accelerating" || word === "improving") return "ok";
+      if (word === "decelerating" || word === "deteriorating") return "bad";
       return "neutral";
     }
     function sig(kind, text) { return '<div class="mom-bd-sig">' + icon(kind) + '<span>' + escapeHtml(text) + '</span></div>'; }
@@ -3782,33 +4161,33 @@
     var rows = [];
     var ra = fund.revenue_accel;
     if (ra && ra.word) {
-      // "Çeyreklik" is explicit so this never looks like it contradicts the
+      // "Quarterly" is explicit so this never looks like it contradicts the
       // thesis card's *annual* growth metric -- they measure different periods.
       // An unconfirmed (single-quarter) move is flagged and shown neutral, not
       // as a full ✓/✗, matching the reduced weight it carries in the score.
       var unconfirmed = ra.confirmed === false;
-      var yoyTxt = isNum(ra.latest_yoy_pct) ? " (son çeyrek YoY " + fmtSignedPct(ra.latest_yoy_pct) + ")" : "";
-      var caveat = unconfirmed ? " — tek çeyrek, teyit bekliyor" : "";
+      var yoyTxt = isNum(ra.latest_yoy_pct) ? " (latest quarter YoY " + fmtSignedPct(ra.latest_yoy_pct) + ")" : "";
+      var caveat = unconfirmed ? " — single quarter, awaiting confirmation" : "";
       var kind = unconfirmed ? "neutral" : trendKind(ra.word);
-      rows.push(sig(kind, "Çeyreklik gelir büyümesi " + ra.word + yoyTxt + caveat));
+      rows.push(sig(kind, "Quarterly revenue growth " + ra.word + yoyTxt + caveat));
     }
     var mt = fund.margin_trend || {};
-    if (mt.gross) rows.push(sig(trendKind(mt.gross), "Brüt marj " + mt.gross));
-    if (mt.fcf) rows.push(sig(trendKind(mt.fcf), "FCF marjı " + mt.fcf));
+    if (mt.gross) rows.push(sig(trendKind(mt.gross), "Gross margin " + mt.gross));
+    if (mt.fcf) rows.push(sig(trendKind(mt.fcf), "FCF margin " + mt.fcf));
     var ms = fund.model_surprise;
     if (ms && ms.direction) {
       var msKind = ms.direction === "beat" ? "ok" : (ms.direction === "miss" ? "bad" : "neutral");
-      var msWord = ms.direction === "beat" ? "modeli aştı" : (ms.direction === "miss" ? "modelin altında" : "modelle uyumlu");
+      var msWord = ms.direction === "beat" ? "beat the model" : (ms.direction === "miss" ? "below the model" : "in line with the model");
       var msPct = isNum(ms.surprise_pct) ? " (" + fmtSignedPct(ms.surprise_pct) + ")" : "";
-      rows.push(sig(msKind, "Gerçekleşen gelir " + msWord + msPct));
+      rows.push(sig(msKind, "Realized revenue " + msWord + msPct));
     } else {
-      rows.push(sig("neutral", "Model-sürpriz: veri yok"));
+      rows.push(sig("neutral", "Model surprise: no data"));
     }
     if (!rows.length) return "";
     var scoreTxt = isNum(fund.score) ? Math.round(Number(fund.score)) : "—";
     return (
       '<div class="mom-bd-col">' +
-        '<div class="mom-bd-title">FUNDAMENTAL <b>' + escapeHtml(String(scoreTxt)) + '/100</b> · sinyaller</div>' +
+        '<div class="mom-bd-title">FUNDAMENTAL <b>' + escapeHtml(String(scoreTxt)) + '/100</b> · signals</div>' +
         rows.join("") +
       '</div>'
     );
@@ -3834,7 +4213,7 @@
     } else {
       bodyHtml =
         '<div class="mom-sub-rows">' +
-          momentumSubRowHtml("Fiyat", momentumPriceBodyHtml(price)) +
+          momentumSubRowHtml("Price", momentumPriceBodyHtml(price)) +
           momentumSubRowHtml("Fundamental", momentumFundamentalBodyHtml(fund)) +
         '</div>';
     }
@@ -3848,7 +4227,7 @@
     var crossHtml = "";
     if (Array.isArray(mo.cross_signals) && mo.cross_signals.length) {
       crossHtml =
-        '<div class="mom-cross-title">Çapraz Sinyaller</div>' +
+        '<div class="mom-cross-title">Cross Signals</div>' +
         '<div class="mom-cross-list">' + mo.cross_signals.map(momentumCrossSignalHtml).join("") + '</div>';
     }
 
@@ -3863,7 +4242,7 @@
         breakdownHtml +
         momentumVerdictTrendHtml(vt) +
         crossHtml +
-        '<div class="mom-help">Momentum, giriş zamanlaması bağlamıdır — adil değer hesaplamasına asla girmez.</div>' +
+        '<div class="mom-help">Momentum is entry-timing context — it never enters the fair-value calculation.</div>' +
       '</div>'
     );
   }
@@ -3879,17 +4258,16 @@
   var INSIDER_SEVERITY_COLOR = { positive: "green", negative: "red", neutral: "muted" };
   var INSIDER_CATEGORY_COLOR = { open_market_buy: "green", open_market_sell: "red" };
 
-  // Compact Turkish-locale money -- deliberately mirrors insider.py's own
-  // _fmt_money() (comma decimal separator: "$2,5M"/"$840K"/"$840") instead
-  // of reusing fmtCompactMoney's period-decimal convention, so the card's
-  // own numbers read identically to insider.note's server-formatted
-  // sentences rather than clashing with them one line apart.
+  // Compact money -- mirrors insider.py's own _fmt_money() (period decimal
+  // separator: "$2.5M"/"$840K"/"$840"), so the card's own numbers read
+  // identically to insider.note's server-formatted sentences rather than
+  // clashing with them one line apart.
   function insiderFmtMoney(v) {
     if (!isNum(v)) return "—";
     var num = Number(v);
     var sign = num < 0 ? "-" : "";
     var abs = Math.abs(num);
-    if (abs >= 1e6) return sign + "$" + (abs / 1e6).toFixed(1).replace(".", ",") + "M";
+    if (abs >= 1e6) return sign + "$" + (abs / 1e6).toFixed(1) + "M";
     if (abs >= 1e3) return sign + "$" + Math.round(abs / 1e3) + "K";
     return sign + "$" + Math.round(abs);
   }
@@ -3899,36 +4277,36 @@
     return (Number(v) < 0 ? "-" : "+") + insiderFmtMoney(Math.abs(Number(v)));
   }
 
-  // Turkish-locale share count (period thousands separator, no decimals) --
-  // mirrors insider.py's _fmt_shares (e.g. 12000 -> "12.000").
+  // Share count with a comma thousands separator, no decimals -- mirrors
+  // insider.py's _fmt_shares (e.g. 12000 -> "12,000").
   function insiderFmtShares(v) {
     if (!isNum(v)) return "—";
-    return Math.round(Number(v)).toLocaleString("tr-TR");
+    return Math.round(Number(v)).toLocaleString("en-US");
   }
 
-  // One side (buy or sell) of the two-sided summary line -- "3 işlem ·
-  // 12.000 adet · $2,5M". Returns null (side omitted) when both the count
-  // and the value are zero/absent, per spec: a "0 işlem" clause would only
-  // clutter the line.
+  // One side (buy or sell) of the two-sided summary line -- "3 transactions ·
+  // 12,000 shares · $2.5M". Returns null (side omitted) when both the count
+  // and the value are zero/absent, per spec: a "0 transactions" clause would
+  // only clutter the line.
   function insiderSideSummary(count, shares, value) {
     var hasCount = isNum(count) && Number(count) !== 0;
     var hasValue = isNum(value) && Number(value) !== 0;
     if (!hasCount && !hasValue) return null;
     var parts = [];
-    if (isNum(count)) parts.push(Math.round(Number(count)) + " işlem");
-    if (isNum(shares)) parts.push(insiderFmtShares(shares) + " adet");
+    if (isNum(count)) parts.push(Math.round(Number(count)) + " transactions");
+    if (isNum(shares)) parts.push(insiderFmtShares(shares) + " shares");
     if (hasValue) parts.push(insiderFmtMoney(value));
     return parts.join(" · ");
   }
 
-  // "İşlem" cell: a category-coloured badge (open-market buy/sell get the
+  // "Transaction" cell: a category-coloured badge (open-market buy/sell get the
   // alert green/red; everything else -- awards, exercises, gifts -- stays
-  // muted) plus a small "türev" marker when the row is a derivative
+  // muted) plus a small "derivative" marker when the row is a derivative
   // transaction, since a derivative row is never an open-market trade and
   // must not be read as one.
   function insiderTxLabelHtml(row) {
     var color = INSIDER_CATEGORY_COLOR[row.category] || "muted";
-    var derivTag = row.derivative ? ' <span class="swing-chip">türev</span>' : "";
+    var derivTag = row.derivative ? ' <span class="swing-chip">derivative</span>' : "";
     return '<span class="badge badge-' + color + '">' + escapeHtml(safeText(row.label || row.code)) + '</span>' + derivTag;
   }
 
@@ -3951,15 +4329,15 @@
     if (!insider) return "";
 
     var sevColor = INSIDER_SEVERITY_COLOR[insider.severity] || "muted";
-    var windowText = isNum(insider.window_days) ? "son " + Math.round(Number(insider.window_days)) + " gün" : "";
+    var windowText = isNum(insider.window_days) ? "last " + Math.round(Number(insider.window_days)) + " days" : "";
 
     var buySide = insiderSideSummary(insider.buy_count, insider.buy_shares, insider.buy_value);
     var sellSide = insiderSideSummary(insider.sell_count, insider.sell_shares, insider.sell_value);
     var summaryHtml = "";
     if (buySide || sellSide || isNum(insider.net_value)) {
       summaryHtml = '<div class="insider-summary">' +
-        (buySide ? '<span class="insider-buy">Alım: ' + escapeHtml(buySide) + '</span>' : "") +
-        (sellSide ? '<span class="insider-sell">Satış: ' + escapeHtml(sellSide) + '</span>' : "") +
+        (buySide ? '<span class="insider-buy">Buy: ' + escapeHtml(buySide) + '</span>' : "") +
+        (sellSide ? '<span class="insider-sell">Sell: ' + escapeHtml(sellSide) + '</span>' : "") +
         (isNum(insider.net_value)
           ? '<span class="insider-net ' + (Number(insider.net_value) < 0 ? "neg" : "pos") + '">Net: ' +
             escapeHtml(insiderFmtSignedMoney(insider.net_value)) + '</span>'
@@ -3974,13 +4352,13 @@
     // The line that distinguishes routine selling from a real signal --
     // shown directly whenever known, never tucked into an accordion.
     var stakeHtml = isNum(insider.median_stake_sold_pct)
-      ? '<div class="verdict-note" style="margin-bottom:8px;">Satan yöneticiler paylarının medyan %' +
-        Number(insider.median_stake_sold_pct).toFixed(1).replace(".", ",") +
-        "'ini elden çıkardı.</div>"
+      ? '<div class="verdict-note" style="margin-bottom:8px;">Selling executives disposed of a median ' +
+        Number(insider.median_stake_sold_pct).toFixed(1) +
+        "% of their stake.</div>"
       : "";
 
     var truncatedHtml = insider.truncated
-      ? '<div class="insider-truncated">⚠ Tarama üst sınıra takıldı — rakamlar kısmi.</div>'
+      ? '<div class="insider-truncated">⚠ Scan hit its upper limit — figures are partial.</div>'
       : "";
 
     var recent = Array.isArray(insider.recent) ? insider.recent : [];
@@ -3988,8 +4366,8 @@
       ? '<div class="swing-table-wrap">' +
           '<table class="sensitivity-table history-table">' +
             '<thead><tr>' +
-              '<th>Tarih</th><th>Kişi</th><th>Görev</th><th>İşlem</th>' +
-              '<th>Adet</th><th>Fiyat</th><th>Tutar</th>' +
+              '<th>Date</th><th>Person</th><th>Role</th><th>Transaction</th>' +
+              '<th>Shares</th><th>Price</th><th>Value</th>' +
             '</tr></thead>' +
             '<tbody>' + recent.map(insiderRowHtml).join("") + '</tbody>' +
           '</table>' +
@@ -3999,7 +4377,7 @@
     return (
       '<div class="card">' +
         '<div class="mom-card-head">' +
-          '<div class="card-title" style="margin:0;">👤 İçeriden İşlemler (Form 4)</div>' +
+          '<div class="card-title" style="margin:0;">👤 Insider Transactions (Form 4)</div>' +
           '<div>' +
             '<span class="badge badge-' + sevColor + '">' + escapeHtml(safeText(insider.verdict)) + '</span>' +
             (windowText ? ' <span class="regime-sub">' + escapeHtml(windowText) + '</span>' : "") +
@@ -4029,24 +4407,24 @@
     var above50 = (p !== null && s50 !== null) ? p >= s50 : null;
     var above200 = (p !== null && s200 !== null) ? p >= s200 : null;
     var regime;
-    if (above50 === true && above200 === true) regime = { label: "YÜKSELİŞ TRENDİ", cls: "regime-up", dir: "up", arrow: "↑" };
-    else if (above50 === false && above200 === false) regime = { label: "DÜŞÜŞ TRENDİ", cls: "regime-down", dir: "down", arrow: "↓" };
-    else if (above50 !== null || above200 !== null) regime = { label: "GEÇİŞ / NÖTR", cls: "regime-neutral", dir: "flat", arrow: "→" };
+    if (above50 === true && above200 === true) regime = { label: "UPTREND", cls: "regime-up", dir: "up", arrow: "↑" };
+    else if (above50 === false && above200 === false) regime = { label: "DOWNTREND", cls: "regime-down", dir: "down", arrow: "↓" };
+    else if (above50 !== null || above200 !== null) regime = { label: "TRANSITION / NEUTRAL", cls: "regime-neutral", dir: "flat", arrow: "→" };
     else regime = { label: "—", cls: "regime-neutral", dir: "flat", arrow: "" };
 
     var evi = [];
     if (s50 !== null && s200 !== null) {
       var lead = (above50 === above200)
-        ? (above50 ? "Fiyat iki ortalamanın da üstünde" : "Fiyat iki ortalamanın da altında")
-        : "Fiyat ortalamalar arasında";
+        ? (above50 ? "Price is above both averages" : "Price is below both averages")
+        : "Price is between the averages";
       evi.push(lead + " (SMA50 " + fmtMoney(s50) + ", SMA200 " + fmtMoney(s200) + ")");
     } else if (s50 !== null) {
-      evi.push("SMA50 " + fmtMoney(s50) + (above50 ? " üstünde" : " altında"));
+      evi.push("SMA50 " + fmtMoney(s50) + (above50 ? " above" : " below"));
     }
-    if (t.golden_cross) evi.push("altın kesişim");
-    else if (t.death_cross) evi.push("ölüm kesişimi");
+    if (t.golden_cross) evi.push("golden cross");
+    else if (t.death_cross) evi.push("death cross");
     if (isNum(t.macd_hist)) evi.push("MACD " + (t.macd_hist > 0 ? "bullish" : t.macd_hist < 0 ? "bearish" : "flat"));
-    if (t.obv_trend) evi.push("OBV " + (t.obv_trend === "up" ? "toplama" : t.obv_trend === "down" ? "dağıtım" : "yatay"));
+    if (t.obv_trend) evi.push("OBV " + (t.obv_trend === "up" ? "accumulation" : t.obv_trend === "down" ? "distribution" : "flat"));
 
     var regimeHtml =
       '<div class="trend-regime">' +
@@ -4082,11 +4460,11 @@
       var nl = nearest.lvl;
       if (nearest.side === "res") {
         calloutHtml = '<div class="trend-callout callout-up"><span class="co-arrow">▲</span><div>' +
-          'Sıradaki tetik: <b>' + srRange(nl) + ' üstünde günlük kapanış</b> (' + techSigned(nl.dist_pct) + ') → ' +
+          'Next trigger: <b>daily close above ' + srRange(nl) + '</b> (' + techSigned(nl.dist_pct) + ') → ' +
           escapeHtml(resistanceEffect(nl, regime.dir)) + '.</div></div>';
       } else {
         calloutHtml = '<div class="trend-callout callout-down"><span class="co-arrow">▼</span><div>' +
-          'Sıradaki tetik: <b>' + srRange(nl) + ' altında günlük kapanış</b> (' + techSigned(nl.dist_pct) + ') → ' +
+          'Next trigger: <b>daily close below ' + srRange(nl) + '</b> (' + techSigned(nl.dist_pct) + ') → ' +
           escapeHtml(supportEffect(nl, regime.dir)) + '.</div></div>';
       }
     }
@@ -4095,7 +4473,7 @@
       var s = srStrength(lvl);
       var isNear = nearest && nearest.side === side && nearest.lvl === lvl;
       var effect = side === "res" ? resistanceEffect(lvl, regime.dir) : supportEffect(lvl, regime.dir);
-      var verb = side === "res" ? "Üstünde kapanış" : "Altında kapanış";
+      var verb = side === "res" ? "Close above" : "Close below";
       var arrow = side === "res" ? "▲" : "▼";
       return '<div class="trig-row trig-' + (side === "res" ? "up" : "down") + (isNear ? " trig-nearest" : "") + '">' +
         '<span class="trig-arrow">' + arrow + '</span>' +
@@ -4114,14 +4492,14 @@
         '<div class="trig-row trig-now">' +
           '<span class="trig-arrow">◆</span>' +
           '<span class="trig-price">' + fmtMoney(t.price) + '</span>' +
-          '<span class="trig-now-tag">ŞU AN</span>' +
+          '<span class="trig-now-tag">NOW</span>' +
           '<span class="trig-rule" style="color:var(--muted)">' + escapeHtml(regime.label.toLowerCase()) + '</span>' +
         '</div>'
       );
       sup.forEach(function (s) { rows.push(trigRow("sup", s)); });
       ladderHtml = '<div class="trigger-ladder">' + rows.join("") + '</div>';
     } else {
-      ladderHtml = '<div class="tech-empty">Trend tetikleri için yeterli fiyat geçmişi yok.</div>';
+      ladderHtml = '<div class="tech-empty">Not enough price history for trend triggers.</div>';
     }
 
     // ---- Collapsed detail: momentum synthesis, then Trend & Durum ----------
@@ -4222,23 +4600,21 @@
     var reversal = computeReversal(t, momentum, horizon);
     var momSynthesisHtml;
     if (momentum) {
-      // Plain .toUpperCase() mis-cases Turkish "i" (no dot) -> "SABIT" instead
-      // of "SABİT"; toLocaleUpperCase("tr-TR") applies the correct dotted-I rule.
-      var badgeLabel = momentum.dirLabel + (momentum.accelWord ? " · " + momentum.accelWord.toLocaleUpperCase("tr-TR") : "");
+      var badgeLabel = momentum.dirLabel + (momentum.accelWord ? " · " + momentum.accelWord.toUpperCase() : "");
       momSynthesisHtml =
         '<div class="mom-badge-row"><span class="mom-badge ' + momentum.dirCls + '">' +
           momentum.arrow + ' ' + escapeHtml(badgeLabel) +
         '</span>' + reversalBadgeMarkerHtml(reversal) + squeezeBadgeHtml(t) + '</div>' +
         '<div class="mom-meter-row">' +
-          '<span class="mom-ends">güçlü↓</span>' +
+          '<span class="mom-ends">strong↓</span>' +
           '<div class="mom-meter"><div class="mom-meter-marker" style="left:' + momentum.meterPos + '%;"></div></div>' +
-          '<span class="mom-ends">güçlü↑</span>' +
+          '<span class="mom-ends">strong↑</span>' +
         '</div>' +
         (momentum.accelWord ? '<div class="mom-meter-cap">(' + escapeHtml(momentum.accelWord) + ')</div>' : "") +
         '<div class="mom-note">' + escapeHtml(momentumSentence(momentum)) + '</div>' +
         reversalBlockHtml(reversal);
     } else {
-      momSynthesisHtml = '<div class="tech-empty">Momentum için yeterli fiyat geçmişi yok.</div>';
+      momSynthesisHtml = '<div class="tech-empty">Not enough price history for momentum.</div>';
     }
 
     return (
@@ -4252,16 +4628,16 @@
           calloutHtml +
           ladderHtml +
           '<details class="tech-disclosure">' +
-            '<summary class="tech-toggle">Momentum &amp; detaylar</summary>' +
+            '<summary class="tech-toggle">Momentum &amp; details</summary>' +
             '<div class="tech-details">' +
               '<div class="tech-section-title">Momentum</div>' +
               momSynthesisHtml +
               rsiHtml +
               '<div class="tech-stats">' + momentumTiles.join("") + '</div>' +
-              '<div class="tech-section-title">Trend &amp; Durum</div>' +
+              '<div class="tech-section-title">Trend &amp; Status</div>' +
               '<div class="tech-stats">' + trendTiles.join("") + '</div>' +
               divNote +
-              (fibCaption ? '<div class="tech-section-title">Seviye ayrıntıları</div>' + fibCaption : "") +
+              (fibCaption ? '<div class="tech-section-title">Level details</div>' + fibCaption : "") +
             '</div>' +
           '</details>' +
         '</div>' +
@@ -4313,6 +4689,19 @@
   // planning layer found no usable mechanical trigger levels (missing price
   // or structural reference levels), not an error -- degrades to a plain
   // sentence rather than an empty table.
+  // Plan-level fields (target_reason/size_reason) are repeated identically
+  // on every tranche dict (see planning.compute_entry_plan's docstring) --
+  // read the first tranche that actually carries a non-empty value instead
+  // of assuming index 0, so a partially-degraded older/hand-built payload
+  // still surfaces them if any tranche has them.
+  function firstTruthyField(entryPlan, key) {
+    for (var i = 0; i < entryPlan.length; i++) {
+      var v = entryPlan[i] && entryPlan[i][key];
+      if (v) return v;
+    }
+    return "";
+  }
+
   function entryPlanHtml(entryPlan) {
     var sub = '<div class="card-sub">These levels are a mechanical reference -- not a buy order or investment advice. ' +
       'Includes both accumulation (dip) and uptrend-confirmation (breakout) zones.</div>';
@@ -4330,9 +4719,9 @@
       // row renders exactly as before (no glyph, no layout shift).
       var kindTag = "";
       if (t.kind === "breakout") {
-        kindTag = '<span class="entry-kind-tag entry-kind-breakout" title="Yükseliş teyidi">▲ teyit</span> ';
+        kindTag = '<span class="entry-kind-tag entry-kind-breakout" title="Uptrend confirmation">▲ confirm</span> ';
       } else if (t.kind === "dip") {
-        kindTag = '<span class="entry-kind-tag entry-kind-dip" title="Birikim (dip alım)">▼ birikim</span> ';
+        kindTag = '<span class="entry-kind-tag entry-kind-dip" title="Accumulation (dip buy)">▼ accumulate</span> ';
       }
       var mainRow =
         '<tr>' +
@@ -4344,11 +4733,44 @@
           '<td>' + fmtMoney(t.target) + '</td>' +
           '<td>' + (isNum(t.rr) ? Number(t.rr).toFixed(1) + ":1" : "—") + '</td>' +
         '</tr>';
-      var noteRow = t.note
-        ? '<tr class="entry-note-row"><td colspan="7">' + escapeHtml(t.note) + '</td></tr>'
+      // Per-tranche extra lines, reusing the existing entry-note-row "extra
+      // text attached to this row" pattern: any existing t.note first (kept
+      // in the original alert tone), then the two newer per-tranche "why"
+      // sentences (trigger_reason/invalidation_reason) in a visually
+      // distinct muted tone so they don't collide with the alert-toned
+      // note. Missing/empty fields (older payloads predating these 4
+      // fields, or the documented empty-string edge case) simply contribute
+      // no line -- never an empty/blank line.
+      var noteLines = [];
+      if (t.note) {
+        noteLines.push('<div class="entry-note-line">' + escapeHtml(t.note) + '</div>');
+      }
+      if (t.trigger_reason) {
+        noteLines.push('<div class="entry-note-line entry-reason-line">' + escapeHtml(t.trigger_reason) + '</div>');
+      }
+      if (t.invalidation_reason) {
+        noteLines.push('<div class="entry-note-line entry-reason-line">' + escapeHtml(t.invalidation_reason) + '</div>');
+      }
+      var noteRow = noteLines.length
+        ? '<tr class="entry-note-row"><td colspan="7">' + noteLines.join("") + '</td></tr>'
         : "";
       return mainRow + noteRow;
     }).join("");
+
+    // target_reason/size_reason are plan-level facts repeated identically on
+    // every tranche (exactly like target/size_pct's underlying rule already
+    // is) -- show each ONCE below the table rather than once per row.
+    var targetReason = firstTruthyField(entryPlan, "target_reason");
+    var sizeReason = firstTruthyField(entryPlan, "size_reason");
+    var legendLines = [];
+    if (targetReason) {
+      legendLines.push('<div class="entry-legend-line"><b>Target:</b> ' + escapeHtml(targetReason) + '</div>');
+    }
+    if (sizeReason) {
+      legendLines.push('<div class="entry-legend-line"><b>Sizing:</b> ' + escapeHtml(sizeReason) + '</div>');
+    }
+    var legend = legendLines.length ? '<div class="entry-legend">' + legendLines.join("") + '</div>' : "";
+
     return (
       '<div class="card"><div class="card-title">Staged Entry Plan</div>' + sub +
         '<table class="sensitivity-table entry-plan-table">' +
@@ -4358,6 +4780,7 @@
           '</tr></thead>' +
           '<tbody>' + rows + '</tbody>' +
         '</table>' +
+        legend +
       '</div>'
     );
   }
@@ -4393,21 +4816,21 @@
     if (!cy || !isNum(cy.position) || !isNum(cy.low) || !isNum(cy.high) || !isNum(cy.current)) return "";
     var isCyc = !!cy.is_cyclical;
     var markerPct = Math.max(0, Math.min(100, cy.position * 100));
-    var fmtP = function (v) { return "%" + (v * 100).toFixed(1); };
+    var fmtP = function (v) { return (v * 100).toFixed(1) + "%"; };
     var fyTag = function (fy) { return isNum(fy) ? " (FY" + fy + ")" : ""; };
 
-    var label = isCyc ? "Döngü konumu" : "Geçmiş aralık";
-    var loEnd = isCyc ? "dip" : "en düşük";
-    var midEnd = isCyc ? "orta-döngü" : "orta";
-    var hiEnd = isCyc ? "zirve" : "en yüksek";
+    var label = isCyc ? "Cycle position" : "Historical range";
+    var loEnd = isCyc ? "trough" : "lowest";
+    var midEnd = isCyc ? "mid-cycle" : "mid";
+    var hiEnd = isCyc ? "peak" : "highest";
 
     var where;
-    if (cy.position >= 0.8) where = isCyc ? "döngüsel zirveye yakın" : "aralığın üst ucunda";
-    else if (cy.position <= 0.2) where = isCyc ? "döngü dibine yakın" : "aralığın alt ucunda";
-    else where = isCyc ? "orta-döngü civarında" : "aralığın ortasında";
+    if (cy.position >= 0.8) where = isCyc ? "near a cyclical peak" : "at the top of the range";
+    else if (cy.position <= 0.2) where = isCyc ? "near a cycle trough" : "at the bottom of the range";
+    else where = isCyc ? "around mid-cycle" : "in the middle of the range";
 
     var thinNote = (isNum(cy.n_years) && cy.n_years < 4)
-      ? ' <span class="cycle-thin">(' + cy.n_years + " yıllık sınırlı geçmiş)</span>"
+      ? ' <span class="cycle-thin">(limited history: ' + cy.n_years + " years)</span>"
       : "";
 
     return (
@@ -4416,13 +4839,14 @@
         '<div class="cycle-track">' +
           '<div class="cycle-mid"></div>' +
           '<div class="cycle-marker" style="left:' + markerPct.toFixed(1) + '%"></div>' +
+          '<div class="cycle-marker-label" style="left:' + markerPct.toFixed(1) + '%">' + fmtP(cy.current) + "</div>" +
         "</div>" +
         '<div class="cycle-ends">' +
-          "<span>" + escapeHtml(loEnd) + " " + fmtP(cy.low) + escapeHtml(fyTag(cy.low_fy)) + "</span>" +
+          '<span class="cycle-end-lo">' + escapeHtml(loEnd) + " " + fmtP(cy.low) + escapeHtml(fyTag(cy.low_fy)) + "</span>" +
           "<span>" + escapeHtml(midEnd) + "</span>" +
-          "<span>" + escapeHtml(hiEnd) + " " + fmtP(cy.high) + escapeHtml(fyTag(cy.high_fy)) + "</span>" +
+          '<span class="cycle-end-hi">' + escapeHtml(hiEnd) + " " + fmtP(cy.high) + escapeHtml(fyTag(cy.high_fy)) + "</span>" +
         "</div>" +
-        '<div class="cycle-caption">Güncel' + escapeHtml(fyTag(cy.current_fy)) + " " + fmtP(cy.current) +
+        '<div class="cycle-caption">Current' + escapeHtml(fyTag(cy.current_fy)) + " " + fmtP(cy.current) +
           " — <b>" + escapeHtml(where) + "</b>" + thinNote +
         "</div>" +
       "</div>"
@@ -4454,8 +4878,14 @@
     }).join(" ");
     var dots = pts.map(function (p, i) {
       var last = i === n - 1;
+      var isLow = !last && isNum(cy.low_fy) && p.fy === cy.low_fy;
+      var isHigh = !last && isNum(cy.high_fy) && p.fy === cy.high_fy;
+      var cls = "spark-dot", r = 2;
+      if (last) { cls += " spark-dot-last"; r = 3.2; }
+      else if (isHigh) { cls += " spark-dot-peak"; r = 3; }
+      else if (isLow) { cls += " spark-dot-trough"; r = 3.4; }
       return '<circle cx="' + xAt(i).toFixed(1) + '" cy="' + yAt(p.value).toFixed(1) +
-        '" r="' + (last ? 3.2 : 2) + '" class="spark-dot' + (last ? " spark-dot-last" : "") + '"/>';
+        '" r="' + r + '" class="' + cls + '"/>';
     }).join("");
     var fyLabel = function (fy, xx, anchor) {
       return isNum(fy)
@@ -4465,14 +4895,95 @@
 
     return (
       '<div class="spark-block">' +
-        '<div class="spark-label">Yıllık seyir</div>' +
+        '<div class="spark-label">Annual trajectory</div>' +
         '<svg class="spark-svg" viewBox="0 0 ' + W + " " + H +
-          '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Çapa metriğin yıllık seyri">' +
+          '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Annual trajectory of the anchor metric">' +
           '<path d="' + path + '" class="spark-line"/>' +
           dots +
           fyLabel(pts[0].fy, padX, "start") +
           fyLabel(pts[n - 1].fy, W - padX, "end") +
         "</svg>" +
+      "</div>"
+    );
+  }
+
+  // Quarterly-invalidation check row (METODOLOJI.md Sec.7): the real,
+  // code-checked rule that two consecutive against-thesis quarters
+  // invalidate the day-1 thesis (previously only a sentence of text in
+  // .thesis-rationale, now actually computed by planning._compute_
+  // quarterly_check). One tick per quarter in qc.quarters, oldest to
+  // newest, colored green when that quarter agreed with the anchor
+  // direction, red when it fought it, muted/gray when the move fell inside
+  // the noise deadband (or there was no prior quarter to compare against).
+  // qc is result.thesis_metric.quarterly_check -- null when no cik/anchor/
+  // series was available (see select_thesis_metric's docstring), in which
+  // case the whole block is omitted, same degrade-gracefully rule as the
+  // sparkline/cycle bar above it.
+  function thesisQuarterlyCheckHtml(qc) {
+    if (!qc || !Array.isArray(qc.quarters) || !qc.quarters.length) return "";
+    var quarters = qc.quarters.filter(function (q) { return q && typeof q.period_end === "string"; });
+    var n = quarters.length;
+    if (!n) return "";
+
+    var W = 600, H = 46, padX = 10, tickY = 20;
+    var innerW = W - padX * 2;
+    var xAt = function (i) { return n > 1 ? padX + (innerW * i) / (n - 1) : W / 2; };
+
+    var ticks = quarters.map(function (q, i) {
+      var at = q.against_thesis;
+      var cls = "qcheck-tick-neutral", status = "nötr (eşik içinde)";
+      if (at === true) { cls = "qcheck-tick-neg"; status = "teze aykırı"; }
+      else if (at === false) { cls = "qcheck-tick-pos"; status = "tezle uyumlu"; }
+      var last = i === n - 1;
+      var r = last ? 5.5 : 4;
+      var valueText = isNum(q.value) ? Number(q.value).toFixed(1) + "%" : "—";
+      var titleText = (q.period_end || "—") + ": " + valueText + " (" + status + ")";
+      return '<circle cx="' + xAt(i).toFixed(1) + '" cy="' + tickY + '" r="' + r +
+        '" class="' + cls + '"><title>' + escapeHtml(titleText) + "</title></circle>";
+    }).join("");
+
+    var baseline = n > 1
+      ? '<line x1="' + xAt(0).toFixed(1) + '" y1="' + tickY + '" x2="' + xAt(n - 1).toFixed(1) +
+        '" y2="' + tickY + '" class="qcheck-baseline"/>'
+      : "";
+
+    var periodLabel = function (q, xx, anchor) {
+      return q && q.period_end
+        ? '<text x="' + xx + '" y="' + (H - 4) + '" class="spark-fy" text-anchor="' + anchor + '">' +
+          escapeHtml(q.period_end) + "</text>"
+        : "";
+    };
+
+    var invalidatedPill = qc.invalidated
+      ? ' <span class="badge badge-red qcheck-pill">TEZ GEÇERSİZ</span>'
+      : "";
+
+    var dirText = qc.anchor_direction === "improving" ? "iyileşme"
+      : qc.anchor_direction === "deteriorating" ? "bozulma"
+      : null;
+    var fyText = isNum(qc.anchor_established_fy) ? " (FY" + qc.anchor_established_fy + "’den beri)" : "";
+    var captionParts = [];
+    if (dirText) captionParts.push("tez yönü: " + dirText + fyText);
+    if (isNum(qc.consecutive_against) && qc.consecutive_against > 0) {
+      captionParts.push("art arda " + qc.consecutive_against + " çeyrek teze aykırı");
+    }
+    var caption = captionParts.length
+      ? '<div class="qcheck-caption">' + escapeHtml(captionParts.join(" · ")) + "</div>"
+      : "";
+
+    return (
+      '<div class="qcheck-block">' +
+        '<div class="qcheck-head">' +
+          '<span class="qcheck-label">Quarterly check (§7)</span>' +
+          invalidatedPill +
+        "</div>" +
+        '<svg class="spark-svg" viewBox="0 0 ' + W + " " + H +
+          '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Quarterly thesis check">' +
+          baseline + ticks +
+          periodLabel(quarters[0], padX, "start") +
+          periodLabel(quarters[n - 1], W - padX, "end") +
+        "</svg>" +
+        caption +
       "</div>"
     );
   }
@@ -4484,14 +4995,15 @@
     var trendColor = "amber";
     if (tm.trend) {
       var s = String(tm.trend).toLowerCase();
-      if (s.indexOf("iyileş") !== -1 || s.indexOf("iyiles") !== -1) trendColor = "green";
-      else if (s.indexOf("boz") !== -1) trendColor = "red";
+      if (s.indexOf("improv") !== -1) trendColor = "green";
+      else if (s.indexOf("deteriorat") !== -1) trendColor = "red";
     }
     var trendHtml = tm.trend
       ? ' <span class="badge badge-' + trendColor + '">' + escapeHtml(tm.trend) + '</span>'
       : "";
     var sparkHtml = thesisSparklineHtml(tm.cycle);
     var cycleHtml = thesisCycleHtml(tm.cycle);
+    var qcHtml = thesisQuarterlyCheckHtml(tm.quarterly_check);
     var rationaleHtml = tm.rationale
       ? '<p class="thesis-rationale">' + escapeHtml(tm.rationale) + '</p>'
       : "";
@@ -4500,6 +5012,7 @@
         '<p class="thesis-metric-line">' + name + ': <b>' + valueText + '</b>' + trendHtml + '</p>' +
         sparkHtml +
         cycleHtml +
+        qcHtml +
         rationaleHtml +
       '</div>'
     );
@@ -4537,7 +5050,7 @@
   // instead of one bespoke card per screen, so Beneish (Sec.8j) and Merton
   // (Sec.8k) need no new card wiring when they land -- only new keys read
   // here.
-  var ALTMAN_ZONE_LABEL_TR = { safe: "güvenli", grey: "gri", distress: "sıkıntı" };
+  var ALTMAN_ZONE_LABEL = { safe: "safe", grey: "grey", distress: "distress" };
 
   function distressFlagsCardHtml(valuation) {
     if (!valuation) return "";
@@ -4545,19 +5058,19 @@
 
     var altman = valuation.altman_z;
     if (altman && isNum(altman.z_score)) {
-      var zoneLabel = ALTMAN_ZONE_LABEL_TR[altman.zone] || altman.zone || "—";
+      var zoneLabel = ALTMAN_ZONE_LABEL[altman.zone] || altman.zone || "—";
       items.push(
-        '<li>Altman Z-skoru: ' + Number(altman.z_score).toFixed(2) +
-          ' <span class="item-detail">(' + escapeHtml(zoneLabel) + ' bölge)</span></li>'
+        '<li>Altman Z-score: ' + Number(altman.z_score).toFixed(2) +
+          ' <span class="item-detail">(' + escapeHtml(zoneLabel) + ' zone)</span></li>'
       );
     }
 
     var beneish = valuation.beneish_m;
     if (beneish && isNum(beneish.m_score)) {
-      var beneishDetail = (beneish.partial ? "kısmi skor" : "") +
-        (beneish.flag ? (beneish.partial ? "; " : "") + "olası manipülasyon sinyali" : "");
+      var beneishDetail = (beneish.partial ? "partial score" : "") +
+        (beneish.flag ? (beneish.partial ? "; " : "") + "possible manipulation signal" : "");
       items.push(
-        '<li>Beneish M-skoru: ' + Number(beneish.m_score).toFixed(2) +
+        '<li>Beneish M-score: ' + Number(beneish.m_score).toFixed(2) +
           (beneishDetail ? ' <span class="item-detail">(' + escapeHtml(beneishDetail) + ')</span>' : '') +
         '</li>'
       );
@@ -4566,9 +5079,9 @@
     var merton = valuation.merton_dtd;
     if (merton && isNum(merton.distance_to_default)) {
       var pdText = isNum(merton.probability_of_default)
-        ? "PD %" + (merton.probability_of_default * 100).toFixed(1) : "";
+        ? "PD " + (merton.probability_of_default * 100).toFixed(1) + "%" : "";
       items.push(
-        '<li>Merton mesafe-temerrüt: ' + Number(merton.distance_to_default).toFixed(2) +
+        '<li>Merton distance-to-default: ' + Number(merton.distance_to_default).toFixed(2) +
           (pdText ? ' <span class="item-detail">(' + escapeHtml(pdText) + ')</span>' : '') +
         '</li>'
       );
@@ -4576,7 +5089,7 @@
 
     if (items.length === 0) return "";
     return accordionCardHtml(
-      "Risk Taramaları",
+      "Risk Screens",
       '<div class="alert-box"><ul>' + items.join("") + '</ul></div>'
     );
   }
@@ -4590,11 +5103,11 @@
     var detail = (valuation || {}).lbo_floor_detail;
     if (!detail || !isNum(detail.per_share)) return "";
     return accordionCardHtml(
-      "LBO Çapası",
+      "LBO Anchor",
       '<div class="alert-box">' +
         '<div>' + fmtMoney(detail.per_share) + ' <span class="item-detail">' +
-          '(bilgi amaçlı, manşete girmez -- disiplinli bir finansal alıcının bugün ' +
-          'ödeyebileceği en yüksek fiyat, salt borç-azaltma getirisiyle)</span></div>' +
+          '(informational, never enters the headline -- the highest price a disciplined financial ' +
+          'buyer could pay today from pure debt-paydown returns alone)</span></div>' +
       '</div>'
     );
   }
@@ -4604,9 +5117,9 @@
   // question -- not "what is it worth" but "what does today's price force you
   // to believe about the cycle".
   var CYCLE_FLAG_LABELS = {
-    peak_cycle_pe_trap: "Tepe-döngü F/K tuzağı",
-    peak_annualization: "Tepe-çeyrek yıllıklaştırma",
-    regime_change_premium: "Rejim-değişimi primi",
+    peak_cycle_pe_trap: "Peak-cycle P/E trap",
+    peak_annualization: "Peak-quarter annualization",
+    regime_change_premium: "Regime-change premium",
   };
 
   function cycleCardHtml(valuation) {
@@ -4622,20 +5135,20 @@
                 '<td class="bs-num">' + value + '</td></tr>');
     }
 
-    statRow("Net marj (şimdi)",
+    statRow("Net margin (now)",
       pct(s.margin_current) + ' <span class="item-detail">' +
       escapeHtml((s.margin_current_basis || "") + ", " +
-        (isNum(s.margin_percentile) ? Math.round(s.margin_percentile) + ". persentil" : "—")) +
+        (isNum(s.margin_percentile) ? Math.round(s.margin_percentile) + "th percentile" : "—")) +
       '</span>');
-    statRow("Through-cycle ort. / medyan", pct(s.margin_mean) + " / " + pct(s.margin_median));
-    statRow("Dip / tepe marj",
+    statRow("Through-cycle mean / median", pct(s.margin_mean) + " / " + pct(s.margin_median));
+    statRow("Trough / peak margin",
       pct(s.margin_trough) + ' <span class="item-detail">FY' + s.margin_trough_fy + '</span> / ' +
       pct(s.margin_peak) + ' <span class="item-detail">FY' + s.margin_peak_fy + '</span>');
     if (isNum(s.pb_current)) {
-      statRow("P/B (şimdi vs tarihsel)",
-        Number(s.pb_current).toFixed(2) + '× <span class="item-detail">dip ' +
-        (isNum(s.pb_trough) ? Number(s.pb_trough).toFixed(2) : "—") + ' · medyan ' +
-        (isNum(s.pb_median) ? Number(s.pb_median).toFixed(2) : "—") + ' · tepe ' +
+      statRow("P/B (now vs historical)",
+        Number(s.pb_current).toFixed(2) + '× <span class="item-detail">trough ' +
+        (isNum(s.pb_trough) ? Number(s.pb_trough).toFixed(2) : "—") + ' · median ' +
+        (isNum(s.pb_median) ? Number(s.pb_median).toFixed(2) : "—") + ' · peak ' +
         (isNum(s.pb_peak) ? Number(s.pb_peak).toFixed(2) : "—") + '</span>');
     }
 
@@ -4643,13 +5156,13 @@
       if (!regime) return;
       statRow(label, money(regime.low) + " · " + money(regime.center) + " · " + money(regime.high));
     }
-    regimeRow(cycle.regime_a, "Rejim A — döngü ortalaması");
-    regimeRow(cycle.regime_b, "Rejim B — yapısal kırılım");
+    regimeRow(cycle.regime_a, "Regime A — cycle average");
+    regimeRow(cycle.regime_b, "Regime B — structural break");
 
     var blend = cycle.blend || {};
     var blendKeys = Object.keys(blend).sort();
     if (blendKeys.length) {
-      statRow("Harman FV(p)", blendKeys.map(function (p) {
+      statRow("Blended FV(p)", blendKeys.map(function (p) {
         return "p=" + p + " " + money(blend[p]);
       }).join(" · "));
     }
@@ -4663,7 +5176,7 @@
         return Number(a) - Number(b);
       }) : [];
       sensHtml =
-        '<table class="sensitivity-table bs-table"><thead><tr><th class="bs-label">Marj \\ Çarpan</th>' +
+        '<table class="sensitivity-table bs-table"><thead><tr><th class="bs-label">Margin \\ Multiple</th>' +
         mults.map(function (x) { return '<th>' + x + '×</th>'; }).join("") +
         '</tr></thead><tbody>' +
         margins.map(function (m) {
@@ -4685,14 +5198,14 @@
       : "";
 
     return (
-      '<div class="card"><div class="card-title">Döngü Konumu ve İki Rejim</div>' +
+      '<div class="card"><div class="card-title">Cycle Position and Two Regimes</div>' +
         '<table class="sensitivity-table bs-table"><tbody>' + rows.join("") + '</tbody></table>' +
-        (sensHtml ? '<div class="sens-axis-note">Rejim B duyarlılığı (yeni-normal marj × çıkış çarpanı) — ' +
-          'her ikisi de yargı girdisidir, filingden türetilmez.</div>' + sensHtml : "") +
+        (sensHtml ? '<div class="sens-axis-note">Regime B sensitivity (new-normal margin × exit multiple) — ' +
+          'both are judgment inputs, not derived from the filing.</div>' + sensHtml : "") +
         '<div class="alert-box"><div>' + escapeHtml(cycle.verdict_sentence || "") + '</div></div>' +
         flagsHtml +
-        '<div class="sens-axis-note">Bilgi amaçlı: manşet gerçeğe uygun değeri değiştirmez. ' +
-        'Döngü istatistiği ' + escapeHtml(String(s.years)) + ' mali yıl üzerinden hesaplandı.</div>' +
+        '<div class="sens-axis-note">Informational: does not change the headline fair value. ' +
+        'Cycle statistics computed over ' + escapeHtml(String(s.years)) + ' fiscal years.</div>' +
       '</div>'
     );
   }
@@ -4718,12 +5231,12 @@
   // SEC item code(s) (see sec_analyzer/signals/events.py), colored by severity.
   function eventsCardHtml(events) {
     if (!events || events.length === 0) return "";
-    var sevLabel = { critical: "KRİTİK", warning: "UYARI", info: "BİLGİ" };
+    var sevLabel = { critical: "CRITICAL", warning: "WARNING", info: "INFO" };
     var items = events.map(function (e) {
       var severity = e.severity || "info";
       var cats = (e.categories || []).join(", ");
       var itemsTxt = (e.items || []).join(", ");
-      var detail = escapeHtml(e.date || "") + (itemsTxt ? " · 8-K madde " + escapeHtml(itemsTxt) : "");
+      var detail = escapeHtml(e.date || "") + (itemsTxt ? " · 8-K item " + escapeHtml(itemsTxt) : "");
       return (
         '<li class="event-' + escapeHtml(severity) + '">' +
           '<span class="event-sev">' + escapeHtml(sevLabel[severity] || severity.toUpperCase()) + '</span>' +
@@ -4733,7 +5246,7 @@
       );
     }).join("");
     return (
-      '<div class="card"><div class="card-title">📄 Son Dosyalama Olayları (8-K)</div>' +
+      '<div class="card"><div class="card-title">📄 Recent Filing Events (8-K)</div>' +
         '<div class="alert-box"><ul>' + items + '</ul></div>' +
       '</div>'
     );
@@ -4747,12 +5260,12 @@
   // existing "—" placeholder instead of throwing or printing
   // "None"/"NaN"/"undefined".
   var LLM_SCENARIO_ORDER = ["bear", "base", "bull"];
-  var LLM_SCENARIO_LABEL = { bear: "Ayı", base: "Baz", bull: "Boğa" };
+  var LLM_SCENARIO_LABEL = { bear: "Bear", base: "Base", bull: "Bull" };
   var LLM_FIELD_ORDER = ["growth_5y", "terminal_growth", "discount_rate"];
   var LLM_FIELD_LABEL = {
-    growth_5y: "Büyüme (5y)",
-    terminal_growth: "Terminal büyüme",
-    discount_rate: "İskonto oranı"
+    growth_5y: "Growth (5y)",
+    terminal_growth: "Terminal growth",
+    discount_rate: "Discount rate"
   };
 
   // Signed "+1.5 pp" / "-2.0 pp" formatting for delta_vs_baseline_pp, which
@@ -4765,7 +5278,7 @@
     return sign + Math.abs(num).toFixed(1) + " pp";
   }
 
-  // One compact table (LLM önerisi / Script tabanı / Kullanılan / Δ pp) plus
+  // One compact table (LLM suggestion / Script baseline / Used / Δ pp) plus
   // the scenario's rationale sentence -- reuses .sensitivity-table/.sens-base
   // exactly like the sensitivity/entry-plan cards do.
   function llmScenarioTableHtml(scenarioKey, scenario) {
@@ -4773,7 +5286,7 @@
     var rows = LLM_FIELD_ORDER.map(function (fieldKey) {
       var f = fields[fieldKey] || {};
       var usedText = isNum(f.used) ? fmtPctTr(f.used) : "—";
-      var clampBadge = f.clamped ? ' <span class="uncertainty-tag">sınırlandı</span>' : "";
+      var clampBadge = f.clamped ? ' <span class="uncertainty-tag">clamped</span>' : "";
       return (
         '<tr>' +
           '<th class="sens-row-h">' + escapeHtml(LLM_FIELD_LABEL[fieldKey]) + '</th>' +
@@ -4786,13 +5299,13 @@
     }).join("");
 
     var storyHtml = scenario && scenario.story
-      ? '<div class="verdict-note">Gerekçe: ' + escapeHtml(scenario.story) + '</div>'
+      ? '<div class="verdict-note">Rationale: ' + escapeHtml(scenario.story) + '</div>'
       : "";
 
     return (
       '<div class="tech-section-title">' + escapeHtml(LLM_SCENARIO_LABEL[scenarioKey] || scenarioKey) + '</div>' +
       '<table class="sensitivity-table llm-report-table">' +
-        '<thead><tr><th></th><th>LLM önerisi</th><th>Script tabanı</th><th>Kullanılan</th><th>Δ (pp)</th></tr></thead>' +
+        '<thead><tr><th></th><th>LLM suggestion</th><th>Script baseline</th><th>Used</th><th>Δ (pp)</th></tr></thead>' +
         '<tbody>' + rows + '</tbody>' +
       '</table>' +
       storyHtml
@@ -4809,24 +5322,24 @@
       // run fell back to deterministic rule-based assumptions. No scenario
       // tables in this variant -- there's nothing the LLM actually produced.
       bodyHtml =
-        '<div class="mom-chip mom-chip-warn">Bu analizde LLM kullanılamadı; kural bazlı varsayımlar kullanıldı.</div>' +
-        '<p class="verdict-note">Neden: ' + escapeHtml(safeText(llm.fallback)) + '</p>';
+        '<div class="mom-chip mom-chip-warn">The LLM was unavailable for this analysis; rule-based assumptions were used.</div>' +
+        '<p class="verdict-note">Reason: ' + escapeHtml(safeText(llm.fallback)) + '</p>';
     } else if (llm.cached) {
       // Variant 3: assumptions came from a frozen/cached set -- the frozen
       // set's own detail lives elsewhere, so just show the provenance note.
       bodyHtml =
         '<div class="mom-chip mom-chip-info">' + escapeHtml(safeText(llm.note)) + '</div>' +
-        '<p class="llm-report-source">Kaynak: ' + escapeHtml(safeText(llm.provider)) + '</p>';
+        '<p class="llm-report-source">Source: ' + escapeHtml(safeText(llm.provider)) + '</p>';
     } else {
       // Variant 1: the LLM actually produced the valuation assumptions --
       // provider/sector line, then one table + rationale per scenario.
-      var providerLine = "Kaynak: " + escapeHtml(safeText(llm.provider)) +
+      var providerLine = "Source: " + escapeHtml(safeText(llm.provider)) +
         (llm.model ? " · " + escapeHtml(String(llm.model)) : "");
-      var sectorLine = llm.sector_type ? "Sektör: " + escapeHtml(String(llm.sector_type)) : "";
+      var sectorLine = llm.sector_type ? "Sector: " + escapeHtml(String(llm.sector_type)) : "";
       var headHtml =
         '<p class="card-sub">' + providerLine + (sectorLine ? " · " + sectorLine : "") + '</p>' +
-        '<p class="verdict-note">Bu bölüm, LLM’in değerleme varsayımlarını nasıl belirlediğini ve ' +
-          'deterministik (script) tabana göre neyi değiştirdiğini gösterir.</p>';
+        '<p class="verdict-note">This section shows how the LLM determined the valuation assumptions and ' +
+          'what it changed relative to the deterministic (script) baseline.</p>';
 
       var scenarios = llm.scenarios || {};
       var scenariosHtml = LLM_SCENARIO_ORDER.map(function (key) {
@@ -4835,7 +5348,7 @@
 
       var notes = Array.isArray(llm.clamp_notes) ? llm.clamp_notes.filter(Boolean) : [];
       var notesHtml = notes.length
-        ? '<div class="tech-section-title">Sınırlamalar</div>' +
+        ? '<div class="tech-section-title">Limitations</div>' +
           '<div class="alert-box"><ul>' +
             notes.map(function (n) { return '<li>' + escapeHtml(String(n)) + '</li>'; }).join("") +
           '</ul></div>'
@@ -4844,7 +5357,7 @@
       bodyHtml = headHtml + scenariosHtml + notesHtml;
     }
 
-    return accordionCardHtml("LLM Kullanım Raporu", bodyHtml);
+    return accordionCardHtml("LLM Usage Report", bodyHtml);
   }
 
   // ---- Footer analysis (catalyst + summary) --------------------------------
@@ -4914,7 +5427,7 @@
   }
 
   // ===================================================================
-  // Balance-sheet ("Bilanço") tab
+  // Balance-sheet tab
   // -------------------------------------------------------------------
   // Reads payload.financials (the serialized annual concept series +
   // pre-computed ratios from the fetch/normalize pipeline) and the
@@ -4924,16 +5437,16 @@
   // formatter. Every cell is None-safe (renders "—", never "NaN").
   // ===================================================================
 
-  //: Balance-sheet line items shown (canonical concept key -> Turkish label),
+  //: Balance-sheet line items shown (canonical concept key -> display label),
   //: in display order. Keys must match _ANNUAL_CONCEPTS in web/app.py.
   var BS_ITEMS = [
-    { key: "TotalAssets", label: "Toplam Varlıklar" },
-    { key: "CurrentAssets", label: "Dönen Varlıklar" },
-    { key: "Cash", label: "Nakit ve Benzerleri" },
-    { key: "TotalLiabilities", label: "Toplam Yükümlülükler" },
-    { key: "CurrentLiabilities", label: "Kısa Vadeli Yükümlülükler" },
-    { key: "LongTermDebt", label: "Uzun Vadeli Borç" },
-    { key: "StockholdersEquity", label: "Özkaynak" },
+    { key: "TotalAssets", label: "Total Assets" },
+    { key: "CurrentAssets", label: "Current Assets" },
+    { key: "Cash", label: "Cash and Equivalents" },
+    { key: "TotalLiabilities", label: "Total Liabilities" },
+    { key: "CurrentLiabilities", label: "Current Liabilities" },
+    { key: "LongTermDebt", label: "Long-Term Debt" },
+    { key: "StockholdersEquity", label: "Stockholders' Equity" },
   ];
 
   //: Number of most-recent fiscal years shown as columns in the tab's tables.
@@ -4985,12 +5498,12 @@
 
     return (
       '<div class="card">' +
-        '<div class="card-title">Bilanço — Ana Kalemler</div>' +
+        '<div class="card-title">Balance Sheet — Key Line Items</div>' +
         '<table class="sensitivity-table bs-table">' +
-          '<thead><tr><th class="bs-label">Kalem</th>' + headCells + '</tr></thead>' +
+          '<thead><tr><th class="bs-label">Item</th>' + headCells + '</tr></thead>' +
           '<tbody>' + rows + '</tbody>' +
         '</table>' +
-        '<div class="sens-axis-note">Kaynak: SEC EDGAR companyfacts (yıllık, 10-K). Değerler kısaltılmıştır (B = milyar, M = milyon).</div>' +
+        '<div class="sens-axis-note">Source: SEC EDGAR companyfacts (annual, 10-K). Values are abbreviated (B = billion, M = million).</div>' +
       '</div>'
     );
   }
@@ -5033,31 +5546,31 @@
     function signColor(v) { return v > 0 ? "bs-pos" : (v < 0 ? "bs-neg" : ""); }
 
     var leverageRow = isFinancial
-      ? ratioRowHtml("Yükümlülük / Özkaynak (mevduat dahil)", cols, "debt_to_equity", fmtX, finLeverageColor)
-      : ratioRowHtml("Borç / Özkaynak", cols, "debt_to_equity", fmtX, deColor);
+      ? ratioRowHtml("Liabilities / Equity (incl. deposits)", cols, "debt_to_equity", fmtX, finLeverageColor)
+      : ratioRowHtml("Debt / Equity", cols, "debt_to_equity", fmtX, deColor);
 
     var rows =
-      (isFinancial ? "" : ratioRowHtml("Cari Oran", cols, "current_ratio", fmtX, curRatioColor)) +
+      (isFinancial ? "" : ratioRowHtml("Current Ratio", cols, "current_ratio", fmtX, curRatioColor)) +
       leverageRow +
-      ratioRowHtml("Net Marj", cols, "net_margin", fmtPct, signColor) +
-      ratioRowHtml("Brüt Marj", cols, "gross_margin", fmtPct, signColor) +
+      ratioRowHtml("Net Margin", cols, "net_margin", fmtPct, signColor) +
+      ratioRowHtml("Gross Margin", cols, "gross_margin", fmtPct, signColor) +
       ratioRowHtml("ROE", cols, "roe", fmtPct, signColor) +
       // ROTCE only where it adds information (SPEC.md Sec.23e): for a filer
       // with no goodwill it just duplicates ROE, and outside banking nobody
       // reads it. Sits under ROE so the goodwill drag reads as a pair.
       (isFinancial ? ratioRowHtml("ROTCE", cols, "rotce", fmtPct, signColor) : "") +
-      ratioRowHtml("Gelir Büyüme (YoY)", cols, "yoy_revenue_growth", fmtPct, signColor) +
-      ratioRowHtml("FCF Marjı", cols, "fcf_margin", fmtPct, signColor);
+      ratioRowHtml("Revenue Growth (YoY)", cols, "yoy_revenue_growth", fmtPct, signColor) +
+      ratioRowHtml("FCF Margin", cols, "fcf_margin", fmtPct, signColor);
 
     var footnote = isFinancial
-      ? "Finansal kuruluşlarda cari oran tanımsızdır (varlık/yükümlülük vadeye göre sınıflandırılmaz) ve gösterilmez. Kaldıraç, mevduat dahil toplam yükümlülük / özkaynaktır; &gt; 10 kırmızı ile işaretlenir. Oranlar yıllık finansallardan hesaplanır."
-      : "Cari oran &lt; 1 ve borç/özkaynak &gt; 2 kırmızı ile işaretlenir. Oranlar yıllık finansallardan hesaplanır.";
+      ? "The current ratio is undefined for financial institutions (assets/liabilities are not classified by maturity) and is not shown. Leverage is total liabilities including deposits / equity; &gt; 10 is flagged red. Ratios are computed from annual financials."
+      : "Current ratio &lt; 1 and debt/equity &gt; 2 are flagged red. Ratios are computed from annual financials.";
 
     return (
       '<div class="card">' +
-        '<div class="card-title">Önemli Oranlar</div>' +
+        '<div class="card-title">Key Ratios</div>' +
         '<table class="sensitivity-table bs-table">' +
-          '<thead><tr><th class="bs-label">Oran</th>' + headCells + '</tr></thead>' +
+          '<thead><tr><th class="bs-label">Ratio</th>' + headCells + '</tr></thead>' +
           '<tbody>' + rows + '</tbody>' +
         '</table>' +
         '<div class="sens-axis-note">' + footnote + '</div>' +
@@ -5098,8 +5611,8 @@
     }).join("");
 
     var summary = scored
-      ? '<div class="card-sub">Son ' + scored + ' çeyreğin ' + beats +
-        ' tanesinde beklenti aşıldı.</div>'
+      ? '<div class="card-sub">Beat expectations in ' + beats + ' of the last ' + scored +
+        ' quarters.</div>'
       : "";
     var source = (earnings && earnings.source) ? escapeHtml(String(earnings.source)) : "yfinance";
 
@@ -5107,13 +5620,13 @@
       summary +
       '<table class="sensitivity-table bs-table">' +
         '<thead><tr>' +
-          '<th class="bs-label">Çeyrek</th><th>Beklenti EPS</th>' +
-          '<th>Gerçekleşen EPS</th><th>Sürpriz</th>' +
+          '<th class="bs-label">Quarter</th><th>EPS Estimate</th>' +
+          '<th>EPS Actual</th><th>Surprise</th>' +
         '</tr></thead>' +
         '<tbody>' + rows + '</tbody>' +
       '</table>' +
-      '<div class="sens-axis-note">Dış kaynak: ' + source +
-        ' — konsensüs EPS beklentisi ile açıklanan EPS karşılaştırması. Değerleme motoruna girmez.</div>'
+      '<div class="sens-axis-note">External source: ' + source +
+        ' — consensus EPS estimate vs. reported EPS. Does not feed the valuation engine.</div>'
     );
   }
 
@@ -5123,7 +5636,7 @@
     if (!analystHtml && !beatHtml) return "";
     return (
       '<div class="card">' +
-        '<div class="card-title">Beklentiler ve Beat</div>' +
+        '<div class="card-title">Expectations and Beats</div>' +
         analystHtml +
         beatHtml +
       '</div>'
@@ -5143,7 +5656,7 @@
     var expHtml = expectationsCardHtml(payload);
 
     if (!bsHtml && !ratioHtml && !expHtml) {
-      return '<div class="card"><div class="empty-state">Bu hisse için bilanço verisi bulunamadı.</div></div>';
+      return '<div class="card"><div class="empty-state">No balance-sheet data found for this stock.</div></div>';
     }
     return bsHtml + ratioHtml + expHtml;
   }
@@ -5185,10 +5698,11 @@
       weightBarHtml(result._weights) +
       footerAnalysisHtml(result);
 
-    // -- Değerleme: what it's worth, and how that number was arrived at.
-    var degerlemeHtml =
+    // -- Valuation: what it's worth, and how that number was arrived at.
+    var valuationHtml =
       priceChartCardHtml(technical, result, payload.horizon, payload.analyst) +
       fanChartCardHtml(result, payload.price) +
+      (valuation ? methodSummaryCardHtml(valuation, "Valuation Methods Used") : "") +
       (valuation ? triangulationRowHtml(valuation, result.confidence) : "") +
       verdictCardHtml("Fundamental", result.fundamental_verdict, result.horizon_note) +
       (valuation ? sensitivityTableHtml(valuation.sensitivity) : "") +
@@ -5203,13 +5717,16 @@
       // closed accordion beside a tall card is a lopsided grid row.
       (valuation ? lboFloorCardHtml(valuation) : "");
 
-    // -- Zamanlama: whether now is the moment, and what unwinds that.
+    // -- Timing: whether now is the moment, and what unwinds that.
     // Profile Fit card intentionally removed from the UI for now (still
     // computed in the payload; just not rendered).
-    var zamanlamaHtml =
+    var timingHtml =
       swingSetupCardHtml(payload, result, technical) +
       momentumCardHtml(result) +
       insiderCardHtml(result.insider) +
+      (technical && technical.method_summary
+        ? methodSummaryCardHtml(technical, "Technical Analysis Methods Used")
+        : "") +
       technicalCardHtml(technical, result.technical_verdict || technical.verdict, payload.horizon) +
       entryPlanHtml(result.entry_plan) +
       stopAddingHtml(result.stop_adding);
@@ -5226,15 +5743,15 @@
     var html =
       coreHtml +
       '<div class="view-tabs" id="view-tabs">' +
-        '<button type="button" class="view-tab active" data-view="degerleme">Değerleme</button>' +
-        '<button type="button" class="view-tab" data-view="zamanlama">Zamanlama</button>' +
+        '<button type="button" class="view-tab active" data-view="valuation">Valuation</button>' +
+        '<button type="button" class="view-tab" data-view="timing">Timing</button>' +
         '<button type="button" class="view-tab" data-view="risk">Risk</button>' +
-        '<button type="button" class="view-tab" data-view="bilanco">Bilanço</button>' +
+        '<button type="button" class="view-tab" data-view="balance">Balance Sheet</button>' +
       '</div>' +
-      '<div data-view-pane="degerleme">' + degerlemeHtml + '</div>' +
-      '<div data-view-pane="zamanlama" style="display:none;">' + zamanlamaHtml + '</div>' +
+      '<div data-view-pane="valuation">' + valuationHtml + '</div>' +
+      '<div data-view-pane="timing" style="display:none;">' + timingHtml + '</div>' +
       '<div data-view-pane="risk" style="display:none;">' + riskHtml + '</div>' +
-      '<div data-view-pane="bilanco" style="display:none;">' + financialsTabHtml(payload) + '</div>' +
+      '<div data-view-pane="balance" style="display:none;">' + financialsTabHtml(payload) + '</div>' +
       globalFooterHtml();
 
     bodyEl.innerHTML = html;
@@ -5246,7 +5763,7 @@
   // ===================================================================
   // View-tab wiring: shows the one [data-view-pane] matching the clicked
   // tab and hides the rest, so adding a tab is a markup change only. The
-  // Değerleme pane (with its charts) starts visible so the fan/price SVGs,
+  // Valuation pane (with its charts) starts visible so the fan/price SVGs,
   // wired above, are laid out from the first paint; the other three are
   // inert markup and need no wiring of their own.
   // ===================================================================
@@ -5277,8 +5794,8 @@
     // (the latest price-bar date, shown separately in the header source
     // note); null on every live run, so this banner is absent by default.
     var asofBannerHtml = data.analysis_as_of
-      ? '<span class="asof-banner">Geçmiş tarih analizi — ' + escapeHtml(data.analysis_as_of) +
-        ' itibarıyla bilinen verilerle üretildi</span>'
+      ? '<span class="asof-banner">Historical analysis — generated with data known as of ' +
+        escapeHtml(data.analysis_as_of) + '</span>'
       : "";
     topnavEl.innerHTML =
       '<div class="nav-inner">' +
@@ -5321,12 +5838,12 @@
           '<input type="text" class="ticker-input" id="ticker-input" placeholder="TICKER" autocomplete="off" />' +
           horizonToggleHtml(horizons.map(function (h) { return h[0]; }), state.horizon, true, "nav-horizon-toggle") +
           '<select class="provider-select" id="provider-select">' + providerOptions + '</select>' +
-          '<label class="asof-label" for="asof-input">Geçmiş tarih (ops.)</label>' +
+          '<label class="asof-label" for="asof-input">As-of date (opt.)</label>' +
           '<input type="date" class="provider-select asof-input" id="asof-input" max="' + todayStr + '" />' +
           '<button type="button" class="analyze-btn" id="analyze-btn">Analyse</button>' +
-          '<button type="button" class="history-nav-btn" id="history-nav-btn">Geçmiş</button>' +
+          '<button type="button" class="history-nav-btn" id="history-nav-btn">History</button>' +
           '<button type="button" class="history-nav-btn" id="swing-nav-btn">Swing</button>' +
-          '<button type="button" class="history-nav-btn" id="overview-nav-btn">Portföy</button>' +
+          '<button type="button" class="history-nav-btn" id="overview-nav-btn">Portfolio</button>' +
         '</div>' +
       '</div>';
 
@@ -5391,8 +5908,8 @@
       if (!navInner) return;
       navInner.insertAdjacentHTML(
         "beforeend",
-        '<span class="asof-banner" id="search-asof-banner">Geçmiş tarih analizi — ' +
-          escapeHtml(analysisAsOf) + ' itibarıyla bilinen verilerle üretildi</span>'
+        '<span class="asof-banner" id="search-asof-banner">Historical analysis — generated with data known as of ' +
+          escapeHtml(analysisAsOf) + '</span>'
       );
     }
 
@@ -5462,12 +5979,12 @@
         '<div class="card analyze-progress">' +
           '<div class="analyze-progress-head">' +
             '<span class="spinner"></span>' +
-            '<span>' + escapeHtml(ticker) + ' analiz ediliyor…</span>' +
+            '<span>Analyzing ' + escapeHtml(ticker) + '…</span>' +
             '<span class="analyze-timer" id="analyze-progress-timer">0:00</span>' +
           '</div>' +
-          '<div class="analyze-stage-count" id="analyze-progress-count">Aşama —/—</div>' +
+          '<div class="analyze-stage-count" id="analyze-progress-count">Stage —/—</div>' +
           '<div class="analyze-stages" id="analyze-progress-stages"></div>' +
-          '<div class="analyze-progress-note">İlk çalıştırmada (soğuk önbellek) birkaç dakika sürebilir; bu sekmeyi açık bırakmanız yeterli.</div>' +
+          '<div class="analyze-progress-note">The first run (cold cache) can take a few minutes; just leave this tab open.</div>' +
           '<div class="analyze-progress-error" id="analyze-progress-error" style="display:none"></div>' +
         '</div>';
     }
@@ -5490,15 +6007,15 @@
         // The server's stage_index is a 0-based cursor into _ANALYZE_STAGES
         // (see app.py's _ANALYZE_STAGE_INDEX), but the counter shown here is
         // human-facing and 1-based -- do not "simplify" this back to the raw
-        // stage_index, that reintroduces the "Aşama 0/10" off-by-one.
+        // stage_index, that reintroduces the "Stage 0/10" off-by-one.
         if (!total) {
-          countEl.textContent = "Aşama —/—";
+          countEl.textContent = "Stage —/—";
         } else if (!(json && json.found)) {
-          countEl.textContent = "Aşama —/" + total;
+          countEl.textContent = "Stage —/" + total;
         } else if (json && json.done) {
-          countEl.textContent = "Aşama " + total + "/" + total;
+          countEl.textContent = "Stage " + total + "/" + total;
         } else {
-          countEl.textContent = "Aşama " + Math.min(stageIndex + 1, total) + "/" + total;
+          countEl.textContent = "Stage " + Math.min(stageIndex + 1, total) + "/" + total;
         }
       }
 
@@ -5535,7 +6052,7 @@
       var errorEl = document.getElementById("analyze-progress-error");
       if (errorEl) {
         var errText = (json && json.error) ? String(json.error) : "";
-        errorEl.textContent = errText ? "İlerleme uyarısı: " + errText : "";
+        errorEl.textContent = errText ? "Progress warning: " + errText : "";
         errorEl.style.display = errText ? "" : "none";
       }
     }
@@ -5623,7 +6140,7 @@
             red_flags: json.red_flags || [],
             entity_name: json.name || null,
             analyst: json.analyst || null,
-            // Feed the "Bilanço" tab: the annual/quarterly concept series +
+            // Feed the "Balance Sheet" tab: the annual/quarterly concept series +
             // ratios live at the top level of the /api/analyze response, and
             // the display-only earnings beat/miss history under `earnings`.
             financials: {
@@ -5675,12 +6192,12 @@
   // when current_price is absent -- the table still renders on its own.
   function historyCaptionHtml(currentPrice, rows) {
     if (!currentPrice || !isNum(currentPrice.close)) return "";
-    var text = "Güncel fiyat: " + fmtMoney(currentPrice.close) +
+    var text = "Current price: " + fmtMoney(currentPrice.close) +
       " (" + escapeHtml(safeText(currentPrice.date)) + ")";
     var lastPrice = (rows && rows.length && isNum(rows[0].price)) ? Number(rows[0].price) : null;
     if (lastPrice) {
       var deltaPct = (Number(currentPrice.close) / lastPrice - 1) * 100;
-      text += " · en son analize göre " + fmtSignedPctTr(deltaPct);
+      text += " · " + fmtSignedPctTr(deltaPct) + " vs. last analysis";
     }
     return '<div class="history-caption">' + text + '</div>';
   }
@@ -5692,7 +6209,7 @@
     row = row || {};
     var analyzedDate = row.analyzed_at ? escapeHtml(String(row.analyzed_at).slice(0, 10)) : "—";
     var asOfCell = row.as_of
-      ? escapeHtml(row.as_of) + ' <span class="asof-pill" title="Geçmiş tarih (as-of) analizi">as-of</span>'
+      ? escapeHtml(row.as_of) + ' <span class="asof-pill" title="Historical (as-of) analysis">as-of</span>'
       : "—";
     var fvBase = (isNum(row.fv_base_lo) && isNum(row.fv_base_hi))
       ? fmtMoney(row.fv_base_lo) + "–" + fmtMoney(row.fv_base_hi)
@@ -5715,7 +6232,7 @@
 
   function renderHistoryMode() {
     var tickerText = String(data.ticker || "—");
-    document.title = tickerText + " — Analiz Geçmişi · Verdict Terminal";
+    document.title = tickerText + " — Analysis History · Verdict Terminal";
     topnavEl.innerHTML =
       '<div class="nav-inner">' +
         '<span class="brand">VERDICT</span>' +
@@ -5723,13 +6240,13 @@
       '</div>';
 
     var rows = data.rows || [];
-    var headerHtml = '<div class="history-header">' + escapeHtml(tickerText) + ' — Analiz Geçmişi</div>';
+    var headerHtml = '<div class="history-header">' + escapeHtml(tickerText) + ' — Analysis History</div>';
 
     if (!rows.length) {
       bodyEl.innerHTML =
         '<div class="card">' +
           headerHtml +
-          '<div class="empty-state">Bu hisse için kayıtlı analiz bulunamadı.</div>' +
+          '<div class="empty-state">No stored analysis found for this stock.</div>' +
         '</div>' +
         globalFooterHtml();
       return;
@@ -5738,9 +6255,9 @@
     var tableHtml =
       '<table class="sensitivity-table history-table">' +
         '<thead><tr>' +
-          '<th>Tarih</th><th>As-of</th><th>Vade</th><th>Sağlayıcı</th>' +
-          '<th>Fiyat</th><th>FV (baz)</th><th>Temel</th><th>Teknik</th>' +
-          '<th>Güven</th><th>Sektör</th>' +
+          '<th>Date</th><th>As-of</th><th>Horizon</th><th>Provider</th>' +
+          '<th>Price</th><th>FV (base)</th><th>Fundamental</th><th>Technical</th>' +
+          '<th>Confidence</th><th>Sector</th>' +
         '</tr></thead>' +
         '<tbody>' + rows.map(historyRowHtml).join("") + '</tbody>' +
       '</table>';
@@ -5775,15 +6292,15 @@
 
   // Swing setup label (SWING_SPEC.md Sec.3.10) -> one of the four verdict
   // color buckets already used everywhere else (see bucketColor above).
-  // Order matters: "GÜÇLÜ FIRSAT" must be checked before the plain "FIRSAT"
-  // substring match so it isn't mistaken for the weaker grade.
+  // Order matters: "STRONG OPPORTUNITY" must be checked before the plain
+  // "OPPORTUNITY" substring match so it isn't mistaken for the weaker grade.
   function swingLabelClass(label) {
     var s = String(label || "").toUpperCase();
-    if (s.indexOf("GÜÇLÜ") !== -1) return "green";
-    if (s.indexOf("FIRSAT") !== -1) return "green";
-    if (s.indexOf("NÖTR") !== -1) return "amber";
-    if (s.indexOf("ZAYIF") !== -1) return "caution";
-    if (s.indexOf("KAÇIN") !== -1) return "red";
+    if (s.indexOf("STRONG") !== -1) return "green";
+    if (s.indexOf("OPPORTUNITY") !== -1) return "green";
+    if (s.indexOf("NEUTRAL") !== -1) return "amber";
+    if (s.indexOf("WEAK") !== -1) return "caution";
+    if (s.indexOf("AVOID") !== -1) return "red";
     return "muted";
   }
 
@@ -5866,8 +6383,8 @@
       '<div class="nav-inner">' +
         '<span class="brand">VERDICT</span>' +
         '<div class="nav-controls">' +
-          '<button type="button" class="history-nav-btn" id="swing-back-btn">Ara</button>' +
-          '<button type="button" class="history-nav-btn" id="swing-overview-btn">Portföy</button>' +
+          '<button type="button" class="history-nav-btn" id="swing-back-btn">Search</button>' +
+          '<button type="button" class="history-nav-btn" id="swing-overview-btn">Portfolio</button>' +
         '</div>' +
       '</div>';
     var backBtn = document.getElementById("swing-back-btn");
@@ -5911,7 +6428,7 @@
       page: 1,
     };
     state.rows = (state.meta && state.meta.rows) || [];
-    document.title = "Swing Trade Fırsatları — " + swingIndexLabel(state.index) + " · Verdict Terminal";
+    document.title = "Swing Trade Opportunities — " + swingIndexLabel(state.index) + " · Verdict Terminal";
 
     // Display label for an index code, from state.indexes -- falls back to
     // the raw code (never "undefined"/"None") if it isn't in the list.
@@ -5952,11 +6469,11 @@
       if (!card) return;
       var meta = state.meta;
       var metaLine = meta
-        ? "Üretildi: " + escapeHtml(swingFormatTimestamp(meta.generated_at)) +
-          " · Fiyat tarihi: " + escapeHtml(safeText(meta.price_as_of)) +
-          " · " + (isNum(meta.count) ? Math.round(Number(meta.count)) : 0) + " hisse" +
-          " · " + ((meta.skipped && meta.skipped.length) || 0) + " atlandı"
-        : "Henüz tarama yapılmadı.";
+        ? "Generated: " + escapeHtml(swingFormatTimestamp(meta.generated_at)) +
+          " · Price date: " + escapeHtml(safeText(meta.price_as_of)) +
+          " · " + (isNum(meta.count) ? Math.round(Number(meta.count)) : 0) + " stocks" +
+          " · " + ((meta.skipped && meta.skipped.length) || 0) + " skipped"
+        : "No scan has been run yet.";
       // Only the running scan for the CURRENTLY DISPLAYED index gets the
       // done/total progress bar. A scan running for a different index still
       // disables the button (one scan at a time globally, SWING_SPEC.md
@@ -5965,13 +6482,13 @@
       var sameIndexRunning = state.running && state.runningIndex === state.index;
       var otherIndexRunning = state.running && state.runningIndex && state.runningIndex !== state.index;
       var progressHtml = sameIndexRunning
-        ? '<div class="swing-progress"><span class="spinner"></span>Taranıyor: ' +
+        ? '<div class="swing-progress"><span class="spinner"></span>Scanning: ' +
           state.done + '/' + state.total + '</div>'
         : "";
       var noteHtml = otherIndexRunning
         ? '<div class="swing-scan-msg">' +
-          escapeHtml(state.runningIndexLabel || swingIndexLabel(state.runningIndex)) +
-          ' için bir tarama çalışıyor; bitince tekrar deneyin.</div>'
+          'A scan for ' + escapeHtml(state.runningIndexLabel || swingIndexLabel(state.runningIndex)) +
+          ' is running; try again once it finishes.</div>'
         : "";
       var msgHtml = state.message
         ? '<div class="swing-scan-msg">' + escapeHtml(state.message) + '</div>'
@@ -5979,14 +6496,14 @@
       card.innerHTML =
         '<div class="header-row">' +
           '<div class="header-left">' +
-            '<div class="ticker-line"><span class="ticker">Swing Trade Fırsatları — ' +
+            '<div class="ticker-line"><span class="ticker">Swing Trade Opportunities — ' +
               escapeHtml(swingIndexLabel(state.index)) + '</span></div>' +
             swingIndexToggleHtml() +
             '<div class="source-note">' + metaLine + '</div>' +
           '</div>' +
           '<div class="header-right">' +
             '<button type="button" class="analyze-btn" id="swing-scan-btn"' +
-              (state.running ? " disabled" : "") + '>Taramayı Başlat</button>' +
+              (state.running ? " disabled" : "") + '>Start Scan</button>' +
           '</div>' +
         '</div>' +
         progressHtml + noteHtml + msgHtml;
@@ -6004,20 +6521,20 @@
       (state.rows || []).forEach(function (r) {
         if (r && r.setup) setups[r.setup] = true;
       });
-      var setupOptions = '<option value="">Tüm kurulumlar</option>' +
+      var setupOptions = '<option value="">All setups</option>' +
         Object.keys(setups).sort().map(function (s) {
           return '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>';
         }).join("");
       return (
         '<div class="swing-filter-bar" id="swing-filter-bar">' +
-          '<label for="swing-min-score">Min. skor</label>' +
+          '<label for="swing-min-score">Min. score</label>' +
           '<input type="number" min="0" max="100" class="swing-filter-input swing-score-input" ' +
             'id="swing-min-score" placeholder="0" />' +
-          '<label for="swing-setup-select">Kurulum</label>' +
+          '<label for="swing-setup-select">Setup</label>' +
           '<select class="swing-filter-select" id="swing-setup-select">' + setupOptions + '</select>' +
-          '<label for="swing-text-filter">Hisse / şirket</label>' +
+          '<label for="swing-text-filter">Stock / company</label>' +
           '<input type="text" class="swing-filter-input swing-text-input" ' +
-            'id="swing-text-filter" placeholder="ör. AAPL" autocomplete="off" />' +
+            'id="swing-text-filter" placeholder="e.g. AAPL" autocomplete="off" />' +
         '</div>'
       );
     }
@@ -6078,8 +6595,8 @@
       return rows;
     }
 
-    // key -> Turkish header label, for the four sortable columns
-    // (SWING_SPEC.md Sec.7: "Column headers for Skor, RSI, RS 3a, R:R are
+    // key -> header label, for the four sortable columns
+    // (SWING_SPEC.md Sec.7: "Column headers for Score, RSI, RS 3m, R:R are
     // click-to-sort").
     function swingSortArrow(key) {
       if (state.sortKey !== key) return "";
@@ -6112,7 +6629,7 @@
       return pages;
     }
 
-    // Pager controls below the table: Önceki/Sonraki, page numbers, and an
+    // Pager controls below the table: Previous/Next, page numbers, and an
     // "X–Y / N" counter (SWING_SPEC.md Sec.7 item 3). Renders "" for a
     // single page so a <=50-row result shows a plain table, no pager.
     function swingPagerHtml(total, page, totalPages) {
@@ -6127,10 +6644,10 @@
       return (
         '<div class="swing-pager">' +
           '<button type="button" class="swing-pager-nav" id="swing-pager-prev"' +
-            (page <= 1 ? " disabled" : "") + '>Önceki</button>' +
+            (page <= 1 ? " disabled" : "") + '>Previous</button>' +
           '<div class="swing-pager-pages">' + buttonsHtml + '</div>' +
           '<button type="button" class="swing-pager-nav" id="swing-pager-next"' +
-            (page >= totalPages ? " disabled" : "") + '>Sonraki</button>' +
+            (page >= totalPages ? " disabled" : "") + '>Next</button>' +
           '<span class="swing-pager-count">' + startIdx + '–' + endIdx + ' / ' + total + '</span>' +
         '</div>'
       );
@@ -6167,13 +6684,13 @@
       var container = document.getElementById("swing-table-container");
       if (!container) return;
       if (!state.meta) {
-        container.innerHTML = '<div class="card"><div class="empty-state">Henüz tarama yapılmadı.</div></div>';
+        container.innerHTML = '<div class="card"><div class="empty-state">No scan has been run yet.</div></div>';
         return;
       }
       var allRows = filteredSortedRows();
       if (!allRows.length) {
         container.innerHTML =
-          '<div class="card"><div class="empty-state">Filtrelerle eşleşen hisse bulunamadı.</div></div>';
+          '<div class="card"><div class="empty-state">No stocks match the filters.</div></div>';
         return;
       }
       var totalPages = Math.max(1, Math.ceil(allRows.length / SWING_PAGE_SIZE));
@@ -6190,18 +6707,18 @@
             '<table class="sensitivity-table swing-table">' +
               '<thead><tr>' +
                 '<th>#</th>' +
-                '<th class="swing-left">Hisse</th>' +
-                '<th class="swing-left">Sektör</th>' +
-                '<th>Fiyat</th>' +
-                swingHeaderCellHtml("score", "Skor") +
-                '<th>Etiket</th>' +
-                '<th class="swing-left">Kurulum</th>' +
+                '<th class="swing-left">Stock</th>' +
+                '<th class="swing-left">Sector</th>' +
+                '<th>Price</th>' +
+                swingHeaderCellHtml("score", "Score") +
+                '<th>Label</th>' +
+                '<th class="swing-left">Setup</th>' +
                 swingHeaderCellHtml("rsi14", "RSI") +
                 '<th>SMA50 %</th>' +
-                swingHeaderCellHtml("rs_3m_pct", "RS 3a") +
-                '<th>Giriş</th><th>Stop</th><th>Hedef</th>' +
+                swingHeaderCellHtml("rs_3m_pct", "RS 3m") +
+                '<th>Entry</th><th>Stop</th><th>Target</th>' +
                 swingHeaderCellHtml("rr", "R:R") +
-                '<th class="swing-left">Rozetler</th>' +
+                '<th class="swing-left">Badges</th>' +
               '</tr></thead>' +
               // Rank (#) is the row's ABSOLUTE position in the filtered+sorted
               // set (startIdx + i + 1), not its index on the page -- page 2
@@ -6256,7 +6773,7 @@
           renderShell();
         })
         .catch(function () {
-          setScanMessage("Tarama sonuçları yüklenirken ağ hatası oluştu.");
+          setScanMessage("A network error occurred while loading the scan results.");
         });
     }
 
@@ -6313,15 +6830,15 @@
         .then(function (res) {
           if (res.status === 409) {
             // Another scan (possibly for a different index) is already
-            // running -- surface the server's Turkish error (it names the
-            // index actually running) and start polling its progress anyway
+            // running -- surface the server's error (it names the index
+            // actually running) and start polling its progress anyway
             // (SWING_SPEC.md Sec.7 item 4).
-            setScanMessage((res.json && res.json.error) || "Bir tarama zaten çalışıyor.");
+            setScanMessage((res.json && res.json.error) || "A scan is already running.");
             startPolling();
             return;
           }
           if (!res.json || !res.json.ok) {
-            setScanMessage((res.json && res.json.error) || "Tarama başlatılamadı.");
+            setScanMessage((res.json && res.json.error) || "Could not start the scan.");
             var btnRetry = document.getElementById("swing-scan-btn");
             if (btnRetry) btnRetry.disabled = false;
             return;
@@ -6335,7 +6852,7 @@
           startPolling();
         })
         .catch(function (err) {
-          setScanMessage("Ağ hatası: " + err.message);
+          setScanMessage("Network error: " + err.message);
           var btnErr = document.getElementById("swing-scan-btn");
           if (btnErr) btnErr.disabled = false;
         });
@@ -6413,7 +6930,7 @@
     return (
       '<div class="ov-tile' + cls + '"' + style + titleAttr + '>' +
         '<div class="ov-tile-label">' + escapeHtml(safeText(entry.label)) + '</div>' +
-        '<div class="ov-tile-n">' + (isNum(entry.n) ? Math.round(Number(entry.n)) : 0) + ' hisse</div>' +
+        '<div class="ov-tile-n">' + (isNum(entry.n) ? Math.round(Number(entry.n)) : 0) + ' stocks</div>' +
         '<div class="ov-tile-pct">' +
           (isNum(entry.median_fv_vs_price_pct) ? fmtSignedPctTr(entry.median_fv_vs_price_pct) : "—") +
         '</div>' +
@@ -6438,13 +6955,13 @@
     );
   }
 
-  // "Yaklaşan Bilançolar" callout (overview.upcoming_earnings) -- omitted
+  // "Upcoming Earnings" callout (overview.upcoming_earnings) -- omitted
   // entirely when the list is empty.
   function overviewEarningsCardHtml(rows) {
     if (!rows || !rows.length) return "";
     var items = rows.map(function (r) {
       r = r || {};
-      var daysText = isNum(r.days_until_earnings) ? ' (' + Math.round(Number(r.days_until_earnings)) + ' gün sonra)' : "";
+      var daysText = isNum(r.days_until_earnings) ? ' (in ' + Math.round(Number(r.days_until_earnings)) + ' days)' : "";
       return (
         '<li><strong>' + escapeHtml(safeText(r.ticker)) + '</strong> — ' + escapeHtml(safeText(r.catalyst_date)) + daysText +
           '<span class="item-detail">' + escapeHtml(safeText(r.fundamental_verdict)) + '</span>' +
@@ -6453,13 +6970,13 @@
     }).join("");
     return (
       '<div class="card">' +
-        '<div class="card-title">Yaklaşan Bilançolar</div>' +
+        '<div class="card-title">Upcoming Earnings</div>' +
         '<div class="alert-box"><ul>' + items + '</ul></div>' +
       '</div>'
     );
   }
 
-  // "Karar ile Band Ortası Arasında Gerilim" callout (overview.drift,
+  // "Tension Between Verdict and Band Midpoint" callout (overview.drift,
   // per-row field verdict_drift). NOT an inconsistency/error -- both
   // fundamental_verdict and value_bucket read the very same stored price;
   // they simply ask different questions about it (fundamental_verdict:
@@ -6490,15 +7007,15 @@
     }).join("");
     return (
       '<div class="card">' +
-        '<div class="card-title">Karar ile Band Ortası Arasında Gerilim</div>' +
+        '<div class="card-title">Tension Between Verdict and Band Midpoint</div>' +
         '<div class="verdict-note" style="margin-bottom:10px;">' +
-          'Fiyat baz bandın içinde kaldığı için karar MAKUL; band geniş olduğundan orta nokta fiyattan uzakta. ' +
-          'İki ölçüt de aynı anda doğru olabilir — bu satırlar geniş bantlı, düşük güvenli isimleri işaret eder.' +
+          'The verdict is FAIR because price sits inside the base band; the midpoint is far from price because the band is wide. ' +
+          'Both readings can be correct at once — these rows flag wide-band, low-confidence names.' +
         '</div>' +
         '<div class="swing-table-wrap">' +
           '<table class="sensitivity-table history-table">' +
             '<thead><tr>' +
-              '<th>Hisse</th><th>Karar</th><th>Güncel Bant</th><th>Fark %</th><th>Baz Bant</th><th>Güven</th>' +
+              '<th>Stock</th><th>Verdict</th><th>Current Bucket</th><th>Diff %</th><th>Base Band</th><th>Confidence</th>' +
             '</tr></thead>' +
             '<tbody>' + body + '</tbody>' +
           '</table>' +
@@ -6507,14 +7024,14 @@
     );
   }
 
-  // "Bayat Analizler" callout (overview.stale) -- omitted entirely when the
+  // "Stale Analyses" callout (overview.stale) -- omitted entirely when the
   // list is empty. Names the stale_days threshold so the reader knows what
   // "stale" means here rather than taking it on faith.
   function overviewStaleCardHtml(rows, staleDays) {
     if (!rows || !rows.length) return "";
     var items = rows.map(function (r) {
       r = r || {};
-      var ageText = isNum(r.age_days) ? Math.round(Number(r.age_days)) + ' gün önce analiz edildi' : "—";
+      var ageText = isNum(r.age_days) ? 'analyzed ' + Math.round(Number(r.age_days)) + ' days ago' : "—";
       return (
         '<li><strong>' + escapeHtml(safeText(r.ticker)) + '</strong>' +
           '<span class="item-detail">' + escapeHtml(ageText) + '</span>' +
@@ -6524,8 +7041,8 @@
     var thresholdText = isNum(staleDays) ? Math.round(Number(staleDays)) : "—";
     return (
       '<div class="card">' +
-        '<div class="card-title">Bayat Analizler</div>' +
-        '<div class="verdict-note" style="margin-bottom:8px;">' + thresholdText + ' günden eski analizler.</div>' +
+        '<div class="card-title">Stale Analyses</div>' +
+        '<div class="verdict-note" style="margin-bottom:8px;">Analyses older than ' + thresholdText + ' days.</div>' +
         '<div class="alert-box"><ul>' + items + '</ul></div>' +
       '</div>'
     );
@@ -6570,7 +7087,7 @@
 
     var fvBand = (isNum(row.fv_base_lo) && isNum(row.fv_base_hi))
       ? swingFmtPrice(row.fv_base_lo) + "–" + swingFmtPrice(row.fv_base_hi) +
-        (isNum(row.fv_base_mid) ? ' <span class="muted">(orta ' + swingFmtPrice(row.fv_base_mid) + ')</span>' : "")
+        (isNum(row.fv_base_mid) ? ' <span class="muted">(mid ' + swingFmtPrice(row.fv_base_mid) + ')</span>' : "")
       : "—";
 
     var pctCell = "—";
@@ -6579,13 +7096,13 @@
       pctCell = '<span class="' + pctCls + '">' + fmtSignedPctTr(row.fv_vs_price_pct) + '</span>';
     }
 
-    var earningsCell = isNum(row.days_until_earnings) ? Math.round(Number(row.days_until_earnings)) + "g" : "—";
+    var earningsCell = isNum(row.days_until_earnings) ? Math.round(Number(row.days_until_earnings)) + "d" : "—";
     var catalystTitle = row.catalyst_date ? ' title="' + escapeHtml(String(row.catalyst_date)) + '"' : "";
 
     var ageCell = "—";
     if (isNum(row.age_days)) {
       var ageNum = Math.round(Number(row.age_days));
-      ageCell = row.stale ? '<span class="ov-stale">⚠ ' + ageNum + 'g</span>' : ageNum + "g";
+      ageCell = row.stale ? '<span class="ov-stale">⚠ ' + ageNum + 'd</span>' : ageNum + "d";
     }
 
     return (
@@ -6617,13 +7134,13 @@
   function renderOverviewMode() {
     var pageEl = document.querySelector(".page");
     if (pageEl) pageEl.classList.add("page-wide");
-    document.title = "Portföy Genel Bakış · Verdict Terminal";
+    document.title = "Portfolio Overview · Verdict Terminal";
 
     topnavEl.innerHTML =
       '<div class="nav-inner">' +
         '<span class="brand">VERDICT</span>' +
         '<div class="nav-controls">' +
-          '<button type="button" class="history-nav-btn" id="ov-search-btn">Ara</button>' +
+          '<button type="button" class="history-nav-btn" id="ov-search-btn">Search</button>' +
           '<button type="button" class="history-nav-btn" id="ov-swing-btn">Swing</button>' +
         '</div>' +
       '</div>';
@@ -6638,7 +7155,7 @@
     if (!rows.length) {
       bodyEl.innerHTML =
         '<div class="card"><div class="empty-state">' +
-          'Henüz kayıtlı analiz yok — bir hisseyi analiz edin, sonra buraya dönün.' +
+          'No stored analyses yet — analyze a stock, then come back here.' +
         '</div></div>';
       return;
     }
@@ -6658,7 +7175,7 @@
 
     function headerStripHtml() {
       var counts = ov.bucket_counts || {};
-      var chips = ["ucuz", "makul", "pahali", "bilinmiyor"].map(function (b) {
+      var chips = ["cheap", "fair", "expensive", "unknown"].map(function (b) {
         var n = isNum(counts[b]) ? Math.round(Number(counts[b])) : 0;
         return '<span class="badge badge-' + overviewBucketColor(b) + '">' + overviewBucketLabel(b) + ' ' + n + '</span>';
       }).join(" ");
@@ -6671,11 +7188,11 @@
         '<div class="card">' +
           '<div class="header-row">' +
             '<div class="header-left">' +
-              '<div class="ticker-line"><span class="ticker">Portföy Genel Bakış</span></div>' +
+              '<div class="ticker-line"><span class="ticker">Portfolio Overview</span></div>' +
               '<div class="source-note">' +
-                (isNum(ov.count) ? Math.round(Number(ov.count)) : rows.length) + ' hisse · ' +
+                (isNum(ov.count) ? Math.round(Number(ov.count)) : rows.length) + ' stocks · ' +
                 escapeHtml(safeText(ov.today)) +
-                ' · medyan makul-değer / fiyat farkı: ' + medianHtml +
+                ' · median fair-value / price gap: ' + medianHtml +
               '</div>' +
             '</div>' +
             '<div class="header-right">' + chips + '</div>' +
@@ -6715,17 +7232,17 @@
     function filterBarHtml() {
       return (
         '<div class="swing-filter-bar" id="ov-filter-bar">' +
-          '<label for="ov-text-filter">Hisse / şirket</label>' +
+          '<label for="ov-text-filter">Stock / company</label>' +
           '<input type="text" class="swing-filter-input swing-text-input" id="ov-text-filter" ' +
-            'placeholder="ör. AAPL" autocomplete="off" />' +
+            'placeholder="e.g. AAPL" autocomplete="off" />' +
           '<div class="horizon-toggle interactive" id="ov-bucket-toggle">' +
-            '<button type="button" class="horizon-pill active" data-bucket="">Tümü</button>' +
-            '<button type="button" class="horizon-pill" data-bucket="ucuz">Ucuz</button>' +
-            '<button type="button" class="horizon-pill" data-bucket="makul">Makul</button>' +
-            '<button type="button" class="horizon-pill" data-bucket="pahali">Pahalı</button>' +
+            '<button type="button" class="horizon-pill active" data-bucket="">All</button>' +
+            '<button type="button" class="horizon-pill" data-bucket="cheap">Cheap</button>' +
+            '<button type="button" class="horizon-pill" data-bucket="fair">Fair</button>' +
+            '<button type="button" class="horizon-pill" data-bucket="expensive">Expensive</button>' +
           '</div>' +
           '<div class="horizon-toggle interactive" id="ov-stale-toggle">' +
-            '<button type="button" class="horizon-pill" data-stale="1">Yalnızca bayat</button>' +
+            '<button type="button" class="horizon-pill" data-stale="1">Stale only</button>' +
           '</div>' +
           '<span class="swing-pager-count" id="ov-live-count"></span>' +
         '</div>'
@@ -6772,9 +7289,9 @@
       if (!container) return;
       var allRows = filteredSortedRows();
       var countEl = document.getElementById("ov-live-count");
-      if (countEl) countEl.textContent = allRows.length + " / " + state.rows.length + " hisse";
+      if (countEl) countEl.textContent = allRows.length + " / " + state.rows.length + " stocks";
       if (!allRows.length) {
-        container.innerHTML = '<div class="card"><div class="empty-state">Filtrelerle eşleşen hisse bulunamadı.</div></div>';
+        container.innerHTML = '<div class="card"><div class="empty-state">No stocks match the filters.</div></div>';
         return;
       }
       container.innerHTML =
@@ -6782,18 +7299,18 @@
           '<div class="swing-table-wrap">' +
             '<table class="sensitivity-table swing-table ov-table">' +
               '<thead><tr>' +
-                overviewHeaderCellHtml("ticker", "Hisse", "swing-left") +
-                overviewHeaderCellHtml("sector", "Sektör", "swing-left") +
-                overviewHeaderCellHtml("sector_type_label", "Yol", "swing-left") +
-                overviewHeaderCellHtml("fundamental_verdict", "Karar") +
-                overviewHeaderCellHtml("price", "Fiyat") +
-                overviewHeaderCellHtml("fv_base_mid", "Makul (baz)") +
-                overviewHeaderCellHtml("fv_vs_price_pct", "Fark %") +
-                overviewHeaderCellHtml("confidence", "Güven") +
+                overviewHeaderCellHtml("ticker", "Stock", "swing-left") +
+                overviewHeaderCellHtml("sector", "Sector", "swing-left") +
+                overviewHeaderCellHtml("sector_type_label", "Route", "swing-left") +
+                overviewHeaderCellHtml("fundamental_verdict", "Verdict") +
+                overviewHeaderCellHtml("price", "Price") +
+                overviewHeaderCellHtml("fv_base_mid", "Fair Value (base)") +
+                overviewHeaderCellHtml("fv_vs_price_pct", "Diff %") +
+                overviewHeaderCellHtml("confidence", "Confidence") +
                 overviewHeaderCellHtml("momentum_verdict", "Momentum") +
-                overviewHeaderCellHtml("insider_verdict", "İçeriden") +
-                overviewHeaderCellHtml("days_until_earnings", "Bilanço") +
-                overviewHeaderCellHtml("age_days", "Yaş") +
+                overviewHeaderCellHtml("insider_verdict", "Insider") +
+                overviewHeaderCellHtml("days_until_earnings", "Earnings") +
+                overviewHeaderCellHtml("age_days", "Age") +
               '</tr></thead>' +
               '<tbody>' + allRows.map(overviewRowHtml).join("") + '</tbody>' +
             '</table>' +
@@ -6818,11 +7335,11 @@
 
     bodyEl.innerHTML =
       headerStripHtml() +
-      overviewHeatSectionHtml(ov.sectors, "Sektör Isı Haritası", "Sektör verisi yok.") +
+      overviewHeatSectionHtml(ov.sectors, "Sector Heat Map", "No sector data.") +
       overviewHeatSectionHtml(
         ov.routes,
-        "Değerleme Yolu (Olgun / Döngüsel / Finansal / GYO / Büyüme)",
-        "Değerleme yolu verisi yok."
+        "Valuation Route (Mature / Cyclical / Financial / REIT / Growth)",
+        "No valuation-route data."
       ) +
       cardGridHtml(
         overviewEarningsCardHtml(ov.upcoming_earnings),
@@ -6831,7 +7348,7 @@
       ) +
       filterBarHtml() +
       '<div id="ov-table-container"></div>' +
-      '<div class="source-note" style="margin:10px 0 0;">Üretildi: ' + escapeHtml(swingFormatTimestamp(ov.generated_at)) + '</div>' +
+      '<div class="source-note" style="margin:10px 0 0;">Generated: ' + escapeHtml(swingFormatTimestamp(ov.generated_at)) + '</div>' +
       globalFooterHtml();
 
     wireFilterBar();

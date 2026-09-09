@@ -2,14 +2,14 @@
 
 Reads the ``verdicts`` + ``verdict_outcomes`` tables and produces:
 
-* **Hit-rate table** -- isabet oranı by verdict type x horizon x route (method),
+* **Hit-rate table** -- hit rate by verdict type x horizon x route (method),
   with the sample size ``n``. Cells with ``n < 10`` are flagged
-  "yetersiz örneklem".
+  "insufficient sample".
 * **Calibration time series** -- per as-of/run date, the basket's median
   fair-value/price ratio (the regime-independent form of the "0.925 median"
   finding: separates engine conservatism from how expensive the period was).
 * **Divergence cases** -- verdicts whose correctness isn't binary
-  (``MODEL-PİYASA AYRIŞMASI`` / ``YÜKSEK BEKLENTİ FİYATLANMIŞ``), with their
+  (``MODEL-PRICE DIVERGENCE`` / ``HIGH EXPECTATIONS PRICED IN``), with their
   realized returns and the manual ``referee_note``.
 
 Every rendered report carries :data:`sec_analyzer.backtest.BACKTEST_DISCLAIMER`.
@@ -88,8 +88,8 @@ def build_report_data(db_path: Optional[str] = None) -> dict:
 
     # --- Momentum hit-rate: does the momentum label sharpen the value verdict? ---
     # Groups binary-hit outcomes by (fundamental_verdict, momentum_verdict,
-    # horizon). Answers e.g. "is UCUZ + NEGATİF momentum really a falling knife
-    # (worse hit-rate), and UCUZ + POZİTİF the strongest combination?".
+    # horizon). Answers e.g. "is CHEAP + NEGATIVE momentum really a falling
+    # knife (worse hit-rate), and CHEAP + POSITIVE the strongest combination?".
     mom_buckets = defaultdict(lambda: {"hits": 0, "n": 0})
     for o in outcomes:
         if o.get("hit") is None:
@@ -198,61 +198,61 @@ def _fmt_ratio(value: Optional[float]) -> str:
 def render_terminal(data: dict) -> str:
     """Render the backtest report as plain text for the terminal."""
     lines: List[str] = []
-    lines.append("=== Backtest raporu ===")
+    lines.append("=== Backtest report ===")
 
-    lines.append("\n[Hit-rate] verdict türü × vade × route")
-    lines.append(f"{'Tür':<24}{'Vade':<6}{'Route':<16}{'n':>5}{'İsabet':>9}")
+    lines.append("\n[Hit-rate] verdict type x horizon x route")
+    lines.append(f"{'Type':<24}{'Horizon':<6}{'Route':<16}{'n':>5}{'Hit rate':>9}")
     lines.append("-" * 60)
     if not data["hit_rate"]:
-        lines.append("(değerlendirilmiş ikili-iddia verdict'i yok)")
+        lines.append("(no evaluated binary-claim verdict)")
     for row in data["hit_rate"]:
-        flag = "  ⚠ yetersiz örneklem" if row["insufficient"] else ""
+        flag = "  ⚠ insufficient sample" if row["insufficient"] else ""
         lines.append(
             f"{row['verdict_type']:<24}{row['horizon']:<6}{row['route']:<16}"
             f"{row['n']:>5}{_fmt_pct(row['rate']):>9}{flag}"
         )
 
-    lines.append("\n[Momentum hit-rate] verdict × momentum × vade")
-    lines.append(f"{'Tür':<20}{'Momentum':<12}{'Vade':<6}{'n':>5}{'İsabet':>9}")
+    lines.append("\n[Momentum hit-rate] verdict x momentum x horizon")
+    lines.append(f"{'Type':<20}{'Momentum':<12}{'Horizon':<6}{'n':>5}{'Hit rate':>9}")
     lines.append("-" * 60)
     mom_rows = data.get("hit_rate_momentum") or []
     if not mom_rows:
-        lines.append("(momentum etiketli değerlendirilmiş verdict yok)")
+        lines.append("(no evaluated verdict with a momentum label)")
     for row in mom_rows:
-        flag = "  ⚠ yetersiz örneklem" if row["insufficient"] else ""
+        flag = "  ⚠ insufficient sample" if row["insufficient"] else ""
         lines.append(
             f"{row['verdict_type']:<20}{row['momentum_verdict']:<12}{row['horizon']:<6}"
             f"{row['n']:>5}{_fmt_pct(row['rate']):>9}{flag}"
         )
 
-    lines.append("\n[Kalibrasyon] tarih başına medyan makul-değer/fiyat")
-    lines.append(f"{'Tarih':<14}{'Medyan FV/Fiyat':>16}{'n':>5}")
+    lines.append("\n[Calibration] median fair-value/price per date")
+    lines.append(f"{'Date':<14}{'Median FV/Price':>16}{'n':>5}")
     lines.append("-" * 36)
     if not data["calibration"]:
-        lines.append("(veri yok)")
+        lines.append("(no data)")
     for row in data["calibration"]:
         lines.append(f"{row['date']:<14}{_fmt_ratio(row['median_ratio']):>16}{row['n']:>5}")
 
-    lines.append("\n[Verdict momentum] hisse başına FV/fiyat oranının seyri")
-    lines.append(f"{'Hisse':<8}{'n':>4}{'İlk':>9}{'Son':>9}{'Değişim':>10}")
+    lines.append("\n[Verdict momentum] per-ticker FV/price ratio trajectory")
+    lines.append(f"{'Ticker':<8}{'n':>4}{'First':>9}{'Last':>9}{'Change':>10}")
     lines.append("-" * 40)
     vm_rows = data.get("verdict_momentum") or []
     if not vm_rows:
-        lines.append("(≥2 çalıştırması olan hisse yok)")
+        lines.append("(no ticker with >=2 runs)")
     for row in vm_rows:
         lines.append(
             f"{row['ticker']:<8}{row['n']:>4}{_fmt_ratio(row['first_ratio']):>9}"
             f"{_fmt_ratio(row['last_ratio']):>9}{_fmt_pct(row['change']):>10}"
         )
 
-    lines.append("\n[Ayrışma vakaları] (MODEL-PİYASA AYRIŞMASI / YÜKSEK BEKLENTİ)")
+    lines.append("\n[Divergence cases] (MODEL-PRICE DIVERGENCE / HIGH EXPECTATIONS)")
     if not data["divergence"]:
-        lines.append("(ayrışma verdict'i yok)")
+        lines.append("(no divergence verdict)")
     for row in data["divergence"]:
         note = row.get("referee_note") or "—"
         lines.append(
             f"  {row['ticker']} @ {row['ref_date']} [{row['horizon'] or '—'}] "
-            f"{row['fundamental_verdict']} · rel {_fmt_pct(row['rel_return'])} · hakem: {note}"
+            f"{row['fundamental_verdict']} · rel {_fmt_pct(row['rel_return'])} · referee: {note}"
         )
 
     lines.append(f"\n{data['disclaimer']}")
@@ -267,11 +267,11 @@ def render_html(data: dict, generated_on: str) -> str:
     """Render the backtest report as a self-contained dark-themed HTML page."""
     def hit_rows() -> str:
         if not data["hit_rate"]:
-            return '<tr><td colspan="5" class="empty">Değerlendirilmiş ikili-iddia verdict\'i yok.</td></tr>'
+            return '<tr><td colspan="5" class="empty">No evaluated binary-claim verdict.</td></tr>'
         out = []
         for r in data["hit_rate"]:
             cls = ' class="insufficient"' if r["insufficient"] else ""
-            flag = ' <span class="warn">yetersiz örneklem</span>' if r["insufficient"] else ""
+            flag = ' <span class="warn">insufficient sample</span>' if r["insufficient"] else ""
             out.append(
                 f"<tr{cls}><td>{_esc(r['verdict_type'])}</td><td>{_esc(r['horizon'])}</td>"
                 f"<td>{_esc(r['route'])}</td><td class='num'>{r['n']}{flag}</td>"
@@ -282,11 +282,11 @@ def render_html(data: dict, generated_on: str) -> str:
     def mom_rows() -> str:
         rows = data.get("hit_rate_momentum") or []
         if not rows:
-            return '<tr><td colspan="5" class="empty">Momentum etiketli değerlendirilmiş verdict yok.</td></tr>'
+            return '<tr><td colspan="5" class="empty">No evaluated verdict with a momentum label.</td></tr>'
         out = []
         for r in rows:
             cls = ' class="insufficient"' if r["insufficient"] else ""
-            flag = ' <span class="warn">yetersiz örneklem</span>' if r["insufficient"] else ""
+            flag = ' <span class="warn">insufficient sample</span>' if r["insufficient"] else ""
             out.append(
                 f"<tr{cls}><td>{_esc(r['verdict_type'])}</td><td>{_esc(r['momentum_verdict'])}</td>"
                 f"<td>{_esc(r['horizon'])}</td><td class='num'>{r['n']}{flag}</td>"
@@ -297,7 +297,7 @@ def render_html(data: dict, generated_on: str) -> str:
     def vm_rows() -> str:
         rows = data.get("verdict_momentum") or []
         if not rows:
-            return '<tr><td colspan="5" class="empty">≥2 çalıştırması olan hisse yok.</td></tr>'
+            return '<tr><td colspan="5" class="empty">No ticker with &ge;2 runs.</td></tr>'
         return "".join(
             f"<tr><td>{_esc(r['ticker'])}</td><td class='num'>{r['n']}</td>"
             f"<td class='num'>{_esc(_fmt_ratio(r['first_ratio']))}</td>"
@@ -308,7 +308,7 @@ def render_html(data: dict, generated_on: str) -> str:
 
     def calib_rows() -> str:
         if not data["calibration"]:
-            return '<tr><td colspan="3" class="empty">Veri yok.</td></tr>'
+            return '<tr><td colspan="3" class="empty">No data.</td></tr>'
         return "".join(
             f"<tr><td>{_esc(r['date'])}</td><td class='num'>{_esc(_fmt_ratio(r['median_ratio']))}</td>"
             f"<td class='num'>{r['n']}</td></tr>"
@@ -317,7 +317,7 @@ def render_html(data: dict, generated_on: str) -> str:
 
     def div_rows() -> str:
         if not data["divergence"]:
-            return '<tr><td colspan="5" class="empty">Ayrışma verdict\'i yok.</td></tr>'
+            return '<tr><td colspan="5" class="empty">No divergence verdict.</td></tr>'
         return "".join(
             f"<tr><td>{_esc(r['ticker'])}</td><td>{_esc(r['ref_date'])}</td>"
             f"<td>{_esc(r['fundamental_verdict'])}</td>"
@@ -327,9 +327,9 @@ def render_html(data: dict, generated_on: str) -> str:
         )
 
     return f"""<!DOCTYPE html>
-<html lang="tr"><head><meta charset="utf-8" />
+<html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Backtest Raporu · {_esc(generated_on)}</title>
+<title>Backtest Report · {_esc(generated_on)}</title>
 <style>
   body {{ margin:0; background:#0d1420; color:#e7ecf5;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }}
@@ -347,29 +347,29 @@ def render_html(data: dict, generated_on: str) -> str:
   .disclaimer {{ margin-top:30px; padding:12px 14px; background:#111b2b;
     border:1px solid #223349; border-radius:10px; color:#9fb3c8; font-size:0.8rem; }}
 </style></head><body><div class="page">
-  <h1>Backtest Raporu</h1>
-  <div class="sub">Oluşturulma: {_esc(generated_on)}</div>
+  <h1>Backtest Report</h1>
+  <div class="sub">Generated: {_esc(generated_on)}</div>
 
-  <h2>Hit-rate — verdict türü × vade × route</h2>
-  <table><thead><tr><th>Tür</th><th>Vade</th><th>Route</th><th class="num">n</th>
-    <th class="num">İsabet</th></tr></thead><tbody>{hit_rows()}</tbody></table>
+  <h2>Hit-rate — verdict type × horizon × route</h2>
+  <table><thead><tr><th>Type</th><th>Horizon</th><th>Route</th><th class="num">n</th>
+    <th class="num">Hit rate</th></tr></thead><tbody>{hit_rows()}</tbody></table>
 
-  <h2>Momentum hit-rate — verdict × momentum × vade</h2>
-  <table><thead><tr><th>Tür</th><th>Momentum</th><th>Vade</th><th class="num">n</th>
-    <th class="num">İsabet</th></tr></thead><tbody>{mom_rows()}</tbody></table>
+  <h2>Momentum hit-rate — verdict × momentum × horizon</h2>
+  <table><thead><tr><th>Type</th><th>Momentum</th><th>Horizon</th><th class="num">n</th>
+    <th class="num">Hit rate</th></tr></thead><tbody>{mom_rows()}</tbody></table>
 
-  <h2>Kalibrasyon — tarih başına medyan makul-değer/fiyat</h2>
-  <table><thead><tr><th>Tarih</th><th class="num">Medyan FV/Fiyat</th>
+  <h2>Calibration — median fair-value/price per date</h2>
+  <table><thead><tr><th>Date</th><th class="num">Median FV/Price</th>
     <th class="num">n</th></tr></thead><tbody>{calib_rows()}</tbody></table>
 
-  <h2>Verdict momentum — hisse başına FV/fiyat oranının seyri</h2>
-  <table><thead><tr><th>Hisse</th><th class="num">n</th><th class="num">İlk oran</th>
-    <th class="num">Son oran</th><th class="num">Değişim</th></tr></thead>
+  <h2>Verdict momentum — per-ticker FV/price ratio trajectory</h2>
+  <table><thead><tr><th>Ticker</th><th class="num">n</th><th class="num">First ratio</th>
+    <th class="num">Last ratio</th><th class="num">Change</th></tr></thead>
     <tbody>{vm_rows()}</tbody></table>
 
-  <h2>Ayrışma vakaları</h2>
-  <table><thead><tr><th>Hisse</th><th>Tarih</th><th>Verdict</th>
-    <th class="num">Rel. getiri</th><th>Hakem notu</th></tr></thead>
+  <h2>Divergence cases</h2>
+  <table><thead><tr><th>Ticker</th><th>Date</th><th>Verdict</th>
+    <th class="num">Rel. return</th><th>Referee note</th></tr></thead>
     <tbody>{div_rows()}</tbody></table>
 
   <div class="disclaimer">{_esc(data['disclaimer'])}</div>
