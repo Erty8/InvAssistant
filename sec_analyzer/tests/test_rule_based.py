@@ -615,6 +615,81 @@ def test_commentary_key_risks_include_red_flags_and_valuation_notes():
     assert len(result["key_risks"]) <= 5
 
 
+def test_commentary_key_risks_excludes_safe_advisory_screen_notes():
+    # I1 regression guard: a CLEAN advisory reading (Altman safe, Beneish
+    # not flagged, Merton safe) must NOT appear as a "risk". The raw
+    # advisory-screen/LBO engine notes are filtered out of key_risks
+    # (_ADVISORY_NOTE_PREFIXES); only genuine risks (red flags + non-advisory
+    # engine warnings) survive. "Bankruptcy risk LOW" is not a risk.
+    valuation = _valuation()
+    valuation["altman_z"] = {"z_score": 12.41, "zone": "safe"}
+    valuation["beneish_m"] = {"m_score": -2.30, "partial": False, "flag": False}
+    valuation["merton_dtd"] = {"distance_to_default": 16.62, "zone": "safe"}
+    valuation["notes"] = [
+        "Altman Z-skoru güvenli bölgede (iflas riski düşük). (Z=12.41)",
+        "Beneish M-skoru -2.3.",
+        "Merton mesafe-temerrüt modeli güvenli bölgede. (DD=16.62, PD=%0.00)",
+        "LBO çapası (bilgi amaçlı, manşete GİRMEZ): ~$130.",
+        "fcf0 = TTM FCF kullanıldı.",  # a genuine engine warning -> stays
+    ]
+    red_flags = [{"code": "X", "message": "Gerçek bir risk", "detail": "..."}]
+
+    result = rule_based.commentary(valuation, red_flags=red_flags)
+
+    assert "Gerçek bir risk" in result["key_risks"]
+    assert "fcf0 = TTM FCF kullanıldı." in result["key_risks"]
+    # No "safe" advisory reading nor the informational LBO floor is a risk.
+    assert not any("Altman Z-skoru" in r for r in result["key_risks"])
+    assert not any("Beneish M-skoru" in r for r in result["key_risks"])
+    assert not any("Merton mesafe-temerrüt" in r for r in result["key_risks"])
+    assert not any("LBO çapası" in r for r in result["key_risks"])
+
+
+def test_commentary_key_risks_surfaces_gated_distress_sentence_once():
+    # A NON-clean advisory reading (distress/flag) IS a risk -- surfaced via
+    # the gated _distress_risk_from_valuation sentence, exactly once, without
+    # ALSO duplicating the raw engine notes.
+    valuation = _valuation()
+    valuation["altman_z"] = {"z_score": 1.2, "zone": "distress"}
+    valuation["beneish_m"] = {"m_score": -1.0, "partial": False, "flag": True}
+    valuation["merton_dtd"] = {"distance_to_default": 0.5, "zone": "distress"}
+    valuation["notes"] = [
+        "Altman Z-skoru sıkıntı bölgesinde (yüksek iflas riski sinyali). (Z=1.2)",
+        "Beneish M-skoru -1.0 -- olası kazanç manipülasyonu sinyali.",
+    ]
+
+    result = rule_based.commentary(valuation, red_flags=[])
+    key_risks = result["key_risks"]
+
+    # Exactly one entry mentions the distress screens (the combined gated
+    # sentence), not one-per-note duplicates.
+    distress_entries = [r for r in key_risks if "iflas riski sinyali" in r or "manipülasyon sinyali" in r]
+    assert len(distress_entries) == 1
+    assert "Altman Z-skoru" in distress_entries[0]
+    assert "manipülasyon" in distress_entries[0]
+    assert "temerrüt" in distress_entries[0]
+
+
+def test_commentary_beneish_flag_caveated_when_sales_growth_high():
+    # I2: a Beneish flag on a fast-growing filer (high SGI) must be caveated
+    # as a likely growth artifact, NOT stated as a manipulation signal --
+    # Beneish structurally over-flags hyper-growers.
+    val_growth = _valuation()
+    val_growth["beneish_m"] = {"m_score": -1.67, "flag": True, "components": {"sgi": 1.90}}
+    growth_risk = rule_based._distress_risk_from_valuation(val_growth)
+    assert growth_risk is not None
+    assert "büyüme yan etkisi" in growth_risk
+    assert "manipülasyon kanıtı değil" in growth_risk
+
+    # A Beneish flag WITHOUT high growth stays a plain manipulation signal.
+    val_flat = _valuation()
+    val_flat["beneish_m"] = {"m_score": -1.50, "flag": True, "components": {"sgi": 1.05}}
+    flat_risk = rule_based._distress_risk_from_valuation(val_flat)
+    assert flat_risk is not None
+    assert "olası kazanç manipülasyonu sinyali" in flat_risk
+    assert "büyüme yan etkisi" not in flat_risk
+
+
 def test_commentary_catalyst_and_red_flags_comment_defaults():
     result = rule_based.commentary(_valuation())
     assert result["catalyst"] == "bilinmiyor"

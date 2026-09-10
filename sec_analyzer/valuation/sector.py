@@ -3,9 +3,11 @@
 Classifies a filer into one of five buckets that the rest of the valuation
 engine uses to pick a method (FCF-DCF vs. P/B x ROE, normalized-earnings DCF
 variant, multiples primary key): ``"reit"``, ``"financial"``, ``"cyclical"``,
-``"growth_unprofitable"``, ``"mature"``. Classification is purely a function
-of the SIC code, with a financial-statement override (unprofitable ->
-``"growth_unprofitable"``) when the SIC itself doesn't already pin down
+``"growth_unprofitable"``, ``"mature"``. Classification is driven by the SIC
+code, with two financial-statement overrides: a deposit-funded balance sheet
+(deposits above 20% of total liabilities) forces ``"financial"`` whatever the
+SIC says, and an unprofitable latest year forces ``"growth_unprofitable"``
+when the SIC itself doesn't already pin down
 ``"reit"``/``"financial"``/``"cyclical"``.
 
 Per ``sec_analyzer/valuation/SPEC.md`` Sec.8, when ``sic`` itself is missing
@@ -43,6 +45,12 @@ _REIT_LIKE_SIC_RANGES = ((6500, 6500), (6510, 6519))
 #: SIC range classified as "financial" (banks, insurance, brokers, ...),
 #: excluding the REIT code and REIT-like real-estate ranges above.
 _FINANCIAL_SIC_RANGE = (6000, 6999)
+
+#: Deposits as a share of total liabilities strictly above this makes a filer
+#: a bank in economic substance regardless of the SIC code it files under
+#: (SPEC.md Sec.20a). Deliberately coarse: it separates deposit-funded
+#: balance sheets from every other funding model, not one bank from another.
+_DEPOSIT_FUNDED_LIABILITY_SHARE = 0.20
 
 #: Inclusive SIC ranges classified as "cyclical" (commodity-linked or
 #: capital-intensive industries whose earnings/multiples swing hard with
@@ -127,6 +135,35 @@ def _is_reit_like_sic(sic: int) -> bool:
     return any(lo <= sic <= hi for lo, hi in _REIT_LIKE_SIC_RANGES)
 
 
+def _is_deposit_funded(normalized: dict, metrics: dict) -> bool:
+    """Whether deposits fund a material share of the filer's liabilities.
+
+    A deposit-funded balance sheet is a bank in economic substance whatever
+    SIC code the filer happens to report under, and must be routed to the
+    residual-income anchor (Sec.8f) rather than an FCF-DCF. Both figures are
+    taken from the SAME fiscal year -- the newest one that has both -- since
+    a deposits figure divided by a different year's liabilities is
+    meaningless. The fiscal year is resolved independently of
+    ``metrics["latest_fy"]``, mirroring ``_build_pb_roe``/``_build_rim``'s
+    FY-selection discipline (SPEC.md Sec.8/8f/20a).
+
+    Never raises: any missing input or unexpected shape returns ``False``.
+    """
+    try:
+        deposits = to_annual_series(normalized or {}, "Deposits")
+        liabilities = to_annual_series(normalized or {}, "TotalLiabilities")
+        for fy in sorted(set(deposits) & set(liabilities), reverse=True):
+            total = liabilities[fy]
+            if total is None or total <= 0:
+                continue
+            return (deposits[fy] / total) > _DEPOSIT_FUNDED_LIABILITY_SHARE
+        return False
+    except Exception:
+        logger.warning("_is_deposit_funded: unexpected error; treating filer as "
+                       "not deposit-funded.", exc_info=True)
+        return False
+
+
 def classify_sector(sic: Optional[Union[int, str]], normalized: dict, metrics: dict) -> str:
     """Classify a filer into a valuation-method sector bucket.
 
@@ -148,6 +185,11 @@ def classify_sector(sic: Optional[Union[int, str]], normalized: dict, metrics: d
         reit; SIC 6000-6999 (excl. the reit codes above, so including 6531
         real-estate agents/managers and 6552 land subdividers/developers,
         which stay asset-light/inventory businesses) -> financial;
+        deposits above 20% of total liabilities (same fiscal year) ->
+        financial, whatever the SIC says, since a deposit-funded balance
+        sheet is a bank in economic substance -- this override never
+        displaces a reit classification and is checked before the cyclical
+        and profitability branches;
         SIC 3674 (semiconductors) -> cyclical when the realized revenue
         CAGR (5y, falling back to 3y) is unknown or <= 15%, otherwise falls
         through to the profitability check below like any other SIC; SIC
@@ -168,6 +210,13 @@ def classify_sector(sic: Optional[Union[int, str]], normalized: dict, metrics: d
     if sic_int == _REIT_SIC or _is_reit_like_sic(sic_int):
         return SECTOR_REIT
     if _FINANCIAL_SIC_RANGE[0] <= sic_int <= _FINANCIAL_SIC_RANGE[1]:
+        return SECTOR_FINANCIAL
+    # Fundamentals override (SPEC.md Sec.20a): a deposit-funded filer outside
+    # the 6000-6999 range is still a bank in substance. Deliberately placed
+    # after the reit checks (a mortgage REIT keeps its FFO anchor) and before
+    # the cyclical/profitability branches (so the filer reaches the RIM anchor
+    # rather than an FCF-DCF).
+    if _is_deposit_funded(normalized, metrics):
         return SECTOR_FINANCIAL
 
     if sic_int == _SEMICONDUCTOR_SIC:
@@ -225,13 +274,13 @@ def detect_hyper_grower(metrics: dict, ratios: List[dict], normalized: dict) -> 
     back to 3-year):
 
     - **Strong tier** -- CAGR strictly above 25% AND at least one of:
-        (a) latest-FY FCF is zero or negative ("FCF negatif veya sıfır");
-        (b) latest-FY FCF margin is strictly below 5% ("FCF marjı %5'in
-            altında (bastırılmış nakit akışı)");
+        (a) latest-FY FCF is zero or negative ("FCF is zero or negative");
+        (b) latest-FY FCF margin is strictly below 5% ("FCF margin is below
+            5% (suppressed cash flow)");
         (c) R&D + SBC as a fraction of revenue (an S&M proxy -- no
             standalone S&M line exists in the normalized concepts) is
-            strictly above 40% ("Ar-Ge + SBC / gelir %40'ı aşıyor (agresif
-            büyüme yatırımı)").
+            strictly above 40% ("R&D + SBC / revenue exceeds 40% (aggressive
+            growth investment)").
       Exactly 25% CAGR does NOT qualify for the strong tier (see gray zone
       below); FCF margin exactly 5% and opex intensity exactly 40% do NOT
       trigger their respective clause.
@@ -295,16 +344,16 @@ def detect_hyper_grower(metrics: dict, ratios: List[dict], normalized: dict) -> 
 
         clause_reasons = []
         if clause_a:
-            clause_reasons.append("FCF negatif veya sıfır")
+            clause_reasons.append("FCF is zero or negative")
         if clause_b:
-            clause_reasons.append("FCF marjı %5'in altında (bastırılmış nakit akışı)")
+            clause_reasons.append("FCF margin is below 5% (suppressed cash flow)")
         if clause_c:
-            clause_reasons.append("Ar-Ge + SBC / gelir %40'ı aşıyor (agresif büyüme yatırımı)")
+            clause_reasons.append("R&D + SBC / revenue exceeds 40% (aggressive growth investment)")
 
         if realized_cagr > _HYPER_GROWTH_CAGR_THRESHOLD:
             if not any_clause:
                 return False, []
-            reasons = [f"Gelir CAGR %{realized_cagr * 100:.1f} (>%25)"] + clause_reasons
+            reasons = [f"Revenue CAGR {realized_cagr * 100:.1f}% (>25%)"] + clause_reasons
             return True, reasons
 
         if realized_cagr > _HYPER_GROWTH_CAGR_GRAY_ZONE_MIN:
@@ -313,8 +362,8 @@ def detect_hyper_grower(metrics: dict, ratios: List[dict], normalized: dict) -> 
             if not (any_clause and high_ps):
                 return False, []
             reasons = [
-                f"Gelir CAGR %{realized_cagr * 100:.1f} (gri bölge %20-25) ve yüksek P/S "
-                f"({ps:.1f}x) — piyasa güçlü büyüme fiyatlıyor"
+                f"Revenue CAGR {realized_cagr * 100:.1f}% (gray zone 20-25%) and high P/S "
+                f"({ps:.1f}x) — the market is pricing in strong growth"
             ] + clause_reasons
             return True, reasons
 

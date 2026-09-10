@@ -598,13 +598,220 @@ def test_compute_entry_plan_high_52w_added_when_no_resistance_zone_is_52w_high()
     assert entries == pytest.approx([130.0, 140.0])
 
 
+def test_compute_entry_plan_dip_trigger_names_its_source_level():
+    # Every dip trigger sentence must name the Turkish source label of the
+    # level it came from (same transparency the breakout sentence already
+    # had), so the reader can tell a valuation-band level from a technical
+    # one. Fixture: bear_lo=40, base_lo=60, base_hi=80 (all <= price=110),
+    # plus sma200=95 and low_52w=35 from the technical read. bull_hi=200 is
+    # above price (target anchor only). 5 dip candidates, no two within 2%,
+    # all kept (cap=5).
+    valuation = _valuation_for_entry_plan()
+    technical = {"sma200": 95, "low_52w": 35}
+    plan = planning.compute_entry_plan(valuation, technical, 110)
+
+    assert len(plan) == 5
+    by_level = {round((t["price_zone"]["lo"] + t["price_zone"]["hi"]) / 2): t for t in plan}
+    assert "— SMA200 desteği" in by_level[95]["trigger"]
+    assert "— baz senaryo üst bandı" in by_level[80]["trigger"]
+    assert "— baz senaryo alt bandı" in by_level[60]["trigger"]
+    assert "— ayı senaryosu alt bandı" in by_level[40]["trigger"]
+    assert "— 52 hafta dibi" in by_level[35]["trigger"]
+    # daily-close-only wording is retained
+    assert all("seviyesinin altına inerse" in t["trigger"] for t in plan)
+
+
+def test_compute_entry_plan_support_confluence_note_on_overlapping_dip_only():
+    # support_levels zones are NOT dip candidates, but a dip level landing
+    # inside a zone's low/high band (widened by the 2% dedupe tolerance) gets
+    # an informational confluence note. Fixture: base_lo=60 falls inside the
+    # 59-61 support zone -> note; bear_lo=40 is far from any zone -> no note.
+    # base_hi=80 sits just outside the 82-84 zone even with the 2% widening
+    # (82 * 0.98 = 80.36 > 80) -> no note.
+    valuation = _valuation_for_entry_plan(bear_lo=40, base_lo=60, base_hi=80, bull_hi=200)
+    technical = {
+        "support_levels": [
+            {"low": 59.0, "high": 61.0, "price": 60.0},
+            {"low": 82.0, "high": 84.0, "price": 83.0},
+        ]
+    }
+    plan = planning.compute_entry_plan(valuation, technical, 110)
+
+    by_level = {round((t["price_zone"]["lo"] + t["price_zone"]["hi"]) / 2): t for t in plan}
+    assert by_level[60]["note"] == "Teknik destek bölgesiyle örtüşüyor (59.00-61.00 USD)."
+    assert by_level[80]["note"] is None
+    assert by_level[40]["note"] is None
+
+
+def test_compute_entry_plan_support_confluence_tolerance_edge():
+    # A dip level just inside the widened band matches: zone 59-61, level
+    # 58 -> 59 * 0.98 = 57.82 <= 58, so the note fires; level 50 is far
+    # below the widened band, so it does not. (The two dip levels are >2%
+    # apart so dedupe keeps both.) Uses sma50/sma200 as the dip levels to
+    # keep the fixture to exactly two candidates.
+    valuation = {"fair_value_range": {"bear": {}, "base": {}, "bull": {}}}
+    technical = {
+        "sma50": 58.0,
+        "sma200": 50.0,
+        "support_levels": [{"low": 59.0, "high": 61.0, "price": 60.0}],
+    }
+    plan = planning.compute_entry_plan(valuation, technical, 110)
+
+    by_level = {round((t["price_zone"]["lo"] + t["price_zone"]["hi"]) / 2, 1): t for t in plan}
+    assert by_level[58.0]["note"] == "Teknik destek bölgesiyle örtüşüyor (59.00-61.00 USD)."
+    assert by_level[50.0]["note"] is None
+
+
+def test_compute_entry_plan_support_confluence_never_touches_breakout_notes():
+    # Breakout tranches are untouched by the support-confluence pass: a
+    # support zone overlapping a breakout level (via garbage inputs) must not
+    # attach a note, and the "Model üstü" note logic is unchanged. Reuses the
+    # model-üstü fixture with a support zone straddling the sma50 breakout.
+    valuation = {
+        "fair_value_range": {
+            "bear": {"lo": 60},
+            "base": {"lo": 70, "hi": 90},
+            "bull": {"hi": 150},
+        }
+    }
+    technical = {
+        "sma50": 120,
+        "resistance_levels": [{"price": 160}],
+        "support_levels": [{"low": 119.0, "high": 121.0, "price": 120.0}],
+    }
+    plan = planning.compute_entry_plan(valuation, technical, 100)
+    by_level = {round((t["price_zone"]["lo"] + t["price_zone"]["hi"]) / 2): t for t in plan}
+
+    assert by_level[120]["kind"] == "breakout"
+    assert by_level[120]["note"] is None  # confluence pass is dip-only
+    assert by_level[160]["note"].startswith("Model üstü")
+
+
+def test_apply_stabilization_condition_appends_after_confluence_note():
+    # When a dip tranche already carries a confluence note, the falling-knife
+    # stabilization precondition appends after it rather than replacing it.
+    valuation = _valuation_for_entry_plan(bear_lo=40, base_lo=60, base_hi=80, bull_hi=200)
+    technical = {"support_levels": [{"low": 59.0, "high": 61.0, "price": 60.0}]}
+    plan = planning.compute_entry_plan(valuation, technical, 110)
+    plan = planning.apply_stabilization_condition(plan, True)
+
+    by_level = {round((t["price_zone"]["lo"] + t["price_zone"]["hi"]) / 2): t for t in plan}
+    note = by_level[60]["note"]
+    assert note.startswith("Teknik destek bölgesiyle örtüşüyor (59.00-61.00 USD).")
+    assert "Stabilizasyon koşulu" in note
+
+
 def test_compute_entry_plan_kind_key_present_and_legacy_keys_retained():
     plan = _mixed_plan_for_rr_and_note_checks()
     assert plan  # sanity
-    expected_keys = {"n", "trigger", "price_zone", "size_pct", "invalidation", "target", "rr", "note", "kind"}
+    expected_keys = {
+        "n", "trigger", "price_zone", "size_pct", "invalidation", "target", "rr", "note", "kind",
+        "trigger_reason", "invalidation_reason", "target_reason", "size_reason",
+    }
     for t in plan:
         assert set(t.keys()) == expected_keys
         assert t["kind"] in ("dip", "breakout")
+
+
+# ---------------------------------------------------------------------------
+# compute_entry_plan -- educational "why" annotations (trigger_reason,
+# invalidation_reason, target_reason, size_reason)
+# ---------------------------------------------------------------------------
+
+
+def test_trigger_reason_lookup_covers_every_source_label():
+    # Nobody may add a new source label to _collect_entry_candidates without
+    # also adding its lookup entry -- this must fail loudly here, not
+    # silently (as an empty trigger_reason) in the report.
+    all_labels = set(planning._DIP_SOURCE_LABELS) | set(planning._BREAKOUT_SOURCE_LABELS) | {
+        planning._BREAKOUT_RESISTANCE_SOURCE_LABEL
+    }
+    assert len(all_labels) == 7 + 3 + 1  # sanity: no accidental overlap collapsing the set
+    for label in all_labels:
+        reason = planning._TRIGGER_REASON_BY_SOURCE.get(label)
+        assert reason, f"missing trigger_reason lookup entry for source label {label!r}"
+
+
+def test_compute_entry_plan_every_tranche_has_nonempty_trigger_reason():
+    plan = _mixed_plan_for_rr_and_note_checks()
+    assert plan
+    for t in plan:
+        assert isinstance(t["trigger_reason"], str) and t["trigger_reason"]
+
+
+def test_compute_entry_plan_invalidation_reason_names_lowest_kept_level_when_it_binds():
+    # Same fixture as test_compute_entry_plan_invalidation_uses_min_of_bear_lo_low_52w_and_lowest_kept_dip:
+    # bear_lo=50, low_52w=45, base_lo=30 -- base_lo=30 is the lowest kept dip
+    # level and sits below min(bear_lo, low_52w)=45, so it is the binding floor.
+    valuation = {"fair_value_range": {"bear": {"lo": 50}, "base": {"lo": 30, "hi": 60}, "bull": {"hi": 90}}}
+    technical = {"low_52w": 45}
+    plan = planning.compute_entry_plan(valuation, technical, 100)
+    dip_tranches = [t for t in plan if t["kind"] == "dip"]
+    assert dip_tranches
+    for t in dip_tranches:
+        assert "en düşük birikim kademesi" in t["invalidation_reason"]
+        assert "%5" in t["invalidation_reason"]
+        assert "PAYLAŞILAN" in t["invalidation_reason"]
+
+
+def test_compute_entry_plan_invalidation_reason_names_bear_lo_when_it_binds():
+    # bear_lo=20 is now the lowest of (bear_lo=20, low_52w=45, lowest kept
+    # dip level=20 -- bear_lo itself is a dip candidate) -- bear_lo binds.
+    valuation = {"fair_value_range": {"bear": {"lo": 20}, "base": {"lo": 30, "hi": 60}, "bull": {"hi": 90}}}
+    technical = {"low_52w": 45}
+    plan = planning.compute_entry_plan(valuation, technical, 100)
+    dip_tranches = [t for t in plan if t["kind"] == "dip"]
+    assert dip_tranches
+    for t in dip_tranches:
+        assert "ayı senaryosu alt bandı" in t["invalidation_reason"]
+        assert "%5" in t["invalidation_reason"]
+
+
+def test_compute_entry_plan_invalidation_reason_differs_between_dip_and_breakout():
+    plan = _mixed_plan_for_rr_and_note_checks()
+    dip_reasons = {t["invalidation_reason"] for t in plan if t["kind"] == "dip"}
+    breakout_reasons = {t["invalidation_reason"] for t in plan if t["kind"] == "breakout"}
+    assert dip_reasons and breakout_reasons
+    assert dip_reasons.isdisjoint(breakout_reasons)
+    # Dip reason names the SHARED structural floor; breakout reason explains
+    # its own per-tranche failed-breakout stop -- the two must read differently.
+    assert all("PAYLAŞILAN" in r for r in dip_reasons)
+    assert all("kendine özel" in r for r in breakout_reasons)
+    assert all("%5" in r for r in dip_reasons | breakout_reasons)
+
+
+def test_compute_entry_plan_target_reason_names_bull_hi_when_available():
+    valuation = _valuation_for_entry_plan()  # bull_hi=200 present
+    plan = planning.compute_entry_plan(valuation, None, 110)
+    assert plan
+    for t in plan:
+        assert t["target_reason"] == planning._TARGET_REASON_BULL
+        assert "boğa senaryosunun üst bandına" in t["target_reason"]
+
+
+def test_compute_entry_plan_target_reason_names_base_hi_fallback_when_bull_hi_missing():
+    valuation = {"fair_value_range": {"bear": {"lo": 40}, "base": {"lo": 60, "hi": 80}, "bull": {}}}
+    plan = planning.compute_entry_plan(valuation, None, 110)
+    assert plan
+    for t in plan:
+        assert t["target_reason"] == planning._TARGET_REASON_BASE_FALLBACK
+        assert "baz senaryonun üst bandına" in t["target_reason"]
+
+
+def test_compute_entry_plan_target_reason_unavailable_when_no_target():
+    valuation = {"fair_value_range": {"bear": {"lo": 40}, "base": {}, "bull": {}}}
+    plan = planning.compute_entry_plan(valuation, None, 100)
+    assert plan
+    for t in plan:
+        assert t["target"] is None
+        assert t["target_reason"] == planning._TARGET_REASON_UNAVAILABLE
+
+
+def test_compute_entry_plan_size_reason_present_and_identical_across_tranches():
+    plan = _mixed_plan_for_rr_and_note_checks()
+    assert plan
+    reasons = {t["size_reason"] for t in plan}
+    assert reasons == {planning._SIZE_REASON_TR}
 
 
 # ---------------------------------------------------------------------------
@@ -961,3 +1168,286 @@ def test_select_thesis_metric_cycle_none_for_single_point_metrics_fallback():
     result = planning.select_thesis_metric("growth_unprofitable", [], {"revenue_cagr_5y": 0.25})
     assert result["latest_value"] == "%25.0"
     assert result["cycle"] is None
+
+
+# ---------------------------------------------------------------------------
+# METODOLOJI.md Sec.7's quarterly thesis-invalidation rule:
+# _classify_quarterly_series (pure classification), _establish_or_load_anchor
+# (persisted day-1 anchor direction, sec_analyzer.store.thesis_anchors), and
+# select_thesis_metric's end-to-end "quarterly_check" wiring.
+#
+# _classify_quarterly_series compares each quarter to the PRIOR quarter in a
+# window (not a trend-window mean), against a per-metric deadband:
+#   margin/ROE-shaped keys (net_margin, gross_margin, fcf_margin, roe): 1.0pp
+#   yoy_revenue_growth: 2.0pp (momentum's own revenue-accel deadband)
+# A delta inside the deadband is neutral (against_thesis=None): it neither
+# breaks nor extends the trailing consecutive-against-thesis streak.
+# invalidated = consecutive_against >= 2 (METODOLOJI Sec.7's "iki çeyrek
+# üst üste tezin aksi yönde" rule).
+# ---------------------------------------------------------------------------
+
+from sec_analyzer.config import Config
+from sec_analyzer.store import thesis_anchors as TA
+
+
+@pytest.fixture
+def db_path(tmp_path, monkeypatch):
+    """A throwaway SQLite path, also installed as Config.DB_PATH, so
+    planning.py's anchor persistence (which always resolves the default
+    Config.DB_PATH -- it never receives a db_path override) is isolated
+    per test. Mirrors test_assumptions_cache.py / test_thesis_anchors.py."""
+    p = str(tmp_path / "test.sqlite3")
+    monkeypatch.setattr(Config, "DB_PATH", p)
+    return p
+
+
+def _qs(pairs):
+    """Build an ascending [{"period_end", "value"}, ...] quarterly series
+    from a list of (period_end, value) tuples."""
+    return [{"period_end": pe, "value": v} for pe, v in pairs]
+
+
+def _normalized_with_quarters(cik, netincome_quarters, revenue_quarters):
+    """A normalized-facts-shaped dict carrying just enough quarterly
+    NetIncome/Revenue data for quarterly_ratio_series (net_margin) to work,
+    plus the `cik` select_thesis_metric's quarterly_check keys the
+    persisted anchor on."""
+    return {
+        "cik": cik,
+        "entity_name": "X",
+        "currency": "USD",
+        "annual": {},
+        "quarterly": {
+            "NetIncome": _qs(netincome_quarters),
+            "Revenue": _qs(revenue_quarters),
+        },
+        "missing": [],
+        "matched_tags": {},
+    }
+
+
+# --- _classify_quarterly_series -------------------------------------------
+
+def test_classify_quarterly_series_two_consecutive_against_thesis_invalidates():
+    # anchor_direction="improving" -> thesis_is_up=True; deadband=1.0pp (net_margin).
+    # Q1=20.0 (no prior -> neutral)
+    # Q2=22.0: diff=+2.0 (>=1.0pp) -> with-thesis (against=False)
+    # Q3=19.0: diff=-3.0 -> against-thesis (against=True)
+    # Q4=15.0: diff=-4.0 -> against-thesis (against=True)
+    # Trailing streak walks back from Q4: True, True, then Q2=False stops it -> 2.
+    series = _qs([
+        ("2023-03-31", 20.0), ("2023-06-30", 22.0), ("2023-09-30", 19.0), ("2023-12-31", 15.0),
+    ])
+    result = planning._classify_quarterly_series("net_margin", series, "improving", 2022)
+    assert result is not None
+    assert result["anchor_direction"] == "improving"
+    assert result["anchor_established_fy"] == 2022
+    assert [q["against_thesis"] for q in result["quarters"]] == [None, False, True, True]
+    assert result["consecutive_against"] == 2
+    assert result["invalidated"] is True
+
+
+def test_classify_quarterly_series_with_thesis_quarter_breaks_the_streak():
+    # Same anchor/deadband as above, but a with-thesis quarter sits between
+    # two against-thesis quarters -- only the TRAILING run counts.
+    # Q1=20.0 (neutral, no prior)
+    # Q2=17.0: diff=-3.0 -> against=True
+    # Q3=21.0: diff=+4.0 -> against=False (breaks the streak)
+    # Q4=19.0: diff=-2.0 -> against=True (streak restarts, only 1 so far)
+    series = _qs([
+        ("2023-03-31", 20.0), ("2023-06-30", 17.0), ("2023-09-30", 21.0), ("2023-12-31", 19.0),
+    ])
+    result = planning._classify_quarterly_series("net_margin", series, "improving", None)
+    assert [q["against_thesis"] for q in result["quarters"]] == [None, True, False, True]
+    assert result["consecutive_against"] == 1
+    assert result["invalidated"] is False
+
+
+def test_classify_quarterly_series_deadband_noise_is_neutral_extends_streak_without_counting():
+    # A delta inside the 1.0pp deadband is neutral: it is skipped when
+    # walking the trailing streak backward (doesn't break it) but also
+    # doesn't add to the count (doesn't extend it) -- consecutive_against
+    # ends up counting only the two real against-thesis quarters, not three.
+    # Q1=20.0 (neutral, no prior)
+    # Q2=17.0: diff=-3.0 -> against=True
+    # Q3=17.5: diff=+0.5 (abs < 1.0pp deadband) -> neutral (against=None)
+    # Q4=14.5: diff=-3.0 -> against=True
+    series = _qs([
+        ("2023-03-31", 20.0), ("2023-06-30", 17.0), ("2023-09-30", 17.5), ("2023-12-31", 14.5),
+    ])
+    result = planning._classify_quarterly_series("net_margin", series, "improving", None)
+    assert [q["against_thesis"] for q in result["quarters"]] == [None, True, None, True]
+    # Walking back from Q4: True(1) -> Q3 None (skipped, continues) -> Q2 True(2).
+    assert result["consecutive_against"] == 2
+    assert result["invalidated"] is True
+
+
+def test_classify_quarterly_series_fewer_than_three_usable_quarters_returns_none():
+    series = _qs([("2023-03-31", 20.0), ("2023-06-30", 22.0)])
+    assert planning._classify_quarterly_series("net_margin", series, "improving", None) is None
+
+
+def test_classify_quarterly_series_empty_series_returns_none():
+    assert planning._classify_quarterly_series("net_margin", [], "improving", None) is None
+
+
+def test_classify_quarterly_series_uses_per_metric_deadband():
+    # Same +1.5pp-per-quarter series, anchor_direction="deteriorating" (thesis_is_up=False,
+    # so a RISING value is against-thesis). Under yoy_revenue_growth's 2.0pp deadband,
+    # 1.5pp is neutral every quarter -> no invalidation. Under net_margin's 1.0pp
+    # deadband, the same 1.5pp deltas all clear the bar -> against every quarter.
+    series = _qs([
+        ("2023-03-31", 10.0), ("2023-06-30", 11.5), ("2023-09-30", 13.0), ("2023-12-31", 14.5),
+    ])
+    growth_result = planning._classify_quarterly_series("yoy_revenue_growth", series, "deteriorating", None)
+    assert [q["against_thesis"] for q in growth_result["quarters"]] == [None, None, None, None]
+    assert growth_result["consecutive_against"] == 0
+    assert growth_result["invalidated"] is False
+
+    margin_result = planning._classify_quarterly_series("net_margin", series, "deteriorating", None)
+    assert [q["against_thesis"] for q in margin_result["quarters"]] == [None, True, True, True]
+    assert margin_result["consecutive_against"] == 3
+    assert margin_result["invalidated"] is True
+
+
+# --- _establish_or_load_anchor ---------------------------------------------
+
+def test_establish_or_load_anchor_establishes_on_first_call(db_path):
+    anchor = planning._establish_or_load_anchor("111", "net_margin", "improving", 2023)
+    assert anchor is not None
+    assert anchor["cik"] == "111"
+    assert anchor["metric_key"] == "net_margin"
+    assert anchor["direction"] == "improving"
+    assert anchor["established_fy"] == 2023
+    assert TA.get_anchor("111") == anchor
+
+
+def test_establish_or_load_anchor_sticks_once_established_even_if_trend_later_flips(db_path):
+    planning._establish_or_load_anchor("112", "net_margin", "improving", 2022)
+    # A later run's annual trend flips to deteriorating, but the metric_key
+    # is unchanged -- the anchor must NOT be rewritten (that reversal is
+    # exactly what the quarterly check exists to catch).
+    loaded = planning._establish_or_load_anchor("112", "net_margin", "deteriorating", 2024)
+    assert loaded["direction"] == "improving"
+    assert loaded["established_fy"] == 2022
+
+
+def test_establish_or_load_anchor_defers_when_trend_is_none_or_flat(db_path):
+    assert planning._establish_or_load_anchor("113", "net_margin", None, 2023) is None
+    assert planning._establish_or_load_anchor("113", "net_margin", "flat", 2023) is None
+    # Nothing was persisted -- deferred, not silently established as None.
+    assert TA.get_anchor("113") is None
+
+
+def test_establish_or_load_anchor_reestablishes_on_metric_key_change():
+    # Simulates a sector reclassification swapping the anchor metric
+    # (e.g. net_margin -> gross_margin): the stored anchor's metric_key no
+    # longer matches, so it is re-established with THIS run's trend.
+    planning._establish_or_load_anchor("114", "net_margin", "improving", 2022)
+    reestablished = planning._establish_or_load_anchor("114", "gross_margin", "deteriorating", 2023)
+    assert reestablished["metric_key"] == "gross_margin"
+    assert reestablished["direction"] == "deteriorating"
+    assert reestablished["established_fy"] == 2023
+
+    # A later run under the SAME (now gross_margin) metric_key, even with a
+    # trend that flipped back to improving, must not overwrite it again.
+    loaded_again = planning._establish_or_load_anchor("114", "gross_margin", "improving", 2024)
+    assert loaded_again["metric_key"] == "gross_margin"
+    assert loaded_again["direction"] == "deteriorating"
+    assert loaded_again["established_fy"] == 2023
+
+
+# --- select_thesis_metric integration (quarterly_check end-to-end) --------
+
+def test_select_thesis_metric_quarterly_check_none_when_normalized_not_supplied(db_path):
+    # Backward compatibility: existing call sites that don't pass `normalized`
+    # simply get quarterly_check=None, same as a missing `cycle`.
+    ratios = [{"fy": 2023, "net_margin": 0.234}, {"fy": 2022, "net_margin": 0.20}]
+    result = planning.select_thesis_metric("mature", ratios, {})
+    assert result["quarterly_check"] is None
+
+
+def test_select_thesis_metric_quarterly_check_none_for_single_point_metrics_fallback(db_path):
+    # growth_unprofitable with no ratios series falls back to metrics'
+    # revenue_cagr_5y -- no series, so chosen_key stays None and
+    # quarterly_check is never even attempted (even though normalized,
+    # with a cik, IS supplied here).
+    normalized = _normalized_with_quarters("222", [], [])
+    result = planning.select_thesis_metric(
+        "growth_unprofitable", [], {"revenue_cagr_5y": 0.25}, normalized=normalized
+    )
+    assert result["quarterly_check"] is None
+    # And no anchor was persisted for this cik, since the check never ran.
+    assert TA.get_anchor("222") is None
+
+
+def test_select_thesis_metric_quarterly_check_none_for_brand_new_pair_with_no_trend_yet(db_path):
+    # Only one fiscal year of ratios data -> trend is None (nothing to
+    # compare against) -> _establish_or_load_anchor defers -> no anchor yet
+    # -> quarterly_check is None, even though normalized/cik was supplied.
+    ratios = [{"fy": 2023, "net_margin": 0.20}]
+    normalized = _normalized_with_quarters("333", [], [])
+    result = planning.select_thesis_metric("mature", ratios, {}, normalized=normalized)
+    assert result["trend"] is None
+    assert result["quarterly_check"] is None
+    assert TA.get_anchor("333") is None
+
+
+def test_select_thesis_metric_quarterly_check_invalidation_appends_turkish_warning(db_path):
+    # Annual trend: fy2022=0.15 -> fy2023=0.20, diff=+0.05 >= 0.01 threshold
+    # -> trend "improving" -> a brand-new anchor is established this same run
+    # with direction="improving" (thesis_is_up=True), established_fy=2023.
+    ratios = [{"fy": 2022, "net_margin": 0.15}, {"fy": 2023, "net_margin": 0.20}]
+    # Quarterly net_margin (NetIncome/Revenue*100, Revenue=100 flat so the
+    # ratio IS the raw NetIncome value): 20.0, 22.0, 19.0, 15.0 -- identical
+    # to the hand-verified "two consecutive against-thesis" case above:
+    # Q2 (+2.0) is with-thesis, Q3 (-3.0) and Q4 (-4.0) are against-thesis
+    # back-to-back -> consecutive_against=2 -> invalidated=True.
+    normalized = _normalized_with_quarters(
+        "444",
+        netincome_quarters=[
+            ("2023-03-31", 20.0), ("2023-06-30", 22.0), ("2023-09-30", 19.0), ("2023-12-31", 15.0),
+        ],
+        revenue_quarters=[
+            ("2023-03-31", 100.0), ("2023-06-30", 100.0), ("2023-09-30", 100.0), ("2023-12-31", 100.0),
+        ],
+    )
+    result = planning.select_thesis_metric("mature", ratios, {}, normalized=normalized)
+
+    assert result["trend"] == "improving"
+    qc = result["quarterly_check"]
+    assert qc is not None
+    assert qc["anchor_direction"] == "improving"
+    assert qc["anchor_established_fy"] == 2023
+    assert qc["consecutive_against"] == 2
+    assert qc["invalidated"] is True
+    assert planning._THESIS_INVALIDATION_TRIGGERED_TR in result["rationale"]
+    # The general Sec.7 rule sentence is always present too, in addition to
+    # the invalidation-triggered one.
+    assert planning._THESIS_INVALIDATION_RULE_TR in result["rationale"]
+
+    # The anchor is now persisted for this cik/metric.
+    anchor = TA.get_anchor("444")
+    assert anchor is not None
+    assert anchor["metric_key"] == "net_margin"
+    assert anchor["direction"] == "improving"
+
+
+def test_select_thesis_metric_quarterly_check_anchor_persists_across_calls(db_path):
+    # First run establishes the anchor from that run's own annual trend.
+    ratios = [{"fy": 2022, "net_margin": 0.15}, {"fy": 2023, "net_margin": 0.20}]
+    normalized = _normalized_with_quarters(
+        "555",
+        netincome_quarters=[("2023-03-31", 20.0), ("2023-06-30", 21.0), ("2023-09-30", 22.0)],
+        revenue_quarters=[("2023-03-31", 100.0), ("2023-06-30", 100.0), ("2023-09-30", 100.0)],
+    )
+    first = planning.select_thesis_metric("mature", ratios, {}, normalized=normalized)
+    assert first["quarterly_check"]["anchor_direction"] == "improving"
+
+    # A second run (e.g. next quarter) with the SAME cik/metric reuses the
+    # already-established anchor rather than re-deriving it -- confirmed by
+    # checking the stored anchor's established_fy/direction are unchanged.
+    anchor_after_first = TA.get_anchor("555")
+    second = planning.select_thesis_metric("mature", ratios, {}, normalized=normalized)
+    assert second["quarterly_check"]["anchor_direction"] == "improving"
+    assert TA.get_anchor("555") == anchor_after_first

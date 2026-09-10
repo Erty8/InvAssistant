@@ -12,6 +12,7 @@ from sec_analyzer.normalize.normalizer import (
     format_table,
     latest_annual_value,
     normalize_facts,
+    quarterly_ratio_series,
     to_annual_series,
 )
 
@@ -126,6 +127,81 @@ def test_depreciation_concept_extracted_as_annual_flow_series():
     assert annual is not None
     assert annual[0]["value"] == 250_000
     assert annual[0]["fy"] == 2022
+
+
+def test_distress_screen_concepts_classified_and_extracted_correctly():
+    """WP8 concepts (Altman Z-score / Beneish M-Score inputs) round-trip
+    through normalize_facts with the correct flow/stock classification:
+    RetainedEarningsAccumulatedDeficit and PropertyPlantAndEquipmentGross
+    are point-in-time balance-sheet snapshots ("stock"), while
+    SellingGeneralAndAdministrativeExpense is a period activity ("flow"),
+    exactly like the pre-existing Depreciation/TotalAssets concepts they
+    sit alongside.
+    """
+    from sec_analyzer.normalize.concepts import FLOW_CONCEPTS, STOCK_CONCEPTS
+
+    assert "SellingGeneralAndAdministrativeExpense" in FLOW_CONCEPTS
+    assert "RetainedEarningsAccumulatedDeficit" in STOCK_CONCEPTS
+    assert "PropertyPlantAndEquipmentGross" in STOCK_CONCEPTS
+
+    usgaap = {
+        "RetainedEarningsAccumulatedDeficit": _usd_tag(
+            [{"end": "2022-12-31", "val": 400_000, "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2023-02-01"}]
+        ),
+        "PropertyPlantAndEquipmentGross": _usd_tag(
+            [{"end": "2022-12-31", "val": 900_000, "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2023-02-01"}]
+        ),
+        "SellingGeneralAndAdministrativeExpense": _usd_tag(
+            [
+                {
+                    "start": "2022-01-01",
+                    "end": "2022-12-31",
+                    "val": 120_000,
+                    "fy": 2022,
+                    "fp": "FY",
+                    "form": "10-K",
+                    "filed": "2023-02-01",
+                }
+            ]
+        ),
+    }
+    result = normalize_facts(_make_facts(usgaap=usgaap))
+
+    assert result["matched_tags"]["RetainedEarningsAccumulatedDeficit"] == ["RetainedEarningsAccumulatedDeficit"]
+    assert result["matched_tags"]["PropertyPlantAndEquipmentGross"] == ["PropertyPlantAndEquipmentGross"]
+    assert result["matched_tags"]["SellingGeneralAndAdministrativeExpense"] == [
+        "SellingGeneralAndAdministrativeExpense"
+    ]
+    assert result["annual"]["RetainedEarningsAccumulatedDeficit"][0]["value"] == 400_000
+    assert result["annual"]["PropertyPlantAndEquipmentGross"][0]["value"] == 900_000
+    assert result["annual"]["SellingGeneralAndAdministrativeExpense"][0]["value"] == 120_000
+
+
+def test_sga_alternate_tag_fallback():
+    """The plural `SellingGeneralAndAdministrativeExpenses` tag (used by some
+    filers instead of the singular-form preferred tag) is a valid fallback.
+    """
+    usgaap = {
+        "SellingGeneralAndAdministrativeExpenses": _usd_tag(
+            [
+                {
+                    "start": "2022-01-01",
+                    "end": "2022-12-31",
+                    "val": 75_000,
+                    "fy": 2022,
+                    "fp": "FY",
+                    "form": "10-K",
+                    "filed": "2023-02-01",
+                }
+            ]
+        ),
+    }
+    result = normalize_facts(_make_facts(usgaap=usgaap))
+
+    assert result["matched_tags"]["SellingGeneralAndAdministrativeExpense"] == [
+        "SellingGeneralAndAdministrativeExpenses"
+    ]
+    assert result["annual"]["SellingGeneralAndAdministrativeExpense"][0]["value"] == 75_000
 
 
 def test_depreciation_concept_fallback_tag_priority():
@@ -830,3 +906,90 @@ def test_concept_with_tag_present_but_wrong_unit_is_missing():
     assert result["annual"]["EPS"] is None
     assert result["quarterly"]["EPS"] is None
     assert "EPS" in result["missing"]
+
+
+# ---------------------------------------------------------------------------
+# quarterly_ratio_series -- generalized numerator/denominator quarterly ratio
+# (percent units), used by momentum._margin_series (denominator="Revenue")
+# and by interpret.planning's thesis-metric quarterly-invalidation check
+# (METODOLOJI.md Sec.7) for other denominators like StockholdersEquity.
+#
+# These build the already-`normalized`-shaped dict directly (bypassing
+# normalize_facts) since quarterly_ratio_series only reads
+# normalized["quarterly"]/["annual"] -- to_quarterly_series treats a record
+# with no "start" key as span=None, i.e. a genuine single-quarter value taken
+# directly (no YTD differencing), which keeps these fixtures simple.
+# ---------------------------------------------------------------------------
+
+def _qrow(period_end, value):
+    return {"period_end": period_end, "value": value}
+
+
+def test_quarterly_ratio_series_hand_computed_ratio():
+    # NetIncome=25.0, Revenue=200.0 -> 25.0/200.0*100 = 12.5
+    normalized = {
+        "quarterly": {
+            "NetIncome": [_qrow("2023-03-31", 25.0)],
+            "Revenue": [_qrow("2023-03-31", 200.0)],
+        },
+        "annual": {},
+    }
+    result = quarterly_ratio_series(normalized, "NetIncome", "Revenue")
+    assert result == [{"period_end": "2023-03-31", "value": 12.5}]
+
+
+def test_quarterly_ratio_series_rounds_to_two_decimals():
+    # 100.0/300.0*100 = 33.3333... -> rounds to 33.33
+    normalized = {
+        "quarterly": {
+            "NetIncome": [_qrow("2023-03-31", 100.0)],
+            "Revenue": [_qrow("2023-03-31", 300.0)],
+        },
+        "annual": {},
+    }
+    result = quarterly_ratio_series(normalized, "NetIncome", "Revenue")
+    assert result == [{"period_end": "2023-03-31", "value": 33.33}]
+
+
+def test_quarterly_ratio_series_skips_quarter_with_nonpositive_denominator():
+    # Q1: 25.0/200.0*100 = 12.5 -> kept.
+    # Q2: denominator is exactly 0 -> undefined ratio -> skipped.
+    # Q3: denominator is negative (e.g. negative equity) -> skipped.
+    normalized = {
+        "quarterly": {
+            "NetIncome": [_qrow("2023-03-31", 25.0), _qrow("2023-06-30", 10.0), _qrow("2023-09-30", 5.0)],
+            "Revenue": [_qrow("2023-03-31", 200.0), _qrow("2023-06-30", 0.0), _qrow("2023-09-30", -50.0)],
+        },
+        "annual": {},
+    }
+    result = quarterly_ratio_series(normalized, "NetIncome", "Revenue")
+    assert result == [{"period_end": "2023-03-31", "value": 12.5}]
+
+
+def test_quarterly_ratio_series_skips_quarter_missing_from_either_series():
+    # 2023-09-30 has a numerator value but no matching denominator period_end
+    # -> that quarter is dropped entirely rather than treated as 0/None.
+    normalized = {
+        "quarterly": {
+            "NetIncome": [_qrow("2023-03-31", 25.0), _qrow("2023-09-30", 30.0)],
+            "Revenue": [_qrow("2023-03-31", 200.0)],
+        },
+        "annual": {},
+    }
+    result = quarterly_ratio_series(normalized, "NetIncome", "Revenue")
+    assert result == [{"period_end": "2023-03-31", "value": 12.5}]
+
+
+def test_quarterly_ratio_series_empty_when_numerator_concept_entirely_missing():
+    normalized = {"quarterly": {"Revenue": [_qrow("2023-03-31", 200.0)]}, "annual": {}}
+    assert quarterly_ratio_series(normalized, "NetIncome", "Revenue") == []
+
+
+def test_quarterly_ratio_series_empty_when_denominator_concept_entirely_missing():
+    normalized = {"quarterly": {"NetIncome": [_qrow("2023-03-31", 25.0)]}, "annual": {}}
+    assert quarterly_ratio_series(normalized, "NetIncome", "Revenue") == []
+
+
+def test_quarterly_ratio_series_empty_when_both_concepts_missing():
+    normalized = {"quarterly": {}, "annual": {}}
+    assert quarterly_ratio_series(normalized, "NetIncome", "Revenue") == []

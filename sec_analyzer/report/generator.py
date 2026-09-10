@@ -114,9 +114,12 @@ def render_report_html(
     flags: Optional[List[dict]] = None,
     price: Optional[float] = None,
     as_of: Optional[str] = None,
+    price_source: Optional[str] = None,
     entity_name: Optional[str] = None,
     analyst: Optional[dict] = None,
     analysis_as_of: Optional[str] = None,
+    financials: Optional[dict] = None,
+    earnings: Optional[dict] = None,
 ) -> str:
     """Build the standalone verdict-card report HTML as a string.
 
@@ -148,6 +151,10 @@ def render_report_html(
             :func:`sec_analyzer.normalize.red_flags.detect_red_flags`, or
             ``None``/empty if none fired.
         price: The latest market price per share, or ``None`` if unavailable.
+        price_source: Which upstream produced the price history
+            (``"yfinance"``/``"cache(...)"``/``"stale-cache(...)"``),
+            surfaced in the report's provenance line so it names the source
+            actually used rather than a hardcoded one. ``None`` omits it.
         as_of: The date that ``price`` is as of (``"YYYY-MM-DD"``), or
             ``None``.
         entity_name: The filer's resolved company name (e.g. ``"Apple
@@ -162,6 +169,15 @@ def render_report_html(
             run. Distinct from ``as_of`` (which is the latest *price* bar
             date); surfaced as a report banner so a backtest run is never
             mistaken for a live one.
+        financials: The serialized financials payload (annual/quarterly
+            concept series + ratios) produced by
+            :func:`sec_analyzer.report.financials.serialize_financials`, or
+            ``None``. Feeds the client-side "Balance sheet" tab;
+            when absent that tab simply renders an empty state.
+        earnings: The dict returned by
+            :func:`sec_analyzer.fetch.earnings.get_earnings_history`, or
+            ``None``. Display-only quarterly EPS beat/miss history shown in
+            the balance-sheet tab -- never feeds the valuation engine.
 
     Returns:
         The complete, self-contained report HTML as a string.
@@ -180,6 +196,7 @@ def render_report_html(
         "price": price,
         "analyst": analyst,
         "as_of": as_of,
+        "price_source": price_source,
         "analysis_as_of": analysis_as_of,
         "generated_on": generated_on,
         "result": result or {},
@@ -187,6 +204,8 @@ def render_report_html(
         "technical": technical or {},
         "red_flags": flags or [],
         "entity_name": entity_name,
+        "financials": financials or {},
+        "earnings": earnings,
     }
 
     return _inject_payload(payload)
@@ -213,7 +232,7 @@ def render_search_page(
 
     Args:
         horizons: ``(value, label)`` pairs for the horizon selector, e.g.
-            ``[("3m", "3 ay"), ("1y", "1 yıl"), ("5y", "5 yıl")]``.
+            ``[("3m", "3 months"), ("1y", "1 year"), ("5y", "5 years")]``.
         providers: ``(value, label)`` pairs for the analysis-provider
             selector.
         default_horizon: The horizon value pre-selected on page load.
@@ -280,6 +299,88 @@ def render_history_page(
     return _inject_payload(payload)
 
 
+def render_overview_page(overview: Optional[dict]) -> str:
+    """Build the portfolio-overview dashboard HTML.
+
+    The ``GET /overview`` counterpart to :func:`render_report_html` /
+    :func:`render_search_page` / :func:`render_history_page` /
+    :func:`render_swing_page`: loads the same ``template.html`` shell but
+    injects a ``mode: "overview"`` payload the client-side ``renderOverviewMode``
+    renders as a sector heat map plus a sortable table of every ticker that has
+    a stored verdict.
+
+    Args:
+        overview: The dict returned by
+            :func:`sec_analyzer.screener.overview.build_overview` -- built
+            from :func:`sec_analyzer.store.database.load_latest_verdicts` by
+            the route. ``None`` (or an empty payload) renders an empty state
+            rather than crashing, so a database with no stored verdicts yet
+            still serves a page.
+
+    Returns:
+        The complete, self-contained overview-page HTML as a string.
+
+    Raises:
+        ValueError: If ``template.html`` is missing the ``__DATA_JSON__``
+            placeholder (a packaging error).
+    """
+    payload = {
+        "mode": "overview",
+        "overview": overview or {},
+        "generated_on": date.today().isoformat(),
+    }
+    return _inject_payload(payload)
+
+
+def render_swing_page(
+    scan: Optional[dict],
+    index: str = "SP500",
+    indexes: Optional[List[Tuple[str, str]]] = None,
+) -> str:
+    """Build the swing-trade screener page HTML for one index.
+
+    The ``GET /swing`` counterpart to :func:`render_report_html` /
+    :func:`render_search_page` / :func:`render_history_page`: loads the same
+    ``template.html`` shell but injects a ``mode: "swing"`` payload the
+    client-side ``renderSwingMode`` renders as a filterable/sortable table of
+    swing-setup scores, an index selector, and scan controls that
+    ``POST /api/swing/scan`` and poll ``GET /api/swing/status`` (see
+    ``sec_analyzer/screener/SWING_SPEC.md`` Sec.6-7).
+
+    Args:
+        scan: The Sec.4 scan-result dict returned by
+            :func:`sec_analyzer.screener.swing_scan.scan_swing` -- typically
+            whatever :func:`sec_analyzer.store.database.load_latest_swing_scan`
+            last persisted for ``index`` -- or ``None`` when that index has
+            never been scanned. The template renders an empty state in that
+            case rather than crashing.
+        index: The currently displayed index code (e.g. ``"SP500"``,
+            ``"NDX"``), already resolved via
+            :func:`sec_analyzer.screener.universe.normalize_index` by the
+            caller. Defaults to ``"SP500"`` so existing call sites keep
+            rendering the S&P 500 unchanged.
+        indexes: ``[(code, label), ...]`` pairs for the index selector, in
+            display order -- typically built from
+            :data:`sec_analyzer.screener.universe.UNIVERSES` by the route.
+            Defaults to an empty list (no selector rendered) when omitted.
+
+    Returns:
+        The complete, self-contained swing-screener page HTML as a string.
+
+    Raises:
+        ValueError: If ``template.html`` is missing the ``__DATA_JSON__``
+            placeholder (a packaging error).
+    """
+    payload = {
+        "mode": "swing",
+        "scan": scan,
+        "index": index,
+        "indexes": [list(p) for p in (indexes or [])],
+        "generated_on": date.today().isoformat(),
+    }
+    return _inject_payload(payload)
+
+
 def generate_report(
     ticker: str,
     horizon: str,
@@ -289,10 +390,13 @@ def generate_report(
     flags: Optional[List[dict]] = None,
     price: Optional[float] = None,
     as_of: Optional[str] = None,
+    price_source: Optional[str] = None,
     out_dir: Optional[str] = None,
     entity_name: Optional[str] = None,
     analyst: Optional[dict] = None,
     analysis_as_of: Optional[str] = None,
+    financials: Optional[dict] = None,
+    earnings: Optional[dict] = None,
 ) -> str:
     """Render and save the HTML verdict-card report for one ticker/horizon.
 
@@ -321,6 +425,8 @@ def generate_report(
         price: The latest market price per share, or ``None`` if unavailable.
         as_of: The date that ``price`` is as of (``"YYYY-MM-DD"``), or
             ``None``.
+        price_source: Which upstream produced the price history -- see
+            :func:`render_report_html`.
         out_dir: Directory to write the report into. Defaults to
             ``Config.REPORTS_DIR``; created if it doesn't already exist.
         entity_name: The filer's resolved company name, or ``None`` if
@@ -332,6 +438,11 @@ def generate_report(
             mode, or ``None`` -- see :func:`render_report_html`. When set,
             an ``_asof-<date>`` segment is added to the saved filename so a
             backtest report never overwrites the same-day live report.
+        financials: The serialized financials payload feeding the report's
+            "Balance sheet" tab, or ``None`` -- see
+            :func:`render_report_html`.
+        earnings: Display-only quarterly EPS beat/miss history, or ``None``
+            -- see :func:`render_report_html`.
 
     Returns:
         The path the report was saved to.
@@ -342,7 +453,9 @@ def generate_report(
     html = render_report_html(
         ticker, horizon, result,
         metrics=metrics, technical=technical, flags=flags, price=price, as_of=as_of,
+        price_source=price_source,
         entity_name=entity_name, analyst=analyst, analysis_as_of=analysis_as_of,
+        financials=financials, earnings=earnings,
     )
 
     target_dir = out_dir or Config.REPORTS_DIR

@@ -43,13 +43,13 @@ _WEIGHTS = {
     "oscillator": 0.05,
 }
 
-#: Turkish display labels for each component (report/terminal driver readout).
+#: Display labels for each component (report/terminal driver readout).
 _COMPONENT_LABELS = {
-    "returns": "Getiri (3a/6a/12-1)",
-    "rel_strength": "Relatif güç",
-    "trend": "Trend kalitesi",
-    "volume": "Hacim teyidi",
-    "oscillator": "Osilatör (RSI/MACD)",
+    "returns": "Returns (3m/6m/12-1)",
+    "rel_strength": "Relative strength",
+    "trend": "Trend quality",
+    "volume": "Volume confirmation",
+    "oscillator": "Oscillator (RSI/MACD)",
 }
 
 #: Direction/label band edges on the [-1, 1] score S (kept identical to the
@@ -272,10 +272,10 @@ def _oscillator_subscore(ind: dict) -> "float | None":
 
 
 def _acceleration(ind: dict, direction: str) -> "str | None":
-    """Turkish acceleration word from the latest-month pace vs. the pace
-    implied by the two months before it, interpreted in the direction of the
-    prevailing momentum. Mirrors the prior JS logic (deadband + direction
-    mapping). ``None`` when the 1m/3m returns aren't both available."""
+    """Acceleration word from the latest-month pace vs. the pace implied by
+    the two months before it, interpreted in the direction of the prevailing
+    momentum. Mirrors the prior JS logic (deadband + direction mapping).
+    ``None`` when the 1m/3m returns aren't both available."""
     r1 = ind.get("return_1m_pct")
     r3 = ind.get("return_3m_pct")
     if not (_is_num(r1) and _is_num(r3)):
@@ -290,22 +290,22 @@ def _acceleration(ind: dict, direction: str) -> "str | None":
     else:
         accel = "steady"
     if direction == "down":
-        return "hızlanıyor" if accel == "down" else ("yavaşlıyor" if accel == "up" else "sabit")
+        return "accelerating" if accel == "down" else ("slowing" if accel == "up" else "steady")
     # up and flat share the same literal reading of the pace change.
-    return "hızlanıyor" if accel == "up" else ("yavaşlıyor" if accel == "down" else "sabit")
+    return "accelerating" if accel == "up" else ("slowing" if accel == "down" else "steady")
 
 
 def _label_for(s: float) -> "tuple[str, str, str]":
-    """Map the score ``s`` to (Turkish label, direction, arrow)."""
+    """Map the score ``s`` to (label, direction, arrow)."""
     if s >= _S_STRONG:
-        return "GÜÇLÜ YUKARI MOMENTUM", "up", "↑"
+        return "STRONG UPWARD MOMENTUM", "up", "↑"
     if s >= _S_MILD:
-        return "YUKARI MOMENTUM", "up", "↑"
+        return "UPWARD MOMENTUM", "up", "↑"
     if s >= -_S_MILD:
-        return "YATAY MOMENTUM", "flat", "→"
+        return "FLAT MOMENTUM", "flat", "→"
     if s > -_S_STRONG:
-        return "AŞAĞI MOMENTUM", "down", "↓"
-    return "GÜÇLÜ AŞAĞI MOMENTUM", "down", "↓"
+        return "DOWNWARD MOMENTUM", "down", "↓"
+    return "STRONG DOWNWARD MOMENTUM", "down", "↓"
 
 
 def compute_price_momentum(indicators: "dict | None") -> "dict | None":
@@ -324,16 +324,16 @@ def compute_price_momentum(indicators: "dict | None") -> "dict | None":
         * ``score``: 0-100 display score (``50`` == neutral).
         * ``s``: the raw ``[-1, 1]`` score.
         * ``direction``: ``"up"`` / ``"flat"`` / ``"down"``.
-        * ``label``: Turkish momentum label (5 bands).
+        * ``label``: momentum label (5 bands).
         * ``arrow``: ``"↑"`` / ``"→"`` / ``"↓"``.
-        * ``accel``: ``"hızlanıyor"`` / ``"sabit"`` / ``"yavaşlıyor"`` /
+        * ``accel``: ``"accelerating"`` / ``"steady"`` / ``"slowing"`` /
           ``None`` -- whether the move is speeding up or cooling off.
         * ``meter_pos``: 0-100 marker position (same as ``score``, kept as a
           distinct key for the report meter).
         * ``components``: list of ``{key, label, sub, weight, points}`` for the
           contributing components (``points`` sum to ``score - 50``), so the
           report can show what pushed the score up/down.
-        * ``summary``: a one-line Turkish readout.
+        * ``summary``: a one-line readout.
     """
     if not isinstance(indicators, dict):
         return None
@@ -393,8 +393,8 @@ def compute_price_momentum(indicators: "dict | None") -> "dict | None":
 
 
 def _build_summary(score: int, label: str, accel: "str | None", components: list) -> str:
-    """One-line Turkish readout: score + label (+ acceleration), then the
-    strongest positive and strongest negative driver."""
+    """One-line readout: score + label (+ acceleration), then the strongest
+    positive and strongest negative driver."""
     head = f"{score}/100 {label.lower()}"
     if accel:
         head += f", {accel}"
@@ -403,9 +403,9 @@ def _build_summary(score: int, label: str, accel: "str | None", components: list
     weakest = ordered[0] if ordered else None
     tail_parts = []
     if strongest and strongest["points"] > 0:
-        tail_parts.append(f"en güçlü: {strongest['label'].lower()}")
+        tail_parts.append(f"strongest: {strongest['label'].lower()}")
     if weakest and weakest["points"] < 0 and weakest is not strongest:
-        tail_parts.append(f"en zayıf: {weakest['label'].lower()}")
+        tail_parts.append(f"weakest: {weakest['label'].lower()}")
     if tail_parts:
         return head + "; " + ", ".join(tail_parts) + "."
     return head + "."

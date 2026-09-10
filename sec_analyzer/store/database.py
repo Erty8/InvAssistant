@@ -76,7 +76,7 @@ _VERDICTS_EXTRA_COLUMNS: List[Tuple[str, str]] = [
     # backtests distinguish "analyzed today with today's data" from "analyzed
     # as of a past date".
     ("as_of", "TEXT"),
-    # Composite momentum label ("GÜÇLÜ+" / "POZİTİF" / "NÖTR" / "NEGATİF")
+    # Composite momentum label ("STRONG+" / "POSITIVE" / "NEUTRAL" / "NEGATIVE")
     # from result["momentum"]["verdict"]; the full momentum dict lives in
     # result_json. Context layer only -- never feeds the fair value.
     ("momentum_verdict", "TEXT"),
@@ -84,6 +84,22 @@ _VERDICTS_EXTRA_COLUMNS: List[Tuple[str, str]] = [
     # assumptions for this run (ASSUMPTIONS_CACHE_SPEC.md Sec.1); NULL for
     # legacy rows and for live/script runs that did not use a cached set.
     ("assumption_set_id", "INTEGER"),
+    # Insider (SEC Form 4) activity label ("STRONG BUY" / "BUY" / "NEUTRAL" /
+    # "SELL" / "HEAVY SELLING") from result["insider"]["verdict"]; the full
+    # activity dict lives in result_json. Context layer only -- like momentum,
+    # it never feeds the fair value.
+    ("insider_verdict", "TEXT"),
+    # Estimated next-earnings date (ISO) as of this analysis, from the
+    # catalyst estimate (fetch/filings.estimate_next_earnings). Stored as its
+    # own column purely so the portfolio overview can show "who reports next"
+    # without parsing result_json for every row.
+    ("catalyst_date", "TEXT"),
+    # The filer's SEC SIC code (from the submissions document). Denormalized
+    # here so the portfolio overview can classify a name into an industry
+    # sector without a network call -- the bundled index-constituent CSVs only
+    # cover S&P 500 / Nasdaq 100 members, so anything outside both indexes had
+    # no sector at all before this.
+    ("sic", "TEXT"),
 ]
 
 
@@ -140,8 +156,9 @@ def get_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
 
 
 def init_db(db_path: Optional[str] = None) -> None:
-    """Create the ``companies``, ``financials``, ``ratios``, ``prices``, and
-    ``verdicts`` tables.
+    """Create the ``companies``, ``financials``, ``ratios``, ``prices``,
+    ``verdicts``, ``verdict_outcomes``, ``swing_scans``, ``swing_studies``,
+    ``assumption_sets``, and ``thesis_anchors`` tables.
 
     Safe to call any number of times: every statement is
     ``CREATE TABLE IF NOT EXISTS``, and any columns added to ``financials``,
@@ -260,6 +277,64 @@ def init_db(db_path: Optional[str] = None) -> None:
                 """
             )
 
+            # S&P 500 swing-trade screener scans (SWING_SPEC.md Sec.5): one
+            # row per scan run, the full result dict stored as a single JSON
+            # payload column rather than shredded into per-ticker columns --
+            # this is a recomputable display artifact (from prices, at any
+            # time), not a fundamental fact, and 500 rows render fine
+            # client-side.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS swing_scans (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    generated_at TEXT NOT NULL,
+                    price_as_of  TEXT,
+                    universe     TEXT NOT NULL,
+                    count        INTEGER NOT NULL,
+                    payload      TEXT NOT NULL
+                )
+                """
+            )
+
+            # Swing-score decile forward-return study runs
+            # (SWING_STUDY_SPEC.md Sec.5): one row per study run, the full
+            # result dict stored as a single JSON payload column -- same
+            # rationale as ``swing_scans`` (a recomputable display artifact,
+            # not a fundamental fact).
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS swing_studies (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    generated_at TEXT NOT NULL,
+                    universe     TEXT NOT NULL,
+                    start_date   TEXT,
+                    end_date     TEXT,
+                    observations INTEGER NOT NULL,
+                    payload      TEXT NOT NULL
+                )
+                """
+            )
+
+            # Cross-sectional peer snapshots built from SEC's XBRL Frames API
+            # (sec_analyzer.screener.peers): per-sector distributions of
+            # filing-derived metrics across the bundled index universe. Same
+            # single-JSON-payload rationale as ``swing_scans`` -- a snapshot is
+            # a recomputable artifact keyed on a fiscal year, not a fundamental
+            # fact, and shredding ~11 sectors x 9 metrics into columns would buy
+            # nothing. ``year`` is the fiscal year the frames were pulled for.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS peer_snapshots (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    generated_at TEXT NOT NULL,
+                    year         INTEGER NOT NULL,
+                    universe     TEXT,
+                    covered      INTEGER,
+                    payload      TEXT NOT NULL
+                )
+                """
+            )
+
             # Migrate pre-existing database files (created by an older
             # version of this module) to the current column set. No-op on
             # a freshly created table above, since the columns are already
@@ -274,6 +349,13 @@ def init_db(db_path: Optional[str] = None) -> None:
             # this one (get_connection/init_db) from being a cycle.
             from sec_analyzer.store import assumptions as _assumptions
             _assumptions.init_assumptions_table(conn)
+
+            # The thesis-validation-metric day-1 anchor table (METODOLOJI.md
+            # Sec.7's quarterly-invalidation rule) shares this database file
+            # too. Its DDL lives in store.thesis_anchors; same lazy-import
+            # rationale as assumptions above.
+            from sec_analyzer.store import thesis_anchors as _thesis_anchors
+            _thesis_anchors.init_thesis_anchors_table(conn)
         logger.debug("Schema ensured at %s", db_path or Config.DB_PATH)
     finally:
         conn.close()
@@ -501,6 +583,8 @@ def save_verdict(
     analyzed_at: Optional[str] = None,
     valuation: Optional[dict] = None,
     as_of: Optional[str] = None,
+    catalyst_date: Optional[str] = None,
+    sic: Optional[str] = None,
 ) -> int:
     """Append one analysis result to the ``verdicts`` history table.
 
@@ -532,6 +616,16 @@ def save_verdict(
             ``datetime.now().isoformat(timespec="seconds")``.
         as_of: Point-in-time cutoff (ISO ``"YYYY-MM-DD"``) when the analysis
             was run in as-of mode, or ``None`` for an ordinary live run.
+        catalyst_date: Estimated next-earnings date (ISO ``"YYYY-MM-DD"``)
+            from :func:`sec_analyzer.fetch.filings.estimate_next_earnings`,
+            or ``None``. Denormalized into its own column so the portfolio
+            overview can order names by upcoming earnings without reading
+            ``result_json``.
+        sic: The filer's SEC SIC code (``submissions["sic"]``), or ``None``.
+            Stored as text so a zero-padded code survives round-tripping;
+            consumers parse it to ``int`` themselves. Lets the portfolio
+            overview assign an industry sector to a filer outside the bundled
+            index-constituent CSVs.
         valuation: The dict returned by
             :func:`sec_analyzer.valuation.engine.run_valuation` (typically
             ``result.get("valuation")``), or ``None``. When given, populates
@@ -560,6 +654,8 @@ def save_verdict(
     valuation_json = json.dumps(valuation, ensure_ascii=False) if valuation else None
     momentum = result.get("momentum") or {}
     momentum_verdict = momentum.get("verdict") if isinstance(momentum, dict) else None
+    insider = result.get("insider") or {}
+    insider_verdict = insider.get("verdict") if isinstance(insider, dict) else None
     # Provenance of the phase-1 assumptions: the CLI stamps the cached set's
     # id into the result when a frozen/cached set was used (Sec.4); NULL
     # otherwise (live/script runs, legacy callers).
@@ -590,6 +686,9 @@ def save_verdict(
         as_of,
         momentum_verdict,
         assumption_set_id,
+        insider_verdict,
+        catalyst_date,
+        None if sic is None else str(sic),
     )
 
     init_db(db_path)
@@ -604,9 +703,9 @@ def save_verdict(
                     fv_bear_lo, fv_bear_hi, fv_base_lo, fv_base_hi, fv_bull_lo, fv_bull_hi,
                     result_json, confidence, sector_type, implied_growth,
                     fair_value_json, valuation_json, as_of, momentum_verdict,
-                    assumption_set_id
+                    assumption_set_id, insider_verdict, catalyst_date, sic
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 row,
             )
@@ -731,6 +830,7 @@ def load_financials(cik: str, db_path: Optional[str] = None) -> List[dict]:
 _VERDICT_HISTORY_COLUMNS = (
     "id, cik, ticker, analyzed_at, as_of, horizon, provider, price, "
     "fundamental_verdict, technical_verdict, profile_fit, momentum_verdict, "
+    "insider_verdict, catalyst_date, sic, "
     "fv_bear_lo, fv_bear_hi, fv_base_lo, fv_base_hi, fv_bull_lo, fv_bull_hi, "
     "confidence, sector_type, implied_growth, watch_note"
 )
@@ -776,6 +876,91 @@ def load_verdicts(
             (str(ticker), int(limit)),
         )
         return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def load_latest_verdicts(
+    db_path: Optional[str] = None, live_only: bool = True
+) -> List[dict]:
+    """Return one row per ticker: that ticker's most recent stored verdict.
+
+    Powers the portfolio-overview screen (``sec_analyzer.screener.overview``),
+    which is a dashboard over everything already analyzed rather than a
+    per-ticker history. Reads the same scalar columns as :func:`load_verdicts`
+    (no JSON blobs -- see :data:`_VERDICT_HISTORY_COLUMNS`).
+
+    "Most recent" is resolved by ``analyzed_at`` descending with the row ``id``
+    as the tie-breaker, so two verdicts written within the same second still
+    order deterministically (the ``id`` is monotonic on an append-only table).
+
+    Args:
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+        live_only: When ``True`` (default), point-in-time (as-of / backtest)
+            runs are excluded, so a backtest grid can't displace the live
+            verdict a ticker's dashboard row is meant to show.
+
+    Returns:
+        A list of plain ``dict`` rows, one per ticker, ordered by ticker.
+        Empty list when nothing has been analyzed yet.
+    """
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        where = "WHERE as_of IS NULL" if live_only else "WHERE 1=1"
+        cursor = conn.execute(
+            f"""
+            SELECT {_VERDICT_HISTORY_COLUMNS}
+            FROM verdicts v
+            {where}
+              AND v.id = (
+                  SELECT v2.id FROM verdicts v2
+                  WHERE v2.ticker = v.ticker COLLATE NOCASE
+                    {"AND v2.as_of IS NULL" if live_only else ""}
+                  ORDER BY v2.analyzed_at DESC, v2.id DESC
+                  LIMIT 1
+              )
+            ORDER BY v.ticker COLLATE NOCASE
+            """
+        )
+        return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def load_watchlist_tickers(
+    db_path: Optional[str] = None, live_only: bool = True
+) -> List[str]:
+    """Return every ticker that has at least one stored verdict, sorted.
+
+    This is the implicit watchlist: the set of names the user has actually
+    analyzed. Used as the default universe for the pre-earnings briefing
+    (``sec_analyzer.screener.preearnings``) so the command works with no
+    arguments instead of demanding a hand-maintained ticker file.
+
+    Never raises -- an unreadable/missing database yields an empty list, and
+    the caller reports "no watchlist" rather than crashing.
+    """
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+    except Exception:  # noqa: BLE001 - best-effort convenience helper
+        logger.warning("load_watchlist_tickers: could not open DB", exc_info=True)
+        return []
+    try:
+        where = "WHERE as_of IS NULL" if live_only else ""
+        cursor = conn.execute(
+            f"""
+            SELECT DISTINCT UPPER(ticker) AS ticker
+            FROM verdicts
+            {where}
+            ORDER BY ticker
+            """
+        )
+        return [row["ticker"] for row in cursor.fetchall() if row["ticker"]]
+    except Exception:  # noqa: BLE001 - best-effort convenience helper
+        logger.warning("load_watchlist_tickers failed", exc_info=True)
+        return []
     finally:
         conn.close()
 
@@ -994,3 +1179,270 @@ def load_outcomes(db_path: Optional[str] = None) -> List[dict]:
         return [dict(row) for row in cursor.fetchall()]
     finally:
         conn.close()
+
+
+def save_swing_scan(result: dict, db_path: Optional[str] = None) -> int:
+    """Persist a swing-screener scan result (SWING_SPEC.md Sec.4/5).
+
+    The full ``result`` dict is stored verbatim as a single JSON payload
+    column (deliberately not shredded into per-ticker columns -- see the
+    ``swing_scans`` DDL comment in :func:`init_db`); ``generated_at``,
+    ``price_as_of``, ``universe``, and ``count`` are pulled out into their
+    own columns purely so the latest-scan lookup doesn't need to parse JSON
+    just to order by recency.
+
+    Args:
+        result: The dict returned by
+            :func:`sec_analyzer.screener.swing_scan.scan_swing`.
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+
+    Returns:
+        The id (``rowid``) of the newly inserted row, or ``0`` on failure.
+        Never raises -- mirrors :func:`save_prices`'s non-fatal posture,
+        since a scan that took minutes to compute must not be lost to a
+        transient disk/DB error.
+    """
+    result = result or {}
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+        try:
+            with conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO swing_scans (generated_at, price_as_of, universe, count, payload)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        result.get("generated_at"),
+                        result.get("price_as_of"),
+                        result.get("universe"),
+                        int(result.get("count") or 0),
+                        json.dumps(result, ensure_ascii=False),
+                    ),
+                )
+                scan_id = cursor.lastrowid
+            logger.info(
+                "Saved swing scan (%d rows) to %s", result.get("count") or 0, db_path or Config.DB_PATH
+            )
+            return scan_id
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - a scan is a recomputable display artifact, never fatal to lose
+        logger.warning("Failed to save swing scan", exc_info=True)
+        return 0
+
+
+def load_latest_swing_scan(db_path: Optional[str] = None, universe: Optional[str] = None) -> Optional[dict]:
+    """Return the most recently saved swing-screener scan's payload.
+
+    Args:
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+        universe: When given, restricts the lookup to the most recent scan
+            of that index only (e.g. ``"SP500"``/``"NDX"``), so switching
+            indexes in the UI never surfaces another index's rows. ``None``
+            (default) returns the most recent scan of any index, preserving
+            the original single-index behaviour.
+
+    Returns:
+        The stored ``result`` dict (see :func:`save_swing_scan`), or
+        ``None`` when no matching scan has been stored yet, the payload is
+        unreadable, or any error occurs. Never raises.
+    """
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+        try:
+            if universe is None:
+                row = conn.execute(
+                    "SELECT payload FROM swing_scans ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT payload FROM swing_scans WHERE universe = ? ORDER BY id DESC LIMIT 1",
+                    (universe,),
+                ).fetchone()
+            if row is None or not row["payload"]:
+                return None
+            return json.loads(row["payload"])
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - best-effort read, never fatal
+        logger.warning("Failed to load latest swing scan", exc_info=True)
+        return None
+
+
+def save_peer_snapshot(snapshot: dict, db_path: Optional[str] = None) -> int:
+    """Persist a cross-sectional peer snapshot (``screener.peers``).
+
+    The full snapshot is stored verbatim as one JSON payload column, mirroring
+    :func:`save_swing_scan`'s rationale; ``generated_at``, ``year``,
+    ``universe`` and ``covered`` are pulled into their own columns purely so
+    the latest-snapshot lookup can order by recency without parsing JSON.
+
+    Returns the new row id, or ``0`` on failure. Never raises -- a snapshot
+    costs a dozen multi-megabyte SEC downloads to rebuild, so a transient DB
+    error must not be allowed to throw it away silently *and* crash the run.
+    """
+    snapshot = snapshot or {}
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+        try:
+            with conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO peer_snapshots (generated_at, year, universe, covered, payload)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot.get("generated_at"),
+                        int(snapshot.get("year") or 0),
+                        ",".join(snapshot.get("indexes") or []) or None,
+                        int(snapshot.get("covered") or 0),
+                        json.dumps(snapshot, ensure_ascii=False),
+                    ),
+                )
+                snapshot_id = cursor.lastrowid
+            logger.info(
+                "Saved peer snapshot for %s (%s companies covered) to %s",
+                snapshot.get("year"), snapshot.get("covered"), db_path or Config.DB_PATH,
+            )
+            return snapshot_id
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - a recomputable artifact, never fatal to lose
+        logger.warning("Failed to save peer snapshot", exc_info=True)
+        return 0
+
+
+def load_latest_peer_snapshot(
+    db_path: Optional[str] = None, year: Optional[int] = None
+) -> Optional[dict]:
+    """Return the most recently saved peer snapshot's payload, or ``None``.
+
+    Args:
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+        year: When given, restricts the lookup to snapshots built for that
+            fiscal year; ``None`` (default) returns the most recent snapshot
+            of any year.
+
+    Never raises -- a missing/unreadable snapshot simply means the analyze
+    path shows no peer comparison, which is the same degraded state as a
+    database that has never had one built.
+    """
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+        try:
+            if year is None:
+                row = conn.execute(
+                    "SELECT payload FROM peer_snapshots ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT payload FROM peer_snapshots WHERE year = ? ORDER BY id DESC LIMIT 1",
+                    (int(year),),
+                ).fetchone()
+            if row is None or not row["payload"]:
+                return None
+            return json.loads(row["payload"])
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - best-effort read, never fatal
+        logger.warning("Failed to load latest peer snapshot", exc_info=True)
+        return None
+
+
+def save_swing_study(result: dict, db_path: Optional[str] = None) -> int:
+    """Persist a swing-score decile study result (SWING_STUDY_SPEC.md Sec.5).
+
+    The full ``result`` dict (as returned by
+    :func:`sec_analyzer.backtest.swing_study.run_swing_study`) is stored
+    verbatim as a single JSON payload column, mirroring
+    :func:`save_swing_scan`'s rationale exactly (a recomputable display
+    artifact, not a fundamental fact); ``generated_at``, ``universe``,
+    ``start_date``/``end_date`` (from ``result["start"]``/``result["end"]``),
+    and ``observations`` are pulled into their own columns purely so the
+    latest-study lookup doesn't need to parse JSON just to order by recency.
+
+    Args:
+        result: The dict returned by
+            :func:`sec_analyzer.backtest.swing_study.run_swing_study`.
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+
+    Returns:
+        The id (``rowid``) of the newly inserted row, or ``0`` on failure.
+        Never raises -- a study that took a long time to compute must not be
+        lost to a transient disk/DB error.
+    """
+    result = result or {}
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+        try:
+            with conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO swing_studies (
+                        generated_at, universe, start_date, end_date, observations, payload
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        result.get("generated_at"),
+                        result.get("index"),
+                        result.get("start"),
+                        result.get("end"),
+                        int(result.get("observations") or 0),
+                        json.dumps(result, ensure_ascii=False),
+                    ),
+                )
+                study_id = cursor.lastrowid
+            logger.info(
+                "Saved swing study (%d observations) to %s",
+                result.get("observations") or 0, db_path or Config.DB_PATH,
+            )
+            return study_id
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - a study is a recomputable display artifact, never fatal to lose
+        logger.warning("Failed to save swing study", exc_info=True)
+        return 0
+
+
+def load_latest_swing_study(db_path: Optional[str] = None, universe: Optional[str] = None) -> Optional[dict]:
+    """Return the most recently saved swing-study's payload.
+
+    Args:
+        db_path: Path to the SQLite file. Defaults to ``Config.DB_PATH``.
+        universe: When given, restricts the lookup to the most recent study
+            of that index only (e.g. ``"SP500"``/``"NDX"``). ``None``
+            (default) returns the most recent study of any index.
+
+    Returns:
+        The stored ``result`` dict (see :func:`save_swing_study`), or
+        ``None`` when no matching study has been stored yet, the payload is
+        unreadable, or any error occurs. Never raises.
+    """
+    try:
+        init_db(db_path)
+        conn = get_connection(db_path)
+        try:
+            if universe is None:
+                row = conn.execute(
+                    "SELECT payload FROM swing_studies ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT payload FROM swing_studies WHERE universe = ? ORDER BY id DESC LIMIT 1",
+                    (universe,),
+                ).fetchone()
+            if row is None or not row["payload"]:
+                return None
+            return json.loads(row["payload"])
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - best-effort read, never fatal
+        logger.warning("Failed to load latest swing study", exc_info=True)
+        return None

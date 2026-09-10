@@ -32,7 +32,13 @@ SDK/key is used.
    (`claude -p`), a local Ollama/Gemma model, or the deterministic script
    analyzer -- and get back a structured
    JSON verdict: a conservative fair-value range, a fundamental-quality
-   verdict, cyclicality commentary, and a plain-language summary.
+   verdict, cyclicality commentary, and a plain-language summary. The
+   verdict card also carries a deterministic SEC Form 4 insider-trading
+   read (see "Portfolio views" and `METODOLOJI.md` §9) alongside it.
+7. **Screen** (optional, `overview`/`preearnings` commands): read back
+   everything already analyzed into a portfolio-wide dashboard or a
+   pre-earnings briefing -- no new fetch, no new valuation, pure
+   aggregation over stored verdicts (see "Portfolio views" below).
 
 ## Install
 
@@ -99,10 +105,26 @@ python -m sec_analyzer.cli fetch AAPL --no-cache
 # Verbose / quiet logging
 python -m sec_analyzer.cli analyze AAPL --verbose
 python -m sec_analyzer.cli fetch AAPL --quiet
+
+# Portfolio-wide dashboard over everything already analyzed (network-free)
+python -m sec_analyzer.cli overview
+
+# Which watchlist names report earnings within the next 14 days
+python -m sec_analyzer.cli preearnings --within 14
 ```
 
-Both subcommands accept `--years N` (default 5) and `--no-cache`. `analyze`
-additionally accepts `--horizon {3m,1y,5y}` (default `1y`) and `--html`.
+Both `fetch`/`analyze` accept `--years N` (default 5) and `--no-cache`.
+`analyze` additionally accepts `--horizon {3m,1y,5y}` (default `1y`) and
+`--html`. See "Portfolio views" below for what `overview` and `preearnings`
+show; in short, `overview` takes `--stale-days` (default 90),
+`--earnings-window` (default 21), and `--json`, while `preearnings` takes
+`--tickers` (comma-separated) or `--tickers-file` (mutually exclusive --
+one ticker per line, `#` comments allowed), `--within` (default 14),
+`--all` (keep every watchlist name regardless of window), `--no-cache`,
+and `--json`. Neither `--tickers` nor `--tickers-file` is required:
+`preearnings` defaults its watchlist to every ticker that already has a
+stored verdict, so it works with no arguments once you've run `analyze` on
+a few names.
 
 **`--years` note:** the default of 5 fiscal years is fine for a quick read,
 but the valuation engine's cyclical-earnings DCF variant (median FCF margin
@@ -379,21 +401,195 @@ Katalizör:   ~15 Ağu 2026 (tahmini)
 belirsizlik" uyarısı, sadece 3×3 duyarlılık matrisinin bant genişliği base
 hücrenin %60'ını aştığında eklenir.
 
+## Portfolio views
+
+Two commands read back everything `analyze` has already stored and turn it
+into a dashboard, without any new fetch or valuation:
+
+### `overview`
+
+```powershell
+python -m sec_analyzer.cli overview
+```
+
+A network-free portfolio dashboard over one row per ticker -- that ticker's
+most recent *live* stored verdict (`sec_analyzer.store.database.
+load_latest_verdicts`), enriched and grouped by
+`sec_analyzer.screener.overview.build_overview`. It shows a sector heat map,
+a valuation-route (`sector_type`) breakdown, a per-name fair-value-vs-price
+gap sorted richest-to-cheapest, staleness (a verdict older than
+`--stale-days`, default 90), upcoming earnings within `--earnings-window`
+days (default 21), and a **"Karar ile band ortası arasında gerilim"**
+("tension between the verdict and the band's midpoint") call-out. Pass
+`--json` to also print the full payload.
+
+That last section is worth explaining carefully, because the two numbers it
+compares are *not* measuring the same thing, even though both are read from
+the very same stored row (same price, same band): the stored
+`fundamental_verdict` asks **where the price sits inside the base
+bear/base/bull band** -- if the price is inside the band, the verdict is
+`MAKUL`, regardless of where in the band it sits. `value_bucket` (the
+column this section flags against it) asks a different question: **how far
+is the band's *midpoint* from the price**, against a fixed
+`CHEAP_THRESHOLD_PCT`/`EXPENSIVE_THRESHOLD_PCT` of ±15%. On a wide band both
+answers can be correct at once -- the price sits inside the band (so the
+engine won't commit to UCUZ/PAHALI) while the midpoint still leans hard to
+one side of it. A flagged row is therefore not a bug or an inconsistency;
+it is a signal about **band width and confidence**: a name the engine
+called `MAKUL` because it couldn't narrow the band further, with a midpoint
+that disagrees. Real example from a live run (band width is `band_hi /
+band_lo`):
+
+```
+Portföy Genel Bakış — 2026-08-07 — 54 hisse (medyan makul-değer/fiyat farkı: -24.7%)
+
+[Sektör ısı haritası]
+Sektör                         n   Medyan fark   Ucuz  Makul  Pahalı  Bayat
+---------------------------------------------------------------------------
+Information Technology        26        -52.8%      5      2      12      0
+Financials                     5        -70.7%      0      0       3      0
+Industrials                    5        +70.3%      1      0       1      0
+Communication Services         3         -9.1%      1      1       1      0
+...
+
+[Değerleme yoluna göre]
+Yol                      n   Medyan fark   Ucuz  Makul  Pahalı
+--------------------------------------------------------------
+Olgun                   26         -6.2%      8      3       9
+Döngüsel                14        -21.9%      4      0       5
+...
+
+[Hisseler — makul değer / fiyat farkına göre]
+Hisse   Sektör             Karar                   Fiyat      Makul      Fark     Güven   Momentum  İçeriden    Yaş
+---------------------------------------------------------------------------------------------------------------------
+HIMS    Health Care        MODEL-PİYASA AYRIŞMASI  33.61      227.49     +576.9%  DÜŞÜK   NEGATİF   —           16g
+KHC     Consumer Staples   UCUZ                    25.86      75.89      +193.4%  YÜKSEK  —         —           17g
+...
+ORCL    Information Techno MAKUL                   143.47     117.22     -18.3%   DÜŞÜK   NEGATİF   YOĞUN SATIŞ 0g
+...
+
+[Karar ile band ortası arasında gerilim]
+  (fiyat baz bandın içinde kaldığı için karar MAKUL; band geniş olduğundan orta nokta uzakta)
+  ZETA    karar: MAKUL    band ortası: ucuz    fark: +37.3%   band: 19.36–33.84           güven: DÜŞÜK
+  FCX     karar: MAKUL    band ortası: ucuz    fark: +33.6%   band: 54.10–101.93          güven: ORTA
+  DASH    karar: MAKUL    band ortası: ucuz    fark: +24.2%   band: 138.58–283.02         güven: ORTA
+  ORCL    karar: MAKUL    band ortası: pahali  fark: -18.3%   band: 83.79–150.65          güven: DÜŞÜK
+  CHTR    karar: MAKUL    band ortası: ucuz    fark: +15.2%   band: 128.04–169.44         güven: DÜŞÜK
+```
+
+Every one of the flagged rows above has a wide band (1.3x-2.0x low-to-high)
+and `DÜŞÜK`/`ORTA` confidence -- exactly what the mechanism predicts.
+
+### `preearnings`
+
+```powershell
+python -m sec_analyzer.cli preearnings --tickers NVDA,ORCL,AAPL --within 45
+```
+
+For a watchlist, shows which names report earnings soon (per
+`sec_analyzer.fetch.filings.estimate_next_earnings`), alongside each name's
+stored verdict, momentum, fair-value gap, historical beat/miss record, and a
+set of deterministic Turkish observations (stale opinion, imminent
+binary catalyst, value x momentum cross, low confidence, recent material
+8-K activity, and so on -- see `sec_analyzer.screener.preearnings._build_notes`).
+This is a read/assemble layer only: it runs no new valuation, every number
+comes straight from the most recent stored *live* verdict or simple
+arithmetic over it. With no `--tickers`/`--tickers-file`, the watchlist
+defaults to every ticker that already has a stored verdict
+(`sec_analyzer.store.database.load_watchlist_tickers`), so the command
+works out of the box once you've analyzed a few names. Real (trimmed)
+output:
+
+```
+Bilanço Öncesi Brifing — 2026-08-07 — önümüzdeki 45 gün — 2/3 hisse
+Hisse   Bilanço      Gün    Karar    Fark     Momentum  Sürpriz     Yaş
+---------------------------------------------------------------------------
+NVDA    2026-08-19   12     MAKUL    -3.2%    POZİTİF   4/4         7g
+ORCL    2026-09-09   33     MAKUL    -18.3%   NEGATİF   3/4         0g
+
+NVDA — Q2 earnings ~19 Ağu
+  • Son 4 çeyrekte 4 kez beklentiyi aştı (ort. +%4,6).
+  • Son 120 günde materyal dosyalama olayı var: Üst düzey yönetici/kurul değişikliği.
+  • Değerleme güveni DÜŞÜK; bilanço sonrası bandın kayması olası.
+  Geçmiş sürprizler: 2026-04-30: +%5,5 · 2026-01-31: +%5,3 · 2025-10-31: +%3,5 · 2025-07-31: +%4,1
+
+Atlanan: 1 hisse
+  AAPL: bilanço 83 gün sonra (pencere: 45)
+```
+
+### Insider (SEC Form 4) column and upcoming-earnings caveat
+
+Both views rely on `verdicts` columns -- `insider_verdict`, `catalyst_date`
+and `sic` -- that were only added alongside this feature. They are populated
+**only by analyses run after this change**, so for any ticker last analyzed
+before it, `overview`'s `İçeriden` column and `upcoming_earnings` list stay
+empty (`—`) even though the rest of the row is fully populated (see the
+sample above: most rows show `—` under `İçeriden`). Re-running
+`analyze TICKER` fills them in.
+
+`sic` is the exception: because it drives the sector heat map -- and an
+unclassified name would leave a hole in the feature's centrepiece -- it was
+backfilled once for the existing rows from the `submissions` documents
+already sitting in the on-disk cache (`sec_analyzer/raw/submissions_CIK*.json`),
+so every stored name classifies today. New analyses write it directly. If
+you ever restore a database whose `sic` column is empty, the affected rows
+simply fall back to the bundled index CSVs and then to
+`"Sınıflandırılmamış"` -- nothing breaks, the map just gets coarser until
+those names are re-analyzed.
+
 ## Price data source
 
 The technical-analysis layer (RSI, moving averages, 52-week range,
 volatility, and the technical verdict) needs a daily OHLCV price history,
-which is **not** available from SEC EDGAR. `sec_analyzer` fetches it from
-[Stooq](https://stooq.com)'s free, no-key CSV endpoint first; if Stooq is
-unavailable or returns something unusable (Stooq occasionally serves an
-HTML/JS-walled page instead of the CSV on some networks), it automatically
-falls back to the optional [`yfinance`](https://pypi.org/project/yfinance/)
-package if it's installed. Price history is cached on disk for 24 hours.
+which is **not** available from SEC EDGAR. `sec_analyzer` tries three sources
+in order, then the on-disk cache:
 
-If both sources fail (or `yfinance` isn't installed and Stooq is
-unreachable), the technical layer is skipped gracefully: `analyze` still
-runs the full fundamental analysis, with the technical verdict reported as
-unavailable rather than the command failing outright.
+| Order | Source | Key | History | Price basis |
+|---|---|---|---|---|
+| 1 | [`yfinance`](https://pypi.org/project/yfinance/) package | none | full | split **+ dividend** adjusted |
+| 2 | Yahoo chart endpoint over plain HTTP | none | full | split **+ dividend** adjusted |
+| 3 | Nasdaq public endpoint | none | ~10 years | split-adjusted **only** |
+
+Tier 2 exists for the failure that actually happens: the yfinance package
+breaking when Yahoo changes something behind it. It is byte-for-byte
+equivalent — verified on ORCL (2026-08-03) across all 10,176 bars, max close
+difference 0.000046 — because the endpoint returns `adjclose` separately and
+the fetcher reproduces yfinance's `auto_adjust` exactly. It does **not** cover
+Yahoo itself being down; tier 3 is the provider-independent one.
+
+> **Tier 3 carries a different price basis.** Nasdaq's closes are not
+> dividend-adjusted, and the gap compounds backwards: measured on ORCL, 0% on
+> the newest bar, −5% four years back, −16% ten years back. A tier-3 frame is
+> therefore used for **technicals only**. `prices.is_total_return_basis()`
+> gates it, and the callers hand the valuation layer no price frame at all, so
+> historical-multiple percentiles report "no data" instead of silently
+> reporting a biased one. Such a frame is also never written to the `prices`
+> table, and never taken as a plain cache hit — the preferred sources are
+> retried on the next run.
+
+[Stooq](https://stooq.com)'s free CSV endpoint was the primary source until
+2026-08-03, when Stooq put every endpoint behind a JavaScript
+browser-verification challenge — it now answers HTTP 200 with an HTML
+challenge page instead of CSV, which no plain HTTP client can get past. The
+Stooq path was removed rather than left in place to fail on every ticker.
+
+If every source fails, a recent-enough on-disk cache is used as a last resort
+and the report labels that price as stale. Failing that, the technical layer is
+skipped gracefully: `analyze` still runs the full fundamental analysis, with
+the technical verdict reported as unavailable rather than the command failing
+outright.
+
+### Cache freshness
+
+The on-disk price cache holds **settled sessions only** — a bar for a session
+still in progress is never written, because on any later day its date would
+make the cache look fresh while its close was really a mid-day snapshot. A
+cache counts as fresh once it carries the last completed session.
+
+That means a run during market hours serves the previous close by default,
+which is what anything ranking on daily bars (the swing screener, backtests)
+should use. The single-ticker `analyze` paths pass `prefer_live=True`, which
+re-fetches while a session is open so the printed price is the current one.
 
 ## SEC rate limits
 
@@ -549,6 +745,21 @@ python -m sec_analyzer.web.app
 
 This serves the UI at **http://127.0.0.1:5050**. As with the CLI,
 `SEC_USER_AGENT` must be set (e.g. in `.env`) before fetching anything.
+
+Besides the ticker-entry home page (`/`), the app serves `/report` (a
+standalone verdict-card HTML page), `/history` (a ticker's stored verdict
+history), `/swing` (the swing screener dashboard), and -- new in this
+change -- **`/overview`**: the same network-free portfolio dashboard as
+`python -m sec_analyzer.cli overview` (sector heat map, fair-value gaps,
+staleness, upcoming earnings, the verdict/band-midpoint tension call-out),
+rendered through the shared `template.html` shell. Its JSON counterpart,
+**`GET /api/overview`**, returns the identical payload as
+`{"ok": true, "overview": {...}}` with no HTML shell. Both accept two query
+parameters -- `stale_days` (default 90) and `earnings_window` (default
+21) -- the same tuning knobs as the CLI's `--stale-days`/`--earnings-window`
+flags, clamped to a sane range so a hand-edited query string can't request
+a nonsensical view. No valuation is re-run for either route; every number
+shown is exactly what that name's last `analyze` run produced.
 
 The page has a **Horizon** dropdown (3m / 1y / 5y, default 1y -- see
 "Investment horizon (`--horizon`)" above) and a provider selector for the

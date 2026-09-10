@@ -55,6 +55,11 @@ _ANNUAL_SPAN_DAYS = (350, 380)
 #: sometimes reports alongside the quarter-only figure).
 _QUARTER_SPAN_DAYS = (80, 100)
 
+#: Relative gap between the as-reported ``Revenue`` series and the
+#: financial-filer ``NetRevenue`` series (measured against the NET figure)
+#: above which the as-reported basis is rejected. Strictly above triggers.
+_NET_REVENUE_DIVERGENCE_THRESHOLD = 0.05
+
 
 def _parse_date(value: Optional[str]) -> Optional[datetime]:
     """Parse a ``YYYY-MM-DD`` date string, returning ``None`` on failure."""
@@ -340,7 +345,7 @@ def _limit_annual_years(records: List[dict], years: int) -> List[dict]:
     return kept
 
 
-def normalize_facts(facts_json: dict, years: int = 5, as_of=None) -> dict:
+def normalize_facts(facts_json: dict, years: int = 12, as_of=None) -> dict:
     """Normalize a raw SEC companyfacts document into tidy time series.
 
     Args:
@@ -526,6 +531,11 @@ def normalize_facts(facts_json: dict, years: int = 5, as_of=None) -> dict:
                 if concept not in missing:
                     missing.append(concept)
 
+    # Financial-filer revenue basis (SPEC.md Sec.19). Runs LAST, on the same
+    # windowed series every downstream consumer sees, so a swap cannot be
+    # partially undone by the windowing above.
+    revenue_basis = _apply_net_revenue_basis(annual, quarterly, matched_tags, missing)
+
     if missing:
         logger.warning(
             "CIK %s (%s): no usable us-gaap data found for concepts: %s",
@@ -540,7 +550,173 @@ def normalize_facts(facts_json: dict, years: int = 5, as_of=None) -> dict:
         "quarterly": quarterly,
         "missing": missing,
         "matched_tags": matched_tags,
+        "revenue_basis": revenue_basis,
     }
+
+
+def _records_to_fy_map(records: Optional[List[dict]]) -> Dict[int, float]:
+    """``{fiscal_year: value}`` from a raw annual record list."""
+    series: Dict[int, float] = {}
+    for record in records or []:
+        fy = record.get("fy")
+        value = record.get("value")
+        if fy is not None and value is not None:
+            series[fy] = value
+    return series
+
+
+def _format_usd_tr(value: float) -> str:
+    """Format a USD amount for a user-facing note (decimal-comma grouping is
+    kept unchanged per this translation pass's rule to preserve existing
+    number formatting)."""
+    if abs(value) >= 1e9:
+        scaled, suffix = value / 1e9, "B$"
+    elif abs(value) >= 1e6:
+        scaled, suffix = value / 1e6, "M$"
+    else:
+        scaled, suffix = value, "$"
+    return f"{scaled:,.2f} {suffix}".replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+
+
+def _empty_revenue_basis() -> dict:
+    """The no-swap ``revenue_basis`` block (SPEC.md Sec.19)."""
+    return {
+        "basis": "as_reported",
+        "swapped": False,
+        "max_divergence": None,
+        "divergent_fys": [],
+        "dropped_fys": [],
+        "rejected_annual": None,
+        "rejected_tags": None,
+        "gross_annual": None,
+        "note": None,
+    }
+
+
+def _apply_net_revenue_basis(
+    annual: Dict[str, Optional[List[dict]]],
+    quarterly: Dict[str, Optional[List[dict]]],
+    matched_tags: Dict[str, Optional[List[str]]],
+    missing: List[str],
+) -> dict:
+    """Prefer a financial filer's net-revenue top line over the ASC-606 slice.
+
+    ``CONCEPTS["Revenue"]`` prefers
+    ``RevenueFromContractWithCustomerExcludingAssessedTax``, which for a bank
+    or lender carries only the contract-fee slice of revenue rather than the
+    income statement's top line -- SoFi's FY2025 contract revenue is $0.62B
+    against a $3.61B total net revenue. Every revenue-derived figure
+    downstream (margins, growth, P/S, the multiples history) would then be
+    computed off a number ~5.8x too small.
+
+    When the ``NetRevenue`` concept (``RevenuesNetOfInterestExpense``, a
+    financial-filer-only tag) contradicts the as-reported series by more than
+    ``_NET_REVENUE_DIVERGENCE_THRESHOLD`` in any overlapping fiscal year, the
+    ``Revenue`` series is replaced -- in both the annual and quarterly buckets
+    -- by a copy of the ``NetRevenue`` series, and the rejection is recorded
+    in the returned metadata rather than applied silently. Divergence is
+    measured against the NET figure and in absolute value, so it catches an
+    under-statement (the SoFi case) as well as the gross-revenue
+    over-statement an aggregator "sales" field would produce.
+
+    Mutates ``annual``/``quarterly``/``matched_tags``/``missing`` in place on
+    a swap. Never raises: any unexpected shape degrades to the no-swap
+    ``basis: "as_reported"`` block with the inputs left untouched. See
+    ``sec_analyzer/valuation/SPEC.md`` Sec.19.
+
+    Returns:
+        The ``revenue_basis`` metadata block (SPEC.md Sec.19).
+    """
+    result = _empty_revenue_basis()
+    try:
+        net_records = annual.get("NetRevenue")
+        net = _records_to_fy_map(net_records)
+
+        # Gross wedge is informational only -- never a revenue basis, never a
+        # ratio input. Reported so the reader can see how much interest
+        # expense the net figure nets out.
+        interest = _records_to_fy_map(annual.get("InterestIncome"))
+        noninterest = _records_to_fy_map(annual.get("NoninterestIncome"))
+        gross = {
+            fy: interest[fy] + noninterest[fy]
+            for fy in sorted(set(interest) & set(noninterest))
+        }
+        result["gross_annual"] = gross or None
+
+        if not net:
+            # Every non-financial filer takes this path: the tag does not
+            # exist for them, so behavior is unchanged by construction.
+            return result
+
+        reported_records = annual.get("Revenue")
+        reported = _records_to_fy_map(reported_records)
+
+        # A zero net figure cannot serve as a divergence denominator.
+        overlap = sorted(fy for fy in net if fy in reported and net[fy])
+        divergence = {
+            fy: abs(reported[fy] - net[fy]) / abs(net[fy]) for fy in overlap
+        }
+        max_divergence = max(divergence.values()) if divergence else None
+
+        result["max_divergence"] = (
+            round(max_divergence, 4) if max_divergence is not None else None
+        )
+        result["divergent_fys"] = [
+            fy for fy in overlap
+            if divergence[fy] > _NET_REVENUE_DIVERGENCE_THRESHOLD
+        ]
+
+        swap = (not overlap) or (
+            max_divergence is not None
+            and max_divergence > _NET_REVENUE_DIVERGENCE_THRESHOLD
+        )
+        if not swap:
+            # The two tags agree within tolerance; the as-reported series
+            # stands and nothing is recorded as rejected.
+            return result
+
+        # Years the as-reported series covered but NetRevenue does not are
+        # dropped rather than spliced in: a shorter single-basis series beats
+        # a longer one that silently mixes two revenue definitions.
+        result["dropped_fys"] = sorted(fy for fy in reported if fy not in net)
+        result["rejected_annual"] = reported or None
+        result["rejected_tags"] = matched_tags.get("Revenue")
+
+        annual["Revenue"] = [dict(record) for record in net_records or []] or None
+        net_quarterly = quarterly.get("NetRevenue")
+        # No mixed basis in the quarterly bucket either: with no quarterly
+        # net-revenue rows the rejected series is cleared, not kept.
+        quarterly["Revenue"] = [dict(record) for record in net_quarterly or []] or None
+        matched_tags["Revenue"] = matched_tags.get("NetRevenue")
+        if "Revenue" in missing:
+            missing.remove("Revenue")
+
+        worst_fy = max(divergence, key=lambda fy: divergence[fy]) if divergence else None
+        result["basis"] = "net_revenue"
+        result["swapped"] = True
+        if worst_fy is not None:
+            gap_pct = f"{divergence[worst_fy] * 100:.1f}".replace(".", ",")
+            result["note"] = (
+                f"Revenue basis corrected: for FY{worst_fy}, the reported revenue tag "
+                f"shows {_format_usd_tr(reported[worst_fy])} while net revenue (interest "
+                f"expense deducted) is {_format_usd_tr(net[worst_fy])}; the gap is "
+                f"%{gap_pct}. For financial institutions, the correct basis is net "
+                "revenue; all revenue-derived ratios were computed on net revenue."
+            )
+        else:
+            result["note"] = (
+                "Revenue basis corrected: since the reported revenue tag contained no "
+                "usable data, net revenue (interest expense deducted) was used instead. "
+                "For financial institutions, the correct basis is net revenue; all "
+                "revenue-derived ratios were computed on net revenue."
+            )
+        return result
+    except Exception:
+        logger.warning(
+            "Net-revenue basis reconciliation failed; keeping the as-reported "
+            "Revenue series.", exc_info=True,
+        )
+        return _empty_revenue_basis()
 
 
 def to_annual_series(normalized: dict, concept: str) -> Dict[int, float]:
@@ -582,6 +758,68 @@ def latest_annual_value(normalized: dict, concept: str) -> Optional[float]:
 _QUARTER_MAX_SPAN_DAYS = 100
 
 
+def _fiscal_year_end_month(normalized: dict) -> Optional[int]:
+    """The month a filer's fiscal year ends in, from its ANNUAL records.
+
+    Taken as the most common ``period_end`` month across every annual
+    concept, ties broken toward the most recent record. ``None`` when the
+    document carries no annual records at all. See
+    :func:`_quarter_fiscal_year` for why this is needed (SPEC.md Sec.24a).
+    """
+    counts: Dict[int, int] = {}
+    newest: Dict[int, str] = {}
+    for records in (normalized.get("annual") or {}).values():
+        for record in records or []:
+            period_end = record.get("period_end")
+            if not period_end or len(period_end) < 7:
+                continue
+            try:
+                month = int(period_end[5:7])
+            except (ValueError, TypeError):
+                continue
+            counts[month] = counts.get(month, 0) + 1
+            if period_end > newest.get(month, ""):
+                newest[month] = period_end
+    if not counts:
+        return None
+    return max(counts, key=lambda m: (counts[m], newest.get(m, "")))
+
+
+def _quarter_fiscal_year(period_end: Optional[str], fy_end_month: Optional[int]) -> Optional[int]:
+    """Fiscal year for a QUARTER, anchored on the filer's fiscal-year end.
+
+    :func:`_fiscal_year` labels a period by the calendar year of its end
+    date. That is correct for an annual record (whose end month IS the
+    fiscal-year end) but wrong for a quarter whenever the fiscal year does
+    not end in December: Micron's year ends in late August, so its Q1 (ending
+    in November) falls in the NEXT calendar year from its own fiscal year's
+    label, and grouping by calendar year mixes it in with the previous
+    fiscal year's Q2/Q3 -- which then corrupts the Q4 derivation in
+    :func:`to_quarterly_series` (SPEC.md Sec.24a).
+
+    With ``M = fy_end_month``, a quarter ending in month ``m`` of calendar
+    year ``Y`` belongs to fiscal year ``Y`` when ``m <= M``, else ``Y + 1``.
+    A December fiscal-year end (``M = 12``) leaves every quarter on its
+    calendar year, so the overwhelmingly common case is unchanged.
+
+    Known limitation: a 52/53-week filer whose year-end drifts across a month
+    boundary can still be off by one bucket. This is a large improvement over
+    the calendar rule, not a calendar-exact reconstruction.
+
+    Falls back to :func:`_fiscal_year` when ``fy_end_month`` is unknown.
+    """
+    if fy_end_month is None:
+        return _fiscal_year(period_end)
+    if not period_end or len(period_end) < 7:
+        return None
+    try:
+        year = int(period_end[:4])
+        month = int(period_end[5:7])
+    except (ValueError, TypeError):
+        return None
+    return year if month <= fy_end_month else year + 1
+
+
 def to_quarterly_series(normalized: dict, concept: str) -> List[dict]:
     """Return a true *single-quarter* series for ``concept``, ascending.
 
@@ -611,6 +849,7 @@ def to_quarterly_series(normalized: dict, concept: str) -> List[dict]:
     if not records:
         return []
 
+    fy_end_month = _fiscal_year_end_month(normalized)
     rows: List[dict] = []
     for r in records:
         pe = r.get("period_end")
@@ -621,7 +860,12 @@ def to_quarterly_series(normalized: dict, concept: str) -> List[dict]:
             value = float(val)
         except (TypeError, ValueError):
             continue
-        fy = r.get("fy") if r.get("fy") is not None else _fiscal_year(pe)
+        # SPEC.md Sec.24a: re-derive the fiscal year from the filer's own
+        # fiscal-year end rather than trusting the record's calendar-year
+        # label, which mis-buckets quarters for any non-December year end.
+        fy = _quarter_fiscal_year(pe, fy_end_month)
+        if fy is None:
+            fy = r.get("fy") if r.get("fy") is not None else _fiscal_year(pe)
         rows.append({"period_end": pe, "value": value, "span": _span_days(r), "fy": fy})
 
     if not rows:
@@ -671,6 +915,53 @@ def to_quarterly_series(normalized: dict, concept: str) -> List[dict]:
                 out.append({"period_end": q4_pe, "value": q4, "derived": True})
 
     out.sort(key=lambda x: x["period_end"])
+    return out
+
+
+def quarterly_ratio_series(normalized: dict, numerator_concept: str, denominator_concept: str) -> List[dict]:
+    """Quarterly ``numerator/denominator`` ratio (percent) series, aligned by
+    quarter, ascending.
+
+    Generalizes the numerator/``Revenue`` margin-ratio shape (originally
+    hardcoded in ``sec_analyzer.signals.momentum._margin_series``) to an
+    arbitrary denominator, so the same machinery covers margins (denominator
+    ``Revenue``) and ROE (denominator ``StockholdersEquity``) alike. Both
+    series come from :func:`to_quarterly_series`, so a flow numerator (e.g.
+    ``NetIncome``) is reconstructed into true single-quarter values while an
+    instant/balance denominator (e.g. ``StockholdersEquity``) is used as its
+    point-in-time, end-of-quarter value -- matching the annual ratio
+    convention in ``sec_analyzer.normalize.ratios`` (end-of-period equity,
+    not an average).
+
+    Args:
+        normalized: The dict returned by :func:`normalize_facts`.
+        numerator_concept: Canonical concept name for the ratio's numerator
+            (e.g. ``"NetIncome"``, ``"GrossProfit"``).
+        denominator_concept: Canonical concept name for the ratio's
+            denominator (e.g. ``"Revenue"``, ``"StockholdersEquity"``).
+
+    Returns:
+        Ascending ``[{"period_end": str, "value": float}, ...]``, ``value``
+        being the ratio as a percent (e.g. ``23.4`` for 23.4%), rounded to 2
+        decimals. A quarter is only included when both series have a value
+        for that ``period_end`` and the denominator is strictly positive (a
+        zero/negative denominator makes the ratio undefined or meaningless,
+        e.g. negative equity); ``[]`` if either series is missing entirely.
+        Pure and never raises on well-formed input.
+    """
+    numerator = to_quarterly_series(normalized, numerator_concept)
+    denominator = to_quarterly_series(normalized, denominator_concept)
+    denom_by_pe = {q["period_end"]: q["value"] for q in denominator if q.get("period_end") is not None}
+    out: List[dict] = []
+    for q in numerator:
+        pe = q.get("period_end")
+        num_v = q.get("value")
+        if pe is None or num_v is None or pe not in denom_by_pe:
+            continue
+        denom_v = denom_by_pe[pe]
+        if denom_v is None or denom_v <= 0:
+            continue
+        out.append({"period_end": pe, "value": round(float(num_v) / float(denom_v) * 100.0, 2)})
     return out
 
 

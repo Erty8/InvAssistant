@@ -26,7 +26,7 @@ değildir:
   - **Küçük evren:** ~20-30 isimlik bir izleme listesi istatistiksel güç
     sağlamaz; birkaç ismin sonucu medyanı savurur.
   - **Survivorship bias:** delisted/iflas etmiş şirketler ücretsiz fiyat
-    kaynaklarında (Stooq) yok; sepet otomatik olarak hayatta kalanlara kayar,
+    kaynağında (yfinance) yok; sepet otomatik olarak hayatta kalanlara kayar,
     bu da hit-rate'i yukarı yanlı gösterir.
   - **Tek rejim:** elde birkaç as-of tarihi var; bir parametreyi bu küçük,
     yanlı, tek-rejim örneğine göre ayarlamak gürültüye overfit olmak demektir —
@@ -37,8 +37,27 @@ değildir:
 
 ## Faz 2
 
-- Watchlist + verdict değişim bildirimi
-- 8-K takibi + AI özet
+- [KISMEN TAMAMLANDI] Watchlist + verdict değişim bildirimi — bir izleme
+  listesi artık zımnen var: `preearnings` komutu argümansız çalıştırıldığında
+  watchlist'i `store/database.py::load_watchlist_tickers`'dan (en az bir
+  saklı canlı verdict'i olan her ticker) türetiyor; `overview`'un "bayat
+  analiz" ve "Karar ile band ortası arasında gerilim" bölümleri de bir
+  ismin kayıtlı görüşünün ne zaman gözden geçirilmesi gerektiğini pasif
+  olarak işaret ediyor. Ama asıl "bildirim" — bir isim için verdict
+  değiştiğinde (ör. UCUZ'dan PAHALI'ya döndüğünde) kendiliğinden tetiklenen
+  bir uyarı (e-posta, push, vb.) — hâlâ YOK; bunların hepsi bir komut elle
+  çalıştırıldığında görülen pasif dashboard'lar.
+- [TAMAMLANDI] 8-K takibi + AI özet — deterministik 8-K yarısı zaten vardı
+  (`signals/events.py`, CLI'nin `Olaylar:` satırı ve HTML rapor kartı ile).
+  Bu değişiklikle KARDEŞ bir dosyalama-kaynaklı sinyal olarak SEC Form 4
+  içeriden-işlem katmanı da eklendi (`fetch/insider.py` + `signals/insider.py`
+  — bkz. METODOLOJI.md §9 ve aşağıdaki "Portföy görünümleri + içeriden işlem
+  sinyali" bölümü). AI ÖZET adımı EKLENMEDİ: CLAUDE.md'nin "LLM usage belongs
+  in offline ETL steps that write to a structured cache; the runtime
+  analysis/valuation path stays deterministic and LLM-free" kuralı gereği,
+  yapılacaksa runtime katmana doğrudan değil, ayrı bir offline ETL adımı
+  (LLM → yapılandırılmış önbellek, `signals/events.py`/`signals/insider.py`
+  ile aynı desen) olarak ele alınmalı.
 - Portfolio review (POZISYONLAR.md entegrasyonu)
 - Peer comparison
 - Risk faktörü diff'i (ardışık 10-K/10-Q Risk Factors karşılaştırması)
@@ -189,3 +208,198 @@ kodlarına genişletme, REIT kartlarında P/E-tabanlı PEG yerine P/FFO. Kalanla
   %12) ve bastırma guardrail'ini geçtiğinde, salt multiples yerine §3c/§4a arası kalibre
   edilmiş (8 yıllık fade, %20 hedef-marj tavanı) bir revenue-first band manşet oluyor. Bkz.
   SPEC.md §8d, VALUATION.md §4b.
+
+## Swing screener + backtest (2026-07-27)
+
+Tamamlananlar: `/swing` sekmesi (S&P 500 + Nasdaq 100 endeks seçimli, 50 satır/sayfa),
+`technical/swing.py` skor motoru, `screener/` tarama katmanı, `swing_scans` /
+`swing_studies` tabloları, `cli swing` ve `cli backtest swing` komutları.
+Bağlayıcı sözleşmeler: `screener/SWING_SPEC.md`, `backtest/SWING_STUDY_SPEC.md`.
+
+### Aşama-1 desil çalışmasının bulguları (ölçüm)
+
+İki bağımsız koşu — Nasdaq 100 2022-2026 (5.274 gözlem) ve S&P 500 2018-2026
+(50.036 gözlem, çok rejimli):
+
+- **Bileşik skorun cross-sectional öngörü gücü YOK.** Üst-alt kova farkı S&P'de
+  %-0.01 (10g, GA %-0.30..%+0.26) ve %+0.08 (21g, GA %-0.30..%+0.50); NDX'te
+  %-0.35 / %+0.32 ve iki ufuk işaret olarak çelişiyor. İsabet oranları %47.7-49.9,
+  yani tümü yazı-turanın altında/seviyesinde. Tüm kovaların medyanı negatif,
+  ortalaması hafif pozitif (sağa çarpık dağılım).
+- **Kurulum sınıflandırması ise tekrarlanan bir sıralama taşıyor** (aynı yön, iki
+  evren, iki ufuk): `MOMENTUM DEVAM` en iyi (S&P: %+0.53 / %+0.82) > `SIKIŞMA` >
+  `AŞIRI SATIM TEPKİSİ` > taban `KURULUM YOK` (%+0.07 / %+0.18) >
+  `TRENDDE GERİ ÇEKİLME` > **`BREAKOUT` tek negatif kova** (%-0.13 / %-0.12,
+  isabet %47.5, n=11.310) — yani "hiç kurulum yok"tan kötü.
+- Büyüklükler küçük (<1pp / 21 gün) ve **maliyet öncesi**; sağlam olan iddia göreli
+  sıralama, özellikle BREAKOUT'un negatif işareti. Survivorship bias tüm rakamları
+  yukarı saptırdığı için boş sonuç göründüğünden daha kötü.
+
+### Bekleyen — kavramsal düzeltme adayları (ağırlık taraması DEĞİL)
+
+ROADMAP'in "backtest optimizasyon aracı değildir" ilkesi gereği düzeltmeler
+kavramsal gerekçeyle yapılıp sonra çalışma tekrar koşulmalı:
+
+- **`BREAKOUT` tanımı yanlış adlandırılmış.** SPEC §3.8'deki kural
+  `dist_52w_high_pct >= -3`, yani *52 hafta zirvesine yakınlık* — pivot üzerine
+  kararlı kapanış veya hacim teyidi yok. Fiilen uzamışlık satın alıyor. Gerçek bir
+  tetikleyiciye bağlanmalı.
+- **SPEC §3.3a ile §3.3c çelişiyor.** §3.3a fiyatın SMA50'nin çok üzerinde olmasını
+  cezalandırıyor, §3.3c 52 hafta zirvesine yakınlığı ödüllendiriyor (zirvede +1.0).
+  Aynı olguya zıt işaret; tek tutarlı fonksiyonda birleştirilmeli. Bu ikisi birlikte
+  skorun en kötü performanslı konfigürasyonu sıralamanın tepesine itmesini açıklıyor
+  (canlı S&P taramasında ilk 10'un tamamı BREAKOUT çıkmıştı — semptom buydu).
+- **`swing.py` / `momentum.py` yorumları ROADMAP ile çelişiyor:** ağırlıkların
+  "backtest tarafından kalibre edileceğini" söylüyorlar, ROADMAP ise parametre
+  taramasını yasaklıyor. Yorumlar düzeltilmeli.
+
+### Bekleyen — diğer
+
+- **Aşama 2 (yapılmadı):** gerçek giriş/stop/hedefle işlem düzeyi simülasyon —
+  R dağılımı, beklenti, kurulum tipi kırılımı. Kurulumların değerinin ham getiride
+  değil risk yönetiminde olup olmadığını sorar; Aşama-1 bulgularıyla çelişmeyen
+  farklı bir soru.
+- **Point-in-time endeks üyeliği (yapılmadı):** evren şu an *bugünün* üyeliği, bu
+  yüzden survivorship bias baskın kısıt. Wikipedia'nın endeks değişiklik tabloları
+  (ör. `List_of_NASDAQ-100_companies` içindeki `changes`) ile geçmiş üyelik
+  rekonstrüksiyonu yapılabilir; delisted isimlerin fiyatı ücretsiz kaynaklarda
+  olmadığı için kısmi kalır ama yanlılığı büyük ölçüde kırar.
+- **Test boşluğu:** `swing_scan`'in process-havuzu yolu otomatik testlerde
+  kapsanmıyor — mevcut testler modül fonksiyonlarını monkeypatch ettiği için
+  spawn edilen worker'lar yamayı görmez (bu yüzden 20 tickerdan küçük fan-out'lar
+  thread yolunda kalıyor). İki yolun eşdeğerliği canlı veriyle elle doğrulandı
+  (101 satır birebir aynı), otomatik test yok.
+- Kullanıcının şimdilik almadığı iki kozmetik iyileştirme: ATR türevi seviyeleri
+  yapısal seviyelerden ayırt eden işaret (breakout isimlerinde R:R sabit 1.50
+  çıkıyor, çünkü yukarıda direnç yok ve hedef ATR'den türetiliyor).
+
+### Performans notu
+
+Tarama CPU-bound (`compute_indicators` ~1s/hisse, saf Python). `swing_scan` artık
+`ProcessPoolExecutor` kullanıyor: 12 çekirdekte sıcak NDX cache'iyle ölçülen
+17.8s vs thread yolunda 71.8s (**4.0x**), satırlar birebir aynı. S&P 500 taraması
+~8 dakikadan ~2 dakikaya indi; Aşama-1 çalışması S&P 500 × 8.5 yıl için ~70 dakika.
+
+## Portföy görünümleri + içeriden işlem sinyali (2026-08-07)
+
+Üç yeni özellik landed:
+
+- **SEC Form 4 içeriden-işlem sinyali** (`fetch/insider.py` + `signals/insider.py`) —
+  açık piyasa alım/satımlarını kümeleyip alım/satış asimetrisini ve
+  pay-oranı materyalite testini uygulayan deterministik bir bağlam katmanı;
+  `analyze`'ın verdict kartına yeni bir `İçeriden:` satırı olarak eklendi
+  (`cli.py::_fetch_insider_activity`). Tam metodoloji: METODOLOJI.md §9.
+- **`overview` komutu + `/overview`, `/api/overview` web rotaları**
+  (`screener/overview.py`) — kayıtlı verdict'ler üzerinden ağsız bir portföy
+  panosu: sektör ısı haritası, değerleme-yolu (`sector_type`) dökümü, isim
+  başına makul-değer/fiyat farkı, bayatlık, yaklaşan bilançolar ve "Karar ile
+  band ortası arasında gerilim" bölümü.
+- **`preearnings` komutu** (`screener/preearnings.py`) — izleme listesindeki
+  hangi isimlerin yakında bilanço açıklayacağını, kayıtlı verdict'i, momentumu,
+  makul-değer farkını, geçmiş sürpriz (beat/miss) kaydını ve deterministik
+  Türkçe gözlemleri tek ekranda toplayan bir brifing; hiçbir yeni değerleme
+  çalıştırmaz, saf okuma/derleme katmanıdır.
+
+**Eklenen dosyalar:** `sec_analyzer/fetch/insider.py`,
+`sec_analyzer/signals/insider.py`, `sec_analyzer/screener/overview.py`,
+`sec_analyzer/screener/preearnings.py`.
+
+**CLI/web yüzeyleri:** `cli.py`'ye `overview` ve `preearnings`
+alt-komutları, verdict kartına `İçeriden:` satırı; `web/app.py`'ye
+`GET /overview` (HTML) ve `GET /api/overview` (JSON) rotaları
+(`stale_days`/`earnings_window` sorgu parametreleriyle).
+
+**DB şeması:** `verdicts` tablosuna üç yeni kolon —
+`insider_verdict TEXT` (`result["insider"]["verdict"]`'ten),
+`catalyst_date TEXT` (o analizdeki kazanç-tahmini tarihinden, ISO) ve
+`sic TEXT` (`submissions["sic"]`'ten; sektör sınıflandırması için) —
+ve iki yeni okuyucu: `load_latest_verdicts` (her ticker için en son canlı
+verdict, `overview`'u besliyor) ve `load_watchlist_tickers` (en az bir
+kayıtlı verdict'i olan her ticker, `preearnings`'in varsayılan izleme
+listesi).
+
+### Sektör ekseninde iki düzeltme
+
+Isı haritası ilk sürümünde iki nedenle parçalıydı:
+
+1. **Sözlük çatışması.** `data/sp500.csv` ile `data/nasdaq100.csv` aynı
+   sektör için farklı adlar kullanıyor ("Information Technology" vs
+   "Technology", "Materials" vs "Basic Materials", "Communication Services"
+   vs "Telecommunications") — aynı sektör iki ayrı kutu olarak çiziliyordu.
+   `overview.py::_SECTOR_ALIASES` hepsini GICS-11 yazımına normalize ediyor.
+2. **Kapsam boşluğu.** Bundle edilmiş CSV'ler yalnızca endeks üyelerini
+   kapsadığı için her iki endeksin de dışındaki isimler
+   "Sınıflandırılmamış" kovasına düşüyordu — 54 satırın 22'si, yani
+   haritanın EN BÜYÜK kutusu "bilinmiyor" anlamına geliyordu. Artık geri
+   düşüş zinciri var: endeks CSV'si → `sic` kolonundan türetilen sektör
+   (`technical/momentum.py::sector_etf_for_sic` + ETF→GICS adı eşlemesi) →
+   `None`. Hangi kaynağın kazandığı satır başına `sector_source`
+   (`"index"`/`"sic"`/`None`) alanında görünür. Mevcut veritabanının 54
+   satırının tamamı artık 11 kanonik GICS kutusundan birine düşüyor
+   (32'si endeksten, 22'si SIC'ten); "Sınıflandırılmamış" kutusu kalmadı.
+
+### Türev satırı hatası (latent, düzeltildi)
+
+Doküman incelemesi sırasında bulundu: `_detect_insider_activity`'nin
+alım/satış toplamları tüm işlemler üzerinde dönüyordu, oysa pay-oranı
+hesabı yalnızca `nonDerivativeTable` satırlarını kullanıyordu. SEC'in
+`P`/`S` kodları türev tablosunda da geçerli olduğundan, bir opsiyon/varant
+işlemi SÖZLEŞME adedini HİSSE adediyle aynı toplama katabilir ve verdict'i
+kaydırabilirdi. Altı canlı isimde (NVDA/ORCL/JPM/KHC/AAPL/AMD, 88-162
+işlem) hiç türev `P`/`S` satırı bulunmadığı için hata hiç ateşlememişti —
+yani latent'ti. Düzeltme: tüm toplamlar artık yalnızca türev-olmayan
+satırlardan hesaplanıyor; türev açık-piyasa işlemleri
+`derivative_buy_count`/`derivative_sell_count` olarak ayrıca raporlanıyor
+ve sıfırdan farklıysa notta dışlandıkları açıkça yazılıyor.
+
+### Kalibrasyon bulgusu
+
+İçeriden-işlem sinyalinin ilk sürümü, `YOĞUN SATIŞ`'ı NVDA, SOFI ve JPM
+gibi birbirinden çok farklı isimlerde AYNI ŞEKİLDE ateşliyordu — yani baz
+oranın kendisinde ateşliyordu, bu da satış tarafını bilgisiz (uninformative)
+kılıyordu. İki neden vardı: (1) sıfır alım olduğunda dejenere olan mekanik
+bir eşik, ve (2) satışı alımla simetrik ele alan kavramsal hata (bkz.
+METODOLOJI.md §9'daki alım/satış asimetrisi). Düzeltme, kişi-başına
+pay-oranı (stake-fraction) materyalite testini getirdi
+(`_HEAVY_SELL_STAKE_PCT`, medyan üzerinden). Düzeltme sonrası, canlı
+dosyalamalar üzerinde ÖLÇÜLEN (tek bir tarihte, doğrulanmış bir backtest
+DEĞİL) sonuçlar:
+
+- **ORCL** → `YOĞUN SATIŞ` (medyan pay satışı %50,0, severity: negative)
+- **NVDA** ve **JPM** → `SATIŞ AĞIRLIKLI` (medyan pay satışı sırasıyla
+  %19,7 / %7,8, severity: neutral)
+- **KHC** → `ALIM` (severity: positive)
+
+Bu dörtlü, düzeltmenin en azından bu örneklemde satış tarafını
+farklılaştırdığını gösteriyor; ama tek bir tarihte, dört isimlik bir ölçüm
+— genellenebilir bir isabet-oranı iddiası değil.
+
+### Bekleyen / bilinen kısıtlar
+
+- **10b5-1 planı ayrımı yok.** Form 4 ayrıştırması, önceden planlanmış
+  (Rule 10b5-1) bir satışı takdire bağlı (discretionary) bir satıştan
+  ayırmıyor — 2022 sonrası formlarda bunu işaretleyen bir kutucuk VAR ama
+  ayrıştırılmıyor; sonuç olarak planlanmış bir satışla gerçek bir karar
+  görsel/veri olarak birbirinden ayırt edilemiyor.
+- **SIC'ten türetilen sektör kaba bir eşlemedir.** Yukarıdaki kapsam
+  boşluğu kapatıldı, ama geri düşüş yolu SIC aralıklarını GICS sektörlerine
+  eşleyen elle yazılmış bir tabloya dayanıyor
+  (`technical/momentum.py::_SIC_ETF_RANGES`, aslında sektör-ETF'i seçmek
+  için yazılmıştı). SIC kodları GICS'ten eski ve daha kaba; sınırdaki
+  isimlerde (ör. holding şirketleri, çok-segmentli sanayiciler) endeks
+  CSV'sinin vereceği sınıflandırmadan farklı bir sonuç çıkabilir. Satır
+  başına `sector_source` alanı hangi kaynağın kullanıldığını gösterir.
+- **`insider_verdict` / `catalyst_date` yalnızca yeni analizlerde dolar.**
+  Bu kolonlar bu değişiklikten SONRA çalıştırılan analizlerde yazılır;
+  daha önce analiz edilmiş isimlerde boş kalırlar (`sic` kolonu mevcut
+  veritabanı için önbellekteki `submissions` dosyalarından bir kez
+  dolduruldu). İsmi yeniden `analyze` etmek hepsini doldurur.
+- **Bilanço tarihi tahmini, duyurulmuş bir tarih DEĞİL.** `preearnings`'in
+  gösterdiği tarih bir medyan-aralık projeksiyonudur
+  (`fetch/filings.py::estimate_next_earnings`); şirketin resmi olarak
+  duyurduğu bir tarih değildir.
+- **Hiçbirinin ileriye-dönük getiri çalışması yok.** İçeriden-işlem sinyali,
+  `overview` ve `preearnings` — üçü de bağlam katmanıdır; ROADMAP'in kendi
+  tasarım ilkesi gereği (bkz. dosyanın başındaki "Backtest — tasarım
+  ilkesi" ve "Yapılmayacaklar" bölümleri) backtest sonuçlarına göre
+  AYARLANMAMALIDIR.

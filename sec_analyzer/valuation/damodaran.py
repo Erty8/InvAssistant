@@ -195,7 +195,7 @@ def load_sector_data(
             provenance block is added and historical sources are preferred:
             * Multiples/betas: a ``data/damodaran/{YEAR}/multiples.csv`` snapshot
               subfolder (nearest year on/before ``as_of``) if present, else the
-              current ``multiples.csv`` with an "anakronik çarpan/beta" warning.
+              current ``multiples.csv`` with an "anachronistic multiple/beta" warning.
             * ERP: per-year snapshot ``erp.csv`` -> ``erp_history.csv`` row for
               ``as_of.year`` -> current ``erp.csv`` (with an anachronism warning
               on the last fallback).
@@ -214,7 +214,7 @@ def load_sector_data(
         present per-row only when that row's CSV data carried a usable Cap
         Ex/Sales value (see :func:`_parse_multiples_rows`). When ``as_of`` is
         set the dict also carries ``"macro_asof": {"as_of","erp_source",
-        "risk_free_source","multiples_source"[,"warnings"]}`` (Turkish source
+        "risk_free_source","multiples_source"[,"warnings"]}`` (English source
         strings, surfaced in the report/notes; ``warnings`` lists anachronism
         notes when a current snapshot had to substitute for a missing
         historical one). Never raises; every missing piece is logged.
@@ -238,10 +238,34 @@ def load_sector_data(
     if as_of is None:
         if not parsed_multiples and current_erp is None and current_risk_free is None:
             return None
+        # Live mode also prefers the FRED observation over the archived
+        # erp.csv risk-free value (SPEC.md "Risk-free source: live FRED
+        # DGS10"). Before this, only as-of runs consulted `fred_rate`, so a
+        # backtest of 2022 used the real 2022 yield while today's analysis
+        # used a hand-refreshed CSV that could be a year stale.
+        live_fred = fred_rate.get("value_pct") if isinstance(fred_rate, dict) else None
+        if live_fred is not None:
+            risk_free_value = live_fred
+            rf_date = fred_rate.get("date")
+            rf_series = fred_rate.get("series") or "FRED"
+            risk_free_source = f"{rf_series} ({rf_date})" if rf_date else str(rf_series)
+        else:
+            risk_free_value = current_risk_free
+            risk_free_source = "erp.csv (archived value — FRED unavailable)"
+        # Provenance is emitted on live runs too, not just as-of runs: now
+        # that the risk-free rate moves daily, "which rate was used and when
+        # was it observed" is what makes a stored verdict reproducible. The
+        # null `as_of` is what tells a consumer this is a live run.
         return {
             "multiples": parsed_multiples or None,
             "erp": current_erp,
-            "risk_free": current_risk_free,
+            "risk_free": risk_free_value,
+            "macro_asof": {
+                "as_of": None,
+                "erp_source": "erp.csv (current value)",
+                "risk_free_source": risk_free_source,
+                "multiples_source": "multiples.csv (current snapshot)",
+            },
         }
 
     # --- Point-in-time (as-of) macro resolution ---
@@ -275,11 +299,11 @@ def load_sector_data(
         multiples_source = f"data/damodaran/{hist_year}/multiples.csv"
     else:
         used_multiples = parsed_multiples
-        multiples_source = "multiples.csv (güncel snapshot — anakronik)"
+        multiples_source = "multiples.csv (current snapshot — anachronistic)"
         if parsed_multiples:
             warnings.append(
-                f"Anakronik çarpan/beta: {as_of_year} için tarihsel Damodaran "
-                "snapshot'ı yok; güncel multiples.csv kullanıldı."
+                f"Anachronistic multiple/beta: no historical Damodaran snapshot "
+                f"for {as_of_year}; used current multiples.csv."
             )
             logger.warning(
                 "damodaran: no per-year snapshot for as_of year %s; using current "
@@ -295,11 +319,11 @@ def load_sector_data(
         erp_source = f"erp_history.csv ({as_of_year})"
     else:
         erp_value = current_erp
-        erp_source = "erp.csv (güncel değer)"
+        erp_source = "erp.csv (current value)"
         if current_erp is not None:
             warnings.append(
-                f"Anakronik ERP: {as_of_year} için tarihsel ERP yok; güncel "
-                "erp.csv değeri kullanıldı."
+                f"Anachronistic ERP: no historical ERP for {as_of_year}; used "
+                "current erp.csv value."
             )
             logger.warning(
                 "damodaran: no historical ERP for as_of year %s; using current "
@@ -321,11 +345,11 @@ def load_sector_data(
         risk_free_source = f"erp_history.csv ({as_of_year})"
     else:
         risk_free_value = current_risk_free
-        risk_free_source = "erp.csv (güncel değer)"
+        risk_free_source = "erp.csv (current value)"
         if current_risk_free is not None:
             warnings.append(
-                "Anakronik risk-free: FRED DGS10 alınamadı ve tarihsel değer yok; "
-                "güncel erp.csv risk-free değeri kullanıldı."
+                "Anachronistic risk-free: FRED DGS10 unavailable and no historical "
+                "value; used current erp.csv risk-free value."
             )
             logger.warning(
                 "damodaran: no historical/FRED risk-free for as_of %s; using current "

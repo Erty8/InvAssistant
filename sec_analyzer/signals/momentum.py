@@ -1,7 +1,7 @@
 """Fundamental- and verdict-momentum signal layer (deterministic, no LLM).
 
 Mirrors :mod:`sec_analyzer.signals.events`: pure, defensive functions that
-never raise, return small Turkish-labelled dicts, and are wired into the CLI
+never raise, return small labelled dicts, and are wired into the CLI
 *after* the fetch/interpret steps rather than through the LLM payload. These
 are **context** signals -- they feed the report's MOMENTUM row and the
 entry-timing narrative; they never enter the fair-value computation.
@@ -23,6 +23,7 @@ from datetime import datetime
 
 from sec_analyzer.normalize.normalizer import (
     latest_annual_value,
+    quarterly_ratio_series,
     to_quarterly_series,
 )
 
@@ -48,9 +49,9 @@ _TREND_WINDOW = 4
 _LABEL_POS = 2
 _LABEL_NEG = -2
 
-_LABEL_POSITIVE = "POZİTİF"
-_LABEL_NEUTRAL = "NÖTR"
-_LABEL_NEGATIVE = "NEGATİF"
+_LABEL_POSITIVE = "POSITIVE"
+_LABEL_NEUTRAL = "NEUTRAL"
+_LABEL_NEGATIVE = "NEGATIVE"
 
 
 def _parse_date(value):
@@ -91,11 +92,11 @@ def _classify_accel(values):
        recent quarter's YoY to actually be higher than the prior quarter's
        (mirrored for decelerating). This blocks a series whose mean drifted up
        but whose latest print turned down (``[36, 48, 63.5, 35.7]``) from
-       reading as "hızlanıyor".
+       reading as "accelerating".
     2. **Two-quarter confirmation** -- ``confirmed`` is ``True`` only when the
        last *two* consecutive transitions agree with the direction; a move
        resting on a single quarter is returned unconfirmed (the caller marks it
-       "teyit bekliyor" and weights it half).
+       "pending confirmation" and weights it half).
 
     Returns ``(sign, confirmed)`` where ``sign`` is ``+1``/``0``/``-1`` (or
     ``None`` with too little data) and ``confirmed`` is a bool.
@@ -166,14 +167,17 @@ def _aligned(series_a, series_b):
 
 def _margin_series(normalized, numerator_concept):
     """Quarterly margin (%) series = ``numerator / Revenue`` aligned by quarter,
-    ascending ``[{period_end, value}]``; ``[]`` if either series is missing."""
-    rev = to_quarterly_series(normalized, "Revenue")
-    num = to_quarterly_series(normalized, numerator_concept)
-    out = []
-    for pe, num_v, rev_v in _aligned(num, rev):
-        if rev_v > 0:
-            out.append({"period_end": pe, "value": round(num_v / rev_v * 100.0, 2)})
-    return out
+    ascending ``[{period_end, value}]``; ``[]`` if either series is missing.
+
+    Thin wrapper over :func:`sec_analyzer.normalize.normalizer.
+    quarterly_ratio_series` (denominator fixed to ``"Revenue"``) -- kept as
+    its own function here since call sites in this module spell it this way,
+    but the actual numerator/denominator alignment and percent conversion
+    live in the shared helper so :mod:`sec_analyzer.interpret.planning` can
+    reuse the exact same logic for other denominators (e.g. ROE's
+    ``StockholdersEquity``) without duplicating it.
+    """
+    return quarterly_ratio_series(normalized, numerator_concept, "Revenue")
 
 
 def _fcf_margin_series(normalized):
@@ -198,7 +202,7 @@ def _fcf_margin_series(normalized):
     return out
 
 
-def _trend_word(sign, improving="iyileşiyor", worsening="bozuluyor", flat="sabit"):
+def _trend_word(sign, improving="improving", worsening="worsening", flat="steady"):
     if sign is None:
         return None
     return improving if sign > 0 else (worsening if sign < 0 else flat)
@@ -207,7 +211,7 @@ def _trend_word(sign, improving="iyileşiyor", worsening="bozuluyor", flat="sabi
 def _accel_word(sign):
     if sign is None:
         return None
-    return "hızlanıyor" if sign > 0 else ("yavaşlıyor" if sign < 0 else "sabit")
+    return "accelerating" if sign > 0 else ("slowing" if sign < 0 else "steady")
 
 
 def _ttm_revenue(normalized):
@@ -291,8 +295,8 @@ def _model_surprise(normalized, prior_verdict):
     else:
         direction = "inline"
     basis = (
-        f"Gerçekleşen gelir, {prior_date.date().isoformat()} tarihli modelin baz "
-        f"senaryosunun ima ettiği seviyeye göre %{surprise_pct:+.1f}."
+        f"Realized revenue is %{surprise_pct:+.1f} versus the level implied by the "
+        f"base scenario of the model dated {prior_date.date().isoformat()}."
     )
     return {"surprise_pct": surprise_pct, "direction": direction, "basis": basis}
 
@@ -311,17 +315,17 @@ def compute_fundamental_momentum(normalized: dict, prior_verdict: "dict | None" 
         A dict of JSON-native values, or ``None`` when quarterly fundamentals
         are too sparse to say anything (e.g. banks with no Revenue concept):
 
-        * ``label``: ``"POZİTİF"`` / ``"NÖTR"`` / ``"NEGATİF"``.
+        * ``label``: ``"POSITIVE"`` / ``"NEUTRAL"`` / ``"NEGATIVE"``.
         * ``s``: continuous score in ``[-1, 1]`` (the fundamental-momentum axis
           of the report's price x fundamental quadrant).
         * ``score``: ``0-100`` display score (``50`` == neutral).
         * ``revenue_accel``: ``{"word", "confirmed", "latest_yoy_pct",
           "yoy_series"}`` or ``None`` -- is quarterly YoY revenue growth
           speeding up or slowing? ``confirmed`` is ``False`` for a
-          single-quarter move (weighted half, flagged "teyit bekliyor").
+          single-quarter move (weighted half, flagged "pending confirmation").
         * ``margin_trend``: ``{"gross", "fcf"}`` trend words (or ``None`` each).
         * ``model_surprise``: see :func:`_model_surprise`, or ``None``.
-        * ``detail``: a one-line Turkish readout.
+        * ``detail``: a one-line readout.
     """
     if not isinstance(normalized, dict):
         return None
@@ -413,10 +417,10 @@ def compute_verdict_momentum(history: "list | None") -> "dict | None":
         A dict, or ``None`` if fewer than two dated points carry a usable
         FV(base mid)/price ratio:
 
-        * ``label``: ``"POZİTİF"`` / ``"NÖTR"`` / ``"NEGATİF"``.
+        * ``label``: ``"POSITIVE"`` / ``"NEUTRAL"`` / ``"NEGATIVE"``.
         * ``direction``: ``"up"`` / ``"flat"`` / ``"down"`` (ratio trajectory).
         * ``series``: ascending ``[{date, fv, price, ratio}]``.
-        * ``detail``: a one-line Turkish reading of the trajectory.
+        * ``detail``: a one-line reading of the trajectory.
     """
     if not history:
         return None
@@ -458,20 +462,20 @@ def compute_verdict_momentum(history: "list | None") -> "dict | None":
     if ratio_change > _VERDICT_RATIO_DEADBAND:
         label, direction = _LABEL_POSITIVE, "up"
         if price_down:
-            detail = "Model bu ismi giderek daha ucuz buluyor: FV/fiyat oranı yükseliyor, fiyat geriliyor (yakınsama fırsatı)."
+            detail = "The model finds this name increasingly cheap: the FV/price ratio is rising while price is falling (a convergence opportunity)."
         else:
-            detail = "FV/fiyat oranı yükseliyor: adil değer fiyattan daha hızlı artıyor."
+            detail = "FV/price ratio is rising: fair value is increasing faster than price."
     elif ratio_change < -_VERDICT_RATIO_DEADBAND:
         direction = "down"
         if fv_down:
             label = _LABEL_NEGATIVE
-            detail = "Tez zayıflıyor: adil değer fiyata doğru eriyor (FV/fiyat oranı düşüyor)."
+            detail = "Thesis weakening: fair value is eroding toward price (FV/price ratio falling)."
         else:
             label = _LABEL_NEUTRAL
-            detail = "Yakınsama gerçekleşiyor: fiyat adil değere yaklaşıyor (FV/fiyat oranı düşüyor)."
+            detail = "Convergence is happening: price is approaching fair value (FV/price ratio falling)."
     else:
         label, direction = _LABEL_NEUTRAL, "flat"
-        detail = "FV/fiyat oranı yatay: model görüşü zaman içinde stabil."
+        detail = "FV/price ratio is flat: the model's view has been stable over time."
 
     return {"label": label, "direction": direction, "series": series, "detail": detail}
 
@@ -482,14 +486,14 @@ def _is_positive(value) -> bool:
 
 #: Price-momentum label -> tier on a [-2, +2] axis for the composite verdict.
 _PRICE_TIER = {
-    "GÜÇLÜ YUKARI MOMENTUM": 2,
-    "YUKARI MOMENTUM": 1,
-    "YATAY MOMENTUM": 0,
-    "AŞAĞI MOMENTUM": -1,
-    "GÜÇLÜ AŞAĞI MOMENTUM": -2,
+    "STRONG UPWARD MOMENTUM": 2,
+    "UPWARD MOMENTUM": 1,
+    "FLAT MOMENTUM": 0,
+    "DOWNWARD MOMENTUM": -1,
+    "STRONG DOWNWARD MOMENTUM": -2,
 }
 
-_MOMENTUM_STRONG_POS = "GÜÇLÜ+"
+_MOMENTUM_STRONG_POS = "STRONG+"
 
 
 def synthesize_momentum(
@@ -550,8 +554,8 @@ def _cross_signals(price_momentum, fundamental_momentum, price_tier, fundamental
     """The value x momentum cross-readings, each ``{type, severity, text}``."""
     signals = []
     fv = (fundamental_verdict or "").upper()
-    is_cheap = "UCUZ" in fv
-    is_expensive = "PAHALI" in fv
+    is_cheap = "CHEAP" in fv
+    is_expensive = "EXPENSIVE" in fv
     price_dir = price_momentum.get("direction") if isinstance(price_momentum, dict) else None
     fund_label = fundamental_momentum.get("label") if isinstance(fundamental_momentum, dict) else None
     model_beat = (
@@ -565,8 +569,9 @@ def _cross_signals(price_momentum, fundamental_momentum, price_tier, fundamental
             "type": "falling_knife",
             "severity": "warn",
             "text": (
-                "Fundamental UCUZ ama fiyat momentumu NEGATİF: düşen bıçak riski. "
-                "Kademeli giriş dip tranche'larına stabilizasyon koşulu eklendi."
+                "Fundamental CHEAP but price momentum NEGATIVE: falling-knife risk. "
+                "A stabilization condition was added to the lower entry tranches of "
+                "the phased entry plan."
             ),
         })
 
@@ -576,20 +581,21 @@ def _cross_signals(price_momentum, fundamental_momentum, price_tier, fundamental
             "type": "profile_guardrail",
             "severity": "warn",
             "text": (
-                "Fundamental PAHALI ama momentum GÜÇLÜ+: momentum cazibesi yüksek, "
-                "değerleme tetiği yok — plan dışı alım riski (profil zaafı)."
+                "Fundamental EXPENSIVE but momentum STRONG+: momentum appeal is high "
+                "with no valuation trigger -- risk of an off-plan purchase (a profile "
+                "weakness)."
             ),
         })
 
     # 3. Cheap + positive fundamental momentum -> strongest combination.
     if is_cheap and fund_label == _LABEL_POSITIVE:
-        extra = " (üst üste model-beat)" if model_beat else ""
+        extra = " (consecutive model-beat)" if model_beat else ""
         signals.append({
             "type": "strong_combo",
             "severity": "good",
             "text": (
-                f"Fundamental UCUZ + fundamental momentum POZİTİF{extra}: en güçlü kombinasyon. "
-                "Tranche planını öne çekmek için gerekçe olabilir."
+                f"Fundamental CHEAP + fundamental momentum POSITIVE{extra}: the "
+                "strongest combination. May justify pulling the tranche plan forward."
             ),
         })
 
@@ -599,24 +605,24 @@ def _cross_signals(price_momentum, fundamental_momentum, price_tier, fundamental
 def _build_fundamental_detail(revenue_accel, margin_trend, model_surprise) -> str:
     parts = []
     if revenue_accel and revenue_accel.get("word"):
-        # Explicitly "çeyreklik" (quarterly) so it never reads as contradicting
-        # the thesis card's *annual* "Yıllık Gelir Büyümesi (YoY)" -- the two
-        # legitimately differ (an annual rate can decelerate while the latest
-        # quarters reaccelerate). Momentum is deliberately the timelier read.
-        caveat = "" if revenue_accel.get("confirmed", True) else " — tek çeyrek, teyit bekliyor"
+        # Explicitly "quarterly" so it never reads as contradicting the thesis
+        # card's *annual* "Annual Revenue Growth (YoY)" -- the two legitimately
+        # differ (an annual rate can decelerate while the latest quarters
+        # reaccelerate). Momentum is deliberately the timelier read.
+        caveat = "" if revenue_accel.get("confirmed", True) else " — single quarter, pending confirmation"
         parts.append(
-            f"Çeyreklik gelir büyümesi {revenue_accel['word']} "
-            f"(son çeyrek YoY %{revenue_accel['latest_yoy_pct']:+.1f}{caveat})"
+            f"Quarterly revenue growth is {revenue_accel['word']} "
+            f"(latest quarter YoY %{revenue_accel['latest_yoy_pct']:+.1f}{caveat})"
         )
     gross = (margin_trend or {}).get("gross")
     if gross:
-        parts.append(f"brüt marj {gross}")
+        parts.append(f"gross margin {gross}")
     fcf = (margin_trend or {}).get("fcf")
     if fcf:
-        parts.append(f"FCF marjı {fcf}")
+        parts.append(f"FCF margin {fcf}")
     if model_surprise:
-        word = {"beat": "modeli aştı", "miss": "modelin altında", "inline": "modelle uyumlu"}[model_surprise["direction"]]
-        parts.append(f"gerçekleşen gelir {word} (%{model_surprise['surprise_pct']:+.1f})")
+        word = {"beat": "beat the model", "miss": "below the model", "inline": "in line with the model"}[model_surprise["direction"]]
+        parts.append(f"realized revenue {word} (%{model_surprise['surprise_pct']:+.1f})")
     if not parts:
-        return "Fundamental momentum için yeterli çeyreklik veri yok."
+        return "Not enough quarterly data for fundamental momentum."
     return "; ".join(parts) + "."

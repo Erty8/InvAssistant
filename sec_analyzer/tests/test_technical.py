@@ -1,13 +1,11 @@
 """Unit tests for sec_analyzer.technical (indicators + verdict) and the
-Stooq/yfinance price-fetching layer in sec_analyzer.fetch.prices.
+yfinance price-fetching layer in sec_analyzer.fetch.prices.
 
 No real network access is used anywhere in this module: the price-history
-tests monkeypatch ``requests.get`` (and, for the fallback path, force
-``import yfinance`` to fail via ``sys.modules``) rather than hitting Stooq
-or Yahoo Finance.
+tests replace the lazily-imported ``yfinance`` module via ``sys.modules``
+(see ``_fake_yfinance``) rather than hitting Yahoo Finance.
 """
 
-import io
 import sys
 from datetime import date
 
@@ -693,74 +691,133 @@ def test_horizon_summary_5y_notes_rsi_not_relevant_and_frames_sma200_as_entry_ti
 # ---------------------------------------------------------------------------
 
 
-def _fake_stooq_csv(n=40, start_price=100.0):
-    """Build a small, valid Stooq-shaped CSV payload as plain text."""
+def _fake_price_frame(n=40, start_price=100.0):
+    """A small, valid daily OHLCV frame shaped like a yfinance download."""
     dates = pd.bdate_range("2023-01-02", periods=n)
-    lines = ["Date,Open,High,Low,Close,Volume"]
     price = start_price
-    for d in dates:
+    rows = []
+    for _d in dates:
         price += 0.5
-        lines.append(
-            f"{d.date()},{price - 0.3:.2f},{price + 0.5:.2f},{price - 0.5:.2f},{price:.2f},1000000"
-        )
-    return "\n".join(lines) + "\n"
+        rows.append({"Open": price - 0.3, "High": price + 0.5,
+                     "Low": price - 0.5, "Close": price, "Volume": 1000000})
+    return pd.DataFrame(rows, index=dates)
 
 
-class _FakeResponse:
-    """Minimal stand-in for requests.Response used by the fetch tests."""
+def _fake_yfinance(frame):
+    """A stand-in ``yfinance`` module whose ``download`` returns ``frame``.
 
-    def __init__(self, text):
-        self.text = text
+    ``_fetch_yfinance`` imports yfinance lazily, so injecting the name into
+    ``sys.modules`` is the seam for every fetch-path test. It replaced
+    monkeypatching ``prices.requests.get``, which stopped existing when the
+    Stooq path was removed (Stooq began serving a JS bot-check in Aug 2026).
+    """
 
-    def raise_for_status(self):
-        pass
+    class _FakeYf:
+        @staticmethod
+        def download(_ticker, period=None, interval=None, progress=None):
+            return frame.copy()
+
+    return _FakeYf
 
 
-def test_get_price_history_stooq_success_writes_cache(monkeypatch, tmp_path):
+def _no_network_yfinance():
+    """A stand-in ``yfinance`` that fails the test if anything fetches."""
+
+    class _FakeYf:
+        @staticmethod
+        def download(*_a, **_k):
+            raise AssertionError("network should not be hit on a fresh cache hit")
+
+    return _FakeYf
+
+
+def test_get_price_history_yfinance_success_writes_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
-    csv_text = _fake_stooq_csv(40)
-    captured_url = {}
-
-    def _fake_get(url, *a, **k):
-        captured_url["url"] = url
-        return _FakeResponse(csv_text)
-
-    monkeypatch.setattr(prices.requests, "get", _fake_get)
+    monkeypatch.setitem(sys.modules, "yfinance", _fake_yfinance(_fake_price_frame(40)))
 
     df, source = prices.get_price_history("FAKE", no_cache=True)
 
-    assert source == "stooq"
+    assert source == "yfinance"
     assert len(df) == 40
     assert list(df.columns) == ["Open", "High", "Low", "Close", "Volume"]
-
-    # The Stooq request must not carry any d1/d2 date-range params -- those
-    # would narrow the response to a fixed lookback window instead of
-    # Stooq's default behavior of returning the full available history.
-    assert "d1=" not in captured_url["url"]
-    assert "d2=" not in captured_url["url"]
 
     cache_file = tmp_path / f"prices_FAKE{prices._CACHE_SUFFIX}.csv"
     assert cache_file.exists()
 
 
 def test_get_price_history_cache_hit_skips_network(monkeypatch, tmp_path):
+    # Freshness is a property of the DATA now, not the file mtime (SPEC-less
+    # fix, see prices._cache_covers_last_session): the cache counts as fresh
+    # only if it carries a bar for the last completed session.
     monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
-    csv_text = _fake_stooq_csv(40)
-    cached_df = (
-        pd.read_csv(io.StringIO(csv_text), parse_dates=["Date"]).set_index("Date").sort_index()
-    )
+    cached_df = _cache_frame_through_last_session(40)
     cache_path = tmp_path / f"prices_FAKE{prices._CACHE_SUFFIX}.csv"
     cached_df.to_csv(cache_path, index_label="Date")
 
-    def _fail_if_called(*_args, **_kwargs):
-        raise AssertionError("network should not be hit on a fresh cache hit")
-
-    monkeypatch.setattr(prices.requests, "get", _fail_if_called)
+    monkeypatch.setitem(sys.modules, "yfinance", _no_network_yfinance())
 
     df, source = prices.get_price_history("FAKE")
 
-    assert source == "cache(stooq)"
+    # No sidecar was written alongside this hand-made cache, so its upstream
+    # is genuinely unrecorded.
+    assert source == "cache(unknown)"
     assert len(df) == 40
+
+
+def _cache_frame_through_last_session(n=40):
+    """A cached OHLCV frame whose newest bar IS the last completed session."""
+    end = prices.last_completed_session()
+    dates = pd.bdate_range(end=pd.Timestamp(end), periods=n)
+    price = 100.0
+    rows = []
+    for d in dates:
+        price += 0.5
+        rows.append({"Date": d, "Open": price - 0.3, "High": price + 0.5,
+                     "Low": price - 0.5, "Close": price, "Volume": 1000000})
+    return pd.DataFrame(rows).set_index("Date").sort_index()
+
+
+def test_get_price_history_refetches_when_cache_misses_the_last_session(monkeypatch, tmp_path):
+    """The MU 2026-07-31 defect: a cache written before the day's close stayed
+    "fresh" for 24h and served a price two sessions old."""
+    monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
+    stale = _cache_frame_through_last_session(40)
+    stale = stale.iloc[:-3]  # drop the newest bars -> misses the last session
+    cache_path = tmp_path / f"prices_FAKE{prices._CACHE_SUFFIX}.csv"
+    stale.to_csv(cache_path, index_label="Date")
+
+    monkeypatch.setitem(sys.modules, "yfinance", _fake_yfinance(_fake_price_frame(40)))
+
+    df, source = prices.get_price_history("FAKE")
+
+    assert source == "yfinance", "a cache missing the last session must re-fetch"
+
+
+def test_get_price_history_records_and_reports_the_cache_source(monkeypatch, tmp_path):
+    """A cache must report the upstream that actually produced it, not a
+    hardcoded guess."""
+    monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
+    cache_path = str(tmp_path / f"prices_FAKE{prices._CACHE_SUFFIX}.csv")
+    frame = _cache_frame_through_last_session(40)
+
+    prices._write_cache(cache_path, frame, source="yfinance")
+    assert prices._read_cache_source(cache_path) == "yfinance"
+
+    monkeypatch.setitem(sys.modules, "yfinance", _no_network_yfinance())
+
+    _df, source = prices.get_price_history("FAKE")
+    assert source == "cache(yfinance)"
+
+
+def test_unmarked_cache_reports_unknown_not_a_dead_source(monkeypatch, tmp_path):
+    """Caches written before the sidecar existed carry no marker. The old
+    default named Stooq, which this module can no longer even reach, so an
+    unrecorded upstream must report itself as unknown."""
+    monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
+    cache_path = str(tmp_path / f"prices_FAKE{prices._CACHE_SUFFIX}.csv")
+    prices._write_cache(cache_path, _cache_frame_through_last_session(40))
+
+    assert prices._read_cache_source(cache_path) == "unknown"
 
 
 def test_get_price_history_ignores_stale_narrow_cache_from_old_filename(monkeypatch, tmp_path):
@@ -769,19 +826,14 @@ def test_get_price_history_ignores_stale_narrow_cache_from_old_filename(monkeypa
     hardcoded ``period="2y"`` -- must simply be ignored (different
     filename), not read as if it were the new full-history cache."""
     monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
-    stale_csv = _fake_stooq_csv(40)
-    stale_df = (
-        pd.read_csv(io.StringIO(stale_csv), parse_dates=["Date"]).set_index("Date").sort_index()
-    )
     old_style_path = tmp_path / "prices_FAKE.csv"
-    stale_df.to_csv(old_style_path, index_label="Date")
+    _fake_price_frame(40).to_csv(old_style_path, index_label="Date")
 
-    fresh_csv = _fake_stooq_csv(80)
-    monkeypatch.setattr(prices.requests, "get", lambda *a, **k: _FakeResponse(fresh_csv))
+    monkeypatch.setitem(sys.modules, "yfinance", _fake_yfinance(_fake_price_frame(80)))
 
     df, source = prices.get_price_history("FAKE")
 
-    assert source == "stooq"
+    assert source == "yfinance"
     assert len(df) == 80
 
 
@@ -814,10 +866,10 @@ def test_fetch_yfinance_defaults_to_max_period(monkeypatch):
     assert len(df) == 40
 
 
-def test_get_price_history_raises_when_stooq_and_yfinance_both_fail(monkeypatch, tmp_path):
+def test_get_price_history_raises_when_yfinance_is_unavailable(monkeypatch, tmp_path):
+    """yfinance is the only source, so its absence is fatal -- there is no
+    second upstream left to fall through to."""
     monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
-    # An HTML error page instead of CSV -- Stooq's "no data" / blocked shape.
-    monkeypatch.setattr(prices.requests, "get", lambda *a, **k: _FakeResponse("<html>error</html>"))
     # Force `import yfinance` inside _fetch_yfinance to raise ImportError:
     # setting a sys.modules entry to None makes any subsequent `import` of
     # that name raise ImportError immediately, without needing the package

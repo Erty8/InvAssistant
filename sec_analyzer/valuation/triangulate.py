@@ -1,15 +1,15 @@
 """Combine DCF, reverse-DCF, and multiples signals into one triangulated view.
 
-Each of the three methods independently votes "ucuz" (cheap) / "makul"
-(fair) / "pahali" (expensive) / "veri_yok" (no data); this module doesn't
-recompute any valuation number, it only classifies each method's existing
-output and looks for agreement across methods as a simple, transparent
-confidence signal (rather than a black-box weighted score).
+Each of the three methods independently votes "cheap" / "fair" / "expensive"
+/ "no_data"; this module doesn't recompute any valuation number, it only
+classifies each method's existing output and looks for agreement across
+methods as a simple, transparent confidence signal (rather than a black-box
+weighted score).
 
 In hyper-grower mode (HYPER_SPEC.md Sec.4, ``hyper_growth=True``) the DCF
-vote gains a 4th value, "yuksek_beklenti" ("priced for high expectations"):
+vote gains a 4th value, "high_expectation" ("priced for high expectations"):
 above the base band but at/below the bull band, distinct from an outright
-"pahali" (only above the bull band).
+"expensive" (only above the bull band).
 """
 
 import logging
@@ -17,10 +17,10 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-SIGNAL_CHEAP = "ucuz"
-SIGNAL_FAIR = "makul"
-SIGNAL_EXPENSIVE = "pahali"
-SIGNAL_NO_DATA = "veri_yok"
+SIGNAL_CHEAP = "cheap"
+SIGNAL_FAIR = "fair"
+SIGNAL_EXPENSIVE = "expensive"
+SIGNAL_NO_DATA = "no_data"
 
 #: Multiples-only signal: the raw multiple's own historical percentile and
 #: the growth-adjusted multiple's percentile (PEG in standard mode,
@@ -28,12 +28,12 @@ SIGNAL_NO_DATA = "veri_yok"
 #: directional buckets (e.g. raw expensive, growth-adjusted fair). Surfaces
 #: the disagreement instead of hiding it behind the raw percentile alone
 #: (VALUATION.md Sec.7). Never emitted unless BOTH percentiles are present.
-SIGNAL_MIXED = "karisik"
+SIGNAL_MIXED = "mixed"
 
 #: Hyper-grower-only DCF signal (HYPER_SPEC.md Sec.4): price sits above the
 #: base band but at/below the bull band -- "priced for high expectations",
-#: distinct from an outright "pahali" (only above the bull band).
-SIGNAL_HIGH_EXPECTATION = "yuksek_beklenti"
+#: distinct from an outright "expensive" (only above the bull band).
+SIGNAL_HIGH_EXPECTATION = "high_expectation"
 
 #: Reverse-DCF: implied growth more than this many percentage points above/
 #: below the reference growth rate flips the signal to expensive/cheap.
@@ -64,11 +64,11 @@ _LEVERAGE_EBITDA_RATIO = 1.0
 _SECTOR_RATIO_EXPENSIVE = 1.25
 _SECTOR_RATIO_CHEAP = 0.80
 
-CONFIDENCE_HIGH = "YÜKSEK"
-CONFIDENCE_MEDIUM = "ORTA"
-CONFIDENCE_LOW = "DÜŞÜK"
+CONFIDENCE_HIGH = "HIGH"
+CONFIDENCE_MEDIUM = "MEDIUM"
+CONFIDENCE_LOW = "LOW"
 
-_DIRECTION_UNCLEAR = "belirsiz"
+_DIRECTION_UNCLEAR = "unclear"
 
 #: Model–market divergence governor (the "expectations discipline" backstop).
 #: When the base fair-value band sits a large multiple away from the price,
@@ -94,14 +94,14 @@ _DIRECTION_UNCLEAR = "belirsiz"
 _DIVERGENCE_UP_FACTOR = 2.0
 _DIVERGENCE_DOWN_FACTOR = 0.5
 
-#: Turkish display labels for each signal value, used in rationale sentences.
+#: Display labels for each signal value, used in rationale sentences.
 _SIGNAL_LABEL_TR = {
-    SIGNAL_CHEAP: "ucuz",
-    SIGNAL_FAIR: "makul",
-    SIGNAL_EXPENSIVE: "pahalı",
-    SIGNAL_HIGH_EXPECTATION: "yüksek beklenti",
-    SIGNAL_MIXED: "karışık",
-    SIGNAL_NO_DATA: "veri yok",
+    SIGNAL_CHEAP: "cheap",
+    SIGNAL_FAIR: "fair",
+    SIGNAL_EXPENSIVE: "expensive",
+    SIGNAL_HIGH_EXPECTATION: "high expectations",
+    SIGNAL_MIXED: "mixed",
+    SIGNAL_NO_DATA: "no data",
 }
 
 
@@ -119,14 +119,14 @@ def _percentile_bucket(pct: Optional[float]) -> Optional[str]:
 
 
 def _bucket_word_tr(pct: Optional[float]) -> str:
-    """Turkish phrase describing where a percentile sits, for the mixed-
-    signal rationale sentence (e.g. ``"pahalı tarafta"``)."""
+    """Phrase describing where a percentile sits, for the mixed-signal
+    rationale sentence (e.g. ``"on the expensive side"``)."""
     bucket = _percentile_bucket(pct)
     if bucket == SIGNAL_EXPENSIVE:
-        return "pahalı tarafta"
+        return "on the expensive side"
     if bucket == SIGNAL_CHEAP:
-        return "ucuz tarafta"
-    return "tarihsel ortasında"
+        return "on the cheap side"
+    return "in the middle of its historical range"
 
 
 def _sector_ratio_bucket(ratio: Optional[float]) -> Optional[str]:
@@ -144,13 +144,13 @@ def _sector_ratio_bucket(ratio: Optional[float]) -> Optional[str]:
 
 
 def _sector_word_tr(bucket: Optional[str]) -> str:
-    """Turkish phrase for a sector-relative bucket, for the mixed-signal
-    rationale sentence (e.g. ``"pahalı"``)."""
+    """Phrase for a sector-relative bucket, for the mixed-signal rationale
+    sentence (e.g. ``"expensive"``)."""
     if bucket == SIGNAL_EXPENSIVE:
-        return "pahalı"
+        return "expensive"
     if bucket == SIGNAL_CHEAP:
-        return "ucuz"
-    return "medyanla uyumlu"
+        return "cheap"
+    return "in line with the median"
 
 
 def _money(value: Optional[float]) -> str:
@@ -163,19 +163,19 @@ def _money(value: Optional[float]) -> str:
 
 
 def _pct(value: Optional[float]) -> str:
-    """Format a fraction (e.g. ``0.185``) as a Turkish-style percent with 1
-    decimal, e.g. ``"%18.5"``. ``None`` -> ``"—"``."""
+    """Format a fraction (e.g. ``0.185``) as a percent with 1 decimal, e.g.
+    ``"18.5%"``. ``None`` -> ``"—"``."""
     if value is None:
         return "—"
-    return f"%{value * 100:.1f}"
+    return f"{value * 100:.1f}%"
 
 
 def _percentile(value: Optional[float]) -> str:
-    """Format an already-0..100 percentile as ``"%73"`` (0 decimals).
+    """Format an already-0..100 percentile as ``"73%"`` (0 decimals).
     ``None`` -> ``"—"``."""
     if value is None:
         return "—"
-    return f"%{value:.0f}"
+    return f"{value:.0f}%"
 
 
 def _dcf_signal(
@@ -226,33 +226,33 @@ def _dcf_rationale(
     hyper_growth: bool = False,
     bull_band: Optional[dict] = None,
 ) -> str:
-    """Turkish display sentence explaining the DCF signal, mirroring
+    """Display sentence explaining the DCF signal, mirroring
     :func:`_dcf_signal`'s branches exactly (same inputs, same thresholds)."""
     if price is None or not dcf_base_band:
-        return "Fiyat ya da baz değerleme aralığı yok."
+        return "No price or base valuation band available."
     lo = dcf_base_band.get("lo")
     hi = dcf_base_band.get("hi")
     if lo is None or hi is None:
-        return "Fiyat ya da baz değerleme aralığı yok."
+        return "No price or base valuation band available."
 
     bull_hi = bull_band.get("hi") if (hyper_growth and bull_band) else None
     if bull_hi is not None:
         if price < lo:
-            return f"Fiyat {_money(price)}, baz değerleme aralığının ({_money(lo)}–{_money(hi)}) altında → ucuz."
+            return f"Price {_money(price)} is below the base valuation band ({_money(lo)}-{_money(hi)}) -> cheap."
         if price <= hi:
-            return f"Fiyat {_money(price)}, baz değerleme aralığı ({_money(lo)}–{_money(hi)}) içinde → makul."
+            return f"Price {_money(price)} is within the base valuation band ({_money(lo)}-{_money(hi)}) -> fair."
         if price <= bull_hi:
             return (
-                f"Fiyat {_money(price)}, baz aralığın ({_money(lo)}–{_money(hi)}) üzerinde ama boğa senaryosu "
-                f"({_money(bull_hi)}) sınırında → yüksek beklenti."
+                f"Price {_money(price)} is above the base band ({_money(lo)}-{_money(hi)}) but within the bull "
+                f"scenario limit ({_money(bull_hi)}) -> high expectations."
             )
-        return f"Fiyat {_money(price)}, baz değerleme aralığının ({_money(lo)}–{_money(hi)}) üzerinde → pahalı."
+        return f"Price {_money(price)} is above the base valuation band ({_money(lo)}-{_money(hi)}) -> expensive."
 
     if price < lo:
-        return f"Fiyat {_money(price)}, baz değerleme aralığının ({_money(lo)}–{_money(hi)}) altında → ucuz."
+        return f"Price {_money(price)} is below the base valuation band ({_money(lo)}-{_money(hi)}) -> cheap."
     if price > hi:
-        return f"Fiyat {_money(price)}, baz değerleme aralığının ({_money(lo)}–{_money(hi)}) üzerinde → pahalı."
-    return f"Fiyat {_money(price)}, baz değerleme aralığı ({_money(lo)}–{_money(hi)}) içinde → makul."
+        return f"Price {_money(price)} is above the base valuation band ({_money(lo)}-{_money(hi)}) -> expensive."
+    return f"Price {_money(price)} is within the base valuation band ({_money(lo)}-{_money(hi)}) -> fair."
 
 
 def _reverse_dcf_signal(
@@ -298,30 +298,30 @@ def _reverse_dcf_rationale(
     base_growth: Optional[float],
     reverse_dcf_status: Optional[str] = None,
 ) -> str:
-    """Turkish display sentence explaining the reverse-DCF signal, mirroring
+    """Display sentence explaining the reverse-DCF signal, mirroring
     :func:`_reverse_dcf_signal`'s branches exactly (same inputs, same
     thresholds)."""
     if reverse_dcf_status == "above_bracket":
-        return "Fiyat, modelin ulaşabileceği en iyimser büyümenin bile üzerinde bir beklenti ima ediyor → pahalı."
+        return "The price implies an expectation above even the most optimistic growth the model can reach -> expensive."
     if reverse_dcf_status == "below_bracket":
-        return "Fiyat, modelin en kötümser büyüme senaryosunun bile altında bir beklenti ima ediyor → ucuz."
+        return "The price implies an expectation below even the model's most pessimistic growth scenario -> cheap."
     if implied_growth is None:
-        return "Fiyatın ima ettiği büyüme hesaplanamadı."
+        return "The price-implied growth could not be computed."
     reference = realized_cagr if realized_cagr is not None else base_growth
     if reference is None:
-        return "Fiyatın ima ettiği büyüme hesaplanamadı."
-    ref_word = "gerçekleşen büyüme" if realized_cagr is not None else "varsayılan büyüme"
+        return "The price-implied growth could not be computed."
+    ref_word = "realized growth" if realized_cagr is not None else "assumed growth"
     if implied_growth > reference + _REVERSE_DCF_MARGIN:
         return (
-            f"Fiyat {_pct(implied_growth)} büyüme ima ediyor; {ref_word} {_pct(reference)} — piyasa daha fazla "
-            "büyüme fiyatlıyor → pahalı."
+            f"Price implies {_pct(implied_growth)} growth; {ref_word} is {_pct(reference)} -- the market is "
+            "pricing in more growth -> expensive."
         )
     if implied_growth < reference - _REVERSE_DCF_MARGIN:
         return (
-            f"Fiyat {_pct(implied_growth)} büyüme ima ediyor; {ref_word} {_pct(reference)} — piyasa daha az "
-            "büyüme fiyatlıyor → ucuz."
+            f"Price implies {_pct(implied_growth)} growth; {ref_word} is {_pct(reference)} -- the market is "
+            "pricing in less growth -> cheap."
         )
-    return f"Fiyatın ima ettiği büyüme ({_pct(implied_growth)}) {ref_word} ({_pct(reference)}) ile uyumlu → makul."
+    return f"Price-implied growth ({_pct(implied_growth)}) is consistent with {ref_word} ({_pct(reference)}) -> fair."
 
 
 def _raw_multiples_signal(
@@ -437,7 +437,7 @@ def _multiples_rationale(
     ev_ebitda_pct: Optional[float] = None,
     leveraged: bool = False,
 ) -> str:
-    """Turkish display sentence explaining the multiples signal, mirroring
+    """Display sentence explaining the multiples signal, mirroring
     :func:`_multiples_signal`'s branches exactly (same inputs, thresholds,
     precedence)."""
     ev_primary = leveraged and ev_ebitda_pct is not None
@@ -446,13 +446,13 @@ def _multiples_rationale(
     elif sector_type == "reit":
         candidates = ((pffo_pct, "P/FFO"), (ps_pct, "P/S"))
     elif leveraged:
-        candidates = ((ev_ebitda_pct, "FD/FAVÖK"), (pe_pct, "P/E"), (ps_pct, "P/S"), (pfcf_pct, "P/FCF"))
+        candidates = ((ev_ebitda_pct, "EV/EBITDA"), (pe_pct, "P/E"), (ps_pct, "P/S"), (pfcf_pct, "P/FCF"))
     else:
         candidates = ((pe_pct, "P/E"), (ps_pct, "P/S"), (pfcf_pct, "P/FCF"))
 
     pct, label = next(((p, lbl) for p, lbl in candidates if p is not None), (None, None))
     if pct is None:
-        return "Çarpan persentili hesaplanamadı."
+        return "The multiple percentile could not be computed."
 
     # 1. Growth-adjusted divergence takes precedence over the plain sentence,
     # matching _multiples_signal's first SIGNAL_MIXED branch (skipped when
@@ -464,9 +464,9 @@ def _multiples_rationale(
         and _percentile_bucket(raw_growth_pair_pct) != _percentile_bucket(growth_adj_pct)
     ):
         return (
-            f"Ham çarpan persentili {_percentile(raw_growth_pair_pct)} ({_bucket_word_tr(raw_growth_pair_pct)}) "
-            f"ama büyümeye göre normalize edilince (persentil {_percentile(growth_adj_pct)}, "
-            f"{_bucket_word_tr(growth_adj_pct)}) ayrışıyor → karışık sinyal."
+            f"Raw multiple percentile is {_percentile(raw_growth_pair_pct)} ({_bucket_word_tr(raw_growth_pair_pct)}) "
+            f"but diverges once normalized for growth (percentile {_percentile(growth_adj_pct)}, "
+            f"{_bucket_word_tr(growth_adj_pct)}) -> mixed signal."
         )
 
     # 2. Own-history vs sector-median divergence (second SIGNAL_MIXED branch).
@@ -474,26 +474,26 @@ def _multiples_rationale(
     sector_bucket = _sector_ratio_bucket(sector_ratio)
     if sector_bucket is not None and sector_bucket != own_bucket:
         return (
-            f"{label} persentili {_percentile(pct)} ({_bucket_word_tr(pct)}) "
-            f"ama sektör medyanına göre {_sector_word_tr(sector_bucket)} → karışık sinyal."
+            f"{label} percentile is {_percentile(pct)} ({_bucket_word_tr(pct)}) "
+            f"but {_sector_word_tr(sector_bucket)} versus the sector median -> mixed signal."
         )
 
     # Own-history and sector agree (or no sector data): plain sentence, with a
     # sector-confirmation clause appended when a sector median is available.
     if sector_bucket == SIGNAL_EXPENSIVE:
-        sector_suffix = " Sektör medyanına göre de pahalı."
+        sector_suffix = " Also expensive versus the sector median."
     elif sector_bucket == SIGNAL_CHEAP:
-        sector_suffix = " Sektör medyanına göre de ucuz."
+        sector_suffix = " Also cheap versus the sector median."
     elif sector_bucket == SIGNAL_FAIR:
-        sector_suffix = " Sektör medyanıyla da uyumlu."
+        sector_suffix = " Also in line with the sector median."
     else:
         sector_suffix = ""
 
     if pct > _PERCENTILE_EXPENSIVE:
-        return f"{label} persentili {_percentile(pct)} (>70) — kendi tarihsel aralığına göre pahalı.{sector_suffix}"
+        return f"{label} percentile is {_percentile(pct)} (>70) -- expensive versus its own historical range.{sector_suffix}"
     if pct < _PERCENTILE_CHEAP:
-        return f"{label} persentili {_percentile(pct)} (<30) — kendi tarihsel aralığına göre ucuz.{sector_suffix}"
-    return f"{label} persentili {_percentile(pct)} — tarihsel aralığın ortalarında → makul.{sector_suffix}"
+        return f"{label} percentile is {_percentile(pct)} (<30) -- cheap versus its own historical range.{sector_suffix}"
+    return f"{label} percentile is {_percentile(pct)} -- in the middle of its historical range -> fair.{sector_suffix}"
 
 
 def triangulate(
@@ -647,18 +647,18 @@ def triangulate(
 
     Returns:
         ``{"signals": {"dcf", "reverse_dcf", "multiples"}, "confidence":
-        "YÜKSEK"|"ORTA"|"DÜŞÜK", "direction": <majority signal or
-        "belirsiz">, "rationale": {"dcf", "reverse_dcf", "multiples",
-        "confidence"}}``. Confidence: all three (non-"veri_yok") signals
-        agree -> YÜKSEK; exactly two agree -> ORTA; otherwise (scattered,
-        or 2+ signals are "veri_yok") -> DÜŞÜK. ``direction`` can surface
+        "HIGH"|"MEDIUM"|"LOW", "direction": <majority signal or
+        "unclear">, "rationale": {"dcf", "reverse_dcf", "multiples",
+        "confidence"}}``. Confidence: all three (non-"no_data") signals
+        agree -> HIGH; exactly two agree -> MEDIUM; otherwise (scattered,
+        or 2+ signals are "no_data") -> LOW. ``direction`` can surface
         :data:`SIGNAL_HIGH_EXPECTATION` in hyper-grower mode exactly like any
         other signal value, via the same majority/agreement counting.
-        ``rationale`` holds one display-ready Turkish sentence per method
+        ``rationale`` holds one display-ready sentence per method
         (explaining the signal it gave, with the underlying numbers already
         formatted in) plus one explaining why the overall ``confidence``
         came out as it did; on the exception-fallback path these are
-        generic "veri yok" sentences. Never raises.
+        generic "no data" sentences. Never raises.
     """
     try:
         return _triangulate(
@@ -674,10 +674,10 @@ def triangulate(
             "confidence": CONFIDENCE_LOW,
             "direction": _DIRECTION_UNCLEAR,
             "rationale": {
-                "dcf": "Veri yok.",
-                "reverse_dcf": "Veri yok.",
-                "multiples": "Veri yok.",
-                "confidence": "Veri yok.",
+                "dcf": "No data.",
+                "reverse_dcf": "No data.",
+                "multiples": "No data.",
+                "confidence": "No data.",
             },
             "divergence": None,
         }
@@ -719,49 +719,50 @@ def _triangulate(
         confidence = CONFIDENCE_LOW
         direction = _DIRECTION_UNCLEAR
         rationale["confidence"] = (
-            "İki veya daha fazla yöntemde veri yok; sağlam bir karşılaştırma yapılamadığı için güven düşük."
+            "Two or more methods have no data; confidence is low since a robust comparison isn't possible."
         )
     elif len(substantive) == 3 and majority_count == 3:
         confidence = CONFIDENCE_HIGH
         direction = majority_signal
         rationale["confidence"] = (
-            f"Üç yöntem de aynı yönü ({_SIGNAL_LABEL_TR.get(direction, direction)}) gösteriyor; güven yüksek."
+            f"All three methods point the same direction ({_SIGNAL_LABEL_TR.get(direction, direction)}); "
+            "confidence is high."
         )
     elif majority_count == 2:
         confidence = CONFIDENCE_MEDIUM
         direction = majority_signal
         rationale["confidence"] = (
-            f"Üç yöntemden ikisi {_SIGNAL_LABEL_TR.get(majority_signal, majority_signal)} diyor, biri ayrışıyor; "
-            "güven orta."
+            f"Two of the three methods say {_SIGNAL_LABEL_TR.get(majority_signal, majority_signal)}, one "
+            "diverges; confidence is medium."
         )
     else:
         confidence = CONFIDENCE_LOW
         direction = _DIRECTION_UNCLEAR
-        rationale["confidence"] = "Yöntemler birbirinden farklı sinyaller veriyor; ortak bir yön olmadığı için güven düşük."
+        rationale["confidence"] = "The methods give conflicting signals; confidence is low since there is no common direction."
 
     if earnings_power_headline and confidence == CONFIDENCE_HIGH:
         confidence = CONFIDENCE_MEDIUM
         rationale["confidence"] += (
-            " (Serbest nakit akışı çapası güvenilmez olduğu için manşet kazanç-gücüne dayanıyor; DCF ve "
-            "çarpan bacakları aynı kazanç sinyalinin türevi olduğundan güven en fazla ORTA ile sınırlandı.)"
+            " (The headline relies on earnings power since the free-cash-flow anchor is unreliable; the DCF "
+            "and multiples legs derive from the same earnings signal, so confidence is capped at MEDIUM.)"
         )
     elif mature_revenue_headline and confidence == CONFIDENCE_HIGH:
         confidence = CONFIDENCE_MEDIUM
         rationale["confidence"] += (
-            " (Manşet, olgun revenue-first DCF'e dayanıyor; bu yöntemin ters-DCF'i de aynı modelden "
-            "türediği için bağımsız bir kanıt değil, güven en fazla ORTA ile sınırlandı.)"
+            " (The headline relies on the mature revenue-first DCF; this method's reverse-DCF derives from "
+            "the same model, so it isn't independent evidence -- confidence is capped at MEDIUM.)"
         )
     elif midgrowth_revenue_headline and confidence == CONFIDENCE_HIGH:
         confidence = CONFIDENCE_MEDIUM
         rationale["confidence"] += (
-            " (Manşet, orta-büyüme revenue-first DCF'e dayanıyor; bu yöntemin ters-DCF'i de aynı modelden "
-            "türediği için bağımsız bir kanıt değil, güven en fazla ORTA ile sınırlandı.)"
+            " (The headline relies on the mid-growth revenue-first DCF; this method's reverse-DCF derives "
+            "from the same model, so it isn't independent evidence -- confidence is capped at MEDIUM.)"
         )
     elif cyclical_fcfe_headline and confidence == CONFIDENCE_HIGH:
         confidence = CONFIDENCE_MEDIUM
         rationale["confidence"] += (
-            " (Manşet, kazanç-tabanlı FCFE çapasından geldiği için — DCF ve çarpanlar bastırılmış FCF'i "
-            "yansıtır — güven ORTA'ya sınırlandı.)"
+            " (The headline comes from the earnings-based FCFE anchor -- the DCF and multiples legs reflect "
+            "suppressed FCF -- so confidence is capped at MEDIUM.)"
         )
 
     # --- Model–market divergence governor (expectations discipline) --------
@@ -770,11 +771,11 @@ def _triangulate(
     if divergence is not None and divergence["action"] == "verdict":
         confidence = CONFIDENCE_LOW
         rationale["confidence"] = (
-            f"Model-piyasa ayrışması: baz değerleme aralığının alt ucu ({_money(divergence['band_edge'])}) "
-            f"fiyatın ({_money(price)}) {divergence['factor']:.1f} katı. Üç yöntem de aynı büyüme/marj "
-            "varsayımından beslendiği için oybirliği bağımsız bir doğrulama değil — aynı varsayımın üç "
-            "aynada yansımasıdır. Model büyümenin sürdüğünü, piyasa bittiğini fiyatlıyor; hakem önümüzdeki "
-            "çeyreklerin gerçekleşen büyümesidir. Güven düşük."
+            f"Model-market divergence: the base valuation band's low end ({_money(divergence['band_edge'])}) "
+            f"is {divergence['factor']:.1f}x the price ({_money(price)}). All three methods feed off the same "
+            "growth/margin assumption, so unanimity isn't independent confirmation -- it's the same assumption "
+            "reflected in three mirrors. The model is pricing in continued growth, the market is pricing in "
+            "its end; the judge will be the realized growth of the coming quarters. Confidence is low."
         )
 
     return {
@@ -792,10 +793,10 @@ def _divergence(price: Optional[float], dcf_base_band: Optional[dict]) -> Option
 
     Returns ``None`` when price/band are unusable or the band sits within the
     normal range of the price. Otherwise a dict:
-    ``{"direction": "ucuz"|"pahali", "action": "verdict"|"log_only",
+    ``{"direction": "cheap"|"expensive", "action": "verdict"|"log_only",
     "factor": <band_edge / price>, "band_edge": <the triggering lo or hi>}``.
-    The UP-side ("ucuz") returns ``action="verdict"``; the DOWN-side
-    ("pahali") returns ``action="log_only"`` (recorded but not yet acted on).
+    The UP-side ("cheap") returns ``action="verdict"``; the DOWN-side
+    ("expensive") returns ``action="log_only"`` (recorded but not yet acted on).
     """
     if price is None or price <= 0 or not dcf_base_band:
         return None

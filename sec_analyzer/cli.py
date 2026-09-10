@@ -1,18 +1,27 @@
 """Command-line entry point for sec_analyzer.
 
-Two subcommands:
+Per-ticker subcommands:
 
 * ``fetch TICKER`` -- resolve the ticker to a CIK, pull SEC XBRL company
   facts, normalize them, compute ratios, print both, and persist everything
   to the local SQLite database.
 * ``analyze TICKER`` -- everything ``fetch`` does, plus price/technical data,
-  valuation metrics, red flags, an earnings-date estimate, and a full
-  fundamental+technical interpretation (fair-value range, verdicts,
-  cyclicality, and a summary) from a selectable backend: the local Claude Code
-  CLI (`claude -p`, subscription billing; default), a local Ollama/Gemma
-  model, or a deterministic script-based (no-AI) analyzer. The result is
-  printed as a compact Turkish-language verdict card and, optionally, saved as
-  a standalone HTML report.
+  valuation metrics, red flags, an earnings-date estimate, recent 8-K events,
+  SEC Form 4 insider activity, and a full fundamental+technical interpretation
+  (fair-value range, verdicts, cyclicality, and a summary) from a selectable
+  backend: the local Claude Code CLI (`claude -p`, subscription billing;
+  default), a local Ollama/Gemma model, or a deterministic script-based
+  (no-AI) analyzer. The result is printed as a compact Turkish-language
+  verdict card and, optionally, saved as a standalone HTML report.
+
+Portfolio-level subcommands, both of which read back what has already been
+analyzed rather than running a new valuation:
+
+* ``overview`` -- network-free dashboard over every ticker with a stored
+  verdict: sector heat map, per-name fair-value gap, staleness, upcoming
+  earnings, and verdict drift.
+* ``preearnings`` -- which watchlist names report soon, and what the stored
+  analysis currently says about each of them.
 
 Usage::
 
@@ -20,10 +29,12 @@ Usage::
     python -m sec_analyzer.cli analyze AAPL
     python -m sec_analyzer.cli analyze AAPL --horizon 5y --provider script
     python -m sec_analyzer.cli analyze AAPL --html
+    python -m sec_analyzer.cli overview
+    python -m sec_analyzer.cli preearnings --within 14
 
 Only the official SEC EDGAR API and (for ``analyze`` with the ``claude_code``
 or ``ollama`` providers) a local LLM are used for financial statement data --
-no third-party finance data libraries beyond the optional Stooq/yfinance
+no third-party finance data libraries beyond the optional yfinance
 price-history fetch used to power the technical-analysis layer.
 """
 
@@ -47,9 +58,18 @@ from sec_analyzer.calibrate import (
 from sec_analyzer.config import Config, ConfigError
 from sec_analyzer.fetch.analyst import get_analyst_targets
 from sec_analyzer.fetch.companyfacts import get_company_facts, get_submissions
+from sec_analyzer.fetch.earnings import get_earnings_history
 from sec_analyzer.fetch.filings import estimate_next_earnings
-from sec_analyzer.fetch.fred import get_risk_free_asof
-from sec_analyzer.fetch.prices import PriceDataError, get_price_history, latest_price, slice_asof
+from sec_analyzer.fetch.insider import get_insider_transactions
+from sec_analyzer.fetch.fred import get_macro_panel, get_risk_free_asof
+from sec_analyzer.fetch.prices import (
+    PriceDataError,
+    drop_unsettled_bars,
+    get_price_history,
+    is_total_return_basis,
+    latest_price,
+    slice_asof,
+)
 from sec_analyzer.fetch.tickers import resolve_cik
 from sec_analyzer.http_client import SecHttpClient
 from sec_analyzer.interpret.analyzer import build_script_phase1, interpret, propose_assumptions
@@ -57,24 +77,46 @@ from sec_analyzer.normalize.metrics import compute_metrics, resolve_fundamental_
 from sec_analyzer.normalize.normalizer import format_table, normalize_facts
 from sec_analyzer.normalize.ratios import compute_ratios
 from sec_analyzer.normalize.red_flags import detect_red_flags
+from sec_analyzer.report.financials import serialize_financials
 from sec_analyzer.report.generator import generate_report
 from sec_analyzer.interpret import planning, rule_based
+from sec_analyzer.screener.overview import build_overview, sector_type_label
+from sec_analyzer.screener.peers import (
+    build_peer_snapshot,
+    metrics_from_normalized,
+    rank_against_peers,
+    resolve_sector,
+)
+from sec_analyzer.screener.preearnings import (
+    DEFAULT_WITHIN_DAYS,
+    format_surprise_pct,
+    scan_preearnings,
+)
+from sec_analyzer.screener.swing_scan import DEFAULT_MAX_WORKERS, scan_swing
+from sec_analyzer.screener.universe import load_universe, normalize_index
 from sec_analyzer.signals.events import detect_events, summarize_events
+from sec_analyzer.signals.insider import detect_insider_activity, summarize_insider
+from sec_analyzer.signals.macro import build_macro_context, summarize_macro
 from sec_analyzer.store import assumptions as assumptions_store
 from sec_analyzer.valuation import damodaran
 from sec_analyzer.valuation.capm import compute_cost_of_equity
 from sec_analyzer.valuation.sanity import clamp_assumptions, validate_assumptions
-from sec_analyzer.valuation.sector import classify_sector
+from sec_analyzer.valuation.sector import SECTOR_FINANCIAL, _is_deposit_funded, classify_sector
 from sec_analyzer.signals.momentum import (
     compute_fundamental_momentum,
     compute_verdict_momentum,
     synthesize_momentum,
 )
 from sec_analyzer.store.database import (
+    load_latest_peer_snapshot,
+    load_latest_verdicts,
     load_prior_live_verdict,
     load_verdicts,
+    load_watchlist_tickers,
     save_normalized,
+    save_peer_snapshot,
     save_prices,
+    save_swing_scan,
     save_verdict,
 )
 from sec_analyzer.technical.indicators import compute_indicators, relative_strength
@@ -95,7 +137,7 @@ _DASH = "—"
 _CARD_LABEL_WIDTH = 13
 
 
-def _print_ratios(ratios: List[dict]) -> None:
+def _print_ratios(ratios: List[dict], sector_type: Optional[str] = None) -> None:
     """Render the per-fiscal-year ratio list as a compact aligned table.
 
     Net margin and the two YoY growth ratios are shown as percentages; ROE
@@ -105,6 +147,12 @@ def _print_ratios(ratios: List[dict]) -> None:
     Args:
         ratios: The list returned by
             :func:`sec_analyzer.normalize.ratios.compute_ratios`.
+        sector_type: One of
+            :func:`sec_analyzer.valuation.sector.classify_sector`'s buckets,
+            or ``None``. ``"financial"`` drops the Current Ratio column,
+            which is undefined for a filer that does not classify its
+            balance sheet by maturity (SPEC.md Sec.20c); every other value
+            keeps the existing table unchanged.
     """
     if not ratios:
         print("No ratios available (insufficient annual data).")
@@ -116,7 +164,12 @@ def _print_ratios(ratios: List[dict]) -> None:
     def as_dec(value) -> str:
         return f"{value:.2f}" if value is not None else "-"
 
-    headers = ["FY", "Net Margin", "ROE", "Current Ratio", "Rev YoY", "NI YoY"]
+    show_current_ratio = sector_type != "financial"
+
+    headers = ["FY", "Net Margin", "ROE"]
+    if show_current_ratio:
+        headers.append("Current Ratio")
+    headers += ["Rev YoY", "NI YoY"]
     print("".join(h.rjust(_RATIO_COL_WIDTH) for h in headers))
     print("-" * (_RATIO_COL_WIDTH * len(headers)))
 
@@ -125,7 +178,10 @@ def _print_ratios(ratios: List[dict]) -> None:
             str(row.get("fy", "-")),
             as_pct(row.get("net_margin")),
             as_dec(row.get("roe")),
-            as_dec(row.get("current_ratio")),
+        ]
+        if show_current_ratio:
+            cells.append(as_dec(row.get("current_ratio")))
+        cells += [
             as_pct(row.get("yoy_revenue_growth")),
             as_pct(row.get("yoy_net_income_growth")),
         ]
@@ -161,12 +217,18 @@ def _fetch_normalize_store(args: argparse.Namespace) -> Tuple[str, str, dict, Li
 
     print(format_table(normalized))
     print()
-    _print_ratios(ratios)
+    # This function has no SIC in scope (submissions are fetched later, only
+    # by `analyze`), but the deposit test alone is enough to know the current
+    # ratio is meaningless here, and it needs no extra network call.
+    _print_ratios(
+        ratios,
+        sector_type=SECTOR_FINANCIAL if _is_deposit_funded(normalized, {}) else None,
+    )
 
     if as_of is not None:
         print(
-            f"\nNot: geçmiş tarih (as-of {as_of.isoformat()}) modunda finansallar "
-            "veritabanına yazılmaz."
+            f"\nNote: in historical (as-of {as_of.isoformat()}) mode, financials "
+            "are not written to the database."
         )
     else:
         save_normalized(args.ticker, cik, name, normalized, ratios, db_path=Config.DB_PATH)
@@ -185,8 +247,8 @@ def _fetch_price_and_technical(
 ):
     """Fetch price history and derive the merged technical indicators/verdict.
 
-    Fully graceful: if price data can't be obtained (Stooq and yfinance both
-    fail, or the ticker simply has too little history), this logs a warning
+    Fully graceful: if price data can't be obtained (yfinance fails, or the
+    ticker simply has too little history), this logs a warning
     and returns ``(None, None, None, None)`` rather than raising -- the
     fundamental side of ``analyze`` must keep working even when there's no
     usable price data at all.
@@ -200,7 +262,11 @@ def _fetch_price_and_technical(
         is unavailable.
     """
     try:
-        price_df, source = get_price_history(ticker, no_cache=no_cache)
+        # prefer_live only when reporting on today: an as-of run slices the
+        # live bar back off anyway, so fetching it would be wasted work.
+        price_df, source = get_price_history(
+            ticker, no_cache=no_cache, prefer_live=as_of is None
+        )
         if as_of is not None:
             price_df = slice_asof(price_df, as_of)
             if price_df.empty:
@@ -220,6 +286,11 @@ def _fetch_price_and_technical(
         indicators["momentum"] = compute_price_momentum(indicators)
         verdict_result = technical_verdict(indicators, horizon)
         technical = {**indicators, **verdict_result}
+        # Provenance of the price series these indicators were computed from,
+        # carried here rather than widening this function's return tuple
+        # (four call sites plus test fakes). The report names the source
+        # actually used instead of a hardcoded "Stooq".
+        technical["price_source"] = source
         logger.info(
             "Price data for %s from %s: %.2f as of %s", ticker, source, price, as_of_date
         )
@@ -249,7 +320,11 @@ def _fetch_relative_strength(
     if str(ticker).strip().upper() == benchmark:
         return None
     try:
-        bench_df, _ = get_price_history(benchmark, no_cache=no_cache)
+        # Matches the stock's own fetch: comparing a live bar against a
+        # settled benchmark bar would skew relative strength by a session.
+        bench_df, _ = get_price_history(
+            benchmark, no_cache=no_cache, prefer_live=as_of is None
+        )
         if as_of is not None:
             bench_df = slice_asof(bench_df, as_of)
         return relative_strength(price_df["Close"], bench_df["Close"], benchmark=benchmark)
@@ -335,19 +410,50 @@ def _fetch_analyst_targets(ticker: str, no_cache: bool) -> Optional[dict]:
         return None
 
 
-def _fetch_risk_free_asof(as_of, no_cache: bool) -> Optional[dict]:
-    """Best-effort historical risk-free rate (FRED DGS10) for as-of mode; never raises.
+def _fetch_earnings_history(ticker: str, no_cache: bool) -> Optional[dict]:
+    """Best-effort fetch of recent quarterly EPS beat/miss history; never raises.
 
-    Thin wrapper over :func:`sec_analyzer.fetch.fred.get_risk_free_asof` so a
-    FRED outage degrades to the archived ERP/risk-free fallback rather than
-    blocking ``analyze``.
+    Display-only cross-check (see :mod:`sec_analyzer.fetch.earnings`) -- never
+    feeds the valuation engine; shown only in the HTML report's "Balance sheet" tab.
+    Any failure is logged and swallowed so it never blocks the rest of
+    ``analyze``.
+
+    Returns:
+        The dict returned by
+        :func:`sec_analyzer.fetch.earnings.get_earnings_history`, or ``None``
+        if unavailable or the fetch fails for any reason.
     """
-    if as_of is None:
+    try:
+        return get_earnings_history(ticker, no_cache=no_cache)
+    except Exception:  # noqa: BLE001 - a display-only cross-check must never be fatal
+        logger.warning("Could not fetch earnings history for %s", ticker, exc_info=True)
         return None
+
+
+def _fetch_risk_free_asof(as_of, no_cache: bool) -> Optional[dict]:
+    """Best-effort risk-free rate (FRED DGS10); never raises.
+
+    ``as_of=None`` (an ordinary live run) asks for the LATEST observation;
+    an as-of date asks for the last observation on/before it.
+
+    Live runs used to skip FRED entirely and let the risk-free rate fall
+    through to the archived ``data/damodaran/erp.csv`` value -- which meant a
+    backtest of 2022 was priced off the real 2022 yield while *today's*
+    analysis was priced off a hand-refreshed CSV that could be a year stale.
+    Since the risk-free rate feeds both the CAPM cost of equity and the
+    terminal-growth anchor (SPEC.md "Terminal-growth anchor"), that stale
+    input moved every fair value the engine produced. Preferring the live
+    series here changes no RULE -- only the freshness of its input -- and
+    `damodaran.load_sector_data` already ranks ``fred_rate`` above the CSV,
+    so a FRED outage still degrades to the archived value exactly as before.
+    """
     try:
         return get_risk_free_asof(as_of, no_cache=no_cache)
     except Exception:  # noqa: BLE001 - macro fetch must never be fatal
-        logger.warning("Could not fetch FRED risk-free rate for as-of %s", as_of, exc_info=True)
+        logger.warning(
+            "Could not fetch FRED risk-free rate (as_of=%s); falling back to "
+            "the archived erp.csv value.", as_of, exc_info=True,
+        )
         return None
 
 
@@ -428,14 +534,139 @@ def _detect_filing_events(submissions: Optional[dict], as_of=None) -> List[dict]
     )
 
 
+#: Lookback window (days) for the SEC Form 4 insider-activity signal, and the
+#: cap on how many Form 4 documents one run will download. Six months is long
+#: enough for a cluster of buys to form and short enough that last year's
+#: compensation cycle doesn't drown out this quarter's conviction.
+_INSIDER_LOOKBACK_DAYS = 180
+_INSIDER_MAX_FILINGS = 40
+
+
+def _fetch_insider_activity(
+    cik: str, ticker: str, submissions: Optional[dict], no_cache: bool, as_of=None
+) -> Optional[dict]:
+    """Best-effort SEC Form 4 insider-activity signal; never raises.
+
+    Reuses the ``submissions`` document :func:`_fetch_submissions` already
+    fetched for this run to locate the recent Form 4 filings, then downloads
+    and parses each one's raw ownership XML (cached per accession, since a
+    filed document is immutable -- see :mod:`sec_analyzer.fetch.insider`).
+    Deterministic and LLM-free; context only, never an input to the fair
+    value. ``as_of`` is the point-in-time reference date, so a backtest run
+    only sees filings that existed on that date.
+    """
+    if not submissions:
+        return None
+    try:
+        client = SecHttpClient()
+        fetched = get_insider_transactions(
+            cik,
+            submissions,
+            client,
+            lookback_days=_INSIDER_LOOKBACK_DAYS,
+            max_filings=_INSIDER_MAX_FILINGS,
+            no_cache=no_cache,
+            today=as_of,
+        )
+        return detect_insider_activity(
+            fetched, lookback_days=_INSIDER_LOOKBACK_DAYS, today=as_of
+        )
+    except Exception:  # noqa: BLE001 - insider context is display-only, never fatal
+        logger.warning("Could not fetch insider activity for %s", ticker, exc_info=True)
+        return None
+
+
+def _base_terminal_growth(result: dict) -> Optional[float]:
+    """Pull the base scenario's terminal growth out of a valuation result.
+
+    Only used to give the macro layer something to cross-check against the
+    market's priced inflation expectation. Returns ``None`` for any shape it
+    doesn't recognize -- the cross-check is then simply omitted.
+    """
+    try:
+        base = ((result.get("valuation") or {}).get("assumptions") or {}).get("base") or {}
+        value = base.get("terminal_growth")
+        return float(value) if isinstance(value, (int, float)) else None
+    except Exception:  # noqa: BLE001 - a display cross-check must never be fatal
+        return None
+
+
+def _attach_macro(result: dict, as_of, no_cache: bool) -> None:
+    """Attach the rates/credit macro context to ``result``; never raises.
+
+    Context only -- SPEC.md's rules are untouched by anything here. The one
+    place macro data DOES reach the numbers is the risk-free rate, and that
+    goes through `_fetch_risk_free_asof` -> `damodaran.load_sector_data`
+    entirely separately from this block. Attached post-``interpret`` (like
+    events/insider/momentum) so it never enters an LLM payload.
+    """
+    try:
+        panel = get_macro_panel(as_of=as_of, no_cache=no_cache)
+        context = build_macro_context(panel, terminal_growth=_base_terminal_growth(result))
+        if context is not None:
+            result["macro"] = context
+    except Exception:  # noqa: BLE001 - macro context is display-only, never fatal
+        logger.warning("Could not build macro context", exc_info=True)
+
+
+def _attach_peers(
+    result: dict, ticker: str, cik: str, submissions: Optional[dict],
+    normalized: dict, ratios: list, metrics: dict, as_of=None,
+) -> None:
+    """Attach the cross-sectional peer comparison to ``result``; never raises.
+
+    Reads the most recent stored peer snapshot (built offline by
+    ``cli peers --refresh``) -- no network here, so an analysis never waits on
+    a dozen multi-megabyte Frames downloads. When no snapshot has been built
+    yet, the comparison is simply absent.
+
+    **Point-in-time guard.** A peer snapshot is keyed on a fiscal year, so an
+    as-of run must not be ranked against a snapshot built from filings that
+    did not exist on the cutoff date -- that is hindsight leakage of exactly
+    the kind the backtest layer is designed to avoid. In as-of mode we
+    therefore look for a snapshot of the last fiscal year that had completed
+    by the cutoff, and attach nothing when there isn't one, rather than
+    silently falling back to the newest snapshot.
+
+    Context only: this never feeds the fair value, the triangulation signals
+    or ``sector_ratio`` (see ``screener/peers.py`` and SPEC.md Sec.6/7, which
+    are deliberately NOT amended for this layer).
+    """
+    try:
+        if as_of is not None:
+            snapshot = load_latest_peer_snapshot(
+                db_path=Config.DB_PATH, year=as_of.year - 1
+            )
+        else:
+            snapshot = load_latest_peer_snapshot(db_path=Config.DB_PATH)
+        if not snapshot:
+            return
+        sic = (submissions or {}).get("sic")
+        sector = resolve_sector(ticker=ticker, cik=cik, sic=sic, snapshot=snapshot)
+        if not sector:
+            return
+        own = metrics_from_normalized(normalized, ratios, metrics)
+        ranked = rank_against_peers(own, sector, snapshot)
+        if ranked is not None:
+            result["peers"] = ranked
+    except Exception:  # noqa: BLE001 - peer context is display-only, never fatal
+        logger.warning("Could not build peer comparison for %s", ticker, exc_info=True)
+
+
 def _save_price_rows(cik: str, price_df) -> None:
     """Convert a price-history DataFrame to row dicts and persist them.
 
     Never raises: a failure to persist price history must not prevent the
     rest of ``analyze`` (interpretation, verdict card, HTML report) from
     completing.
+
+    Bars for a session still in progress are not stored: the same reasoning as
+    the price cache (see ``prices.drop_unsettled_bars``) applies to the
+    ``prices`` table, which ``load_latest_stored_price`` reads as a settled
+    close.
     """
     try:
+        price_df = drop_unsettled_bars(price_df)
         rows = [
             {
                 "date": row["Date"].strftime("%Y-%m-%d") if hasattr(row["Date"], "strftime") else str(row["Date"]),
@@ -469,10 +700,29 @@ def _fmt_money(value) -> str:
     return f"${value:,.2f}"
 
 
+def _fmt_swing_price(value) -> str:
+    """Format a number as a dollar amount for the swing-scan table.
+
+    Unlike :func:`_fmt_money` (which drops decimals for whole numbers in the
+    terminal verdict card by deliberate, pre-existing choice), the swing
+    table's Price/Entry/Stop/Target columns must always show exactly 2
+    decimals so the column stays visually aligned across rows (e.g.
+    ``"$153.00"``, never ``"$153"``). Returns :data:`_DASH` for
+    ``None``/unparseable input.
+    """
+    if value is None:
+        return _DASH
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return _DASH
+    return f"${value:,.2f}"
+
+
 def _dr_suffix(value) -> str:
     """Append a trailing ``" dr"`` to a discount-rate string like ``"%12"``
     -> ``"%12 dr"``, unless it already reads that way. ``discount_rate`` (and
-    ``growth``) values are always already-formatted, human-readable Turkish
+    ``growth``) values are always already-formatted, human-readable
     strings produced upstream (e.g. by
     :mod:`sec_analyzer.interpret.rule_based`) -- this never reformats the
     number itself, only appends the unit label. Returns :data:`_DASH` for
@@ -482,7 +732,7 @@ def _dr_suffix(value) -> str:
         return _DASH
     text = str(value)
     lowered = text.lower()
-    if "dr" in lowered or "iskonto" in lowered:
+    if "dr" in lowered or "discount" in lowered:
         return text
     return f"{text} dr"
 
@@ -493,7 +743,7 @@ def _strip_leading_dollar(text: str) -> str:
 
 
 def _scenario_line(label: str, scenario: Optional[dict]) -> str:
-    """Render one bear/bull scenario, e.g. ``"bear $70–95 (%8 büyüme, %12 dr)"``."""
+    """Render one bear/bull scenario, e.g. ``"bear $70–95 (%8 growth, %12 dr)"``."""
     scenario = scenario or {}
     lo, hi = scenario.get("lo"), scenario.get("hi")
     if lo is None or hi is None:
@@ -507,7 +757,7 @@ def _scenario_line(label: str, scenario: Optional[dict]) -> str:
 
 def _analyst_line(analyst: Optional[dict], price) -> Optional[str]:
     """Render the display-only consensus analyst-target line for the verdict
-    card, e.g. ``"Analist:     $128 ort (34 analist) · +%12 · aralık $95–$160"``.
+    card, e.g. ``"Analyst:     $128 avg (34 analysts) · +%12 · range $95–$160"``.
 
     This is a reference cross-check only (see
     :mod:`sec_analyzer.fetch.analyst`) -- it never feeds the valuation
@@ -525,11 +775,11 @@ def _analyst_line(analyst: Optional[dict], price) -> Optional[str]:
         return None
 
     target_mean = analyst["target_mean"]
-    parts = [f"{_fmt_money(target_mean)} ort"]
+    parts = [f"{_fmt_money(target_mean)} avg"]
 
     num_analysts = analyst.get("num_analysts")
     if num_analysts is not None:
-        parts.append(f"({num_analysts} analist)")
+        parts.append(f"({num_analysts} analysts)")
 
     try:
         price_is_positive = price is not None and float(price) > 0
@@ -541,9 +791,9 @@ def _analyst_line(analyst: Optional[dict], price) -> Optional[str]:
 
     target_low, target_high = analyst.get("target_low"), analyst.get("target_high")
     if target_low is not None and target_high is not None:
-        parts.append(f"· aralık {_fmt_money(target_low)}–{_fmt_money(target_high)}")
+        parts.append(f"· range {_fmt_money(target_low)}–{_fmt_money(target_high)}")
 
-    label = "Analist:".ljust(_CARD_LABEL_WIDTH)
+    label = "Analyst:".ljust(_CARD_LABEL_WIDTH)
     return f"{label}{' '.join(parts)}"
 
 
@@ -553,11 +803,11 @@ def _valuation_method_label(valuation: dict) -> str:
     Checked in order, depending on which anchor actually produced the
     headline fair-value band for this filer (SPEC.md Sec.8/8e/11):
 
-    - ``"Revenue-DCF (hiper-büyüme)"``: the hyper-grower revenue-first DCF is
+    - ``"Revenue-DCF (hyper-growth)"``: the hyper-grower revenue-first DCF is
       the headline (``valuation["hyper_growth"]`` truthy and its
       ``hyper_growth_detail`` present and not suppressed -- SPEC.md Sec.3.5,
       which takes precedence over every anchor below).
-    - ``"FCFE (kazanç+büyüme)"``: the cyclical sustainable-growth FCFE
+    - ``"FCFE (earnings+growth)"``: the cyclical sustainable-growth FCFE
       anchor is the headline (``valuation["cyclical_fcfe_headline"]`` --
       SPEC.md Sec.8e, e.g. Micron-shaped capital-intensive cyclicals whose
       FCF-DCF is suppressed by growth CapEx).
@@ -574,10 +824,14 @@ def _valuation_method_label(valuation: dict) -> str:
     - ``"FFO"``: the DCF is disabled and ``valuation["ffo"]`` is a populated
       FFO-based Gordon growth block (has a ``"scenarios"`` key) -- REIT/GYO
       filers valued via FFO multiples instead of a cash-flow DCF.
-    - ``"P/B×ROE"``: the DCF is disabled and there's no populated FFO block --
-      financial (banks/insurers) filers valued via the P/B x ROE anchor, or a
-      REIT that fell back to the P/B x ROE anchor without a populated FFO
-      block.
+    - ``"RIM"``: the DCF is disabled, there's no populated FFO block, and
+      ``valuation["rim"]`` is a populated residual income model block (has a
+      ``"scenarios"`` key) -- financial (banks/insurers) filers valued via
+      the multi-period RIM anchor (SPEC.md Sec.8f).
+    - ``"P/B×ROE"``: the DCF is disabled and there's no populated FFO or RIM
+      block -- financial filers whose RIM build failed (falls back to the
+      P/B x ROE anchor), or a REIT that fell back to the P/B x ROE anchor
+      without a populated FFO block.
     """
     valuation = valuation or {}
     # Hyper-grower revenue-first DCF takes precedence over every other anchor
@@ -587,9 +841,9 @@ def _valuation_method_label(valuation: dict) -> str:
     # hyper-headlined filer (e.g. Reddit) would mislabel as "DCF".
     hyper_detail = valuation.get("hyper_growth_detail") or {}
     if valuation.get("hyper_growth") and hyper_detail and not hyper_detail.get("suppressed"):
-        return "Revenue-DCF (hiper-büyüme)"
+        return "Revenue-DCF (hyper-growth)"
     if valuation.get("cyclical_fcfe_headline"):
-        return "FCFE (kazanç+büyüme)"
+        return "FCFE (earnings+growth)"
     if valuation.get("earnings_power_headline"):
         return "EPV"
     if valuation.get("mature_revenue_headline") or valuation.get("midgrowth_revenue_headline"):
@@ -600,11 +854,14 @@ def _valuation_method_label(valuation: dict) -> str:
     ffo = valuation.get("ffo")
     if isinstance(ffo, dict) and "scenarios" in ffo:
         return "FFO"
+    rim = valuation.get("rim")
+    if isinstance(rim, dict) and "scenarios" in rim:
+        return "RIM"
     return "P/B×ROE"
 
 
 def _format_pct_signed(value) -> str:
-    """Render a decimal-fraction growth rate as a whole-percent Turkish
+    """Render a decimal-fraction growth rate as a whole-percent
     string, e.g. ``0.19 -> "%19"``, ``-0.05 -> "%-5"``. Returns :data:`_DASH`
     for ``None``/non-numeric input."""
     if value is None:
@@ -638,8 +895,8 @@ def _reverse_dcf_line(result: dict, valuation: dict) -> str:
     realized_label = reverse_dcf.get("realized_label") or _DASH
     realized_text = _format_pct_signed(reverse_dcf.get("realized_cagr_5y"))
     return (
-        f"{label}fiyat 10y {_format_pct_signed(implied)} CAGR ima ediyor "
-        f"(gerçekleşen {realized_label}: {realized_text})"
+        f"{label}price implies a 10y {_format_pct_signed(implied)} CAGR "
+        f"(realized {realized_label}: {realized_text})"
     )
 
 
@@ -649,13 +906,13 @@ def _multiples_line(valuation: dict) -> str:
     When a growth-adjusted multiple (PEG in standard mode, growth-adjusted
     EV/Sales in hyper-grower mode) is applicable, renders the compact
     two-component form -- raw percentile · growth-adjusted value (percentile)
-    -- appending "→ karışık sinyal" when the triangulation multiples signal
+    -- appending "→ mixed signal" when the triangulation multiples signal
     is ``"karisik"`` (the two components disagree on direction, VALUATION.md
-    Sec.7), e.g. ``"P/E 88. pctile · PEG 1.4 (45. pctile) → karışık
-    sinyal"``. When the growth-adjusted figure is not applicable, falls back
-    to the original descriptive form (``"P/E kendi Ny medyanının N.
-    yüzdeliğinde"``). ``"veri yetersiz"`` when no raw percentile is usable
-    (fewer than 5 years of price-backed history).
+    Sec.7), e.g. ``"P/E 88. pctile · PEG 1.4 (45. pctile) → mixed
+    signal"``. When the growth-adjusted figure is not applicable, falls back
+    to the original descriptive form (``"P/E is at the Nth percentile of its
+    own Ny-year median"``). ``"insufficient data"`` when no raw percentile is
+    usable (fewer than 5 years of price-backed history).
 
     For ``valuation["sector_type"] == "reit"``, P/E and P/FCF (and the
     P/E-derived PEG) are meaningless -- GAAP depreciation distorts REIT
@@ -671,7 +928,7 @@ def _multiples_line(valuation: dict) -> str:
     multiples_signal = ((valuation.get("triangulation") or {}).get("signals") or {}).get("multiples")
 
     # Leverage-primary (SPEC.md Sec.6/Sec.10): a leveraged non-reit filer's
-    # primary own-history multiple is EV/EBITDA (FD/FAVÖK) ahead of P/E, and
+    # primary own-history multiple is EV/EBITDA ahead of P/E, and
     # the P/E-based PEG line is suppressed -- mirrors triangulate's signal.
     ev_primary = (
         not is_reit
@@ -681,7 +938,7 @@ def _multiples_line(valuation: dict) -> str:
     growth_adjusted = {} if (is_reit or ev_primary) else (multiples.get("growth_adjusted") or {})
 
     # Primary raw multiple. Reit uses P/FFO -> P/S only (P/E and P/FCF are
-    # meaningless for REITs); a leveraged filer leads with FD/FAVÖK; everything
+    # meaningless for REITs); a leveraged filer leads with EV/EBITDA; everything
     # else keeps the P/E -> P/S -> P/FCF fallback order.
     primary = None
     if is_reit:
@@ -691,7 +948,7 @@ def _multiples_line(valuation: dict) -> str:
         )
     elif ev_primary:
         primary_candidates = (
-            ("FD/FAVÖK", multiples.get("ev_ebitda_percentile")),
+            ("EV/EBITDA", multiples.get("ev_ebitda_percentile")),
             ("P/E", multiples.get("pe_percentile")),
             ("P/S", multiples.get("ps_percentile")),
             ("P/FCF", multiples.get("pfcf_percentile")),
@@ -728,19 +985,19 @@ def _multiples_line(valuation: dict) -> str:
         if parts:
             line = " · ".join(parts)
             if multiples_signal == "karisik":
-                line += " → karışık sinyal"
+                line += " → mixed signal"
             return f"{label}{line}"
 
     if primary is not None:
         name, percentile = primary
-        return f"{label}{name} kendi {history_years}y medyanının {percentile:.0f}. yüzdeliğinde"
+        return f"{label}{name} is at the {percentile:.0f}th percentile of its own {history_years}y median"
 
-    return f"{label}veri yetersiz"
+    return f"{label}insufficient data"
 
 
 def _ev_multiples_line(valuation: dict) -> Optional[str]:
-    """Render the informational "EV çarpanları:" card line: current EV/EBITDA
-    (FD/FAVÖK) and EV/EBIT (FD/FVÖK), each with its own historical percentile
+    """Render the informational "EV multiple:" card line: current EV/EBITDA
+    (EV/EBITDA) and EV/EBIT (EV/EBIT), each with its own historical percentile
     when enough price-backed history exists (SPEC.md Sec.6). These are
     capital-structure-neutral earnings multiples reported alongside P/E; the
     verdict/triangulation still keys off P/E. Returns ``None`` (line omitted)
@@ -749,8 +1006,8 @@ def _ev_multiples_line(valuation: dict) -> Optional[str]:
     current = multiples.get("current") or {}
     fragments = []
     for name, cur_key, pct_key in (
-        ("FD/FAVÖK", "ev_ebitda", "ev_ebitda_percentile"),
-        ("FD/FVÖK", "ev_ebit", "ev_ebit_percentile"),
+        ("EV/EBITDA", "ev_ebitda", "ev_ebitda_percentile"),
+        ("EV/EBIT", "ev_ebit", "ev_ebit_percentile"),
     ):
         value = current.get(cur_key)
         if value is None:
@@ -763,18 +1020,122 @@ def _ev_multiples_line(valuation: dict) -> Optional[str]:
 
     if not fragments:
         return None
-    label = "FD çarpanı:".ljust(_CARD_LABEL_WIDTH)
+    label = "EV multiple:".ljust(_CARD_LABEL_WIDTH)
+    return f"{label}{' · '.join(fragments)}"
+
+
+_CYCLE_FLAG_LABELS = {
+    "peak_cycle_pe_trap": "peak-cycle P/E trap",
+    "peak_annualization": "peak-quarter annualization",
+    "regime_change_premium": "regime-change premium",
+}
+
+
+def _cycle_lines(valuation: dict) -> List[str]:
+    """Render the cyclical cycle-position / two-regime block (SPEC.md Sec.26e).
+
+    Advisory: this never moves the headline fair value. It answers a
+    different question -- not "what is it worth" but "what does today's price
+    force you to believe about the cycle". Returns ``[]`` for any filer
+    without a ``cycle`` block (every non-cyclical sector, and cyclicals with
+    too little history)."""
+    cycle = valuation.get("cycle")
+    if not cycle:
+        return []
+    stats = cycle.get("stats") or {}
+    lines: List[str] = []
+
+    def _pct(value):
+        return f"%{value * 100:.1f}" if isinstance(value, (int, float)) else _DASH
+
+    percentile = stats.get("margin_percentile")
+    percentile_txt = f"{percentile:.0f}. pctile" if isinstance(percentile, (int, float)) else _DASH
+    position = (
+        f"margin {_pct(stats.get('margin_current'))} "
+        f"({stats.get('margin_current_basis', '?')}, {percentile_txt}) · "
+        f"avg {_pct(stats.get('margin_mean'))} · trough {_pct(stats.get('margin_trough'))} "
+        f"/ peak {_pct(stats.get('margin_peak'))} [{stats.get('years')}y]"
+    )
+    lines.append(f"{'Cycle:'.ljust(_CARD_LABEL_WIDTH)}{position}")
+
+    if all(isinstance(stats.get(k), (int, float)) for k in ("pb_current", "pb_median", "pb_peak")):
+        lines.append(
+            f"{''.ljust(_CARD_LABEL_WIDTH)}P/B {stats['pb_current']:.2f} "
+            f"(historical trough {stats['pb_trough']:.2f} · median {stats['pb_median']:.2f} "
+            f"· peak {stats['pb_peak']:.2f})"
+        )
+
+    def _band(regime, label):
+        if not regime:
+            return None
+        parts = [
+            f"{name} ${regime[key]:,.0f}"
+            for name, key in (("low", "low"), ("center", "center"), ("high", "high"))
+            if isinstance(regime.get(key), (int, float))
+        ]
+        return f"{label}: {' · '.join(parts)}" if parts else None
+
+    for text in (_band(cycle.get("regime_a"), "Regime A (cycle average)"),
+                 _band(cycle.get("regime_b"), "Regime B (structural break)")):
+        if text:
+            lines.append(f"{''.ljust(_CARD_LABEL_WIDTH)}{text}")
+
+    blend = cycle.get("blend") or {}
+    if blend:
+        cells = " · ".join(f"p={p} ${v:,.0f}" for p, v in sorted(blend.items()))
+        lines.append(f"{''.ljust(_CARD_LABEL_WIDTH)}Blend: {cells}")
+
+    lines.append(f"{''.ljust(_CARD_LABEL_WIDTH)}{cycle.get('verdict_sentence', '')}")
+
+    fired = [label for key, label in _CYCLE_FLAG_LABELS.items() if (cycle.get("flags") or {}).get(key)]
+    if fired:
+        lines.append(f"{''.ljust(_CARD_LABEL_WIDTH)}Flags: {', '.join(fired)}")
+    return lines
+
+
+def _tangible_multiples_line(valuation: dict) -> Optional[str]:
+    """Render the informational "TBV mult.:" card line for a financial
+    filer: current P/TBV (price / tangible book value) with its own
+    historical percentile, plus ROTCE (SPEC.md Sec.23e).
+
+    Occupies the slot :func:`_ev_multiples_line` fills for other sectors and
+    that Sec.20b deliberately emptied for this one: enterprise value is
+    undefined for a deposit funder, while P/TBV is that sector's own
+    convention (P/B is not comparable across filers carrying different
+    goodwill loads). Reported alongside P/E; the verdict/triangulation still
+    keys off P/E. Returns ``None`` (line omitted) for any other sector, or
+    when no P/TBV figure exists."""
+    if (valuation.get("sector_type")) != "financial":
+        return None
+    multiples = valuation.get("multiples") or {}
+    ptbv = (multiples.get("current") or {}).get("ptbv")
+    if ptbv is None:
+        return None
+
+    pct = multiples.get("ptbv_percentile")
+    fragment = f"P/TBV {ptbv:.2f}×"
+    if pct is not None:
+        fragment += f" ({pct:.0f}. pctile)"
+    fragments = [fragment]
+
+    rotce = (valuation.get("rim") or {}).get("rotce")
+    if rotce is not None:
+        fragments.append(f"ROTCE %{rotce * 100:.1f}")
+
+    # 10 chars, so it still leaves a separating space at _CARD_LABEL_WIDTH
+    # (13) -- and it parallels _ev_multiples_line's "EV multiple:".
+    label = "TBV mult.:".ljust(_CARD_LABEL_WIDTH)
     return f"{label}{' · '.join(fragments)}"
 
 
 def _triangulation_line(valuation: dict) -> str:
-    """Render the "Üçgenleme:" card line (SPEC.md Sec.13): each of the three
+    """Render the "Triangulation:" card line (SPEC.md Sec.13): each of the three
     valuation methods' cheap/fair/expensive direction signal, plus a
     confidence-derived closing phrase, from ``valuation["triangulation"]``.
-    ``"YÜKSEK"`` confidence reads as "yön net" (clear direction), ``"DÜŞÜK"``
-    as "yön karışık" (mixed signals); anything else (typically ``"ORTA"``)
+    ``"HIGH"`` confidence reads as "clear direction", ``"LOW"``
+    as "mixed direction" (mixed signals); anything else (typically ``"MEDIUM"``)
     falls back to the triangulation's own majority ``direction`` word."""
-    label = "Üçgenleme:".ljust(_CARD_LABEL_WIDTH)
+    label = "Triangulation:".ljust(_CARD_LABEL_WIDTH)
     triangulation = valuation.get("triangulation") or {}
     signals = triangulation.get("signals") or {}
     confidence = triangulation.get("confidence")
@@ -783,10 +1144,10 @@ def _triangulation_line(valuation: dict) -> str:
     reverse_dcf_signal = signals.get("reverse_dcf") or _DASH
     multiples_signal = signals.get("multiples") or _DASH
 
-    if confidence == "YÜKSEK":
-        suffix = "yön net"
-    elif confidence == "DÜŞÜK":
-        suffix = "yön karışık"
+    if confidence == "HIGH":
+        suffix = "clear direction"
+    elif confidence == "LOW":
+        suffix = "mixed direction"
     else:
         suffix = triangulation.get("direction") or _DASH
 
@@ -794,12 +1155,12 @@ def _triangulation_line(valuation: dict) -> str:
 
 
 def _sensitivity_line(valuation: dict) -> str:
-    """Render the "Duyarlılık:" card line (SPEC.md Sec.13): the full price
+    """Render the "Sensitivity:" card line (SPEC.md Sec.13): the full price
     range spanned by the base-scenario 3x3 growth/discount-rate sensitivity
-    matrix, from ``valuation["sensitivity"]``, appending a "yüksek
-    belirsizlik" flag when that matrix's own ``high_uncertainty`` bit is
+    matrix, from ``valuation["sensitivity"]``, appending a "high
+    uncertainty" flag when that matrix's own ``high_uncertainty`` bit is
     set (its (hi-lo)/base-cell spread exceeds 60%)."""
-    label = "Duyarlılık:".ljust(_CARD_LABEL_WIDTH)
+    label = "Sensitivity:".ljust(_CARD_LABEL_WIDTH)
     sensitivity = valuation.get("sensitivity") or {}
     lo, hi = sensitivity.get("lo"), sensitivity.get("hi")
     if lo is None or hi is None:
@@ -808,12 +1169,91 @@ def _sensitivity_line(valuation: dict) -> str:
     range_text = f"{_fmt_money(lo)}–{_fmt_money(hi)}"
     line = f"{label}base {range_text} (g±2pp, r±1pp)"
     if sensitivity.get("high_uncertainty"):
-        line += " — yüksek belirsizlik"
+        line += " — high uncertainty"
     return line
 
 
+#: Display label for each Altman-Z zone (SPEC.md Sec.8g).
+_ALTMAN_ZONE_LABEL_TR = {"safe": "safe", "grey": "grey", "distress": "distress"}
+
+
+def _distress_flags_line(valuation: dict) -> Optional[str]:
+    """Render the "Risk score:" card line (SPEC.md Sec.8g/8j/8k): a
+    single line summarizing whichever ADVISORY distress/earnings-quality
+    screens (Altman Z-score, Beneish M-score, Merton distance-to-default)
+    were computable for this filer.
+
+    These screens never affect ``fair_value_range`` or the triangulation
+    confidence (SPEC.md Sec.8g/8j/8k are explicit about this) -- this line
+    exists purely to surface bankruptcy-risk/earnings-manipulation signals
+    alongside the valuation, the same way "Red flags:" surfaces
+    ``detect_red_flags`` findings without touching the fair-value math.
+
+    A single shared line (rather than one bespoke line per screen) is
+    deliberate: all three screens are advisory-only and share the same
+    "is it present, what's its headline number/zone" shape, so one function
+    reading all three ``valuation`` keys avoids near-duplicate wiring per
+    screen as Beneish (Sec.8j) and Merton (Sec.8k) land.
+
+    Returns ``None`` (renders nothing) when none of the three screens
+    produced a result -- e.g. ``financial``/``reit`` sectors, where Altman Z
+    isn't computed at all (SPEC.md Sec.8g), or a filer missing the
+    underlying balance-sheet data for all three.
+    """
+    valuation = valuation or {}
+    parts = []
+
+    altman = valuation.get("altman_z")
+    if isinstance(altman, dict) and altman.get("z_score") is not None:
+        zone = _ALTMAN_ZONE_LABEL_TR.get(altman.get("zone"), altman.get("zone"))
+        parts.append(f"Altman Z {altman['z_score']:.2f} ({zone})")
+
+    beneish = valuation.get("beneish_m")
+    if isinstance(beneish, dict) and beneish.get("m_score") is not None:
+        suffix = " [partial]" if beneish.get("partial") else ""
+        if beneish.get("flag"):
+            # I2: caveat the flag as a likely growth artifact when sales grew
+            # fast (Beneish over-flags hyper-growers) rather than presenting it
+            # as a manipulation signal on the compact card.
+            sgi = (beneish.get("components") or {}).get("sgi")
+            if isinstance(sgi, (int, float)) and sgi > 1.40:
+                suffix += " — flagged (likely a fast-growth side effect)"
+            else:
+                suffix += " — possible manipulation signal"
+        parts.append(f"Beneish M {beneish['m_score']:.2f}{suffix}")
+
+    merton = valuation.get("merton_dtd")
+    if isinstance(merton, dict) and merton.get("distance_to_default") is not None:
+        pd_pct = merton.get("probability_of_default")
+        pd_text = f", PD %{pd_pct * 100:.1f}" if pd_pct is not None else ""
+        parts.append(f"Merton DD {merton['distance_to_default']:.2f}{pd_text}")
+
+    if not parts:
+        return None
+    return f"{'Risk score:'.ljust(_CARD_LABEL_WIDTH)}{' · '.join(parts)}"
+
+
+def _lbo_floor_line(valuation: dict) -> Optional[str]:
+    """Render the "LBO anchor:" card line (SPEC.md Sec.8h): the LBO-implied
+    per-share value floor -- the highest price a disciplined financial
+    (private-equity) buyer could justify today, purely from debt-paydown
+    ("deleveraging") returns, with NO organic growth or multiple-expansion
+    credit. ADVISORY ONLY: informational, never affects ``fair_value_range``
+    or the triangulation confidence.
+
+    Returns ``None`` (renders nothing) when ``valuation["lbo_floor_detail"]``
+    is absent -- e.g. ``financial``/``reit`` sectors (never computed), or
+    missing EBITDA/EV-EBITDA/debt/FCF/share data.
+    """
+    detail = valuation.get("lbo_floor_detail")
+    if not isinstance(detail, dict) or detail.get("per_share") is None:
+        return None
+    label = "LBO anchor:".ljust(_CARD_LABEL_WIDTH)
+    return f"{label}{_fmt_money(detail['per_share'])} (informational only, not part of the headline)"
+
+
 def _signed_pct_tr(value) -> str:
-    """Turkish signed-percent, sign-first then ``%``: ``4 -> "+%4"``,
+    """Signed-percent, sign-first then ``%``: ``4 -> "+%4"``,
     ``-7.5 -> "-%8"`` (0 decimals, matching the compact card style)."""
     if value is None:
         return _DASH
@@ -823,28 +1263,28 @@ def _signed_pct_tr(value) -> str:
 
 def _momentum_line(technical: dict) -> Optional[str]:
     """Compact returns/trend sub-line for the technical card, e.g.
-    ``"Getiriler:  1a +%4 · 3a +%13 · 6a -%3 · Trend: yükseliş (GC) · 52h %68"``.
+    ``"Returns:  1m +%4 · 3m +%13 · 6m -%3 · Trend: up (GC) · 52w %68"``.
     ``None`` when no figure is available. (The composite momentum synthesis is
     a separate top-level ``Momentum:`` row -- see :func:`_momentum_synthesis_text`.)"""
     parts: List[str] = []
-    for label, key in (("1a", "return_1m_pct"), ("3a", "return_3m_pct"), ("6a", "return_6m_pct")):
+    for label, key in (("1m", "return_1m_pct"), ("3m", "return_3m_pct"), ("6m", "return_6m_pct")):
         value = technical.get(key)
         if value is not None:
             parts.append(f"{label} {_signed_pct_tr(value)}")
 
     above = technical.get("sma50_above_sma200")
     if above is True:
-        parts.append("Trend: yükseliş" + (" (GC)" if technical.get("golden_cross") else ""))
+        parts.append("Trend: up" + (" (GC)" if technical.get("golden_cross") else ""))
     elif above is False:
-        parts.append("Trend: düşüş" + (" (DC)" if technical.get("death_cross") else ""))
+        parts.append("Trend: down" + (" (DC)" if technical.get("death_cross") else ""))
 
     range_position = technical.get("range_position_pct")
     if range_position is not None:
-        parts.append(f"52h %{range_position:.0f}")
+        parts.append(f"52w %{range_position:.0f}")
 
     if not parts:
         return None
-    return "Getiriler:  " + " · ".join(parts)
+    return "Returns:  " + " · ".join(parts)
 
 
 #: Severity -> glyph for the momentum cross-signal sub-lines.
@@ -854,12 +1294,12 @@ _CROSS_ICON = {"warn": "⚠", "good": "✓", "info": "•"}
 def _momentum_synthesis_text(momentum: dict) -> str:
     """Top-level ``Momentum:`` row text from ``result["momentum"]``: the
     composite verdict followed by the price / fundamental / verdict-trend
-    sub-reads, e.g. ``"POZİTİF · fiyat: YUKARI MOMENTUM (68/100, hızlanıyor) ·
-    fundamental: POZİTİF · verdict: yakınsama"``."""
+    sub-reads, e.g. ``"POSITIVE · price: STRONG UPWARD MOMENTUM (68/100, accelerating) ·
+    fundamental: POSITIVE · verdict: convergence"``."""
     parts: List[str] = []
     price = momentum.get("price")
     if isinstance(price, dict) and price.get("label"):
-        seg = f"fiyat: {price['label']} ({price.get('score')}/100"
+        seg = f"price: {price['label']} ({price.get('score')}/100"
         seg += f", {price['accel']}" if price.get("accel") else ""
         seg += ")"
         parts.append(seg)
@@ -883,48 +1323,48 @@ def _rsi_divergence_line(technical: dict) -> Optional[str]:
     rsi_prev, rsi_last = detail.get("rsi_prev"), detail.get("rsi_last")
     if detail.get("type") == "bearish":
         return (
-            f"RSI uyumsuzluğu (ayı): fiyat {price_prev}→{price_last} daha yüksek zirve ama "
-            f"RSI {rsi_prev:.0f}→{rsi_last:.0f} düştü — momentum teyit etmiyor."
+            f"RSI divergence (bear): price {price_prev}→{price_last} made a higher high but "
+            f"RSI {rsi_prev:.0f}→{rsi_last:.0f} fell — momentum is not confirming."
         )
     return (
-        f"RSI uyumsuzluğu (boğa): fiyat {price_prev}→{price_last} daha düşük dip ama "
-        f"RSI {rsi_prev:.0f}→{rsi_last:.0f} yükseldi — satış baskısı azalıyor."
+        f"RSI divergence (bull): price {price_prev}→{price_last} made a lower low but "
+        f"RSI {rsi_prev:.0f}→{rsi_last:.0f} rose — selling pressure is easing."
     )
 
 
 def _signal_volume_line(technical: dict) -> Optional[str]:
     """Compact MACD + volume sub-line, e.g.
-    ``"MACD/Hacim:  MACD boğa (kesişim ↑) · Hacim 1.3× · OBV ↑"``. ``None``
+    ``"MACD/Volume:  MACD bull (cross ↑) · Volume 1.3× · OBV ↑"``. ``None``
     when neither MACD nor volume signals are available."""
     parts: List[str] = []
 
     macd_hist = technical.get("macd_hist")
     if macd_hist is not None:
-        state = "boğa" if macd_hist > 0 else ("ayı" if macd_hist < 0 else "nötr")
+        state = "bull" if macd_hist > 0 else ("bear" if macd_hist < 0 else "neutral")
         segment = f"MACD {state}"
         cross = technical.get("macd_cross")
         if cross == "bullish":
-            segment += " (kesişim ↑)"
+            segment += " (cross ↑)"
         elif cross == "bearish":
-            segment += " (kesişim ↓)"
+            segment += " (cross ↓)"
         parts.append(segment)
 
     rel_volume = technical.get("rel_volume")
     if rel_volume is not None:
-        parts.append(f"Hacim {rel_volume:.1f}×")
+        parts.append(f"Volume {rel_volume:.1f}×")
 
     obv_trend = technical.get("obv_trend")
     if obv_trend:
-        parts.append({"up": "OBV ↑", "down": "OBV ↓", "flat": "OBV yatay"}.get(obv_trend, f"OBV {obv_trend}"))
+        parts.append({"up": "OBV ↑", "down": "OBV ↓", "flat": "OBV flat"}.get(obv_trend, f"OBV {obv_trend}"))
 
     if not parts:
         return None
-    return "MACD/Hacim:  " + " · ".join(parts)
+    return "MACD/Volume:  " + " · ".join(parts)
 
 
 def _support_resistance_line(technical: dict) -> Optional[str]:
     """Compact support/resistance sub-line for the technical card, e.g.
-    ``"Destek/Direnç:  Direnç $108 (+%8), $118 (+%18) | Destek $92.50 (-%8)"``.
+    ``"Support/Resistance:  Resistance $108 (+%8), $118 (+%18) | Support $92.50 (-%8)"``.
     Shows up to two nearest levels per side. ``None`` when none exist."""
     def _range(z: dict) -> str:
         lo, hi = z.get("low"), z.get("high")
@@ -936,14 +1376,14 @@ def _support_resistance_line(technical: dict) -> Optional[str]:
         touches = z.get("touches") or 0
         parts = []
         if z.get("is_52w_high"):
-            parts.append("52h zirve")
+            parts.append("52w high")
         elif z.get("is_52w_low"):
-            parts.append("52h dip")
+            parts.append("52w low")
         if touches >= 1:
             parts.append(f"{touches}×")
         if z.get("fib"):
             parts.append(f"Fib {z['fib']}")
-        note = " + ".join(parts) or "seviye"
+        note = " + ".join(parts) or "level"
         return f"{_range(z)} ({_signed_pct_tr(z.get('dist_pct'))} · {note})"
 
     def _levels(items: list) -> str:
@@ -953,12 +1393,12 @@ def _support_resistance_line(technical: dict) -> Optional[str]:
     supports = technical.get("support_levels") or []
     segments: List[str] = []
     if resistances:
-        segments.append(f"Direnç {_levels(resistances)}")
+        segments.append(f"Resistance {_levels(resistances)}")
     if supports:
-        segments.append(f"Destek {_levels(supports)}")
+        segments.append(f"Support {_levels(supports)}")
     if not segments:
         return None
-    return "Destek/Direnç:  " + " | ".join(segments)
+    return "Support/Resistance:  " + " | ".join(segments)
 
 
 def _print_verdict_card(
@@ -971,7 +1411,7 @@ def _print_verdict_card(
     analyst: Optional[dict] = None,
     as_of=None,
 ) -> None:
-    """Print the compact, Turkish-language terminal verdict card.
+    """Print the compact terminal verdict card.
 
     This is the default (non-``--verbose``) output of ``analyze`` -- it
     replaces the old raw-JSON dump, which is now only shown behind
@@ -982,10 +1422,10 @@ def _print_verdict_card(
     When ``result["valuation"]`` (the dict from
     :func:`sec_analyzer.valuation.engine.run_valuation`, SPEC.md Sec.13) is
     present, the "Fair Value" line gains a method label (``"DCF"``, ``"FFO"``,
-    or ``"P/B×ROE"`` -- see :func:`_valuation_method_label`) and a "Güven:"
+    or ``"P/B×ROE"`` -- see :func:`_valuation_method_label`) and a "Confidence:"
     confidence suffix, and four extra lines
-    follow the bear/bull line: "Reverse DCF:", "Multiples:", "Üçgenleme:",
-    and "Duyarlılık:". Without a ``"valuation"`` key (e.g. an older stored
+    follow the bear/bull line: "Reverse DCF:", "Multiples:", "Triangulation:",
+    and "Sensitivity:". Without a ``"valuation"`` key (e.g. an older stored
     result, or a phase-2 provider failure that still reached this function)
     the card renders exactly as it did before those additions.
 
@@ -997,7 +1437,7 @@ def _print_verdict_card(
             error shape).
         metrics: The dict returned by
             :func:`sec_analyzer.normalize.metrics.compute_metrics`; its
-            ``"price"`` field is used for the "Fiyat:" line.
+            ``"price"`` field is used for the "Price:" line.
         flags: The list returned by
             :func:`sec_analyzer.normalize.red_flags.detect_red_flags`, used
             as a fallback "Red flags:" line when ``result`` has no
@@ -1005,13 +1445,13 @@ def _print_verdict_card(
         analyst: The dict returned by
             :func:`sec_analyzer.fetch.analyst.get_analyst_targets`, or
             ``None``. Display-only consensus cross-check, rendered as an
-            "Analist:" line right after the bear/bull scenario line (see
+            "Analyst:" line right after the bear/bull scenario line (see
             :func:`_analyst_line`); never feeds the valuation engine.
 
-    The "Olaylar:" line summarizes ``result["events"]`` (the recent 8-K event
+    The "Events:" line summarizes ``result["events"]`` (the recent 8-K event
     list attached in ``cmd_analyze`` via
     :func:`sec_analyzer.signals.events.detect_events`) using
-    :func:`sec_analyzer.signals.events.summarize_events`; it reads ``"yok"``
+    :func:`sec_analyzer.signals.events.summarize_events`; it reads ``"none"``
     when there are no recent warning/critical events.
     """
     result = result or {}
@@ -1019,30 +1459,30 @@ def _print_verdict_card(
     flags = flags or []
 
     ticker_label = str(ticker).upper()
-    header = f"{ticker_label} — Vade: {horizon} — {date.today().isoformat()}"
+    header = f"{ticker_label} — Horizon: {horizon} — {date.today().isoformat()}"
 
     print()
     print(header)
     print("─" * len(header))
     if as_of is not None:
         print(
-            f"AS-OF {as_of.isoformat()} — geçmiş veri, hindsight içermez "
-            "(analist konsensüsü gösterilmiyor)"
+            f"AS-OF {as_of.isoformat()} — historical data, contains no hindsight "
+            "(analyst consensus not shown)"
         )
         macro_asof = (result.get("valuation") or {}).get("macro_asof") if isinstance(result, dict) else None
         if macro_asof:
             print(
-                f"  Makro: ERP {macro_asof.get('erp_source')} · risksiz faiz "
-                f"{macro_asof.get('risk_free_source')} · çarpan/beta "
+                f"  Macro: ERP {macro_asof.get('erp_source')} · risk-free rate "
+                f"{macro_asof.get('risk_free_source')} · multiple/beta "
                 f"{macro_asof.get('multiples_source', 'multiples.csv')}"
             )
         leak = result.get("hindsight_leak_risk") if isinstance(result, dict) else None
         if leak:
             print(f"  ⚠ {leak}")
-    print(f"Fiyat: {_fmt_money(metrics.get('price'))}")
+    print(f"Price: {_fmt_money(metrics.get('price'))}")
 
     if "error" in result:
-        print(f"Analiz kullanılamıyor ({result['error']}): {result.get('summary', _DASH)}")
+        print(f"Analysis unavailable ({result['error']}): {result.get('summary', _DASH)}")
         return
 
     fv = result.get("fair_value_range") or {}
@@ -1057,7 +1497,7 @@ def _print_verdict_card(
     if valuation:
         method_label = _valuation_method_label(valuation)
         confidence = result.get("confidence") or _DASH
-        print(f"Fair Value (base, {method_label}): {base_range}   Güven: {confidence}")
+        print(f"Fair Value (base, {method_label}): {base_range}   Confidence: {confidence}")
     else:
         print(f"Fair Value (base): {base_range}")
     print(f"  {_scenario_line('bear', fv.get('bear'))} | {_scenario_line('bull', fv.get('bull'))}")
@@ -1072,8 +1512,20 @@ def _print_verdict_card(
         ev_multiples_line = _ev_multiples_line(valuation)
         if ev_multiples_line:
             print(ev_multiples_line)
+        # SPEC.md Sec.23e: the same slot, for the sector where EV is undefined.
+        tangible_multiples_line = _tangible_multiples_line(valuation)
+        if tangible_multiples_line:
+            print(tangible_multiples_line)
+        for cycle_line in _cycle_lines(valuation):
+            print(cycle_line)
         print(_triangulation_line(valuation))
         print(_sensitivity_line(valuation))
+        distress_line = _distress_flags_line(valuation)
+        if distress_line:
+            print(distress_line)
+        lbo_line = _lbo_floor_line(valuation)
+        if lbo_line:
+            print(lbo_line)
 
     print(f"{'Fundamental:'.ljust(_CARD_LABEL_WIDTH)}{result.get('fundamental_verdict') or _DASH}")
 
@@ -1081,9 +1533,9 @@ def _print_verdict_card(
     technical_verdict = result.get("technical_verdict") or technical.get("verdict") or _DASH
     verdict_detail = technical.get("verdict_detail")
     technical_line = technical_verdict
-    if verdict_detail and verdict_detail != "yetersiz veri":
+    if verdict_detail and verdict_detail != "insufficient data":
         technical_line = f"{technical_verdict} ({verdict_detail})"
-    print(f"{'Teknik:'.ljust(_CARD_LABEL_WIDTH)}{technical_line}")
+    print(f"{'Technical:'.ljust(_CARD_LABEL_WIDTH)}{technical_line}")
 
     momentum_line = _momentum_line(technical)
     if momentum_line:
@@ -1111,24 +1563,39 @@ def _print_verdict_card(
     profile_verdict = profile.get("verdict") or _DASH
     profile_reason = profile.get("reason")
     profile_line = f"{profile_verdict} — {profile_reason}" if profile_reason else profile_verdict
-    print(f"{'Profil:'.ljust(_CARD_LABEL_WIDTH)}{profile_line}")
+    print(f"{'Profile:'.ljust(_CARD_LABEL_WIDTH)}{profile_line}")
 
     if "red_flags_comment" in result:
-        red_flags_line = result.get("red_flags_comment") or "yok"
+        red_flags_line = result.get("red_flags_comment") or "none"
     elif flags:
-        red_flags_line = "; ".join(f.get("message", "") for f in flags if f.get("message")) or "yok"
+        red_flags_line = "; ".join(f.get("message", "") for f in flags if f.get("message")) or "none"
     else:
-        red_flags_line = "yok"
+        red_flags_line = "none"
     print(f"{'Red flags:'.ljust(_CARD_LABEL_WIDTH)}{red_flags_line}")
 
     events_line = summarize_events(result.get("events") or [])
-    print(f"{'Olaylar:'.ljust(_CARD_LABEL_WIDTH)}{events_line}")
+    print(f"{'Events:'.ljust(_CARD_LABEL_WIDTH)}{events_line}")
 
-    print(f"{'Katalizör:'.ljust(_CARD_LABEL_WIDTH)}{result.get('catalyst') or _DASH}")
+    insider = result.get("insider")
+    print(f"{'Insider:'.ljust(_CARD_LABEL_WIDTH)}{summarize_insider(insider)}")
+    if isinstance(insider, dict) and insider.get("note"):
+        print(f"  {insider['note']}")
+
+    peers = result.get("peers")
+    if isinstance(peers, dict):
+        print(f"{'Peers:'.ljust(_CARD_LABEL_WIDTH)}{peers.get('note') or _DASH}")
+
+    macro = result.get("macro")
+    if isinstance(macro, dict):
+        print(f"{'Macro:'.ljust(_CARD_LABEL_WIDTH)}{summarize_macro(macro)}")
+        for note in macro.get("notes") or []:
+            print(f"  {note}")
+
+    print(f"{'Catalyst:'.ljust(_CARD_LABEL_WIDTH)}{result.get('catalyst') or _DASH}")
 
     summary = result.get("summary")
     if summary:
-        print(f"Özet: {summary}")
+        print(f"Summary: {summary}")
 
 
 def cmd_analyze(args: argparse.Namespace) -> None:
@@ -1153,22 +1620,22 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         provider = explicit_provider or Config.ANALYZER_PROVIDER
     if as_of is not None and provider != "script":
         print(
-            f"\nUYARI: as-of modunda AI sağlayıcı ({provider}) kullanılıyor — "
-            "sonuç 'hindsight sızıntısı riski' etiketi taşıyacak.",
+            f"\nWARNING: using AI provider ({provider}) in as-of mode — "
+            "the result will carry a 'hindsight leak risk' label.",
             file=sys.stderr,
         )
     print(f"\nRunning {provider} analysis (horizon={horizon})...")
 
     # Point-in-time no-data guard: if the as-of cutoff predates every filed
-    # fact, there's nothing to analyze -- print a minimal Turkish card and
+    # fact, there's nothing to analyze -- print a minimal card and
     # stop before the rest of the pipeline (which would otherwise divide by
     # missing fundamentals). Never crashes the CLI.
     if as_of is not None and not any((normalized.get("annual") or {}).values()):
         result = {
             "error": "as_of_no_data",
             "summary": (
-                f"{as_of.isoformat()} tarihi itibarıyla dosyalanmış SEC verisi "
-                "bulunamadı; şirketin ilk dosyalaması bu tarihten sonra olabilir."
+                f"No SEC data was filed as of {as_of.isoformat()}; "
+                "the company's first filing may postdate this date."
             ),
         }
         _print_verdict_card(args.ticker, horizon, result, {}, [], None, as_of=as_of)
@@ -1187,12 +1654,25 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     submissions = _fetch_submissions(cik, args.ticker, args.no_cache)
     catalyst = _fetch_catalyst(submissions, args.ticker, as_of)
     events = _detect_filing_events(submissions, as_of)
+    insider = _fetch_insider_activity(cik, args.ticker, submissions, args.no_cache, as_of)
     # Now that the SIC is known, fold in sector-relative strength and recompute
     # the composite momentum score with it (SPY-only momentum is already set).
     _enrich_sector_momentum(args.ticker, technical, price_df, submissions, args.no_cache, as_of)
 
-    if price_df is not None and as_of is None:
-        _save_price_rows(cik, price_df)
+    # A degraded-source frame (split-adjusted only) must not overwrite rows in
+    # a table read as a total-return series, nor reach the valuation layer.
+    # Technicals keep the full frame -- see prices.is_total_return_basis.
+    price_source = (technical or {}).get("price_source")
+    valuation_price_df = price_df if is_total_return_basis(price_source) else None
+    if valuation_price_df is None and price_df is not None:
+        logger.warning(
+            "Price source %r is not a total-return series for %s; historical multiples "
+            "and price persistence are skipped. Technicals are unaffected.",
+            price_source, args.ticker,
+        )
+
+    if valuation_price_df is not None and as_of is None:
+        _save_price_rows(cik, valuation_price_df)
 
     # Resolve where phase-1 assumptions come from (frozen cache / deterministic
     # script / legacy live LLM) per --assumptions (ASSUMPTIONS_CACHE_SPEC.md).
@@ -1216,7 +1696,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         red_flags=flags,
         catalyst=catalyst,
         submissions=submissions,
-        price_df=price_df,
+        price_df=valuation_price_df,
         as_of=as_of,
         fred_rate=fred_rate,
         phase1_override=override,
@@ -1229,6 +1709,11 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     # the HTML report, which reads result.events.
     if isinstance(result, dict):
         result["events"] = events
+        # Insider (Form 4) activity is the same kind of fact as `events`: SEC
+        # filing metadata classified deterministically, attached after
+        # interpret() so it never enters the LLM payload or the fair value.
+        if insider is not None:
+            result["insider"] = insider
         if as_of is not None:
             result["as_of"] = as_of.isoformat()
         # Momentum context layer (price + fundamental + verdict momentum),
@@ -1237,6 +1722,11 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         # save_verdict so the persisted verdict carries the momentum label.
         if "error" not in result:
             _attach_momentum(result, args.ticker, normalized, technical, as_of)
+            _attach_macro(result, as_of, args.no_cache)
+            _attach_peers(
+                result, args.ticker, cik, submissions, normalized, ratios, metrics,
+                as_of=as_of,
+            )
 
     if "error" in result:
         print(
@@ -1252,6 +1742,8 @@ def cmd_analyze(args: argparse.Namespace) -> None:
                 args.ticker, cik, horizon, verdict_provider or provider, price, result,
                 db_path=Config.DB_PATH, valuation=result.get("valuation"),
                 as_of=as_of.isoformat() if as_of is not None else None,
+                catalyst_date=(catalyst or {}).get("estimate_date"),
+                sic=(submissions or {}).get("sic"),
             )
         except Exception:  # noqa: BLE001 - persistence failure must not be fatal
             logger.warning("Failed to save verdict for %s", args.ticker, exc_info=True)
@@ -1262,6 +1754,11 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         print("\n" + json.dumps(result, indent=2, ensure_ascii=False))
 
     if getattr(args, "html", False):
+        # The earnings beat/miss history is display-only and only shown in the
+        # HTML report's "Balance sheet" tab, so it's fetched here (not on plain-text
+        # runs) and, like the analyst consensus, suppressed in as-of mode
+        # because it is undated and cannot be made point-in-time.
+        earnings = None if as_of is not None else _fetch_earnings_history(args.ticker, args.no_cache)
         try:
             report_path = generate_report(
                 args.ticker,
@@ -1272,8 +1769,11 @@ def cmd_analyze(args: argparse.Namespace) -> None:
                 flags=flags,
                 price=price,
                 as_of=price_as_of,
+                price_source=(technical or {}).get("price_source"),
                 analyst=analyst,
                 analysis_as_of=as_of.isoformat() if as_of is not None else None,
+                financials=serialize_financials(normalized, ratios),
+                earnings=earnings,
             )
             print(f"\nHTML report saved to: {report_path}")
         except Exception as exc:  # noqa: BLE001 - a report-writing failure must not crash analyze
@@ -1300,7 +1800,7 @@ def cmd_calibrate(args: argparse.Namespace) -> None:
     rows = run_calibration(tickers, years=args.years, no_cache=args.no_cache, as_of=as_of)
     print()
     if as_of is not None:
-        print(f"As-of (geçmiş tarih) modu: {as_of.isoformat()}")
+        print(f"As-of (historical date) mode: {as_of.isoformat()}")
     print_calibration_table(rows)
 
     summary = summarize_ratios(rows)
@@ -1315,6 +1815,186 @@ def cmd_calibrate(args: argparse.Namespace) -> None:
         print(f"\nSaved calibration snapshot to: {path}")
     else:
         print("\nWARNING: failed to save calibration snapshot.", file=sys.stderr)
+
+
+#: Column widths for the swing-scan terminal table (SWING_SPEC.md Sec.8).
+_SWING_COL_WIDTHS = [4, 8, 6, 14, 22, 10, 10, 10, 10, 6]
+
+#: How often (in scanned tickers) a progress line is logged during `swing`,
+#: so a cold-cache 500-ticker scan doesn't flood the log with one line per
+#: ticker but still shows it's making progress.
+_SWING_PROGRESS_STEP = 25
+
+
+def _print_swing_table(result: dict, top: int) -> None:
+    """Print the ranked plain-text swing-scan table (SWING_SPEC.md Sec.8):
+    rank, ticker, score, label, setup, price, entry/stop/target, R:R, plus a
+    one-line summary of skipped tickers."""
+    rows = result.get("rows") or []
+    index_label = result.get("universe_label") or result.get("universe") or _DASH
+    print(
+        f"\nSwing Scan — {index_label} — {result.get('generated_at') or _DASH} "
+        f"(price date: {result.get('price_as_of') or _DASH}) — "
+        f"{result.get('count', 0)}/{result.get('total', 0)} stocks scanned"
+    )
+
+    headers = ["#", "Ticker", "Score", "Label", "Setup", "Price", "Entry", "Stop", "Target", "R:R"]
+    print("".join(h.ljust(w) for h, w in zip(headers, _SWING_COL_WIDTHS)))
+    print("-" * sum(_SWING_COL_WIDTHS))
+
+    for rank, row in enumerate(rows[:top], start=1):
+        rr = row.get("rr")
+        cells = [
+            str(rank),
+            str(row.get("ticker") or _DASH),
+            str(row.get("score") if row.get("score") is not None else _DASH),
+            str(row.get("label") or _DASH),
+            str(row.get("setup") or _DASH),
+            _fmt_swing_price(row.get("price")),
+            _fmt_swing_price(row.get("entry")),
+            _fmt_swing_price(row.get("stop")),
+            _fmt_swing_price(row.get("target")),
+            f"{rr:.2f}" if rr is not None else _DASH,
+        ]
+        print("".join(c.ljust(w) for c, w in zip(cells, _SWING_COL_WIDTHS)))
+
+    skipped = result.get("skipped") or []
+    if skipped:
+        sample = ", ".join(str(s.get("ticker") or "?") for s in skipped[:5])
+        more = f" (+{len(skipped) - 5} more)" if len(skipped) > 5 else ""
+        print(f"\nSkipped: {len(skipped)} stocks — {sample}{more}")
+    else:
+        print("\nSkipped: none")
+
+
+def cmd_swing(args: argparse.Namespace) -> None:
+    """Handle the ``swing`` subcommand: scan the S&P 500 (or a subset, via
+    ``--limit``) for long-only swing-trade setups (SWING_SPEC.md Sec.8),
+    print a ranked table, and persist the result unless ``--no-save``.
+
+    Never raises out to the user: a failed scan prints an error line
+    to stderr and exits with status 1, so a warmed-cache/network hiccup
+    can't crash the CLI (CLAUDE.md: analysis layer never crashes the CLI).
+    """
+    index = normalize_index(getattr(args, "index", None))
+
+    tickers = None
+    if args.limit is not None:
+        try:
+            universe = load_universe(index=index)
+        except OSError as exc:
+            print(f"Could not read universe file: {exc}", file=sys.stderr)
+            sys.exit(1)
+            return
+        tickers = [row["ticker"] for row in universe[: args.limit]]
+
+    def _progress(done: int, total: int, ticker: str) -> None:
+        if done % _SWING_PROGRESS_STEP == 0 or done == total:
+            logger.info("Swing scan progress: %d/%d (last: %s)", done, total, ticker)
+
+    try:
+        result = scan_swing(
+            tickers=tickers,
+            no_cache=args.no_cache,
+            max_workers=args.workers,
+            progress_cb=_progress,
+            index=index,
+        )
+    except Exception as exc:  # noqa: BLE001 - a failed scan must not crash the CLI
+        logger.exception("Swing scan failed")
+        print(f"Swing scan failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+        return
+
+    _print_swing_table(result, args.top)
+
+    if not args.no_save:
+        scan_id = save_swing_scan(result, db_path=Config.DB_PATH)
+        if scan_id:
+            print(f"\nScan saved (id {scan_id}): {Config.DB_PATH}")
+        else:
+            print("\nWARNING: could not save swing scan to the database.", file=sys.stderr)
+
+
+#: Column widths for the swing-study decile terminal table (SWING_STUDY_SPEC.md
+#: Sec.5): bucket, n, mean excess return %, median, hit rate %, mean score.
+_SWING_STUDY_DECILE_COL_WIDTHS = [8, 8, 16, 12, 10, 12]
+
+
+def _fmt_swing_study_pct(value) -> str:
+    return _DASH if value is None else f"%{value:.2f}"
+
+
+def _print_swing_study_report(result: dict) -> None:
+    """Print the swing-study terminal report (SWING_STUDY_SPEC.md Sec.5):
+    header, one decile table per horizon, top-minus-bottom spread,
+    monotonicity, the per-setup table, then limitations and the disclaimer.
+    """
+    index_label = result.get("index_label") or result.get("index") or _DASH
+    print(
+        f"\n=== Swing score decile study — {index_label} — "
+        f"{result.get('start') or _DASH} .. {result.get('end') or _DASH} ==="
+    )
+    print(
+        f"Rebalance dates: {result.get('rebalance_dates', 0)} · "
+        f"Observations: {result.get('observations', 0)} · "
+        f"Stocks scanned: {result.get('tickers_scanned', 0)} · "
+        f"Skipped: {len(result.get('skipped') or [])} · "
+        f"No-score: {result.get('dropped_no_score', 0)} · "
+        f"No-forward-data: {result.get('dropped_no_forward', 0)}"
+    )
+
+    deciles = result.get("deciles") or {}
+    spread = result.get("spread") or {}
+    monotonicity = result.get("monotonicity") or {}
+
+    for horizon_key in sorted(deciles, key=lambda k: int(k)):
+        print(f"\n[{horizon_key} trading-day forward return]")
+        headers = ["Bucket", "n", "Mean excess ret.", "Median", "Hit rate %", "Mean score"]
+        print("".join(h.ljust(w) for h, w in zip(headers, _SWING_STUDY_DECILE_COL_WIDTHS)))
+        print("-" * sum(_SWING_STUDY_DECILE_COL_WIDTHS))
+        for row in deciles.get(horizon_key) or []:
+            flag = "  ⚠ low sample size" if row.get("low_sample") else ""
+            cells = [
+                str(row.get("decile")),
+                str(row.get("n")),
+                _fmt_swing_study_pct(row.get("mean_excess_pct")),
+                _fmt_swing_study_pct(row.get("median_excess_pct")),
+                f"%{row['hit_rate_pct']:.1f}" if row.get("hit_rate_pct") is not None else _DASH,
+                f"{row['mean_score']:.1f}" if row.get("mean_score") is not None else _DASH,
+            ]
+            print("".join(c.ljust(w) for c, w in zip(cells, _SWING_STUDY_DECILE_COL_WIDTHS)) + flag)
+
+        sp = spread.get(horizon_key) or {}
+        ci_low, ci_high = sp.get("ci_low"), sp.get("ci_high")
+        ci_str = (
+            f" (bootstrap 95% CI: {_fmt_swing_study_pct(ci_low)} .. {_fmt_swing_study_pct(ci_high)})"
+            if ci_low is not None and ci_high is not None else ""
+        )
+        print(f"Top-minus-bottom bucket spread: {_fmt_swing_study_pct(sp.get('mean_excess_pct'))}{ci_str}")
+        print(f"Monotonicity (Spearman rho): {monotonicity.get(horizon_key, 0.0):.3f}")
+
+    by_setup = result.get("by_setup") or {}
+    if by_setup:
+        print("\n[By setup type]")
+        print(f"{'Setup':<24}{'n':>5}{'Excess 10d':>12}{'Excess 21d':>12}{'Hit 10d':>12}{'Hit 21d':>12}")
+        print("-" * 77)
+        for setup, row in sorted(by_setup.items()):
+            hit_10 = row.get("hit_rate_10_pct")
+            hit_21 = row.get("hit_rate_21_pct")
+            hit_10_str = _DASH if hit_10 is None else f"%{hit_10:.1f}"
+            hit_21_str = _DASH if hit_21 is None else f"%{hit_21:.1f}"
+            print(
+                f"{setup:<24}{row.get('n', 0):>5}"
+                f"{_fmt_swing_study_pct(row.get('mean_excess_10_pct')):>12}"
+                f"{_fmt_swing_study_pct(row.get('mean_excess_21_pct')):>12}"
+                f"{hit_10_str:>12}{hit_21_str:>12}"
+            )
+
+    print("\n[Known limitations]")
+    for line in result.get("limitations") or []:
+        print(f"  - {line}")
+    print(f"\n{result.get('disclaimer') or ''}")
 
 
 def cmd_backtest(args: argparse.Namespace) -> None:
@@ -1351,21 +2031,21 @@ def cmd_backtest(args: argparse.Namespace) -> None:
             print("No dates given to --dates.", file=sys.stderr)
             return
         print(
-            f"Backtest grid: {len(tickers)} ticker × {len(dates)} tarih "
-            f"= {len(tickers) * len(dates)} hücre (no-AI, script)."
+            f"Backtest grid: {len(tickers)} tickers × {len(dates)} dates "
+            f"= {len(tickers) * len(dates)} cells (no-AI, script)."
         )
         tally = run_backtest(
             tickers, dates, years=args.years, no_cache=args.no_cache, db_path=Config.DB_PATH
         )
         print(
-            f"\nBitti: {tally['ok']} ok, {tally['no_data']} veri-yok, "
-            f"{tally['error']} hata (of {tally['cells']} hücre)."
+            f"\nDone: {tally['ok']} ok, {tally['no_data']} no-data, "
+            f"{tally['error']} errors (of {tally['cells']} cells)."
         )
         if tally.get("outcomes"):
             o = tally["outcomes"]
             print(
-                f"Outcomes: {o['evaluated']} değerlendirildi, "
-                f"{o['skipped_immature']} vadesi dolmadı, {o['skipped_no_data']} veri-yok."
+                f"Outcomes: {o['evaluated']} evaluated, "
+                f"{o['skipped_immature']} not yet mature, {o['skipped_no_data']} no-data."
             )
         print(f"\n{BACKTEST_DISCLAIMER}")
         return
@@ -1373,9 +2053,9 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     if action == "evaluate":
         summary = evaluate_outcomes(db_path=Config.DB_PATH, no_cache=args.no_cache)
         print(
-            f"Outcomes: {summary['evaluated']} değerlendirildi, "
-            f"{summary['skipped_immature']} vadesi dolmadı, "
-            f"{summary['skipped_no_data']} veri-yok (of {summary['verdicts_seen']} verdict)."
+            f"Outcomes: {summary['evaluated']} evaluated, "
+            f"{summary['skipped_immature']} not yet mature, "
+            f"{summary['skipped_no_data']} no-data (of {summary['verdicts_seen']} verdicts)."
         )
         print(f"\n{BACKTEST_DISCLAIMER}")
         return
@@ -1385,10 +2065,45 @@ def cmd_backtest(args: argparse.Namespace) -> None:
         print(render_terminal(data))
         generated_on = date.today().isoformat()
         path = write_html_report(data, generated_on)
-        print(f"\nHTML backtest raporu: {path}")
+        print(f"\nHTML backtest report: {path}")
         return
 
-    print("Usage: backtest {run|evaluate|report} ...", file=sys.stderr)
+    if action == "swing":
+        from sec_analyzer.backtest.swing_study import run_swing_study
+        from sec_analyzer.screener.universe import normalize_index
+        from sec_analyzer.store.database import save_swing_study
+
+        index = normalize_index(getattr(args, "index", None))
+
+        def _progress(done: int, total: int, ticker: str) -> None:
+            if done % _SWING_PROGRESS_STEP == 0 or done == total:
+                logger.info("Swing study progress: %d/%d (last: %s)", done, total, ticker)
+
+        try:
+            result = run_swing_study(
+                index=index,
+                start=args.start,
+                end=args.end,
+                max_workers=args.workers,
+                progress_cb=_progress,
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed study must not crash the CLI
+            logger.exception("Swing score study failed")
+            print(f"Swing score study failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+            return
+
+        _print_swing_study_report(result)
+
+        if not args.no_save:
+            study_id = save_swing_study(result, db_path=Config.DB_PATH)
+            if study_id:
+                print(f"\nStudy saved (id {study_id}): {Config.DB_PATH}")
+            else:
+                print("\nWARNING: could not save swing study to the database.", file=sys.stderr)
+        return
+
+    print("Usage: backtest {run|evaluate|report|swing} ...", file=sys.stderr)
 
 
 def _parse_as_of(value: str) -> date:
@@ -1431,7 +2146,7 @@ def _default_model_for(provider: Optional[str]) -> Optional[str]:
 
 
 def _fmt_frac_pct(value) -> str:
-    """Format a decimal fraction (0.105) as a Turkish percent string ('%10.5')."""
+    """Format a decimal fraction (0.105) as a percent string ('%10.5')."""
     if not isinstance(value, (int, float)):
         return _DASH
     return f"%{value * 100:.1f}"
@@ -1479,14 +2194,14 @@ def _print_assumptions_review(
     divergence is information, not an error.
     """
     model_str = f" ({source_model})" if source_model else ""
-    print(f"\n=== {ticker} — Varsayım Önerisi (taslak #{set_id}) ===")
-    print(f"Sektör tipi: {sector_type}   |   Kaynak: {source_provider}{model_str}")
-    print(f"\n{'Senaryo':<6} {'Alan':<16} {'Öneri':>9} {'Script':>9} {'Δ':>9}")
+    print(f"\n=== {ticker} — Assumption Proposal (draft #{set_id}) ===")
+    print(f"Sector type: {sector_type}   |   Source: {source_provider}{model_str}")
+    print(f"\n{'Scenario':<6} {'Field':<16} {'Proposed':>9} {'Script':>9} {'Δ':>9}")
     print("-" * 52)
     field_labels = {
-        "growth_5y": "büyüme 5y",
+        "growth_5y": "growth 5y",
         "terminal_growth": "terminal",
-        "discount_rate": "iskonto",
+        "discount_rate": "discount",
     }
     for scenario in _ASSUMPTION_SCENARIOS:
         prop = (clamped or {}).get(scenario) or {}
@@ -1504,9 +2219,9 @@ def _print_assumptions_review(
             )
     base_story = ((clamped or {}).get("base") or {}).get("story")
     if base_story:
-        print(f"\nHikaye (base): {base_story}")
+        print(f"\nStory (base): {base_story}")
     if sanity_notes:
-        print("\nClamp/sanity notları:")
+        print("\nClamp/sanity notes:")
         for note in sanity_notes:
             print(f"  - {note}")
 
@@ -1524,7 +2239,7 @@ def _cmd_assumptions_propose(args: argparse.Namespace) -> None:
         cik, _name, normalized, ratios, metrics, sector_hint, capm, risk_free_pct
     ) = _assumptions_resolve_inputs(args)
 
-    print(f"\n'{provider}' ile varsayım önerisi hazırlanıyor (phase 1)...")
+    print(f"\nPreparing assumption proposal with '{provider}' (phase 1)...")
     phase1 = propose_assumptions(
         normalized, ratios, metrics, sector_hint=sector_hint,
         provider=provider, model=getattr(args, "model", None),
@@ -1566,16 +2281,16 @@ def _cmd_assumptions_propose(args: argparse.Namespace) -> None:
         clamped, script_baseline, clamp_notes,
     )
     if set_id is None:
-        print("\nUYARI: taslak veritabanına kaydedilemedi (log'a bakın).", file=sys.stderr)
+        print("\nWARNING: could not save draft to the database (see log).", file=sys.stderr)
         return
     print(
-        f"\nGözden geçir, sonra dondur:  assumptions freeze {args.ticker}"
-        f"\nDüzeltmek için:              assumptions edit {args.ticker} --set base.growth_5y=0.12"
+        f"\nReview, then freeze:  assumptions freeze {args.ticker}"
+        f"\nTo edit:               assumptions edit {args.ticker} --set base.growth_5y=0.12"
     )
 
 
 def _freshness_label(cik: str, row: Optional[dict], args: argparse.Namespace) -> str:
-    """Turkish freshness label for a stored set vs. the current fundamentals."""
+    """Freshness label for a stored set vs. the current fundamentals."""
     if row is None:
         return _DASH
     try:
@@ -1586,10 +2301,10 @@ def _freshness_label(cik: str, row: Optional[dict], args: argparse.Namespace) ->
         metrics = compute_metrics(normalized, ratios, None)
     except Exception:  # noqa: BLE001 - freshness is best-effort; never crash `show`
         logger.warning("Could not fetch current fundamentals for freshness check", exc_info=True)
-        return "bilinmiyor (finansallar getirilemedi)"
+        return "unknown (could not fetch financials)"
     if assumptions_store.is_fresh(row, normalized, metrics):
-        return "GÜNCEL"
-    return "BAYAT — yeni dosyalama var; yeniden 'propose' önerilir"
+        return "CURRENT"
+    return "STALE — a new filing exists; re-running 'propose' is recommended"
 
 
 def _cmd_assumptions_show(args: argparse.Namespace) -> None:
@@ -1600,19 +2315,19 @@ def _cmd_assumptions_show(args: argparse.Namespace) -> None:
     frozen = assumptions_store.load_active(cik, assumptions_store.STATUS_FROZEN, db_path=Config.DB_PATH)
     history = assumptions_store.load_history(cik, db_path=Config.DB_PATH)
 
-    print(f"\n=== {args.ticker} — Varsayım Setleri ===")
+    print(f"\n=== {args.ticker} — Assumption Sets ===")
 
     if frozen is not None:
         freshness = _freshness_label(cik, frozen, args)
         model_str = f" ({frozen.get('source_model')})" if frozen.get("source_model") else ""
         print(
-            f"\nDONDURULMUŞ (aktif) #{frozen['id']}  |  {freshness}"
-            f"\n  Kaynak: {frozen.get('source_provider')}{model_str}"
-            f"  |  önerilme: {frozen.get('proposed_at')}  |  dondurma: {frozen.get('frozen_at')}"
-            f"\n  Sektör: {frozen.get('sector_type')}  |  fundamental FY: {frozen.get('fundamental_fy')}"
+            f"\nFROZEN (active) #{frozen['id']}  |  {freshness}"
+            f"\n  Source: {frozen.get('source_provider')}{model_str}"
+            f"  |  proposed: {frozen.get('proposed_at')}  |  frozen: {frozen.get('frozen_at')}"
+            f"\n  Sector: {frozen.get('sector_type')}  |  fundamental FY: {frozen.get('fundamental_fy')}"
         )
         if frozen.get("review_note"):
-            print(f"  Not: {frozen['review_note']}")
+            print(f"  Note: {frozen['review_note']}")
         _print_assumptions_review(
             args.ticker, frozen["id"], frozen.get("sector_type"),
             frozen.get("source_provider"), frozen.get("source_model"),
@@ -1620,22 +2335,22 @@ def _cmd_assumptions_show(args: argparse.Namespace) -> None:
             frozen.get("sanity_notes") or [],
         )
     else:
-        print("\nDondurulmuş set yok.")
+        print("\nNo frozen set.")
 
     if draft is not None:
         print(
-            f"\nTASLAK #{draft['id']} (henüz dondurulmadı)  |  "
-            f"kaynak: {draft.get('source_provider')}  |  önerilme: {draft.get('proposed_at')}"
+            f"\nDRAFT #{draft['id']} (not yet frozen)  |  "
+            f"source: {draft.get('source_provider')}  |  proposed: {draft.get('proposed_at')}"
         )
-        print(f"  Dondurmak için: assumptions freeze {args.ticker}")
+        print(f"  To freeze: assumptions freeze {args.ticker}")
 
     superseded = [r for r in history if r.get("status") == assumptions_store.STATUS_SUPERSEDED]
     if superseded:
-        print("\nGeçmiş (supersede edilmiş):")
+        print("\nHistory (superseded):")
         for r in superseded:
             print(
                 f"  #{r['id']}  {r.get('source_provider')}  "
-                f"dondurma: {r.get('frozen_at')} → supersede: {r.get('superseded_at')}"
+                f"frozen: {r.get('frozen_at')} → superseded: {r.get('superseded_at')}"
             )
 
 
@@ -1646,7 +2361,7 @@ def _cmd_assumptions_edit(args: argparse.Namespace) -> None:
     draft = assumptions_store.load_active(cik, assumptions_store.STATUS_DRAFT, db_path=Config.DB_PATH)
     if draft is None:
         print(
-            f"'{args.ticker}' için taslak yok. Önce: assumptions propose {args.ticker}",
+            f"No draft for '{args.ticker}'. First run: assumptions propose {args.ticker}",
             file=sys.stderr,
         )
         return
@@ -1655,13 +2370,13 @@ def _cmd_assumptions_edit(args: argparse.Namespace) -> None:
     for expr in args.set or []:
         path, sep, raw_value = expr.partition("=")
         if not sep:
-            print(f"Geçersiz --set '{expr}'; beklenen biçim PATH=VALUE.", file=sys.stderr)
+            print(f"Invalid --set '{expr}'; expected the form PATH=VALUE.", file=sys.stderr)
             return
         scenario, _, field = path.strip().partition(".")
         if scenario not in _ASSUMPTION_SCENARIOS or field not in _ASSUMPTION_FIELDS:
             print(
-                f"Geçersiz yol '{path}'. Senaryo ∈ {_ASSUMPTION_SCENARIOS}, "
-                f"alan ∈ {_ASSUMPTION_FIELDS}.",
+                f"Invalid path '{path}'. Scenario ∈ {_ASSUMPTION_SCENARIOS}, "
+                f"field ∈ {_ASSUMPTION_FIELDS}.",
                 file=sys.stderr,
             )
             return
@@ -1671,7 +2386,7 @@ def _cmd_assumptions_edit(args: argparse.Namespace) -> None:
             try:
                 value = float(raw_value)
             except ValueError:
-                print(f"'{path}' için sayısal değer beklendi (ondalık kesir), '{raw_value}' verildi.", file=sys.stderr)
+                print(f"Expected a numeric value (decimal fraction) for '{path}', got '{raw_value}'.", file=sys.stderr)
                 return
         assumptions.setdefault(scenario, {})[field] = value
 
@@ -1680,7 +2395,7 @@ def _cmd_assumptions_edit(args: argparse.Namespace) -> None:
         db_path=Config.DB_PATH,
     )
     if updated is None:
-        print("UYARI: taslak güncellenemedi (log'a bakın).", file=sys.stderr)
+        print("WARNING: could not update draft (see log).", file=sys.stderr)
         return
     _print_assumptions_review(
         args.ticker, updated["id"], updated.get("sector_type"),
@@ -1688,7 +2403,7 @@ def _cmd_assumptions_edit(args: argparse.Namespace) -> None:
         updated.get("assumptions"), updated.get("script_baseline"),
         updated.get("sanity_notes") or [],
     )
-    print(f"\nDondurmak için: assumptions freeze {args.ticker}")
+    print(f"\nTo freeze: assumptions freeze {args.ticker}")
 
 
 def _cmd_assumptions_freeze(args: argparse.Namespace) -> None:
@@ -1698,7 +2413,7 @@ def _cmd_assumptions_freeze(args: argparse.Namespace) -> None:
     draft = assumptions_store.load_active(cik, assumptions_store.STATUS_DRAFT, db_path=Config.DB_PATH)
     if draft is None:
         print(
-            f"'{args.ticker}' için dondurulacak taslak yok. Önce: assumptions propose {args.ticker}",
+            f"No draft to freeze for '{args.ticker}'. First run: assumptions propose {args.ticker}",
             file=sys.stderr,
         )
         return
@@ -1711,20 +2426,20 @@ def _cmd_assumptions_freeze(args: argparse.Namespace) -> None:
         is_unprofitable=(draft.get("sector_type") == "growth_unprofitable"),
     )
     if violations:
-        print("Dondurulamadı — sanity ihlalleri var:", file=sys.stderr)
+        print("Could not freeze — sanity violations found:", file=sys.stderr)
         for v in violations:
             print(f"  - {v}", file=sys.stderr)
-        print(f"Düzeltin: assumptions edit {args.ticker} --set ...", file=sys.stderr)
+        print(f"Fix with: assumptions edit {args.ticker} --set ...", file=sys.stderr)
         return
 
     frozen = assumptions_store.freeze_draft(cik, getattr(args, "note", None), db_path=Config.DB_PATH)
     if frozen is None:
-        print("UYARI: dondurma başarısız (log'a bakın).", file=sys.stderr)
+        print("WARNING: freeze failed (see log).", file=sys.stderr)
         return
     print(
-        f"\n{args.ticker} için varsayım seti donduruldu (#{frozen['id']}, "
+        f"\nAssumption set frozen for {args.ticker} (#{frozen['id']}, "
         f"{frozen.get('frozen_at')}).\n"
-        f"Artık 'analyze {args.ticker}' (varsayılan --assumptions auto) bu seti kullanır."
+        f"'analyze {args.ticker}' (default --assumptions auto) will now use this set."
     )
 
 
@@ -1746,7 +2461,7 @@ def _resolve_analyze_phase1(
       (from a fresh frozen set, or a deterministic script build), or ``None``
       to let ``interpret`` run its ordinary phase-1 (legacy ``llm`` mode, and
       every as-of case).
-    * ``note``: a Turkish line to print explaining what happened, or ``None``.
+    * ``note``: a line to print explaining what happened, or ``None``.
     * ``stop``: ``True`` only for strict ``--assumptions frozen`` when no fresh
       frozen set exists -- the caller prints an error card and does not analyze.
     * ``verdict_provider``: ``"cached:<src>"`` when a frozen set is used (so the
@@ -1765,8 +2480,8 @@ def _resolve_analyze_phase1(
         note = None
         if strategy in ("auto", "frozen"):
             note = (
-                "as-of modunda dondurulmuş varsayım seti kullanılmaz (hindsight "
-                "riski); deterministik varsayımlarla devam edildi."
+                "a frozen assumption set is not used in as-of mode (hindsight "
+                "risk); continuing with deterministic assumptions."
             )
         return None, note, False, None
 
@@ -1792,14 +2507,14 @@ def _resolve_analyze_phase1(
             "_provider": f"cached:{src}",
             "_assumption_set_id": frozen.get("id"),
         }
-        note = f"Dondurulmuş varsayım seti #{frozen.get('id')} kullanıldı (kaynak: {src})."
+        note = f"Used frozen assumption set #{frozen.get('id')} (source: {src})."
         return override, note, False, f"cached:{src}"
 
-    reason = "yok" if frozen is None else "bayat (yeni dosyalama var)"
+    reason = "none" if frozen is None else "stale (a new filing exists)"
     if strategy == "frozen":
         note = (
-            f"--assumptions frozen: kullanılabilir güncel dondurulmuş set {reason}; "
-            f"analiz durduruldu. Öneri: assumptions propose {args.ticker}"
+            f"--assumptions frozen: no usable current frozen set ({reason}); "
+            f"analysis stopped. Suggestion: assumptions propose {args.ticker}"
         )
         return None, note, True, None
 
@@ -1808,8 +2523,8 @@ def _resolve_analyze_phase1(
         normalized, ratios, metrics, sector_hint, sic_description, fred_rate=fred_rate
     )
     note = (
-        f"Dondurulmuş varsayım seti {reason}; deterministik (script) varsayımlar "
-        f"kullanıldı. Öneri: assumptions propose {args.ticker}"
+        f"Frozen assumption set {reason}; used deterministic (script) assumptions "
+        f"instead. Suggestion: assumptions propose {args.ticker}"
     )
     return override, note, False, None
 
@@ -1827,6 +2542,426 @@ def cmd_assumptions(args: argparse.Namespace) -> None:
         _cmd_assumptions_freeze(args)
     else:
         print("Usage: assumptions {propose|show|edit|freeze} TICKER ...", file=sys.stderr)
+
+
+#: Column widths for the portfolio-overview terminal table: ticker, sector,
+#: verdict, price, fair value (base band mid), gap %, confidence, momentum,
+#: insider, age. The verdict column is sized for the longest label the engine
+#: actually emits ("MODEL-PRICE DIVERGENCE"); the valuation route is not a
+#: column here because it already has its own summary table above.
+_OVERVIEW_COL_WIDTHS = [8, 19, 24, 11, 11, 9, 8, 10, 12, 5]
+
+#: Column widths for the pre-earnings briefing tables: ticker, date, days,
+#: verdict, gap %, momentum, beat record, verdict age. The verdict column is
+#: sized for the longest label the engine emits ("MODEL-PRICE DIVERGENCE").
+_PREEARNINGS_COL_WIDTHS = [8, 13, 7, 24, 10, 10, 9, 6]
+
+#: Cap on how many per-name observation blocks the briefing prints before
+#: summarizing the rest. A full watchlist run can match dozens of names, and a
+#: briefing nobody reads to the end is not a briefing.
+_PREEARNINGS_MAX_NOTE_BLOCKS = 20
+
+
+def _fmt_pct(value: Optional[float], decimals: int = 1) -> str:
+    """Render a percentage with an explicit sign, or the em-dash placeholder."""
+    if value is None:
+        return _DASH
+    return f"{value:+.{decimals}f}%"
+
+
+def _fmt_price(value: Optional[float]) -> str:
+    """Render a price, or the em-dash placeholder for a missing one."""
+    return _DASH if value is None else f"{value:,.2f}"
+
+
+def _print_overview_table(overview: dict) -> None:
+    """Print the portfolio overview: the sector heat map, then one row per
+    analyzed ticker, then the stale / upcoming-earnings / drift call-outs.
+
+    Everything here is read back from stored verdicts -- no network, no
+    valuation is re-run, so the numbers are exactly what the last analysis of
+    each name produced.
+    """
+    rows = overview.get("rows") or []
+    print(
+        f"\nPortfolio Overview — {overview.get('today') or _DASH} — "
+        f"{overview.get('count', 0)} stocks "
+        f"(median fair-value/price gap: {_fmt_pct(overview.get('median_fv_vs_price_pct'))})"
+    )
+
+    sectors = overview.get("sectors") or []
+    if sectors:
+        print("\n[Sector heat map]")
+        print(f"{'Sector':<28}{'n':>4}{'Median gap':>14}{'Cheap':>7}{'Fair':>7}{'Expensive':>8}{'Stale':>7}")
+        print("-" * 75)
+        for sector in sectors:
+            print(
+                f"{str(sector.get('label') or _DASH)[:27]:<28}"
+                f"{sector.get('n', 0):>4}"
+                f"{_fmt_pct(sector.get('median_fv_vs_price_pct')):>14}"
+                f"{sector.get('cheap_n', 0):>7}"
+                f"{sector.get('fair_n', 0):>7}"
+                f"{sector.get('expensive_n', 0):>8}"
+                f"{sector.get('stale_n', 0):>7}"
+            )
+
+    routes = overview.get("routes") or []
+    if routes:
+        print("\n[By valuation route]")
+        print(f"{'Route':<22}{'n':>4}{'Median gap':>14}{'Cheap':>7}{'Fair':>7}{'Expensive':>8}")
+        print("-" * 62)
+        for route in routes:
+            print(
+                f"{str(route.get('label') or _DASH)[:21]:<22}"
+                f"{route.get('n', 0):>4}"
+                f"{_fmt_pct(route.get('median_fv_vs_price_pct')):>14}"
+                f"{route.get('cheap_n', 0):>7}"
+                f"{route.get('fair_n', 0):>7}"
+                f"{route.get('expensive_n', 0):>8}"
+            )
+
+    if not rows:
+        print("\nNo stored analysis found — run `analyze TICKER` first.")
+        return
+
+    print("\n[Stocks — by fair value / price gap]")
+    headers = ["Ticker", "Sector", "Verdict", "Price", "Fair", "Gap", "Confidence", "Momentum", "Insider", "Age"]
+    print("".join(h.ljust(w) for h, w in zip(headers, _OVERVIEW_COL_WIDTHS)))
+    print("-" * sum(_OVERVIEW_COL_WIDTHS))
+    for row in rows:
+        age = row.get("age_days")
+        cells = [
+            str(row.get("ticker") or _DASH),
+            str(row.get("sector") or "Unclassified")[:18],
+            str(row.get("fundamental_verdict") or _DASH)[:23],
+            _fmt_price(row.get("price")),
+            _fmt_price(row.get("fv_base_mid")),
+            _fmt_pct(row.get("fv_vs_price_pct")),
+            str(row.get("confidence") or _DASH),
+            str(row.get("momentum_verdict") or _DASH)[:9],
+            str(row.get("insider_verdict") or _DASH)[:11],
+            (f"{age}d" if age is not None else _DASH),
+        ]
+        print("".join(c.ljust(w) for c, w in zip(cells, _OVERVIEW_COL_WIDTHS)))
+
+    upcoming = overview.get("upcoming_earnings") or []
+    if upcoming:
+        window = overview.get("earnings_window_days")
+        print(f"\n[Upcoming earnings — {window} days]")
+        for row in upcoming:
+            print(
+                f"  {str(row.get('ticker') or _DASH):<8}"
+                f"{row.get('catalyst_date') or _DASH}  "
+                f"({row.get('days_until_earnings')} days) — "
+                f"{row.get('fundamental_verdict') or _DASH}"
+            )
+
+    # The engine's own verdict asks WHERE IN THE BAND the price sits (inside
+    # the base band -> FAIR); this dashboard's bucket asks HOW FAR the band's
+    # MIDPOINT is from the price. On a wide band those two can disagree while
+    # both being right, which is why the disagreement is worth naming: it
+    # isolates the names whose midpoint leans hard one way but whose band is
+    # too wide for the engine to commit.
+    drift = overview.get("drift") or []
+    if drift:
+        print("\n[Tension between verdict and band midpoint]")
+        print("  (price stays inside the base band so the verdict is FAIR; the band is wide so the midpoint is far off)")
+        for row in drift[:10]:
+            lo, hi = row.get("fv_base_lo"), row.get("fv_base_hi")
+            band = f"{_fmt_price(lo)}–{_fmt_price(hi)}" if lo is not None and hi is not None else _DASH
+            print(
+                f"  {str(row.get('ticker') or _DASH):<8}"
+                f"verdict: {str(row.get('fundamental_verdict') or _DASH):<9}"
+                f"band mid: {str(row.get('value_bucket') or _DASH):<8}"
+                f"gap: {_fmt_pct(row.get('fv_vs_price_pct')):<9}"
+                f"band: {band:<22}"
+                f"confidence: {row.get('confidence') or _DASH}"
+            )
+
+    stale = overview.get("stale") or []
+    if stale:
+        names = ", ".join(str(r.get("ticker") or "?") for r in stale[:12])
+        more = f" (+{len(stale) - 12} more)" if len(stale) > 12 else ""
+        print(f"\nStale analysis (older than {overview.get('stale_days')} days): {len(stale)} — {names}{more}")
+
+
+def cmd_overview(args: argparse.Namespace) -> None:
+    """Handle the ``overview`` subcommand: a network-free dashboard over every
+    ticker that has a stored verdict -- sector heat map, per-name fair-value
+    gap, staleness, upcoming earnings, and verdict drift.
+
+    Reads only the local database, so it is instant and works offline. Never
+    raises out to the user (CLAUDE.md: the analysis layer never crashes the CLI).
+    """
+    try:
+        rows = load_latest_verdicts(db_path=Config.DB_PATH)
+    except Exception as exc:  # noqa: BLE001 - a read failure must not crash the CLI
+        logger.exception("Could not read portfolio overview data")
+        print(f"Could not read overview: {exc}", file=sys.stderr)
+        sys.exit(1)
+        return
+
+    overview = build_overview(
+        rows,
+        stale_days=args.stale_days,
+        earnings_window_days=args.earnings_window,
+    )
+    _print_overview_table(overview)
+
+    if getattr(args, "json", False):
+        print("\n" + json.dumps(overview, indent=2, ensure_ascii=False))
+
+
+def _preearnings_row_cells(row: dict) -> List[str]:
+    """Render one briefing row's cells, shared by both briefing tables."""
+    age = row.get("verdict_age_days")
+    beat = row.get("beat_count")
+    surprises = row.get("surprises") or []
+    return [
+        str(row.get("ticker") or _DASH),
+        str(row.get("earnings_date") or _DASH),
+        (_DASH if row.get("just_reported") else str(row.get("days_until", _DASH))),
+        str(row.get("verdict") or _DASH)[:23],
+        _fmt_pct(row.get("fv_vs_price_pct")),
+        str(row.get("momentum_verdict") or _DASH)[:9],
+        (f"{beat}/{len(surprises)}" if beat is not None and surprises else _DASH),
+        (f"{age}d" if age is not None else _DASH),
+    ]
+
+
+def _print_preearnings_table(rows: List[dict], date_header: str) -> None:
+    """Print one briefing table with ``date_header`` naming what its date
+    column means -- the two sections below carry different dates (an upcoming
+    estimate vs. the estimate for the quarter AFTER the one just published),
+    and one shared header would misstate the second."""
+    headers = ["Ticker", date_header, "Days", "Verdict", "Gap", "Momentum", "Surprise", "Age"]
+    print("".join(h.ljust(w) for h, w in zip(headers, _PREEARNINGS_COL_WIDTHS)))
+    print("-" * sum(_PREEARNINGS_COL_WIDTHS))
+    for row in rows:
+        print("".join(c.ljust(w) for c, w in zip(_preearnings_row_cells(row), _PREEARNINGS_COL_WIDTHS)))
+
+
+def _print_preearnings_briefing(result: dict, include_all: bool = False) -> None:
+    """Print the pre-earnings briefing, then the per-name observations.
+
+    Upcoming and just-reported names are printed as two separate tables. They
+    are different states -- one is a catalyst still ahead, the other a print
+    that already landed -- and during earnings season the just-reported set is
+    large enough to bury the names actually about to report. Their date columns
+    also mean different things: for a just-reported name the estimate shown is
+    for the quarter AFTER the one just published, which can be months out.
+    """
+    rows = result.get("rows") or []
+    reported = [r for r in rows if r.get("just_reported")]
+    upcoming = [r for r in rows if not r.get("just_reported")]
+
+    # With --all the window is not applied, so naming it in the header would
+    # contradict the rows below it (names months out under a "14 days" title).
+    window_text = "entire calendar" if include_all else f"next {result.get('within_days')} days"
+    print(
+        f"\nPre-Earnings Briefing — {result.get('today') or _DASH} — "
+        f"{window_text} — "
+        f"{result.get('count', 0)}/{result.get('requested', 0)} stocks"
+    )
+
+    if not rows:
+        print("\nNo names reporting earnings in this window.")
+
+    if upcoming:
+        print(f"\n[Upcoming earnings — {len(upcoming)} stocks]")
+        _print_preearnings_table(upcoming, "Earnings")
+    elif rows:
+        print("\n[Upcoming earnings] none — the names below just reported earnings.")
+
+    if reported:
+        print(f"\n[Just reported — {len(reported)} stocks · date column is the estimate for the NEXT quarter]")
+        _print_preearnings_table(reported, "Next")
+
+    # Observations: upcoming names first -- they are the ones a reader can
+    # still act on before the print.
+    ordered = upcoming + reported
+    for row in ordered[:_PREEARNINGS_MAX_NOTE_BLOCKS]:
+        notes = row.get("notes") or []
+        if not notes:
+            continue
+        print(f"\n{row.get('ticker')} — {row.get('catalyst_label') or _DASH}")
+        for note in notes:
+            print(f"  • {note}")
+        surprises = row.get("surprises") or []
+        if surprises:
+            cells = " · ".join(
+                f"{q.get('period') or _DASH}: {format_surprise_pct(q.get('surprise_pct'))}"
+                for q in surprises
+            )
+            print(f"  Past surprises: {cells}")
+    if len(ordered) > _PREEARNINGS_MAX_NOTE_BLOCKS:
+        print(
+            f"\n(+{len(ordered) - _PREEARNINGS_MAX_NOTE_BLOCKS} stocks' notes not shown — "
+            "use --within to narrow it down, or --json for the full data)"
+        )
+
+    skipped = result.get("skipped") or []
+    if skipped:
+        print(f"\nSkipped: {len(skipped)} stocks")
+        for entry in skipped[:10]:
+            print(f"  {entry.get('ticker') or '?'}: {entry.get('reason') or _DASH}")
+        if len(skipped) > 10:
+            print(f"  (+{len(skipped) - 10} more)")
+
+
+def cmd_preearnings(args: argparse.Namespace) -> None:
+    """Handle the ``preearnings`` subcommand: which watchlist names report
+    soon, and what the stored analysis currently says about them.
+
+    The watchlist defaults to every ticker with a stored verdict (i.e. what
+    the user has actually analyzed); ``--tickers``/``--tickers-file`` override
+    it. Never raises out to the user.
+    """
+    tickers: List[str] = []
+    if getattr(args, "tickers", None):
+        tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
+    elif getattr(args, "tickers_file", None):
+        try:
+            with open(args.tickers_file, "r", encoding="utf-8") as handle:
+                tickers = [
+                    line.strip().upper()
+                    for line in handle
+                    if line.strip() and not line.strip().startswith("#")
+                ]
+        except OSError as exc:
+            print(f"Could not read watchlist file: {exc}", file=sys.stderr)
+            sys.exit(1)
+            return
+    else:
+        tickers = load_watchlist_tickers(db_path=Config.DB_PATH)
+        if not tickers:
+            print(
+                "Watchlist is empty: no stored analysis. First run `analyze TICKER` "
+                "or provide --tickers / --tickers-file.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+            return
+
+    def _progress(done: int, total: int, ticker: str) -> None:
+        logger.info("Pre-earnings briefing progress: %d/%d (last: %s)", done, total, ticker)
+
+    include_all = getattr(args, "all", False)
+    result = scan_preearnings(
+        tickers,
+        within_days=args.within,
+        no_cache=args.no_cache,
+        db_path=Config.DB_PATH,
+        progress_cb=_progress,
+        include_all=include_all,
+    )
+    _print_preearnings_briefing(result, include_all=include_all)
+
+    if getattr(args, "json", False):
+        print("\n" + json.dumps(result, indent=2, ensure_ascii=False))
+
+
+#: Metrics shown, in this order, by the `peers` command's sector table.
+_PEER_TABLE_METRICS = [
+    ("net_margin", "Net Profit Margin"),
+    ("operating_margin", "Operating margin"),
+    ("gross_margin", "Gross margin"),
+    ("fcf_margin", "FCF margin"),
+    ("roe", "ROE"),
+    ("roa", "ROA"),
+    ("debt_to_equity", "Debt/Equity"),
+    ("revenue_growth", "Revenue growth"),
+]
+
+
+def _fmt_ratio(value: Optional[float]) -> str:
+    """Render a decimal-fraction metric as a percentage."""
+    if value is None:
+        return _DASH
+    return f"%{value * 100:.1f}"
+
+
+def _print_peer_snapshot(snapshot: dict) -> None:
+    """Print a built/stored peer snapshot: coverage, then per-sector medians."""
+    print(
+        f"\nPeer Snapshot — FY {snapshot.get('year')} — "
+        f"{snapshot.get('covered', 0)}/{snapshot.get('universe_size', 0)} companies "
+        f"({', '.join(snapshot.get('indexes') or []) or _DASH})"
+    )
+    missing = snapshot.get("frames_missing") or []
+    if missing:
+        print(f"Frames that could not be fetched: {', '.join(str(m) for m in missing)}")
+
+    sectors = snapshot.get("sectors") or {}
+    if not sectors:
+        print("\nNo sector data.")
+        return
+
+    print(f"\n{'Sector':<26}{'n':>4}" + "".join(f"{label:>16}" for _k, label in _PEER_TABLE_METRICS))
+    print("-" * (30 + 16 * len(_PEER_TABLE_METRICS)))
+    for sector in sorted(sectors):
+        data = sectors[sector] or {}
+        metrics = data.get("metrics") or {}
+        cells = "".join(
+            f"{_fmt_ratio((metrics.get(key) or {}).get('median')):>16}"
+            for key, _label in _PEER_TABLE_METRICS
+        )
+        print(f"{str(sector)[:25]:<26}{data.get('n', 0):>4}{cells}")
+
+    print(
+        "\nNote: this snapshot is a context layer only — it does NOT feed the "
+        "fair value calculation, the triangulation, or the sector multiple signal."
+    )
+
+
+def cmd_peers(args: argparse.Namespace) -> None:
+    """Handle the ``peers`` subcommand: build or show the peer cross-section.
+
+    Without ``--refresh`` this only reads the stored snapshot (instant,
+    offline). With ``--refresh`` it pulls the SEC XBRL Frames documents for
+    the requested fiscal year and rebuilds — a dozen multi-megabyte downloads,
+    which is exactly why the analyze path never does it inline.
+
+    Never raises out to the user.
+    """
+    year = getattr(args, "year", None)
+    if getattr(args, "refresh", False):
+        if year is None:
+            # Default to the last COMPLETED calendar year: the current year's
+            # annual frames are still filling up as filers report, so a
+            # snapshot built from them would compare a handful of early
+            # filers against each other rather than a sector.
+            year = date.today().year - 1
+        print(f"Building peer snapshot for FY {year} (SEC Frames)...")
+        try:
+            snapshot = build_peer_snapshot(year, SecHttpClient(), no_cache=args.no_cache)
+        except Exception as exc:  # noqa: BLE001 - a failed build must not crash the CLI
+            logger.exception("Could not build peer snapshot")
+            print(f"Could not build peer snapshot: {exc}", file=sys.stderr)
+            sys.exit(1)
+            return
+        _print_peer_snapshot(snapshot)
+        if not args.no_save:
+            snapshot_id = save_peer_snapshot(snapshot, db_path=Config.DB_PATH)
+            if snapshot_id:
+                print(f"\nSnapshot saved (id {snapshot_id}): {Config.DB_PATH}")
+            else:
+                print("\nWARNING: could not save peer snapshot to the database.", file=sys.stderr)
+        return
+
+    snapshot = load_latest_peer_snapshot(db_path=Config.DB_PATH, year=year)
+    if not snapshot:
+        print(
+            "No stored peer snapshot. To build one: "
+            "python -m sec_analyzer.cli peers --refresh",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+        return
+    _print_peer_snapshot(snapshot)
+
+    if getattr(args, "json", False):
+        print("\n" + json.dumps(snapshot, indent=2, ensure_ascii=False))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1848,8 +2983,12 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument(
         "--years",
         type=int,
-        default=5,
-        help="Number of most-recent fiscal years to retain (default: 5).",
+        default=12,
+        help=(
+            "Number of most-recent fiscal years to retain (default: 12). "
+            "Wide enough to span a full commodity cycle -- a shorter window "
+            "makes through-cycle statistics depend on WHICH cycle it caught."
+        ),
     )
     common.add_argument(
         "--no-cache",
@@ -1964,8 +3103,12 @@ def build_parser() -> argparse.ArgumentParser:
     calibrate_parser.add_argument(
         "--years",
         type=int,
-        default=5,
-        help="Number of most-recent fiscal years to retain (default: 5).",
+        default=12,
+        help=(
+            "Number of most-recent fiscal years to retain (default: 12). "
+            "Wide enough to span a full commodity cycle -- a shorter window "
+            "makes through-cycle statistics depend on WHICH cycle it caught."
+        ),
     )
     calibrate_parser.add_argument(
         "--no-cache",
@@ -1987,13 +3130,173 @@ def build_parser() -> argparse.ArgumentParser:
     )
     calibrate_parser.set_defaults(func=cmd_calibrate)
 
+    # --- swing (S&P 500 swing-trade screener; SWING_SPEC.md Sec.8) ---
+    swing_parser = subparsers.add_parser(
+        "swing",
+        help=(
+            "Scan the S&P 500 (or a subset) for long-only swing-trade setups "
+            "and print a ranked table (see sec_analyzer.screener.swing_scan)."
+        ),
+    )
+    swing_parser.add_argument(
+        "--index",
+        type=str,
+        default="sp500",
+        help=(
+            "Universe to scan: sp500 (default) or ndx (Nasdaq 100). "
+            "Case-insensitive; an unrecognized value falls back to sp500."
+        ),
+    )
+    swing_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Scan only the first N universe tickers (alphabetical), for a quick smoke run.",
+    )
+    swing_parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Bypass the on-disk price cache and re-fetch for every ticker (including SPY).",
+    )
+    swing_parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_MAX_WORKERS,
+        help=f"Thread-pool size for the per-ticker fan-out (default: {DEFAULT_MAX_WORKERS}).",
+    )
+    swing_parser.add_argument(
+        "--top",
+        type=int,
+        default=25,
+        help="Number of top-ranked rows to print (default: 25).",
+    )
+    swing_parser.add_argument(
+        "--no-save",
+        action="store_true",
+        help="Do not persist the scan result to the database.",
+    )
+    swing_parser.set_defaults(func=cmd_swing)
+
+    # --- overview (portfolio dashboard over stored verdicts) ---
+    overview_parser = subparsers.add_parser(
+        "overview",
+        help=(
+            "Network-free dashboard over every ticker with a stored verdict: "
+            "sector heat map, fair-value gap per name, staleness, upcoming "
+            "earnings, and verdict drift (see sec_analyzer.screener.overview)."
+        ),
+    )
+    overview_parser.add_argument(
+        "--stale-days",
+        type=int,
+        default=90,
+        help="Flag a stored verdict older than this many days as stale (default: 90).",
+    )
+    overview_parser.add_argument(
+        "--earnings-window",
+        type=int,
+        default=21,
+        help="Surface names whose stored earnings estimate falls within this many days (default: 21).",
+    )
+    overview_parser.add_argument(
+        "--json", action="store_true", help="Also print the full overview payload as JSON.",
+    )
+    overview_parser.set_defaults(func=cmd_overview)
+
+    # --- preearnings (pre-earnings briefing for the watchlist) ---
+    preearnings_parser = subparsers.add_parser(
+        "preearnings",
+        help=(
+            "Which watchlist names report soon, and what the stored analysis "
+            "says about them (see sec_analyzer.screener.preearnings)."
+        ),
+    )
+    preearnings_group = preearnings_parser.add_mutually_exclusive_group()
+    preearnings_group.add_argument(
+        "--tickers",
+        type=str,
+        default=None,
+        help="Comma-separated tickers. Defaults to every ticker with a stored verdict.",
+    )
+    preearnings_group.add_argument(
+        "--tickers-file",
+        type=str,
+        default=None,
+        dest="tickers_file",
+        help="Path to a watchlist file (one ticker per line; '#' comments allowed).",
+    )
+    preearnings_parser.add_argument(
+        "--within",
+        type=int,
+        default=DEFAULT_WITHIN_DAYS,
+        help=f"Only names reporting within this many days (default: {DEFAULT_WITHIN_DAYS}).",
+    )
+    preearnings_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Keep every name regardless of how far out its earnings date is (full calendar).",
+    )
+    preearnings_parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Bypass the on-disk SEC/price caches and re-fetch.",
+    )
+    preearnings_parser.add_argument(
+        "--json", action="store_true", help="Also print the full briefing payload as JSON.",
+    )
+    preearnings_parser.set_defaults(func=cmd_preearnings)
+
+    # --- peers (cross-sectional peer snapshot from SEC XBRL Frames) ---
+    peers_parser = subparsers.add_parser(
+        "peers",
+        help=(
+            "Build or show the cross-sectional peer snapshot: per-sector "
+            "medians of filing-derived metrics across the bundled index "
+            "universe, from SEC's XBRL Frames API (see "
+            "sec_analyzer.screener.peers). Context layer -- never feeds the "
+            "fair value."
+        ),
+    )
+    peers_parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help=(
+            "Rebuild from SEC Frames (a dozen multi-MB downloads). Without "
+            "this, the stored snapshot is shown from the database."
+        ),
+    )
+    peers_parser.add_argument(
+        "--year",
+        type=int,
+        default=None,
+        help=(
+            "Fiscal year to build/show. Defaults to the last completed "
+            "calendar year when refreshing, and to the most recent stored "
+            "snapshot of any year otherwise."
+        ),
+    )
+    peers_parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Bypass the on-disk Frames cache and re-fetch every document.",
+    )
+    peers_parser.add_argument(
+        "--no-save",
+        action="store_true",
+        help="Do not persist the rebuilt snapshot to the database.",
+    )
+    peers_parser.add_argument(
+        "--json", action="store_true", help="Also print the full snapshot as JSON.",
+    )
+    peers_parser.set_defaults(func=cmd_peers)
+
     # --- backtest {run|evaluate|report} ---
     backtest_parser = subparsers.add_parser(
         "backtest",
         help=(
             "Evaluation (not optimization) tool: run an as-of grid, evaluate "
             "forward outcomes, and report hit-rate/calibration/divergence. "
-            "See ROADMAP.md 'Backtest — tasarım ilkesi'."
+            "See ROADMAP.md 'Backtest — design principle'."
         ),
     )
     backtest_sub = backtest_parser.add_subparsers(dest="backtest_action", required=True)
@@ -2009,7 +3312,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--dates", required=True,
         help="Comma-separated as-of dates, e.g. '2020-06-30,2022-06-30,2023-12-31'.",
     )
-    bt_run.add_argument("--years", type=int, default=5, help="Fiscal-year window (default 5).")
+    bt_run.add_argument("--years", type=int, default=12, help="Fiscal-year window (default 12).")
     bt_run.add_argument(
         "--no-cache", action="store_true", help="Bypass raw JSON/price caches and re-fetch.",
     )
@@ -2023,6 +3326,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     backtest_sub.add_parser(
         "report", help="Print hit-rate/calibration/divergence tables and write an HTML report.",
+    )
+
+    bt_swing = backtest_sub.add_parser(
+        "swing",
+        help=(
+            "Stage 1 swing backtest: score-decile forward-return study -- does a "
+            "higher swing score predict a higher forward return? "
+            "See sec_analyzer/backtest/SWING_STUDY_SPEC.md."
+        ),
+    )
+    bt_swing.add_argument(
+        "--index", type=str, default="sp500",
+        help="Universe to study: sp500 (default) or ndx. Case-insensitive.",
+    )
+    bt_swing.add_argument("--start", type=str, default=None, help="ISO start date (default: earliest usable).")
+    bt_swing.add_argument("--end", type=str, default=None, help="ISO end date (default: latest available bar).")
+    bt_swing.add_argument(
+        "--workers", type=int, default=None,
+        help="Process/thread-pool size (default: min(8, cpu_count)).",
+    )
+    bt_swing.add_argument(
+        "--no-save", action="store_true", help="Do not persist the study result to the database.",
     )
 
     backtest_parser.set_defaults(func=cmd_backtest)

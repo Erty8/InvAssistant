@@ -1,7 +1,7 @@
 """CAPM cost of equity for the DCF discount rate.
 
-The valuation engine's discount rate is a levered COST OF EQUITY (özkaynak
-maliyeti, SPEC.md Sec.3), not a WACC. Historically the deterministic
+The valuation engine's discount rate is a levered COST OF EQUITY (SPEC.md
+Sec.3), not a WACC. Historically the deterministic
 (``script``) path used a flat sector-agnostic default (10%, or 12% for
 unprofitable filers -- see ``rule_based._DEFAULT_DISCOUNT_RATE_BASE``). This
 module replaces that flat constant, when the reference data is available, with
@@ -173,11 +173,11 @@ def _compute_cost_of_equity(
     clamped = rate != raw_rate
 
     detail = (
-        f"CAPM: rf %{risk_free:.1f} + βL {levered_beta:.2f} × ERP %{erp:.2f} "
-        f"= %{rate * 100:.1f}"
+        f"CAPM: rf {risk_free:.1f}% + βL {levered_beta:.2f} × ERP {erp:.2f}% "
+        f"= {rate * 100:.1f}%"
     )
     if clamped:
-        detail += f" (%{raw_rate * 100:.1f} sınıra çekildi)"
+        detail += f" (clamped from {raw_rate * 100:.1f}%)"
 
     return {
         "rate": rate,

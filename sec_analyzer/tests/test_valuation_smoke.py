@@ -210,7 +210,7 @@ def test_run_valuation_end_to_end_on_minimal_fixture():
 
     # Top-level shape.
     for key in (
-        "sector_type", "fcf0", "fcf0_source", "dcf", "pb_roe", "fair_value_range",
+        "sector_type", "fcf0", "fcf0_source", "dcf", "pb_roe", "rim", "fair_value_range",
         "reverse_dcf", "multiples", "sensitivity", "triangulation", "assumptions", "notes",
     ):
         assert key in result
@@ -251,6 +251,11 @@ def test_run_valuation_end_to_end_on_minimal_fixture():
 
 
 def test_run_valuation_disables_dcf_for_financial_sector():
+    # WP9 (SPEC.md Sec.8f): RIM is now financial's PRIMARY anchor -- with a
+    # fixture that has both NetIncome and StockholdersEquity/roe history
+    # (this one does), RIM succeeds and pb_roe stays the (unused) fallback,
+    # i.e. None here. See test_valuation_rim.py for RIM's own hand-verified
+    # numeric coverage and the pb_roe-fallback-when-RIM-unavailable case.
     normalized = _fake_normalized()
     ratios = _fake_ratios()
     metrics = _fake_metrics()
@@ -263,8 +268,9 @@ def test_run_valuation_disables_dcf_for_financial_sector():
 
     assert result["dcf"]["enabled"] is False
     assert result["dcf"]["disabled_reason"]
-    assert result["pb_roe"] is not None
-    assert result["pb_roe"]["scenarios"]["base"]["per_share"] is not None
+    assert result["rim"] is not None
+    assert result["rim"]["scenarios"]["base"]["per_share"] is not None
+    assert result["pb_roe"] is None
 
 
 def test_run_valuation_never_raises_on_empty_inputs():

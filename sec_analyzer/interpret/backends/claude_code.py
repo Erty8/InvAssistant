@@ -39,11 +39,11 @@ logger = logging.getLogger(__name__)
 #: billing. The guard below treats any non-empty value as "set".
 _API_KEY_ENV = "ANTHROPIC_API_KEY"
 
-#: Exact operator-facing message for the billing guard (Turkish, per spec).
+#: Exact operator-facing message for the billing guard.
 _API_KEY_GUARD_MESSAGE = (
-    "ANTHROPIC_API_KEY ortamda set — claude -p bu durumda abonelik yerine API "
-    "hesabına fatura keser. Backend iptal edildi. Key'i unset edin veya "
-    "llm_backend=api seçin."
+    "ANTHROPIC_API_KEY is set in the environment -- in this case claude -p bills the API "
+    "account instead of the subscription. Backend cancelled. Unset the key or "
+    "select llm_backend=api."
 )
 
 
@@ -87,24 +87,24 @@ def _extract_model_text(envelope_text: str) -> str:
         The inner model reply text (still possibly a fenced JSON string).
     """
     if not envelope_text or not envelope_text.strip():
-        raise ClaudeCodeError("Claude Code boş çıktı döndürdü (stdout yok).")
+        raise ClaudeCodeError("Claude Code returned empty output (no stdout).")
     try:
         envelope = json.loads(envelope_text)
     except (ValueError, TypeError) as exc:
         raise ClaudeCodeError(
-            f"Claude Code çıktısı JSON zarfı olarak ayrıştırılamadı: {exc}"
+            f"Claude Code output could not be parsed as a JSON envelope: {exc}"
         ) from exc
 
     if not isinstance(envelope, dict):
         raise ClaudeCodeError(
-            "Claude Code JSON zarfı beklenen nesne biçiminde değil."
+            "Claude Code JSON envelope is not in the expected object shape."
         )
 
     # A CC envelope can itself signal failure (e.g. subtype 'error_*').
     if envelope.get("is_error") or envelope.get("subtype") in ("error_max_turns", "error_during_execution"):
         raise ClaudeCodeError(
-            f"Claude Code hata zarfı döndürdü: "
-            f"{envelope.get('subtype') or envelope.get('result') or 'bilinmeyen hata'}"
+            f"Claude Code returned an error envelope: "
+            f"{envelope.get('subtype') or envelope.get('result') or 'unknown error'}"
         )
 
     for key in ("result", "text", "content"):
@@ -113,7 +113,7 @@ def _extract_model_text(envelope_text: str) -> str:
             return value
 
     raise ClaudeCodeError(
-        "Claude Code zarfında model metni bulunamadı (result/text/content yok)."
+        "No model text found in the Claude Code envelope (no result/text/content)."
     )
 
 
@@ -160,10 +160,10 @@ def call_claude_code(
     resolved_bin = shutil.which(binary)
     if resolved_bin is None:
         raise ClaudeCodeError(
-            f"Claude Code CLI ('{binary}') PATH'te bulunamadı. Kurulum: "
-            "'npm install -g @anthropic-ai/claude-code', sonra 'claude login'. "
-            "(Masaüstü uygulaması yeterli değildir; ayrı CLI gerekir. Kuruluysa "
-            "yolu CLAUDE_CODE_BIN ile verebilirsiniz.)"
+            f"Claude Code CLI ('{binary}') not found on PATH. Install with: "
+            "'npm install -g @anthropic-ai/claude-code', then 'claude login'. "
+            "(The desktop app is not sufficient; a separate CLI is required. If "
+            "installed, you can pass its path via CLAUDE_CODE_BIN.)"
         )
 
     # `claude -p` takes a single prompt; there is no separate system channel in
@@ -188,17 +188,17 @@ def call_claude_code(
         )
     except subprocess.TimeoutExpired as exc:
         raise ClaudeCodeError(
-            f"Claude Code {resolved_timeout}s içinde yanıt vermedi (timeout)."
+            f"Claude Code did not respond within {resolved_timeout}s (timeout)."
         ) from exc
     except OSError as exc:  # e.g. the binary vanished/became non-executable between which() and run()
-        raise ClaudeCodeError(f"Claude Code çalıştırılamadı: {exc}") from exc
+        raise ClaudeCodeError(f"Claude Code could not be run: {exc}") from exc
 
     if completed.returncode != 0:
         stderr = (completed.stderr or "").strip()
         logger.error("Claude Code exited %s: %s", completed.returncode, stderr[:500])
         raise ClaudeCodeError(
-            f"Claude Code hata koduyla çıktı ({completed.returncode}): "
-            f"{stderr[:200] or 'stderr yok'}"
+            f"Claude Code exited with an error code ({completed.returncode}): "
+            f"{stderr[:200] or 'no stderr'}"
         )
 
     if completed.stderr and completed.stderr.strip():

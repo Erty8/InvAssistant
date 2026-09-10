@@ -39,13 +39,13 @@ identical to what pre-two-phase callers already expect)::
                   "discount_rate": <str>, "note": <str>},
         "base": {...}, "bull": {...}
       },
-      "fundamental_verdict": "UCUZ" | "MAKUL" | "PAHALI",
+      "fundamental_verdict": "CHEAP" | "FAIR" | "EXPENSIVE",
       "technical_verdict": <str -- always overwritten by this module from
         the ``technical`` argument; no provider, including the LLMs, ever
         decides this itself>,
-      "confidence": "YÜKSEK" | "ORTA" | "DÜŞÜK" (from
+      "confidence": "HIGH" | "MEDIUM" | "LOW" (from
         valuation.triangulation.confidence),
-      "profile_fit": {"verdict": "UYUMLU" | "KISMEN" | "UYUMSUZ", "reason": <str>},
+      "profile_fit": {"verdict": "MATCH" | "PARTIAL" | "MISMATCH", "reason": <str>},
       "reverse_dcf_comment": <str>, "cyclical_risk": <str>,
       "horizon_note": <str>, "key_risks": [<str>, ...],
       "red_flags_comment": <str>, "catalyst": <str>, "summary": <str>,
@@ -206,7 +206,7 @@ chance to revise; if still invalid, a deterministic default is substituted
 instead of your proposal), per bear/base/bull scenario:
 
 - terminal_growth must not exceed 4%.
-- discount_rate is a levered COST OF EQUITY (özkaynak maliyeti), NOT a WACC
+- discount_rate is a levered COST OF EQUITY (equity cost), NOT a WACC
   -- the DCF is FCFE-direct (the projected free cash flow is already a
   levered/equity cash flow, so no net-debt bridge is applied), so it must be
   discounted at a cost of equity. For a typical profitable large-cap this is
@@ -324,12 +324,12 @@ Respond with ONLY a single JSON object -- no prose before or after it, and
 no markdown code fences. The JSON object must match exactly this schema:
 
 {
-  "fundamental_verdict": <string, exactly one of "UCUZ", "MAKUL", "PAHALI"
+  "fundamental_verdict": <string, exactly one of "CHEAP", "FAIR", "EXPENSIVE"
     -- judge this from valuation.triangulation and valuation.fair_value_range
     (base band) vs. the current price; application code will override this
     field if it contradicts valuation.triangulation.signals.dcf>,
-  "profile_fit": {"verdict": <string, exactly one of "UYUMLU", "KISMEN",
-    "UYUMSUZ">, "reason": <string, one sentence, judged from the investor
+  "profile_fit": {"verdict": <string, exactly one of "MATCH", "PARTIAL",
+    "MISMATCH">, "reason": <string, one sentence, judged from the investor
     profile text in this system prompt and the current horizon>},
   "reverse_dcf_comment": <string -- interpret valuation.reverse_dcf
     (implied_growth vs. realized_cagr_5y/realized_label) per the reverse-DCF
@@ -340,11 +340,14 @@ no markdown code fences. The JSON object must match exactly this schema:
   "horizon_note": <string, one sentence on what the current horizon
     emphasizes for this filer, and, if valuation.sensitivity.high_uncertainty
     is true, an explicit note about that>,
-  "key_risks": [<string>, ...],
-  "red_flags_comment": <string -- "yok" if no red flags were supplied,
+  "key_risks": [<string>, ...  -- if valuation.altman_z is present and its
+    "zone" is "grey" or "distress", include one entry naming the Z-score and
+    zone (an ADVISORY bankruptcy-risk screen; it does not change the
+    fair-value figures, so do not treat it as a valuation input)>],
+  "red_flags_comment": <string -- "none" if no red flags were supplied,
     otherwise a short synthesis of them>,
   "catalyst": <string -- the upcoming catalyst label if one was supplied,
-    otherwise "bilinmiyor">,
+    otherwise "unknown">,
   "summary": <string, a short plain-language paragraph summarizing the
     analysis, referencing the base fair-value band and the confidence level
     in valuation.triangulation.confidence>
@@ -447,8 +450,8 @@ def load_valuation_rules() -> str:
 #: ``Config.PROFIL_PATH`` doesn't exist (or can't be read) -- tells the
 #: model to assume a neutral investor and nudges the user to create one.
 _NEUTRAL_PROFILE_NOTE = (
-    "Profil dosyası yok; nötr bir yatırımcı varsay ve kullanıcıya PROFIL.md "
-    "oluşturmasını öner."
+    "No profile file exists; assume a neutral investor and suggest the user "
+    "create a PROFIL.md."
 )
 
 #: Per-horizon guidance text, formatted with the (fundamental_pct,
@@ -456,18 +459,18 @@ _NEUTRAL_PROFILE_NOTE = (
 #: :func:`_build_horizon_instruction`.
 _HORIZON_GUIDANCE = {
     "3m": (
-        "Vade: 3m. Sinyal ağırlıkları: fundamental %{fw:.0f} / teknik %{tw:.0f}. "
-        "Bu ufukta teknik ve momentum sinyalleri (RSI, SMA50, volatilite) öncelikli "
-        "olmalı; yaklaşan katalizör (kazanç tarihi vb.) kritik önemdedir."
+        "Horizon: 3m. Signal weights: fundamental {fw:.0f}% / technical {tw:.0f}%. "
+        "In this horizon, technical and momentum signals (RSI, SMA50, volatility) should "
+        "take priority; the upcoming catalyst (earnings date, etc.) is critically important."
     ),
     "1y": (
-        "Vade: 1y. Sinyal ağırlıkları: fundamental %{fw:.0f} / teknik %{tw:.0f}. "
-        "Bu ufukta fundamental ve teknik sinyaller dengeli şekilde değerlendirilmelidir."
+        "Horizon: 1y. Signal weights: fundamental {fw:.0f}% / technical {tw:.0f}%. "
+        "In this horizon, fundamental and technical signals should be weighed in a balanced way."
     ),
     "5y": (
-        "Vade: 5y. Sinyal ağırlıkları: fundamental %{fw:.0f} / teknik %{tw:.0f}. "
-        "Bu ufukta fundamental sinyaller öncelikli olmalı; RSI gibi kısa vadeli "
-        "göstergeler önemsizdir; döngüsel tepe (cyclical trap) kontrolü zorunludur."
+        "Horizon: 5y. Signal weights: fundamental {fw:.0f}% / technical {tw:.0f}%. "
+        "In this horizon, fundamental signals should take priority; short-term indicators "
+        "like RSI are unimportant; a cyclical-peak (cyclical trap) check is mandatory."
     ),
 }
 
@@ -476,7 +479,7 @@ def _load_profile() -> str:
     """Return the investor-profile section of the system prompt.
 
     If ``Config.PROFIL_PATH`` points at an existing, non-empty file, its
-    contents are returned prefixed with a "## Yatırımcı Profili" heading so
+    contents are returned prefixed with a "## Investor Profile" heading so
     the model can weigh ``profile_fit`` against it. Otherwise -- or if
     reading the file fails for any reason -- :data:`_NEUTRAL_PROFILE_NOTE`
     is returned instead.
@@ -491,7 +494,7 @@ def _load_profile() -> str:
                 content = f.read().strip()
             if content:
                 logger.info("Using investor profile from %s", path)
-                return f"## Yatırımcı Profili\n{content}"
+                return f"## Investor Profile\n{content}"
             logger.info("Profile file %s is empty; using the neutral-default note.", path)
         else:
             logger.info("No profile file found at %s; using the neutral-default note.", path)
@@ -536,9 +539,9 @@ def _build_phase1_system_prompt() -> str:
 #: leak can't be fully prevented -- callers surface this so an AI-assisted
 #: backtest verdict is never trusted like the deterministic one.
 _HINDSIGHT_LEAK_LABEL = (
-    "Hindsight sızıntısı riski: yapay zeka sağlayıcısı, analiz tarihinden "
-    "sonrasına dair eğitim verisi taşıyabilir; bu as-of analizi tam "
-    "point-in-time garanti etmez."
+    "Hindsight leak risk: the AI provider may carry training data from after "
+    "the analysis date; this does not guarantee the as-of analysis is fully "
+    "point-in-time."
 )
 
 
@@ -547,10 +550,10 @@ def _build_asof_instruction(as_of) -> str:
     LLM provider is told to ignore everything after the as-of date."""
     as_of_str = as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of)
     return (
-        f"ANALİZ TARİHİ: {as_of_str}. Bu bir geçmiş-tarih (point-in-time) "
-        "analizidir. Bu tarihten SONRAsına dair hiçbir bilgi, olay, haber, "
-        "fiyat hareketi veya sonuç kullanma; yalnızca bu tarihte bilinebilir "
-        "olan veriyle yorum yap."
+        f"ANALYSIS DATE: {as_of_str}. This is a historical-date (point-in-time) "
+        "analysis. Do not use any information, event, news, price movement, or "
+        "outcome from AFTER this date; comment only using data that could have "
+        "been known as of this date."
     )
 
 
@@ -615,15 +618,15 @@ def _build_phase1_user_payload(
 
 
 def _build_phase1_revision_payload(original_user_payload: str, violations: List[str]) -> str:
-    """Append a Turkish sanity-violation list to the original phase-1 user
+    """Append a sanity-violation list to the original phase-1 user
     payload, requesting the single allowed revision (SPEC.md Sec.12)."""
     violation_lines = "\n".join(f"- {v}" for v in violations)
     return (
         f"{original_user_payload}\n\n"
-        "Şu sınırlar ihlal edildi, varsayımları revize et:\n"
+        "The following limits were violated, revise the assumptions:\n"
         f"{violation_lines}\n\n"
-        'Aynı JSON şemasıyla (yalnızca "assumptions" ve "sector_type") '
-        "düzeltilmiş önerini gönder."
+        'Send your corrected proposal using the same JSON schema (only '
+        '"assumptions" and "sector_type").'
     )
 
 
@@ -948,7 +951,7 @@ def propose_assumptions(
     backend for a proposal, and runs it through
     :func:`sec_analyzer.valuation.sanity.validate_assumptions`. If that
     finds violations, the LLM is re-called exactly once with the violation
-    list appended (in Turkish) asking for a revision; if the revised
+    list appended (in English) asking for a revision; if the revised
     proposal is still invalid (or the LLM call fails at any point, or the
     provider is ``"script"``), the deterministic
     :func:`sec_analyzer.interpret.rule_based.default_assumptions` fallback
@@ -1109,10 +1112,10 @@ def _propose_assumptions(
 
 #: The hyper-grower-only verdict label (HYPER_SPEC.md Sec.4) -- the phase-2
 #: contract's "fundamental_verdict" enum only ever asks a provider for
-#: UCUZ/MAKUL/PAHALI, so this string can only ever originate from
+#: CHEAP/FAIR/EXPENSIVE, so this string can only ever originate from
 #: :data:`_DCF_SIGNAL_TO_VERDICT` / :func:`_reconcile_fundamental_verdict`,
 #: never from a provider's own output.
-_HIGH_EXPECTATION_VERDICT = "YÜKSEK BEKLENTİ FİYATLANMIŞ"
+_HIGH_EXPECTATION_VERDICT = "HIGH EXPECTATIONS PRICED IN"
 
 #: Model–market divergence verdict (the DOWN-price mirror of
 #: :data:`_HIGH_EXPECTATION_VERDICT`). Emitted deterministically by
@@ -1121,24 +1124,24 @@ _HIGH_EXPECTATION_VERDICT = "YÜKSEK BEKLENTİ FİYATLANMIŞ"
 #: flags an up-side divergence (``action == "verdict"``): the base fair-value
 #: band sits more than ~2x above price, so the three method votes read off ONE
 #: assumption set rather than independently confirming "cheap". The honest
-#: headline is then a model↔market disagreement, not "UCUZ". Applied AFTER the
+#: headline is then a model↔market disagreement, not "CHEAP". Applied AFTER the
 #: reconcile step, overriding whatever verdict any provider (LLM or script)
 #: produced; the low confidence is already set by the governor itself.
-_DIVERGENCE_VERDICT = "MODEL-PİYASA AYRIŞMASI"
+_DIVERGENCE_VERDICT = "MODEL-PRICE DIVERGENCE"
 
 #: Map from a triangulation direction signal to the schema's verdict
 #: string; "veri_yok" deliberately has no entry.
 _DCF_SIGNAL_TO_VERDICT = {
-    "ucuz": "UCUZ",
-    "makul": "MAKUL",
-    "pahali": "PAHALI",
+    "ucuz": "CHEAP",
+    "makul": "FAIR",
+    "pahali": "EXPENSIVE",
     "yuksek_beklenti": _HIGH_EXPECTATION_VERDICT,
 }
 
 #: The only two verdicts that can contradict each other on the
-#: cheap-vs-expensive axis -- "MAKUL" on either side is never a
+#: cheap-vs-expensive axis -- "FAIR" on either side is never a
 #: contradiction (SPEC.md Sec.12).
-_OPPOSITE_VERDICT = {"UCUZ": "PAHALI", "PAHALI": "UCUZ"}
+_OPPOSITE_VERDICT = {"CHEAP": "EXPENSIVE", "EXPENSIVE": "CHEAP"}
 
 
 def _reconcile_fundamental_verdict(llm_verdict: Optional[str], dcf_signal: Optional[str], provider: str) -> str:
@@ -1146,7 +1149,7 @@ def _reconcile_fundamental_verdict(llm_verdict: Optional[str], dcf_signal: Optio
     deterministic DCF (or P/B x ROE) triangulation signal.
 
     Only an outright contradiction on the ucuz<->pahali axis is overridden:
-    a "MAKUL" from either side, or a missing/"veri_yok" code signal, is not
+    a "FAIR" from either side, or a missing/"veri_yok" code signal, is not
     a contradiction (there's nothing to override against). The provider
     can never win a direct disagreement with the code-computed signal.
 
@@ -1154,17 +1157,17 @@ def _reconcile_fundamental_verdict(llm_verdict: Optional[str], dcf_signal: Optio
     ``"yuksek_beklenti"`` -- a valid, non-contradictory code-computed state
     (not an error case) that maps to its own
     :data:`_HIGH_EXPECTATION_VERDICT` label rather than being squeezed into
-    UCUZ/MAKUL/PAHALI. Unlike the ucuz<->pahali cross-check above, this
+    CHEAP/FAIR/EXPENSIVE. Unlike the ucuz<->pahali cross-check above, this
     mapping always wins outright: no provider (an LLM, or the "script"
     provider's own ``rule_based._fundamental_verdict_from_valuation``
-    fallback, which defaults unrecognized signals to "MAKUL") is ever asked
+    fallback, which defaults unrecognized signals to "FAIR") is ever asked
     for this 4th value, so there is nothing for it to legitimately
     contribute here -- it is purely a code-side classification of the
     already-computed bands.
 
     Args:
         llm_verdict: The provider's own ``fundamental_verdict`` (or
-            ``None``/anything not in ``{"UCUZ", "MAKUL", "PAHALI"}``, e.g.
+            ``None``/anything not in ``{"CHEAP", "FAIR", "EXPENSIVE"}``, e.g.
             when JSON parsing failed).
         dcf_signal: ``valuation["triangulation"]["signals"]["dcf"]`` --
             ``"ucuz"``, ``"makul"``, ``"pahali"``, ``"yuksek_beklenti"``, or
@@ -1176,10 +1179,10 @@ def _reconcile_fundamental_verdict(llm_verdict: Optional[str], dcf_signal: Optio
         The final ``fundamental_verdict`` string.
     """
     code_verdict = _DCF_SIGNAL_TO_VERDICT.get(dcf_signal)
-    llm_verdict = llm_verdict if llm_verdict in ("UCUZ", "MAKUL", "PAHALI") else None
+    llm_verdict = llm_verdict if llm_verdict in ("CHEAP", "FAIR", "EXPENSIVE") else None
 
     if code_verdict is None:
-        return llm_verdict or "MAKUL"
+        return llm_verdict or "FAIR"
     if code_verdict == _HIGH_EXPECTATION_VERDICT:
         return code_verdict
     if llm_verdict is None:
@@ -1205,6 +1208,7 @@ def _postprocess_phase2_result(
     ratios: Optional[List[dict]] = None,
     red_flags: Optional[List[dict]] = None,
     metrics: Optional[dict] = None,
+    normalized: Optional[dict] = None,
 ) -> dict:
     """Apply the fixed, provider-agnostic phase-2 post-processing rules
     (SPEC.md Sec.12 step 2) that no provider -- LLM or ``"script"`` -- can
@@ -1253,6 +1257,14 @@ def _postprocess_phase2_result(
             used by :func:`sec_analyzer.interpret.planning.
             compute_scenario_returns`/:func:`~sec_analyzer.interpret.
             planning.compute_entry_plan`.
+        normalized: The dict returned by
+            :func:`sec_analyzer.normalize.normalizer.normalize_facts`, or
+            ``None`` -- used by :func:`sec_analyzer.interpret.planning.
+            select_thesis_metric` to build the anchor metric's quarterly
+            series and to key its persisted day-1 anchor (METODOLOJI.md
+            Sec.7). Optional/defaulted so a call site that can't supply it
+            still works; ``thesis_metric["quarterly_check"]`` simply comes
+            back ``None`` in that case.
 
     Returns:
         ``result``, mutated in place and returned for convenience.
@@ -1261,7 +1273,7 @@ def _postprocess_phase2_result(
         detail = technical.get("verdict_detail") or ""
         result["technical_verdict"] = f"{technical['verdict']} ({detail})" if detail else technical["verdict"]
     else:
-        result["technical_verdict"] = "VERİ YOK (fiyat verisi alınamadı)"
+        result["technical_verdict"] = "NO DATA (price data unavailable)"
 
     triangulation = valuation.get("triangulation") or {}
     result["confidence"] = triangulation.get("confidence")
@@ -1274,7 +1286,7 @@ def _postprocess_phase2_result(
 
     # Model–market divergence override (governor, action="verdict"; see
     # _DIVERGENCE_VERDICT). Deterministic, numbers-driven, applied LAST so it
-    # overrides any provider's verdict; confidence is already floored to DÜŞÜK
+    # overrides any provider's verdict; confidence is already floored to LOW
     # by the governor via triangulation.confidence above.
     divergence = triangulation.get("divergence") or {}
     divergence_active = divergence.get("action") == "verdict"
@@ -1282,7 +1294,7 @@ def _postprocess_phase2_result(
         result["fundamental_verdict"] = _DIVERGENCE_VERDICT
 
     if not result.get("catalyst"):
-        result["catalyst"] = catalyst.get("label") if catalyst else "bilinmiyor"
+        result["catalyst"] = catalyst.get("label") if catalyst else "unknown"
     # Surface the raw estimated-earnings ISO date (deterministic, from
     # estimate_next_earnings) so the report can compute a swing "N days to
     # earnings" proximity flag; independent of the free-text catalyst label.
@@ -1300,7 +1312,9 @@ def _postprocess_phase2_result(
     result["stop_adding"] = planning.compute_stop_adding(
         valuation, technical, red_flags, result["entry_plan"], catalyst
     )
-    result["thesis_metric"] = planning.select_thesis_metric(valuation.get("sector_type"), ratios, metrics)
+    result["thesis_metric"] = planning.select_thesis_metric(
+        valuation.get("sector_type"), ratios, metrics, normalized
+    )
     if divergence_active:
         # In a divergence the kill-switch is whether the market-priced
         # assumption (a growth collapse the model rejects) actually
@@ -1308,8 +1322,9 @@ def _postprocess_phase2_result(
         # referee while keeping its computed name/value/trend intact.
         thesis_metric = dict(result["thesis_metric"] or {})
         thesis_metric["rationale"] = (
-            "Model-piyasa ayrışması: hakem, piyasanın fiyatladığı büyüme yavaşlamasının gerçekleşip "
-            "gerçekleşmemesidir. Bu metriğin önümüzdeki çeyreklerdeki seyri tezi doğrular ya da çürütür."
+            "Model-price divergence: the referee is whether the growth slowdown the market has "
+            "priced in actually materializes. This metric's trajectory over the coming quarters "
+            "will confirm or refute the thesis."
         )
         result["thesis_metric"] = thesis_metric
 
@@ -1412,7 +1427,7 @@ def interpret_results(
             }
         return _postprocess_phase2_result(
             result, "script", "rule-based-v2", horizon, technical, catalyst, valuation,
-            ratios=ratios, red_flags=red_flags, metrics=metrics,
+            ratios=ratios, red_flags=red_flags, metrics=metrics, normalized=normalized,
         )
 
     system_prompt = _build_phase2_system_prompt(horizon, as_of=as_of)
@@ -1435,7 +1450,7 @@ def interpret_results(
         logger.info("Claude Code phase-2 unavailable (%s); caller will fall back to rule-based.", exc)
         return {
             "error": str(exc),
-            "summary": "Claude Code kullanılamadı; kural bazlı yoruma geçilecek.",
+            "summary": "Claude Code unavailable; falling back to rule-based commentary.",
             "_provider": "claude_code",
         }
     except ValueError as exc:
@@ -1456,7 +1471,7 @@ def interpret_results(
     result = _parse_model_json(raw_text)
     processed = _postprocess_phase2_result(
         result, _canonical_provider(resolved_provider), resolved_model, horizon, technical, catalyst, valuation,
-        ratios=ratios, red_flags=red_flags, metrics=metrics,
+        ratios=ratios, red_flags=red_flags, metrics=metrics, normalized=normalized,
     )
     # As-of + an LLM provider: the model's training data may leak post-as_of
     # knowledge, so flag the result. Only reached on the LLM path (the
@@ -1489,7 +1504,7 @@ def _interpret_results_with_fallback(
     ``claude -p`` subprocess can't produce phase-2 commentary (API-key guard,
     binary missing, timeout, unparseable envelope), ``interpret_results``
     returns an error dict -- we retry once with the deterministic ``"script"``
-    provider so the engine still yields a result, and return a Turkish note
+    provider so the engine still yields a result, and return a note
     explaining the degradation. For every other provider the original result
     (including its error dict) is returned unchanged, so ollama
     behavior is untouched.
@@ -1500,14 +1515,14 @@ def _interpret_results_with_fallback(
         as_of=as_of,
     )
     if resolved_provider == "claude_code" and isinstance(result, dict) and "error" in result:
-        reason = result.get("error") or "bilinmeyen hata"
+        reason = result.get("error") or "unknown error"
         logger.warning("claude_code phase-2 failed (%s); falling back to rule-based commentary.", reason)
         result = interpret_results(
             normalized, ratios, metrics, technical, red_flags, catalyst, valuation,
             provider="script", model=None, api_key=None, host=None, horizon=horizon,
             as_of=as_of,
         )
-        return result, f"AI backend (claude_code) kullanılamadı, kural bazlı çalışıldı: {reason}"
+        return result, f"AI backend (claude_code) unavailable, fell back to rule-based: {reason}"
     return result, None
 
 
@@ -1606,7 +1621,7 @@ def _build_llm_report(
                 "used_llm": False,
                 "requested_provider": requested_provider,
                 "fallback": backend_note
-                or "AI backend kullanılamadı; deterministik (kural bazlı) varsayımlar kullanıldı.",
+                or "AI backend unavailable; deterministic (rule-based) assumptions were used.",
             }
         return None  # pure script run -- nothing LLM-specific to report
 
@@ -1834,8 +1849,8 @@ def interpret(
             and phase1.get("_provider") == "script"
         ):
             backend_note = (
-                "AI backend (claude_code) varsayım önerisi veremedi; "
-                "deterministik varsayımlar kullanıldı."
+                "AI backend (claude_code) could not provide an assumption proposal; "
+                "deterministic assumptions were used."
             )
 
         if isinstance(result, dict) and "error" not in result:
@@ -1855,8 +1870,8 @@ def interpret(
                     "cached": True,
                     "provider": phase1_override.get("_provider"),
                     "note": (
-                        "Varsayımlar dondurulmuş bir setten geldi "
-                        "(propose sırasında üretildi); ayrıntı için 'assumptions show'."
+                        "The assumptions came from a frozen set "
+                        "(produced at propose time); see 'assumptions show' for details."
                     ),
                 }
             else:

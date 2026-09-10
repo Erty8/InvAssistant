@@ -4,8 +4,8 @@ This module is a thin sibling of ``sec_analyzer.normalize.ratios`` and
 ``sec_analyzer.normalize.metrics``: it consumes their outputs (the
 normalized annual facts, the per-fiscal-year ratio list, and the valuation
 metrics dict) and runs a fixed set of quality/valuation checks that are
-worth calling out explicitly to a Turkish-speaking end user, rather than
-left implicit in a ratio table. Each rule either fires (appending one flag)
+worth calling out explicitly to the end user, rather than left implicit in
+a ratio table. Each rule either fires (appending one flag)
 or doesn't -- there is no scoring here, unlike
 ``sec_analyzer.interpret.rule_based``'s checklist.
 
@@ -92,14 +92,15 @@ def _check_receivables_outpace(normalized: dict) -> Optional[dict]:
         return None
 
     breakdown = "; ".join(
-        f"FY{y}: alacak %{recv_growth[y] * 100:+.1f} vs gelir %{rev_growth[y] * 100:+.1f}"
+        f"FY{y}: receivables {recv_growth[y] * 100:+.1f}% vs revenue {rev_growth[y] * 100:+.1f}%"
         for y in streak_years
     )
     return _flag(
         "RECEIVABLES_OUTPACE",
-        "Alacaklar gelirden daha hızlı büyüyor",
-        f"Son {len(streak_years)} yılda alacak büyümesi gelir büyümesini geride bıraktı ({breakdown}). "
-        "Bu, tahsilatların zayıfladığına veya gelirin erken kaydedildiğine işaret edebilir.",
+        "Receivables are growing faster than revenue",
+        f"Over the last {len(streak_years)} year(s), receivables growth has outpaced revenue "
+        f"growth ({breakdown}). This can signal weakening collections or revenue being "
+        "recognized early.",
     )
 
 
@@ -120,9 +121,9 @@ def _check_ocf_negative(normalized: dict, metrics: dict) -> Optional[dict]:
 
     return _flag(
         "OCF_NEGATIVE",
-        "Kâr var ama işletme nakit akışı negatif",
-        f"FY{latest_fy}: net kâr {ni:,.0f} (pozitif) iken işletme faaliyetlerinden nakit akışı "
-        f"{ocf:,.0f} (negatif). Kâr kalitesi düşük olabilir.",
+        "Profitable on paper but operating cash flow is negative",
+        f"FY{latest_fy}: net income {ni:,.0f} (positive) while cash flow from operating "
+        f"activities is {ocf:,.0f} (negative). Earnings quality may be low.",
     )
 
 
@@ -135,9 +136,10 @@ def _check_dilution(metrics: dict) -> Optional[dict]:
 
     return _flag(
         "DILUTION",
-        "Hisse sayısı hızla artıyor (seyrelme riski)",
-        f"Dolaşımdaki hisse sayısı yıllık %{shares_yoy * 100:.1f} arttı "
-        f"(eşik %{_DILUTION_THRESHOLD * 100:.0f}). Mevcut ortaklar önemli ölçüde seyreliyor.",
+        "Share count is rising fast (dilution risk)",
+        f"Shares outstanding grew {shares_yoy * 100:.1f}% year-over-year "
+        f"(threshold {_DILUTION_THRESHOLD * 100:.0f}%). Existing shareholders are being "
+        "meaningfully diluted.",
     )
 
 
@@ -151,10 +153,10 @@ def _check_sbc_high(metrics: dict) -> Optional[dict]:
 
     return _flag(
         "SBC_HIGH",
-        "Hisse bazlı ödemeler gelire göre yüksek",
-        f"Hisse bazlı ödemeler (SBC), gelirin %{sbc_revenue * 100:.1f}'i "
-        f"(eşik %{_SBC_REVENUE_THRESHOLD * 100:.0f}). Bu, raporlanan kârlılığın "
-        "gerçek nakit ekonomisini abartabileceği anlamına gelir.",
+        "Stock-based compensation is high relative to revenue",
+        f"Stock-based compensation (SBC) is {sbc_revenue * 100:.1f}% of revenue "
+        f"(threshold {_SBC_REVENUE_THRESHOLD * 100:.0f}%). This means reported profitability "
+        "may overstate the real cash economics of the business.",
     )
 
 
@@ -191,17 +193,17 @@ def _check_cyclical_trap(ratios: List[dict], metrics: dict, horizon: str) -> Opt
         return None
 
     horizon_note = (
-        "5 yıllık ufukta bu kontrol zorunludur: "
+        "This check is mandatory on a 5-year horizon: "
         if horizon == "5y"
-        else "Uzun vadeli değerlendirmede önemlidir: "
+        else "This matters for a long-term assessment: "
     )
     return _flag(
         "CYCLICAL_TRAP",
-        "Düşük P/E yanıltıcı olabilir (döngüsel tepe riski)",
-        f"{horizon_note}FY{latest_fy} net kâr marjı %{latest_margin * 100:.1f}, "
-        f"tarihi zirveye çok yakın (zirve %{max_margin * 100:.1f}) ve P/E {pe:.1f} "
-        f"(eşik {_CYCLICAL_PE_MAX:.0f} altı). Marjlar döngüsel bir tepeden normalleşirse "
-        "bugünkü düşük P/E yanıltıcı olabilir.",
+        "A low P/E may be misleading (cyclical peak risk)",
+        f"{horizon_note}FY{latest_fy} net margin is {latest_margin * 100:.1f}%, very close to "
+        f"its historical peak ({max_margin * 100:.1f}%), and P/E is {pe:.1f} "
+        f"(below the {_CYCLICAL_PE_MAX:.0f} threshold). If margins normalize down from a "
+        "cyclical peak, today's low P/E could be misleading.",
     )
 
 

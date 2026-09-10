@@ -206,17 +206,22 @@ def fcfe_sustainable_growth_per_share(
 
     ni_path: List[float] = []
     fcfe_path: List[float] = []
+    growth_path: List[float] = []
+    growth_capped = False
     previous_ni = ni0
     pv_sum = 0.0
     for year in range(1, HORIZON_YEARS + 1):
         growth_rate = _year_growth_rate(year, growth_5y, terminal_growth)
         g_eff = min(growth_rate, roe)
+        if g_eff < growth_rate:
+            growth_capped = True
         ni_year = previous_ni * (1 + g_eff)
         reinvestment_rate = g_eff / roe
         fcfe_year = ni_year * (1 - reinvestment_rate)
 
         ni_path.append(ni_year)
         fcfe_path.append(fcfe_year)
+        growth_path.append(g_eff)
         pv_sum += fcfe_year / (1 + discount_rate) ** year
         previous_ni = ni_year
 
@@ -248,6 +253,210 @@ def fcfe_sustainable_growth_per_share(
         "fcfe_path": fcfe_path,
         "tv": tv,
         "effective_shares": effective_shares,
+        # SPEC.md Sec.22a: the growth actually applied, so a caller can tell
+        # the reader when the internal-funding cap discarded the assumption.
+        "growth_path": growth_path,
+        "effective_growth_5y": min(growth_5y, roe),
+        "growth_capped": growth_capped,
+    }
+
+
+def rim_per_share(
+    bve0: Optional[float],
+    ni0: Optional[float],
+    roe: float,
+    growth_5y: float,
+    terminal_growth: float,
+    discount_rate: float,
+    shares: Optional[float],
+    dilution_rate: float = 0.0,
+    terminal_roe: Optional[float] = None,
+) -> dict:
+    """Compute a per-share residual income model (RIM) fair value from
+    book value, normalized net income, and ROE (SPEC.md Sec.8f).
+
+    Ohlson-style residual income: intrinsic equity value = book value today
+    plus the present value of all future "excess" earnings (residual income,
+    ``RI_t = NI_t - discount_rate * BVE_{t-1}``) the firm is expected to
+    generate above what its cost of equity requires on the book value it
+    starts each period with. This is the financial-sector counterpart to
+    :func:`fcfe_sustainable_growth_per_share` -- same ``g_eff = min(g, roe)``
+    reinvestment cap and ``terminal_roe`` fade-to-cost-of-equity convention,
+    just applied to a book-value/residual-income compounding path instead of
+    a dividend/FCFE payout path. It replaces the single-period justified-P/B
+    heuristic (``engine._justified_pb``, ``(ROE - g) / (r - g)`` applied as a
+    static multiple to today's book value) with a genuine multi-year fade:
+    years 1-5 grow earnings at ``growth_5y``, years 6-10 fade linearly to
+    ``terminal_growth`` (via :func:`_year_growth_rate`, the same fade curve
+    :func:`dcf_per_share` uses), each year's earnings are capped at what ROE
+    can fund (``g_eff = min(g, roe)``), and book value compounds forward by
+    the fraction of earnings actually retained to fund that capped growth.
+
+    Earnings/book-value roll-forward: earnings compound at ``g_eff`` exactly
+    like :func:`fcfe_sustainable_growth_per_share`'s ``ni_path``
+    (``ni_year = previous_ni * (1 + g_eff)``); the reinvestment rate ``b =
+    g_eff / roe`` is the fraction of that year's earnings retained (added to
+    book value) rather than distributed, so book value grows by
+    ``retained = ni_year * b`` each year (clean-surplus accounting with no
+    external capital raise) -- NOT by the full ``ni_year`` (that would imply
+    100% retention regardless of ``g_eff``, silently assuming no dividend
+    ever gets paid).
+
+    Terminal ROE fade to cost of equity: the terminal (perpetuity) net
+    income is what the ending book value earns at the terminal ROE --
+    ``ni_terminal = terminal_roe_resolved * bve_10`` -- so terminal residual
+    income is ``(terminal_roe_resolved - discount_rate) * bve_10``. When the
+    caller fades terminal ROE to the cost of equity (typically by passing the
+    scenario's own ``discount_rate`` as ``terminal_roe``), the terminal
+    spread is exactly zero, so the terminal residual income AND the Gordon
+    terminal value are zero: intrinsic equity is then today's book value plus
+    the present value of only the finite-horizon excess returns (the standard
+    RIM "excess returns compete away in steady state" terminal, Damodaran/
+    Penman). This is the RIM analog of
+    :func:`fcfe_sustainable_growth_per_share`'s terminal fade -- NOT the same
+    mechanism: there, terminal reinvestment earns exactly the cost of equity
+    (value-neutral) and the terminal DIVIDEND perpetuity is still positive;
+    here, the book value already captures the normal return, so a faded
+    terminal adds nothing beyond it. A caller passing ``terminal_roe`` ABOVE
+    the cost of equity (a durable-franchise assumption) still gets a
+    positive, ``terminal_growth``-growing terminal residual. ``terminal_roe``
+    defaults to ``roe`` when omitted (a permanent-excess-return terminal --
+    the engine always passes ``discount_rate`` for the faded convention).
+
+    No net-debt bridge: book value of equity and net income are already
+    equity-level (post-interest, post-tax) figures for a financial-sector
+    filer, so ``discount_rate`` must be a levered cost of equity, exactly
+    like :func:`dcf_per_share`/:func:`fcfe_sustainable_growth_per_share`.
+
+    Args:
+        bve0: Base-year (year 0) book value of equity (``StockholdersEquity``)
+            the roll-forward starts from.
+        ni0: Base-year (year 0) net income (used only to validate the anchor
+            is being built from a profitable base; the earnings PATH itself
+            compounds off ``ni0`` at each year's ``g_eff``, mirroring
+            :func:`fcfe_sustainable_growth_per_share`).
+        roe: Return on equity (net income / book value of equity) used to
+            derive each projection year's sustainable reinvestment rate
+            ``b = g_eff / roe``.
+        growth_5y: Constant earnings-growth rate for projection years 1-5
+            (decimal fraction).
+        terminal_growth: Growth rate years 6-10 fade to, and the growth rate
+            the terminal residual income grows at in perpetuity (Gordon
+            denominator ``discount_rate - terminal_growth``).
+        discount_rate: Annual discount rate (decimal fraction) -- a levered
+            COST OF EQUITY, exactly like :func:`dcf_per_share`.
+        shares: Diluted shares outstanding used as the pre-dilution base.
+        dilution_rate: Annual share-count growth rate applied over 5 years
+            to derive the effective share count. Defaults to ``0.0``.
+        terminal_roe: The ROE the ending book value is assumed to earn in the
+            terminal (perpetuity) phase; ``terminal_roe == discount_rate``
+            makes the terminal residual income (and the Gordon terminal
+            value) zero -- see the "Terminal ROE fade" note above. Defaults
+            to ``None`` (falls back to ``roe`` -- a permanent-excess-return
+            terminal; the engine always passes ``discount_rate``).
+
+    Returns:
+        A dict with keys ``per_share``, ``equity`` (total intrinsic equity
+        value, ``bve0`` plus the PV of all residual income), ``bve0``,
+        ``ri_path`` (the 10 projected residual-income floats), ``bve_path``
+        (the 10 projected book-value-of-equity floats, end of each year),
+        ``tv`` (undiscounted terminal value), and ``effective_shares``.
+        Nothing is rounded here -- rounding is the caller's (``engine.py``'s)
+        responsibility.
+
+    Raises:
+        ValueError: If ``ni0`` is ``None``, if ``bve0`` is ``None`` or
+            ``<= 0`` (a non-positive book value makes the roll-forward
+            meaningless), if ``shares`` is falsy or ``<= 0``, if ``roe <= 0``,
+            or if ``discount_rate <= terminal_growth`` (the Gordon-growth
+            terminal value is undefined in that case -- never silently
+            "fixed").
+    """
+    if ni0 is None:
+        raise ValueError("rim_per_share: ni0 is None; cannot project an earnings path without a base.")
+    if bve0 is None or bve0 <= 0:
+        raise ValueError(f"rim_per_share: bve0 must be a positive number, got {bve0!r}.")
+    if not shares or shares <= 0:
+        raise ValueError(f"rim_per_share: shares must be a positive number, got {shares!r}.")
+    if roe <= 0:
+        raise ValueError(f"rim_per_share: roe must be positive, got {roe!r}.")
+    if discount_rate <= terminal_growth:
+        raise ValueError(
+            f"rim_per_share: discount_rate ({discount_rate}) must be strictly greater than "
+            f"terminal_growth ({terminal_growth}) for the Gordon-growth terminal value to be defined."
+        )
+
+    ri_path: List[float] = []
+    bve_path: List[float] = []
+    growth_path: List[float] = []
+    growth_capped = False
+    previous_ni = ni0
+    previous_bve = bve0
+    pv_sum = 0.0
+    for year in range(1, HORIZON_YEARS + 1):
+        growth_rate = _year_growth_rate(year, growth_5y, terminal_growth)
+        g_eff = min(growth_rate, roe)
+        if g_eff < growth_rate:
+            growth_capped = True
+        ni_year = previous_ni * (1 + g_eff)
+        reinvestment_rate = g_eff / roe
+        retained = ni_year * reinvestment_rate
+        bve_year = previous_bve + retained
+        ri_year = ni_year - discount_rate * previous_bve
+
+        ri_path.append(ri_year)
+        bve_path.append(bve_year)
+        growth_path.append(g_eff)
+        pv_sum += ri_year / (1 + discount_rate) ** year
+        previous_ni = ni_year
+        previous_bve = bve_year
+
+    # Terminal phase: the terminal (perpetuity) net income is what the ending
+    # book value earns at the FADED terminal ROE -- `ni_terminal =
+    # terminal_roe_resolved * bve_10` -- NOT the year-10 net income compounded
+    # forward. This is what makes `terminal_roe` actually bite (the earlier
+    # `min(terminal_growth, terminal_roe)` construction left it inert, since
+    # `terminal_growth < terminal_roe` always held under the `r > terminal_growth`
+    # guard). Terminal residual income is then the excess of that terminal
+    # earning power over the cost-of-equity charge on the same book:
+    # `ri_terminal = (terminal_roe_resolved - discount_rate) * bve_10`.
+    #
+    # When the caller fades terminal ROE to the cost of equity (the engine
+    # passes `terminal_roe = discount_rate`), the terminal spread is exactly
+    # 0, so terminal residual income and the Gordon terminal value are 0 --
+    # the standard RIM "excess returns compete away in steady state" terminal
+    # (Damodaran/Penman): intrinsic equity then equals today's book value plus
+    # the present value of only the finite-horizon excess returns. This is the
+    # RIM analog of the FCFE sibling's terminal fade (there, terminal
+    # reinvestment earns exactly the cost of equity and is value-neutral;
+    # here, the book value already captures the normal return, so only the
+    # vanishing excess return is what the terminal adds). A caller passing a
+    # terminal_roe ABOVE the cost of equity (a durable-franchise assumption)
+    # still gets a positive, `terminal_growth`-growing terminal residual.
+    terminal_roe_resolved = terminal_roe if terminal_roe is not None else roe
+    ri_terminal = (terminal_roe_resolved - discount_rate) * bve_path[-1]
+    tv = ri_terminal / (discount_rate - terminal_growth)
+    pv_tv = tv / (1 + discount_rate) ** HORIZON_YEARS
+
+    equity = bve0 + pv_sum + pv_tv
+
+    effective_shares = shares * (1 + dilution_rate) ** _DILUTION_HORIZON_YEARS
+    per_share = equity / effective_shares
+
+    return {
+        "per_share": per_share,
+        "equity": equity,
+        "bve0": bve0,
+        "ri_path": ri_path,
+        "bve_path": bve_path,
+        "tv": tv,
+        "effective_shares": effective_shares,
+        # SPEC.md Sec.22a: the growth actually applied. When `growth_capped`
+        # is True the caller's `growth_5y` was discarded in favor of what
+        # retained earnings alone can fund, and the reader must be told.
+        "growth_path": growth_path,
+        "effective_growth_5y": min(growth_5y, roe),
+        "growth_capped": growth_capped,
     }
 
 
@@ -353,4 +562,141 @@ def dcf_per_share(
         "fcf_path": fcf_path,
         "tv": tv,
         "effective_shares": effective_shares,
+    }
+
+
+def rim_external_growth_per_share(
+    bve0: float,
+    ni0: float,
+    roe: float,
+    growth_5y: float,
+    terminal_growth: float,
+    discount_rate: float,
+    shares: float,
+    terminal_roe: Optional[float] = None,
+) -> dict:
+    """Residual income when growth is funded by issuing equity, not retention.
+
+    :func:`rim_per_share` caps every year at ``min(g, roe)`` -- the growth
+    retained earnings alone can fund (``g = b x ROE``, ``b <= 1``). A firm can
+    of course grow faster by issuing shares; SoFi's FY2025 equity went
+    ``6,525M -> 10,489M`` on ``481M`` of net income, so roughly ``3.5B`` came
+    from external issuance. This function answers what that does to value.
+
+    **Issuance is modeled at fair value, which is value-neutral**: new
+    shareholders pay in exactly what their claim is worth, so the injected
+    capital and the claim it buys cancel. Two consequences:
+
+    * the share count is NOT inflated -- ``per_share`` divides by today's
+      shares;
+    * the whole value effect comes from applying the ``roe - discount_rate``
+      spread to a LARGER book value.
+
+    Modeling issuance at any other price would transfer value between old and
+    new holders, and picking that price would make an *intrinsic* estimate
+    depend on the market price it exists to be tested against.
+
+    The sign is the point, and it is unambiguous: with ``roe >
+    discount_rate`` faster growth ADDS value, with ``roe == discount_rate``
+    it is exactly neutral (residual income is zero every year, so the value
+    is ``bve0`` regardless of growth), and with ``roe < discount_rate`` it
+    DESTROYS value. This function quantifies that; it does not rescue a
+    number.
+
+    Earnings follow an ROE-consistent path (``ni_t = roe * bve_{t-1}``) rather
+    than ``rim_per_share``'s ``ni0``-compounding path, so the stated ROE
+    cannot drift (see Sec.8f's documented F4 front-loading). To keep the
+    comparison honest, ``per_share_internal`` re-runs THIS path with growth
+    capped at ``roe`` -- so ``value_gap_per_share`` isolates the funding
+    assumption alone instead of mixing in the two functions' different
+    earnings paths.
+
+    Args:
+        bve0: Opening book value of equity. Must be positive.
+        ni0: Latest net income. Accepted for signature symmetry with
+            ``rim_per_share`` and validated identically; the projection
+            itself derives earnings from ``roe * bve`` (see above).
+        roe: Return on equity, as a fraction. Must be positive.
+        growth_5y: Assumed growth for years 1-5, applied UNCAPPED here.
+        terminal_growth: Perpetuity growth; also the years 6-10 fade target.
+        discount_rate: Levered cost of equity (no net-debt bridge -- book
+            value and net income are already equity-level figures).
+        shares: Today's share count. Must be positive.
+        terminal_roe: Terminal-phase ROE. The engine passes the cost of
+            equity, making terminal residual income (and so the terminal
+            value) exactly zero. Defaults to ``roe``.
+
+    Returns:
+        ``{"per_share", "equity", "bve0", "ri_path", "bve_path", "tv",
+        "effective_shares", "per_share_internal", "value_gap_per_share",
+        "external_funding_total", "external_funding_path"}``. Nothing is
+        rounded -- that is the caller's job.
+
+    Raises:
+        ValueError: On the same invalid inputs as :func:`rim_per_share`.
+    """
+    if ni0 is None:
+        raise ValueError("rim_external_growth_per_share: ni0 must not be None.")
+    if bve0 is None or bve0 <= 0:
+        raise ValueError(
+            f"rim_external_growth_per_share: bve0 must be positive, got {bve0!r}."
+        )
+    if not shares or shares <= 0:
+        raise ValueError(
+            f"rim_external_growth_per_share: shares must be a positive number, got {shares!r}."
+        )
+    if roe <= 0:
+        raise ValueError(f"rim_external_growth_per_share: roe must be positive, got {roe!r}.")
+    if discount_rate <= terminal_growth:
+        raise ValueError(
+            f"rim_external_growth_per_share: discount_rate ({discount_rate}) must be strictly "
+            f"greater than terminal_growth ({terminal_growth}) for the Gordon-growth terminal "
+            "value to be defined."
+        )
+
+    terminal_roe_resolved = terminal_roe if terminal_roe is not None else roe
+
+    def _run(cap_growth: bool):
+        ri_path: List[float] = []
+        bve_path: List[float] = []
+        funding_path: List[float] = []
+        previous_bve = bve0
+        pv_sum = 0.0
+        for year in range(1, HORIZON_YEARS + 1):
+            growth_rate = _year_growth_rate(year, growth_5y, terminal_growth)
+            g = min(growth_rate, roe) if cap_growth else growth_rate
+            # Residual income on the OPENING book, exactly as rim_per_share.
+            ri_year = (roe - discount_rate) * previous_bve
+            # Retention supplies `roe * previous_bve`; the rest must be issued.
+            funding_path.append(max(0.0, previous_bve * (g - roe)))
+            bve_year = previous_bve * (1 + g)
+
+            ri_path.append(ri_year)
+            bve_path.append(bve_year)
+            pv_sum += ri_year / (1 + discount_rate) ** year
+            previous_bve = bve_year
+
+        ri_terminal = (terminal_roe_resolved - discount_rate) * bve_path[-1]
+        tv = ri_terminal / (discount_rate - terminal_growth)
+        pv_sum += tv / (1 + discount_rate) ** HORIZON_YEARS
+        return bve0 + pv_sum, ri_path, bve_path, funding_path, tv
+
+    equity, ri_path, bve_path, funding_path, tv = _run(cap_growth=False)
+    equity_internal, _, _, _, _ = _run(cap_growth=True)
+
+    per_share = equity / shares
+    per_share_internal = equity_internal / shares
+
+    return {
+        "per_share": per_share,
+        "equity": equity,
+        "bve0": bve0,
+        "ri_path": ri_path,
+        "bve_path": bve_path,
+        "tv": tv,
+        "effective_shares": shares,
+        "per_share_internal": per_share_internal,
+        "value_gap_per_share": per_share - per_share_internal,
+        "external_funding_total": sum(funding_path),
+        "external_funding_path": funding_path,
     }

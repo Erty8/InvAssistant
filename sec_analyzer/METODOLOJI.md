@@ -19,7 +19,7 @@
    İkisi çelişebilir ve çelişki GİZLENMEZ ("fundamental ucuz ama teknik olarak bıçak düşüyor" geçerli bir sonuçtur).
 4. **Senaryo tablosu** — bear/base/bull (+ gerekirse tail): her satırda hedef fiyat, güncel fiyattan % getiri, senaryonun tetikleyicisi.
 5. **Kademeli giriş planı** — tek plan, en fazla 5 tranche'lık tablo, toplam boyut ~%100. İki yönlüdür:
-   - **Birikim (dip) tranche'ları** — seviye güncel fiyatın altında/eşiğinde. Tetik koşulu fiyat DEĞİL, koşuldur: "günlük kapanış X'in ALTINA inerse". Tüm dip tranche'ları TEK ortak yapısal invalidation paylaşır (bear.lo / 52 hafta dip'in altında bir tampon).
+   - **Birikim (dip) tranche'ları** — seviye güncel fiyatın altında/eşiğinde. Tetik koşulu fiyat DEĞİL, koşuldur: "günlük kapanış X'in ALTINA inerse". Tetik cümlesi seviyenin kaynağını da adlandırır (ör. "baz senaryo alt bandı", "SMA200 desteği", "52 hafta dibi"). Tüm dip tranche'ları TEK ortak yapısal invalidation paylaşır (bear.lo / 52 hafta dip'in altında bir tampon). Teknik okumadaki destek bölgeleri (`support_levels`) bilinçli olarak dip adayı DEĞİLDİR — dip seviyeleri değerleme-çapalı kalır; bir dip seviyesi teknik destek bölgesine denk gelirse (bölgenin low/high bandı, %2 dedupe toleransıyla genişletilmiş) tranche'a yalnızca bilgilendirici bir not düşülür: "Teknik destek bölgesiyle örtüşüyor (lo-hi USD)." — seçim, boyutlandırma, invalidation ve R:R bu nottan etkilenmez.
    - **Yükseliş teyidi (breakout) tranche'ları** — seviye güncel fiyatın üzerinde (SMA50/SMA200 geri alımı, direnç/önceki zirve kırılımı, 52 hafta zirve kırılımı gibi kaynaklardan). Tetik koşulu: "günlük kapanış X'in ÜZERİNE çıkarsa (yükseliş teyidi)" — örn. "X seviyesinin günlük kapanışla geri alınması". Her breakout tranche'ı KENDİ "başarısız kırılım" invalidation'ını taşır (kırılan seviyenin hemen altı); bir breakout'un iptali diğer tranche'ları geçersiz kılmaz. Bir breakout tetik seviyesi modelin kendi bull.hi (yoksa base.hi) hedefinin ÜZERİNDE olabilir — bu "model üstü" tranche'lar yine de KORUNUR (trend-takip eklemesidirler) ama işaretlenir: `rr = None` raporlanır ve `note` alanına "Model üstü: tetik seviyesi model bull hedefinin üzerinde; değer-çapalı R:R tanımsız -- yalnızca trend-takip girişi" notu düşülür, çünkü raporlanacak değer-çapalı bir ödül yoktur.
 
    Seçim: her iki yönde de aday varsa en az birer tranche garanti edilir, kalan slotlar fiyata en yakın seviyelerden doldurulur (sadece tek yönde aday varsa o yönden en fazla 5 alınır). Boyutlandırma: en ucuz (en düşük fiyatlı) tranche en büyük payı alır. Her tranche için ortak hedef ve **per-tranche R:R** (kendi invalidation'ına göre) raporlanır. "Düşük fiyatlı tranche'lar daha yüksek R:R sunmalı" kuralı SADECE birikim (dip) merdiveninin ardışık tranche'ları arasında geçerlidir — bunlar ortak invalidation'ı paylaştığı için R:R fiyat düştükçe monoton artar. Breakout tranche'ları kendi dar/kendine-özgü invalidation'larıyla bu ölçekte karşılaştırılamaz; dolayısıyla mekanik "R:R ters" uyarısı yalnızca ardışık dip tranche'ları arasında uygulanır, breakout tranche'larına veya dip/breakout çiftlerine uygulanmaz.
@@ -99,7 +99,7 @@ metodolojisiyle aynı araç, farklı zaman noktalarında).
   görünümdür); yalnızca `verdicts` tablosuna, o kaydın hangi tarihte
   ("otopsi" mi "canlı" mı) üretildiğini ayırt eden bir `as_of` sütunuyla
   kaydedilir.
-- En riskli bilinen sınırlama: fiyat verisi (Stooq/yfinance) bugüne göre
+- En riskli bilinen sınırlama: fiyat verisi (yfinance) bugüne göre
   split-ayarlıdır — `as_of`'tan SONRA gerçekleşen bir hisse bölünmesi (ör.
   NVDA'nın 2024'teki 10:1 bölünmesi), o bölünmeden önceki bir tarih analiz
   edildiğinde piyasa değeri/çarpanları bölünme oranı kadar çarpıtır.
@@ -171,3 +171,108 @@ kullanılır, böylece geçmişe dönük bir analiz gelecekteki saklı verdict'l
 veya sonraki fiyat hareketine bakmaz (bkz. §7'deki point-in-time ilkesi).
 Backtest raporu ayrıca bir (verdict × momentum × vade) isabet-oranı tablosu
 ve hisse başına bir verdict-momentum bölümü taşır.
+
+## 9. İçeriden işlem sinyali (SEC Form 4)
+
+> **Kapsam sınırı:** Momentum gibi (§8), bu katman da HİÇBİR ZAMAN fair value
+> hesaplamasına girmez. Yalnızca giriş zamanlaması ve tez güveni tarafını
+> besler; "ne kadar eder" sorusuna dokunmaz.
+
+**Veri ve önbellek.** Kaynak, SEC Form 4 (ve düzeltmesi 4/A) mülkiyet
+dosyalamalarıdır — yönetici/yönetim kurulu üyesi/%10 ortakların, kendi
+şirketlerindeki hisse hareketlerini dosyalamak zorunda oldukları belgeler.
+`fetch/insider.py`, `analyze` işleminin zaten çektiği `submissions` belgesinin
+(`filings.recent.{form,filingDate,accessionNumber,primaryDocument}` paralel
+dizileri — aynı belge `fetch/filings.py`'nin kazanç katalizörü ve
+`signals/events.py`'nin 8-K taraması için de kullandığı belgedir) içinde
+`"4"`/`"4/A"` formlarını arar, her bir dosyalamanın ham `ownershipDocument`
+XML'ini indirir ve ayrıştırır. LLM yok, üçüncü taraf veri sağlayıcı yok,
+tamamen deterministik — yalnızca SEC EDGAR'a karşı `requests`. Dosyalama
+başına önbellek (`sec_analyzer/raw/form4/form4_<accession>.json`, tire'leri
+kırpılmış accession numarasına göre içerik-adresli) TTL TAŞIMAZ, çünkü
+dosyalanmış bir belge değişmezdir — bir önbellek isabeti asla SEC'e karşı
+yeniden doğrulanmaz.
+
+**Hangi işlemler sinyal taşır.** `signals/insider.py::_CODE_MAP`, SEC'in
+işlem kodlarını Türkçe etiket + kategoriye eşler. Yalnızca açık piyasa alımı
+(`P`, `open_market_buy`) ve açık piyasa satışı (`S`, `open_market_sell`)
+BİLGİLENDİRİCİ kodlardır — fiyat hakkında bir görüş ifade ederler. Hisse
+ödülü/tahsisi (`A`), opsiyon/türev kullanımı (`M`/`X`/`C`), vergi için hisse
+mahsubu (`F`) ve bağış/devir (`G`) tazminat mekaniğidir; kimse bunları
+yaparak fiyat hakkında bir görüş bildirmez, dolayısıyla verdict'i hiç
+etkilemezler (yine de şeffaflık için `recent` listesinde gösterilirler).
+Türev tablosundaki satırlar da ayrıştırılır ve `derivative: True` ile
+işaretlenir, ama alım/satış TOPLAMLARINA HİÇ GİRMEZLER. Gerekçe birim
+uyuşmazlığıdır: SEC'in `P`/`S` kodları türev tablosunda da geçerlidir (bir
+opsiyonun/varantın açık piyasada alınıp satılması), fakat orada `shares`
+alanı SÖZLEŞME adedidir, hisse adedi değil — ve fiyatı da sözleşme başınadır.
+Bu iki büyüklüğü aynı toplamda birleştirmek, farklı birimleri sessizce
+toplamak olurdu. Bu yüzden `buy_count`/`sell_count`, pay/değer toplamları,
+alıcı-satıcı kümeleri, kümelenme bayrakları ve pay-oranı (materyalite)
+hesabı — dolayısıyla verdict'in tamamı — yalnızca `nonDerivativeTable`
+satırlarından hesaplanır. Türev işlemleri yok sayılmaz: `recent` listesinde
+gösterilir ve `derivative_buy_count`/`derivative_sell_count` olarak ayrıca
+raporlanır; sıfırdan farklı olduklarında notta toplamlara dahil
+edilmedikleri açıkça belirtilir — okurun göremediği bir dışlama, hiç var
+olmamış veriden ayırt edilemez.
+
+**Alım/satış asimetrisi — bu bölümün merkezi noktası.** Bir içeriden kişi
+açık piyasadan hisse ALIRSA bunun tek bir makul açıklaması vardır: kendi
+parasıyla, hissenin ucuz olduğuna inanmaktadır. SATMASININ ise fiyatla hiç
+ilgisi olmayan pek çok nedeni olabilir — portföy çeşitlendirmesi, vergi
+yükümlülüğü, likidite ihtiyacı veya önceden planlanmış bir 10b5-1 satış
+planı. Bu yüzden alım bir KANAAT sinyali olarak, satış ise — materyalite
+testini geçmedikçe — BAZ ORAN (routine) olarak ele alınır. Bu asimetri iki
+tasarım kararına yansır: (1) verdict merdiveni alımı "anlamlı" saymak için
+çok daha az kanıt ister — tek bir fiyatlı açık piyasa alımı bile doğrudan
+`"ALIM"`e taşır — ama tek başına dolar bazlı satış, ne kadar büyük olursa
+olsun, nötr `"SATIŞ AĞIRLIKLI"`nın ötesine geçemez; (2) dolar tutarı tek
+başına kötü bir materyalite ölçüsüdür — hâlâ 2 milyar dolarlık payı olan bir
+yöneticinin 24 milyon dolarlık satışı önemsizken, aynı dolar tutarı payının
+çoğunu elden çıkaran biri için önemlidir.
+
+**Materyalite testi.** `_stake_details`, her satıcı için
+`sharesOwnedFollowingTransaction` (işlemden hemen sonra elde kalan hisse
+sayısı, Form 4'ün `postTransactionAmounts` alanından) kullanarak
+`stake_sold_pct = satılan / (satılan + kalan) * 100` hesaplar — pay ORANI,
+dolar değeri değil. Kişi başına oranların MEDYANI `_HEAVY_SELL_STAKE_PCT`
+(**%25**) eşiğini geçmeden satış olumsuz etiketi kazanamaz. Neden dolar değeri
+değil de kendi payının kesri doğru payda: büyük bir pozisyonu olan birinin
+büyük dolarlık satışı rutindir; ama küçük bir pozisyonu olan birinin payının
+yarısını elden çıkarması rutin değildir — payda kişinin KENDİ pozisyonu
+olduğunda bu ayrım otomatik olarak ortaya çıkar, dolar tutarında çıkmaz.
+
+**Verdict merdiveni** (`_classify_verdict`, ilk eşleşen kural kazanır):
+
+1. En az 2 farklı açık-piyasa alıcısı (`cluster_buy`) → **`GÜÇLÜ ALIM`**
+   (positive).
+2. En az 1 alım VE alım değeri satış değerinden büyük/eşit → **`ALIM`**
+   (positive).
+3. En az 1 alım var ama değerce satışlarca geride bırakılmış →
+   **`KARIŞIK`** (neutral).
+4. `cluster_sell` (≥2 farklı satıcı) VE satıcıların medyan pay-satış oranı
+   BİLİNİYOR ve `_HEAVY_SELL_STAKE_PCT` (%25) eşiğine ulaşıyor →
+   **`YOĞUN SATIŞ`** (negative). Bilinçli kural: medyan hiçbir satıcı için
+   hesaplanamadıysa (kimsenin işlem-sonrası pay bilgisi ayrıştırılamadıysa)
+   materyalite KANITLANAMAZ; bu kural ateşlemez ve bir sonraki kurala düşer
+   — tahmin yürütülmez.
+5. En az 1 satış (miktarı/oranı ne olursa olsun) → **`SATIŞ AĞIRLIKLI`**
+   (neutral, DEĞİL negative) — rutin satış çoğu büyük/uzun-kıdemli yönetim
+   ekibi için baz orandır, tek başına olumsuz bir olay sayılmaz.
+6. Aksi halde → **`NÖTR`** (neutral).
+
+**Nerede görünür.** `verdicts` tablosundaki `insider_verdict` kolonu,
+terminal kartındaki `İçeriden:` satırı, HTML raporun "Zamanlama" sekmesindeki
+kart ve portföy genel bakışındaki `İçeriden` sütunu — hepsi salt görüntüleme
+amaçlıdır (yukarıdaki kapsam sınırı notuna bakınız).
+
+**Zaman-noktası (point-in-time) davranışı.** `--as-of` modunda referans
+tarih hem dosyalamaları (`fetch/insider.py`, filing tarihi referans tarihten
+sonraysa atlanır) hem de işlemleri (`signals/insider.py`, işlem tarihi
+referans tarihten sonraysa atlanır) filtreler — geçmişe dönük bir koşu,
+henüz gerçekleşmemiş bir dosyalamayı asla görmez. Pratik sınırlama: pencere
+`lookback_days` (varsayılan 180 gün) ile ve indirilen dosyalama sayısı
+`max_filings` (varsayılan 40) ile sınırlıdır; çekilebilecek nitelikli
+dosyalama sayısı bu tavanı aşarsa sonuç `truncated: True` işaretlenir ve
+`İçeriden:` satırına `" (kısmi)"` eklenir — kısmi bir taramayı tam gibi
+sunmak yerine bu açıkça belirtilir.

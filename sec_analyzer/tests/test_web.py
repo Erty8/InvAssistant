@@ -119,6 +119,10 @@ def test_report_happy_path_returns_full_report_html(monkeypatch):
     assert "sensitivityTableHtml" in body
     assert "sensitivity-table" in body
     assert "AAPL" in body
+    # The balance-sheet ("Bilanço") tab is wired into the shared template.
+    assert "view-tabs" in body
+    assert "Bilanço" in body
+    assert "financialsTabHtml" in body
 
 
 def test_report_missing_ticker_returns_html_error_page():
@@ -244,12 +248,13 @@ def test_api_analyze_valid_as_of_threads_through_and_is_echoed(monkeypatch):
         return 1
 
     def _fail_if_called(*args, **kwargs):
-        raise AssertionError("analyst consensus must be suppressed in as-of mode")
+        raise AssertionError("display-only cross-checks must be suppressed in as-of mode")
 
     monkeypatch.setattr(web_app, "_run_full_pipeline", _capturing_pipeline)
     monkeypatch.setattr(web_app, "interpret", _capturing_interpret)
     monkeypatch.setattr(web_app, "save_verdict", _capturing_save_verdict)
     monkeypatch.setattr(web_app, "_fetch_analyst_targets", _fail_if_called)
+    monkeypatch.setattr(web_app, "_fetch_earnings_history", _fail_if_called)
 
     client = web_app.app.test_client()
     resp = client.post("/api/analyze", json={"ticker": "AAPL", "as_of": "2022-06-30"})
@@ -259,6 +264,8 @@ def test_api_analyze_valid_as_of_threads_through_and_is_echoed(monkeypatch):
     assert body["ok"] is True
     assert body["as_of"] == "2022-06-30"
     assert body["analyst"] is None
+    # The earnings beat/miss history is undated, so it too is suppressed.
+    assert body["earnings"] is None
 
     from datetime import date
     assert captured_pipeline_args["as_of"] == date(2022, 6, 30)
@@ -274,6 +281,10 @@ def test_api_analyze_without_as_of_still_fetches_analyst_targets(monkeypatch):
     monkeypatch.setattr(web_app, "interpret", _fake_interpret)
     monkeypatch.setattr(web_app, "save_verdict", lambda *a, **k: 1)
     monkeypatch.setattr(web_app, "_fetch_analyst_targets", lambda ticker, no_cache: {"target": 200.0})
+    monkeypatch.setattr(
+        web_app, "_fetch_earnings_history",
+        lambda ticker, no_cache: {"quarters": [{"period": "2024-09-30"}], "source": "yfinance"},
+    )
 
     client = web_app.app.test_client()
     resp = client.post("/api/analyze", json={"ticker": "AAPL"})
@@ -282,6 +293,8 @@ def test_api_analyze_without_as_of_still_fetches_analyst_targets(monkeypatch):
     body = resp.get_json()
     assert body["as_of"] is None
     assert body["analyst"] == {"target": 200.0}
+    # The earnings beat/miss history is fetched and echoed in the payload.
+    assert body["earnings"] == {"quarters": [{"period": "2024-09-30"}], "source": "yfinance"}
 
 
 # ---------------------------------------------------------------------------

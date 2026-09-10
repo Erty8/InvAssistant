@@ -9,7 +9,11 @@ directly -- matching the style of ``test_ratios.py``.
 
 import pytest
 
-from sec_analyzer.normalize.metrics import compute_metrics, resolve_fundamental_fy
+from sec_analyzer.normalize.metrics import (
+    _trend_growth,
+    compute_metrics,
+    resolve_fundamental_fy,
+)
 from sec_analyzer.normalize.normalizer import to_annual_series
 
 _CONCEPTS = [
@@ -40,8 +44,15 @@ def _normalized(annual_overrides):
 
 
 def _full_normalized():
-    """A filer with 4 fiscal years of data (2018, 2020, 2022, 2023), enough
-    to exercise both the 3y and 5y revenue CAGR windows."""
+    """A filer with enough fiscal years to exercise both revenue-growth windows.
+
+    Revenue is a contiguous doubling series ending at 1000 (FY2019 62.5 ->
+    FY2023 1000). A perfect geometric series makes the log-linear trend
+    (SPEC.md Sec.27) exactly its common ratio, so both windows are
+    hand-checkable at 100%: the 3y window sees FY2020-23 and the 5y window
+    FY2018-23. It used to be a sparse 2018/2020/2023 series, which existed to
+    exercise the OLD two-endpoint estimator's exact-endpoint requirement --
+    a requirement the trend estimator deliberately dropped."""
     return _normalized(
         {
             "SharesOutstanding": [
@@ -54,8 +65,10 @@ def _full_normalized():
             "Cash": [_record(2023, 80)],
             "Revenue": [
                 _record(2023, 1000),
-                _record(2020, 500),
-                _record(2018, 250),
+                _record(2022, 500),
+                _record(2021, 250),
+                _record(2020, 125),
+                _record(2019, 62.5),
             ],
             "SBC": [_record(2023, 50)],
             "RnD": [_record(2023, 40)],
@@ -82,8 +95,9 @@ def test_full_metrics_with_price():
     assert metrics["pe"] == 10.0
     assert metrics["ps"] == 2.0
     assert metrics["pfcf"] == round(2000.0 / 180, 4)
-    assert metrics["revenue_cagr_3y"] == round((1000 / 500) ** (1 / 3) - 1, 4)
-    assert metrics["revenue_cagr_5y"] == round((1000 / 250) ** (1 / 5) - 1, 4)
+    # Log-linear trend over a perfect doubling series == the ratio itself.
+    assert metrics["revenue_cagr_3y"] == pytest.approx(1.0)
+    assert metrics["revenue_cagr_5y"] == pytest.approx(1.0)
     assert metrics["sbc_revenue"] == 0.05
     assert metrics["rnd_revenue"] == 0.04
     assert metrics["shares_yoy"] == round(100 / 90 - 1, 4)
@@ -154,8 +168,9 @@ def test_missing_price_nulls_price_dependent_metrics_but_keeps_others():
     assert metrics["pfcf"] is None
 
     # Non-price-dependent metrics are still computed.
-    assert metrics["revenue_cagr_3y"] == round((1000 / 500) ** (1 / 3) - 1, 4)
-    assert metrics["revenue_cagr_5y"] == round((1000 / 250) ** (1 / 5) - 1, 4)
+    # Log-linear trend over a perfect doubling series == the ratio itself.
+    assert metrics["revenue_cagr_3y"] == pytest.approx(1.0)
+    assert metrics["revenue_cagr_5y"] == pytest.approx(1.0)
     assert metrics["sbc_revenue"] == 0.05
     assert metrics["rnd_revenue"] == 0.04
     assert metrics["shares_yoy"] == round(100 / 90 - 1, 4)
@@ -365,8 +380,9 @@ def test_latest_fundamental_fy_matches_latest_fy_and_metrics_are_unchanged_witho
     assert metrics["pe"] == 10.0
     assert metrics["ps"] == 2.0
     assert metrics["pfcf"] == round(2000.0 / 180, 4)
-    assert metrics["revenue_cagr_3y"] == round((1000 / 500) ** (1 / 3) - 1, 4)
-    assert metrics["revenue_cagr_5y"] == round((1000 / 250) ** (1 / 5) - 1, 4)
+    # Log-linear trend over a perfect doubling series == the ratio itself.
+    assert metrics["revenue_cagr_3y"] == pytest.approx(1.0)
+    assert metrics["revenue_cagr_5y"] == pytest.approx(1.0)
     assert metrics["fcf"] == 180
 
 
@@ -418,3 +434,91 @@ def test_no_data_at_all_reports_price_reliable_true():
     metrics = compute_metrics(_normalized({}), [], price=None)
     assert metrics["price_reliable"] is True
     assert metrics["price_reliability_note"] is None
+
+
+# ---------------------------------------------------------------------------
+# _trend_growth -- log-linear trend replacing the two-endpoint CAGR (Sec.27)
+# ---------------------------------------------------------------------------
+
+
+def test_trend_growth_on_a_geometric_series_is_the_common_ratio():
+    """A perfectly compounding series has an exact answer, so this pins the
+    arithmetic rather than just its direction."""
+    series = {2019: 1000.0, 2020: 1100.0, 2021: 1210.0, 2022: 1331.0, 2023: 1464.1}
+
+    assert _trend_growth(series, 2023, 5) == pytest.approx(0.10)
+    assert _trend_growth(series, 2023, 3) == pytest.approx(0.10)
+
+
+def test_trend_growth_on_a_flat_series_is_zero():
+    series = {fy: 500.0 for fy in range(2019, 2024)}
+
+    assert _trend_growth(series, 2023, 5) == pytest.approx(0.0)
+
+
+def test_trend_growth_resists_a_depressed_starting_year():
+    """The defect Sec.27 exists for: Pfizer's real FY2020-25 revenue. Revenue
+    has FALLEN since FY2022, but a two-endpoint CAGR anchored on the
+    COVID-trough FY2020 called it an 8.5% grower."""
+    series = {2020: 41.7e9, 2021: 73.6e9, 2022: 91.8e9,
+              2023: 50.9e9, 2024: 63.6e9, 2025: 62.6e9}
+
+    endpoint_cagr = (series[2025] / series[2020]) ** (1 / 5) - 1
+    trend = _trend_growth(series, 2025, 5)
+
+    assert endpoint_cagr == pytest.approx(0.085, abs=5e-3)
+    assert trend == pytest.approx(0.029, abs=5e-3)
+    assert trend < endpoint_cagr / 2
+
+
+def test_trend_growth_barely_moves_a_well_behaved_series():
+    """Robustness must not cost accuracy where there is nothing to correct:
+    Caterpillar's real FY2020-25 revenue moves 10.1% -> 9.7%."""
+    series = {2020: 41.7e9, 2021: 51.0e9, 2022: 59.4e9,
+              2023: 67.1e9, 2024: 64.8e9, 2025: 67.6e9}
+
+    endpoint_cagr = (series[2025] / series[2020]) ** (1 / 5) - 1
+    trend = _trend_growth(series, 2025, 5)
+
+    assert abs(trend - endpoint_cagr) < 0.01
+
+
+def test_trend_growth_needs_at_least_three_points():
+    # Two points inside the window: a least-squares line would just be the
+    # two-endpoint line, so it is refused rather than dressed up as a trend.
+    assert _trend_growth({2021: 500.0, 2023: 1000.0}, 2023, 3) is None
+    assert _trend_growth({2021: 500.0, 2022: 700.0, 2023: 1000.0}, 2023, 3) is not None
+
+
+def test_trend_growth_requires_the_latest_year_itself():
+    """Deliberately asymmetric: dropping the START-point requirement is the
+    point of Sec.27, but the END point is what keeps the figure current."""
+    series = {2019: 100.0, 2020: 110.0, 2021: 121.0}
+
+    assert _trend_growth(series, 2023, 5) is None
+    assert _trend_growth(series, 2021, 5) is not None
+
+
+def test_trend_growth_ignores_years_outside_the_window():
+    series = {2010: 1.0, 2011: 2.0, 2021: 500.0, 2022: 700.0, 2023: 1000.0}
+    windowed = {2021: 500.0, 2022: 700.0, 2023: 1000.0}
+
+    assert _trend_growth(series, 2023, 3) == pytest.approx(_trend_growth(windowed, 2023, 3))
+
+
+def test_trend_growth_drops_non_positive_values():
+    # The log is undefined at or below zero, so those years are dropped -- and
+    # if too few survive, the answer is None rather than a partial fit.
+    assert _trend_growth({2021: -5.0, 2022: 0.0, 2023: 1000.0}, 2023, 3) is None
+    assert _trend_growth(
+        {2020: 0.0, 2021: 500.0, 2022: 700.0, 2023: 1000.0}, 2023, 5
+    ) is not None
+
+
+def test_trend_growth_needs_a_two_year_span():
+    assert _trend_growth({2022: 500.0, 2023: 1000.0}, 2023, 5) is None
+
+
+@pytest.mark.parametrize("series, latest_fy", [(None, 2023), ({}, 2023), ({2023: 1.0}, None)])
+def test_trend_growth_degrades_on_missing_input(series, latest_fy):
+    assert _trend_growth(series, latest_fy, 5) is None

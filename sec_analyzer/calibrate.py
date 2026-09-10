@@ -87,7 +87,7 @@ def _method_slug(valuation: dict) -> str:
 
     Returns:
         One of ``"hyper"``, ``"cyclical-fcfe"``, ``"epv"``, ``"mature-rev"``,
-        ``"midgrowth-rev"``, ``"dcf"``, ``"ffo"``, or ``"pb-roe"``.
+        ``"midgrowth-rev"``, ``"dcf"``, ``"ffo"``, ``"rim"``, or ``"pb-roe"``.
     """
     valuation = valuation or {}
     detail = valuation.get("hyper_growth_detail") or {}
@@ -107,11 +107,14 @@ def _method_slug(valuation: dict) -> str:
     ffo = valuation.get("ffo")
     if isinstance(ffo, dict) and "scenarios" in ffo:
         return "ffo"
+    rim = valuation.get("rim")
+    if isinstance(rim, dict) and "scenarios" in rim:
+        return "rim"
     return "pb-roe"
 
 
 def run_calibration(
-    tickers: List[str], years: int = 5, no_cache: bool = False, as_of=None
+    tickers: List[str], years: int = 12, no_cache: bool = False, as_of=None
 ) -> List[dict]:
     """Run the headless script-provider pipeline for each ticker in ``tickers``.
 
@@ -171,8 +174,12 @@ def run_calibration(
         _fetch_submissions,
     )
 
-    # One (cached) FRED fetch for the whole basket in as-of mode.
-    fred_rate = _fetch_risk_free_asof(as_of, no_cache) if as_of is not None else None
+    # One (cached) FRED fetch for the whole basket -- the latest observation
+    # on a live run, the as-of one on a historical run. Fetched once here so
+    # every ticker in the basket is priced off the SAME risk-free rate; a
+    # per-ticker fetch could straddle a FRED update mid-run and make the
+    # basket's fair-value/price ratios incomparable.
+    fred_rate = _fetch_risk_free_asof(as_of, no_cache)
 
     rows: List[dict] = []
     for ticker in tickers:

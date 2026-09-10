@@ -17,6 +17,7 @@ servers again.
 import json
 import logging
 import os
+import time
 
 import requests
 
@@ -49,6 +50,62 @@ def _write_cache(path: str, data: dict) -> None:
         json.dump(data, f)
 
 
+def _cache_is_fresh(path: str, ttl_hours: float) -> bool:
+    """Whether ``path`` was written within ``ttl_hours`` (SPEC.md Sec.21c).
+
+    A non-positive ``ttl_hours`` means "never expires" -- the behavior every
+    cache here had before this check existed, kept as an escape hatch. An
+    unreadable mtime is treated as stale, so a broken cache re-fetches.
+    """
+    if ttl_hours <= 0:
+        return True
+    try:
+        age_hours = (time.time() - os.path.getmtime(path)) / 3600.0
+    except OSError:
+        return False
+    return age_hours < ttl_hours
+
+
+def _load_or_fetch(
+    cache_path: str, url: str, client: SecHttpClient, no_cache: bool,
+    ttl_hours: float, what: str, cik: str,
+) -> dict:
+    """Return a cached document if it exists and is fresh, else re-fetch.
+
+    When a STALE cache exists but the re-fetch fails (network down, SEC 5xx),
+    the stale copy is returned with a warning rather than propagating the
+    error: a month-old document still supports an analysis, whereas a raised
+    exception kills the whole run. That preserves the offline/degraded
+    operation the previous exists-only check gave for free.
+    """
+    cached = os.path.exists(cache_path) and not no_cache
+    if cached and _cache_is_fresh(cache_path, ttl_hours):
+        logger.info("%s cache hit for CIK %s: %s", what, cik, cache_path)
+        return _read_cache(cache_path)
+
+    if cached:
+        logger.info(
+            "%s cache for CIK %s is older than %.0fh; re-fetching from SEC.",
+            what, cik, ttl_hours,
+        )
+
+    logger.info("Fetching %s for CIK %s from %s", what.lower(), cik, url)
+    try:
+        data = client.get_json(url)
+    except Exception:  # noqa: BLE001 - a stale document beats no analysis
+        if cached:
+            logger.warning(
+                "%s re-fetch for CIK %s failed; falling back to the stale "
+                "cache at %s.", what, cik, cache_path, exc_info=True,
+            )
+            return _read_cache(cache_path)
+        raise
+
+    _write_cache(cache_path, data)
+    logger.debug("Wrote %s cache: %s", what.lower(), cache_path)
+    return data
+
+
 def get_company_facts(
     cik: str, client: SecHttpClient, no_cache: bool = False
 ) -> dict:
@@ -61,23 +118,17 @@ def get_company_facts(
             overwriting the cache file.
 
     Returns:
-        The parsed companyfacts JSON document.
+        The parsed companyfacts JSON document. A cache older than
+        ``Config.COMPANYFACTS_CACHE_TTL_HOURS`` is re-fetched (SPEC.md
+        Sec.21c); if that re-fetch fails, the stale copy is returned.
     """
     Config.ensure_dirs()
-    cache_path = os.path.join(Config.RAW_DIR, f"CIK{cik}.json")
-
-    if os.path.exists(cache_path) and not no_cache:
-        logger.info("Company facts cache hit for CIK %s: %s", cik, cache_path)
-        return _read_cache(cache_path)
-
-    url = COMPANYFACTS_URL.format(cik=cik)
-    logger.info("Fetching company facts for CIK %s from %s", cik, url)
-    data = client.get_json(url)
-
-    _write_cache(cache_path, data)
-    logger.debug("Wrote company facts cache: %s", cache_path)
-
-    return data
+    return _load_or_fetch(
+        os.path.join(Config.RAW_DIR, f"CIK{cik}.json"),
+        COMPANYFACTS_URL.format(cik=cik),
+        client, no_cache, Config.COMPANYFACTS_CACHE_TTL_HOURS,
+        what="Company facts", cik=cik,
+    )
 
 
 def get_submissions(
@@ -92,23 +143,19 @@ def get_submissions(
             overwriting the cache file.
 
     Returns:
-        The parsed submissions JSON document.
+        The parsed submissions JSON document. A cache older than
+        ``Config.SUBMISSIONS_CACHE_TTL_HOURS`` is re-fetched (SPEC.md
+        Sec.21c) -- the earnings catalyst is derived from this document, so a
+        stale copy silently hides a just-published earnings 8-K. If the
+        re-fetch fails, the stale copy is returned.
     """
     Config.ensure_dirs()
-    cache_path = os.path.join(Config.RAW_DIR, f"submissions_CIK{cik}.json")
-
-    if os.path.exists(cache_path) and not no_cache:
-        logger.info("Submissions cache hit for CIK %s: %s", cik, cache_path)
-        return _read_cache(cache_path)
-
-    url = SUBMISSIONS_URL.format(cik=cik)
-    logger.info("Fetching submissions for CIK %s from %s", cik, url)
-    data = client.get_json(url)
-
-    _write_cache(cache_path, data)
-    logger.debug("Wrote submissions cache: %s", cache_path)
-
-    return data
+    return _load_or_fetch(
+        os.path.join(Config.RAW_DIR, f"submissions_CIK{cik}.json"),
+        SUBMISSIONS_URL.format(cik=cik),
+        client, no_cache, Config.SUBMISSIONS_CACHE_TTL_HOURS,
+        what="Submissions", cik=cik,
+    )
 
 
 def get_company_concept(cik: str, tag: str, client: SecHttpClient) -> dict | None:

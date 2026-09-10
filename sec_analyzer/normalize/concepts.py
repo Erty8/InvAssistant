@@ -129,6 +129,51 @@ CONCEPTS: Dict[str, List[str]] = {
         "ImpairmentOfRealEstate",
         "RealEstateImpairment",
     ],
+    "RetainedEarningsAccumulatedDeficit": [
+        "RetainedEarningsAccumulatedDeficit",
+    ],
+    "PropertyPlantAndEquipmentGross": [
+        "PropertyPlantAndEquipmentGross",
+    ],
+    "SellingGeneralAndAdministrativeExpense": [
+        "SellingGeneralAndAdministrativeExpense",
+        "SellingGeneralAndAdministrativeExpenses",
+    ],
+    # Financial-filer income-statement top line: total revenue NET of interest
+    # expense. Banks and lenders tag their ASC-606 contract-fee slice under
+    # "Revenue"'s preferred tag, which for them is only a fraction of the real
+    # top line, so ``normalizer._apply_net_revenue_basis`` prefers this series
+    # when the two disagree materially (SPEC.md Sec.19).
+    "NetRevenue": [
+        "RevenuesNetOfInterestExpense",
+    ],
+    "InterestIncome": [
+        "InterestIncomeOperating",
+        "InterestAndDividendIncomeOperating",
+    ],
+    "NoninterestIncome": [
+        "NoninterestIncome",
+    ],
+    # Deposit funding, used as a materiality trigger for classifying a filer
+    # as a bank in economic substance regardless of its SIC code (SPEC.md
+    # Sec.20a). The fallback tag is a strictly narrower measure
+    # (interest-bearing deposits only); because that can only UNDER-state the
+    # deposits/liabilities share, a mixed series can suppress the trigger but
+    # never produce a false positive.
+    "Deposits": [
+        "Deposits",
+        "InterestBearingDepositLiabilities",
+    ],
+    # Deducted from StockholdersEquity to get tangible equity, the base for
+    # ROTCE and P/TBV (SPEC.md Sec.23). A filer with no goodwill simply does
+    # not tag it, so a missing series is treated as zero downstream.
+    "Goodwill": [
+        "Goodwill",
+    ],
+    "IntangibleAssets": [
+        "IntangibleAssetsNetExcludingGoodwill",
+        "FiniteLivedIntangibleAssetsNet",
+    ],
 }
 
 #: Concepts that describe an activity over a period (both ``start`` and
@@ -139,6 +184,8 @@ FLOW_CONCEPTS = {
     "GrossProfit", "OperatingIncome", "CapEx", "DividendsPaid",
     "EPS", "SharesOutstanding", "Buyback", "RnD", "SBC", "Depreciation",
     "GainOnSaleRealEstate", "RealEstateImpairment",
+    "SellingGeneralAndAdministrativeExpense",
+    "NetRevenue", "InterestIncome", "NoninterestIncome",
 }
 
 #: Concepts that are a point-in-time snapshot (only ``end`` is meaningful).
