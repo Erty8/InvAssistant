@@ -120,6 +120,7 @@ from sec_analyzer.store.database import (
     save_verdict,
 )
 from sec_analyzer.technical.indicators import compute_indicators, relative_strength
+from sec_analyzer.technical.action import compute_technical_action
 from sec_analyzer.technical.momentum import compute_price_momentum, sector_etf_for_sic
 from sec_analyzer.technical.verdict import technical_verdict
 
@@ -286,6 +287,7 @@ def _fetch_price_and_technical(
         indicators["momentum"] = compute_price_momentum(indicators)
         verdict_result = technical_verdict(indicators, horizon)
         technical = {**indicators, **verdict_result}
+        technical["action"] = compute_technical_action(technical, horizon)
         # Provenance of the price series these indicators were computed from,
         # carried here rather than widening this function's return tuple
         # (four call sites plus test fakes). The report names the source
@@ -385,8 +387,10 @@ def _enrich_sector_momentum(ticker, technical, price_df, submissions, no_cache, 
             sector_rs = _fetch_relative_strength(ticker, price_df, no_cache, as_of, benchmark=etf)
             if sector_rs is not None:
                 technical["relative_strength_sector"] = sector_rs
-        # Recompute momentum so the sector-relative component is included.
+        # Recompute momentum so the sector-relative component is included,
+        # then the action that reads it.
         technical["momentum"] = compute_price_momentum(technical)
+        technical["action"] = compute_technical_action(technical, technical.get("horizon") or "1y")
     except Exception:  # noqa: BLE001 - display-only enrichment, never fatal
         logger.warning("Could not enrich sector momentum for %s", ticker, exc_info=True)
 
@@ -2103,7 +2107,210 @@ def cmd_backtest(args: argparse.Namespace) -> None:
                 print("\nWARNING: could not save swing study to the database.", file=sys.stderr)
         return
 
-    print("Usage: backtest {run|evaluate|report|swing} ...", file=sys.stderr)
+    if action == "action":
+        from sec_analyzer.backtest.action_study import run_action_study
+
+        def _aprogress(done: int, total: int, ticker: str) -> None:
+            if done % _SWING_PROGRESS_STEP == 0 or done == total:
+                logger.info("Action study progress: %d/%d (last: %s)", done, total, ticker)
+
+        try:
+            result = run_action_study(
+                start=args.start, end=args.end, sample_every=args.sample_every,
+                max_workers=args.workers, progress_cb=_aprogress,
+                checkpoint_path=args.checkpoint,
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed study must not crash the CLI
+            logger.exception("Action study failed")
+            print(f"Action study failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+            return
+        _print_action_study_report(result)
+        if args.json:
+            try:
+                with open(args.json, "w", encoding="utf-8") as f:
+                    json.dump(result, f, ensure_ascii=False, indent=1)
+                print(f"\nFull result written to {args.json}")
+            except OSError as exc:
+                print(f"WARNING: could not write {args.json}: {exc}", file=sys.stderr)
+        return
+
+    if action == "factors":
+        from sec_analyzer.backtest.factor_study import run_factor_study
+
+        try:
+            result = run_factor_study(start=args.start, end=args.end, pit=args.pit)
+        except Exception as exc:  # noqa: BLE001 - a failed study must not crash the CLI
+            logger.exception("Factor study failed")
+            print(f"Factor study failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+            return
+        if args.pit:
+            _print_factor_study_pit_report(result)
+        else:
+            _print_factor_study_report(result)
+        if args.json:
+            try:
+                with open(args.json, "w", encoding="utf-8") as f:
+                    json.dump(result, f, ensure_ascii=False, indent=1)
+                print(f"\nFull result written to {args.json}")
+            except OSError as exc:
+                print(f"WARNING: could not write {args.json}: {exc}", file=sys.stderr)
+        return
+
+    print("Usage: backtest {run|evaluate|report|swing|action|factors} ...", file=sys.stderr)
+
+
+def _print_factor_study_pit_report(result: dict) -> None:
+    """Terminal readout of factor study v2 (FACTOR_STUDY_SPEC.md §10)."""
+    def pp(v) -> str:
+        return f"{v:+.2f}pp" if isinstance(v, (int, float)) and not isinstance(v, bool) else "—"
+
+    print(f"\nPrice-factor study v2 — {result.get('universe')}, {result.get('start')} .. {result.get('end')}")
+    if result.get("error"):
+        print(f"ERROR: {result['error']}")
+        return
+    pit = result.get("pit") or {}
+    cov = pit.get("coverage") or {}
+    print(f"Membership file sha256 {str(pit.get('membership_sha256'))[:12]}…, last change {pit.get('membership_last_date')}; "
+          f"{pit.get('tickers_ever_members')} symbols ever members, "
+          f"{pit.get('tickers_without_cached_prices')} without price data; "
+          f"{pit.get('covered_symbols')} covered, of which {pit.get('covered_symbols_not_current_members')} "
+          "are former members (ticker-recycling exposure).")
+    print(f"Coverage (covered members / members): mean {cov.get('mean')}, "
+          f"{cov.get('dates_at_or_above_90pct')} dates at ≥ 90%.")
+    print("  by year: " + "  ".join(f"{y} {v:.2f}" for y, v in (cov.get("by_year") or {}).items() if v is not None))
+    print("Forward windows dropped (stock stopped trading), % of matured rows: "
+          + "  ".join(f"{h}d {v}%" for h, v in (pit.get("forward_dropped_pct_of_matured_rows") or {}).items()))
+
+    v1 = result.get("v1_confirmation_primary_spreads") or {}
+    for name in ("primary", "secondary"):
+        block = pit.get(name)
+        if not block:
+            print(f"\n{name.upper()}: no usable dates.")
+            continue
+        title = "PRIMARY (verdicts)" if name == "primary" else "SECONDARY (coverage ≥ 90%)"
+        print(f"\n{title}: {block['tickers']} tickers, {block['dates_used']} dates")
+        for fid, f in block["factors"].items():
+            m = f["by_horizon"][str(f["primary_horizon"])]
+            c = f["costs"]
+            robust = f"  robust: {'yes' if f.get('robust') else 'no'}" if name == "primary" else ""
+            print(f"  {fid} [{f['verdict'].upper()}] {f['label']} ({f['primary_horizon']}d){robust}")
+            print(f"      spread {pp(m['mean_spread_pct'])}  CI {pp(m['ci_low'])} .. {pp(m['ci_high'])}"
+                  f"  | 2005–14 {pp(m['sub_2005_2014'])}  2015– {pp(m['sub_2015_end'])}"
+                  f"  | net 21d {pp(c['net_21d_spread_pct'])} (survives costs: {'yes' if c['survives_costs'] else 'no'})"
+                  + (f"  | v1 {pp(v1.get(fid))}" if name == "primary" else ""))
+
+    print("\nLimitations:")
+    for lim in result.get("limitations") or []:
+        print(f"  - {lim}")
+    print(f"\n{result.get('disclaimer')}")
+
+
+def _print_factor_study_report(result: dict) -> None:
+    """Terminal readout of the factor study (FACTOR_STUDY_SPEC.md): verdicts on
+    the confirmation sample first, then quintile tables, then discovery."""
+    def pp(v) -> str:
+        return f"{v:+.2f}pp" if isinstance(v, (int, float)) and not isinstance(v, bool) else "—"
+
+    print(f"\nPrice-factor study v1 — {result.get('universe')}, {result.get('start')} .. {result.get('end')}")
+    print(f"{result.get('tickers')} tickers; failed {len(result.get('failed') or [])}, "
+          f"excluded (not total-return) {len(result.get('excluded_non_total_return') or [])}; "
+          f"cost {result.get('cost_bp_per_side')} bp per side.")
+    conf, disc = result.get("confirmation"), result.get("discovery")
+    if not conf:
+        print("No usable data.")
+        return
+    print(f"Confirmation sample: {conf['tickers']} tickers, {conf['dates_used']} dates "
+          f"({conf['dates_dropped_thin']} dropped for < 100 names). "
+          "Spread = best − worst quintile forward return, mean over dates; block-bootstrap 95% CI.\n")
+    print("VERDICTS (confirmation sample, primary horizon)")
+    for fid, f in conf["factors"].items():
+        m = f["by_horizon"][str(f["primary_horizon"])]
+        c = f["costs"]
+        print(f"  {fid} [{f['verdict'].upper()}] {f['label']} (best = {f['direction']}, primary {f['primary_horizon']}d)")
+        print(f"      {f['primary_horizon']}d spread {pp(m['mean_spread_pct'])}  CI {pp(m['ci_low'])} .. {pp(m['ci_high'])}"
+              f"  | 2005–14 {pp(m['sub_2005_2014'])}  2015– {pp(m['sub_2015_end'])}  | n={m['n_dates']} dates")
+        others = "  ".join(f"{h}d {pp(v['mean_spread_pct'])}" for h, v in f["by_horizon"].items())
+        print(f"      all horizons: {others}")
+        print(f"      costs: monthly {pp(c['mean_monthly_cost_pct'])}, 21d net {pp(c['net_21d_spread_pct'])}"
+              f" -> survives costs: {'yes' if c['survives_costs'] else 'no'}")
+
+    print("\nQUINTILES (confirmation, primary horizon; Q5 = predicted best)")
+    for fid, f in conf["factors"].items():
+        h = str(f["primary_horizon"])
+        print(f"  {fid} {f['label']} ({h}d)")
+        print(f"    {'Q':<3}{'n':>8}{'vs mean':>10}{'raw':>10}{'hit%':>7}{'stdev':>9}{'ret/sd':>8}")
+        for row in f["quintiles"][h]:
+            hit = row["hit_rate_pct"]
+            sd = row["stdev_raw_pct"]
+            rps = row["return_per_stdev"]
+            hit_s = str(hit) if hit is not None else "—"
+            sd_s = f"{sd:.2f}" if sd is not None else "—"
+            rps_s = f"{rps:.3f}" if rps is not None else "—"
+            print(f"    Q{row['quintile']:<2}{row['n']:>8}{pp(row['mean_rel_pct']):>10}{pp(row['mean_raw_pct']):>10}"
+                  f"{hit_s:>7}{sd_s:>9}{rps_s:>8}")
+
+    if disc:
+        print(f"\nDISCOVERY SAMPLE (no verdict; {disc['tickers']} tickers — the action study's names)")
+        for fid, f in disc["factors"].items():
+            m = f["by_horizon"][str(f["primary_horizon"])]
+            print(f"  {fid} {f['label']}: {f['primary_horizon']}d spread {pp(m['mean_spread_pct'])}"
+                  f"  CI {pp(m['ci_low'])} .. {pp(m['ci_high'])}")
+
+    print("\nLimitations:")
+    for lim in result.get("limitations") or []:
+        print(f"  - {lim}")
+    print(f"\n{result.get('disclaimer')}")
+
+
+def _print_action_study_report(result: dict) -> None:
+    """Terminal readout of the action validation study: hypothesis verdicts
+    first (ACTION_STUDY_SPEC.md §3), then the descriptive tables."""
+    def pct(v) -> str:
+        return f"{v:+.2f}pp" if isinstance(v, (int, float)) and not isinstance(v, bool) else "—"
+    print(
+        f"\nTechnical action study — {result.get('index_label')} "
+        f"(every {result.get('sample_every')}th ticker, {result.get('tickers_scanned')} names), "
+        f"{result.get('start')} .. {result.get('end')}"
+    )
+    print(
+        f"{result.get('rebalance_dates')} monthly dates, {result.get('observations')} observations; "
+        f"skipped {len(result.get('skipped') or [])} tickers, "
+        f"no action {result.get('dropped_no_action')}, no forward bars {result.get('dropped_no_forward')}."
+    )
+    print("Primary metric: forward return minus same-date universe mean (pp). "
+          "Verdict at 21 trading days, date-cluster bootstrap 95% CI.\n")
+    print("HYPOTHESES (pre-registered)")
+    for hid, h in (result.get("hypotheses") or {}).items():
+        m = h["by_horizon"][str(result.get("verdict_horizon", 21))]
+        side = ">" if h["predicted_sign"] > 0 else "<"
+        print(f"  {hid} [{h['verdict'].upper()}] {h['description']} (predicted A−B {side} 0)")
+        print(f"      21d: {pct(m['diff'])}  CI {pct(m['ci_low'])} .. {pct(m['ci_high'])}  "
+              f"(nA={m['n_a']}, nB={m['n_b']})  | 10d {pct(h['by_horizon']['10']['diff'])}"
+              f"  63d {pct(h['by_horizon']['63']['diff'])}"
+              f"  | halves {pct(h['stability_21d']['first_half'])} / {pct(h['stability_21d']['second_half'])}")
+
+    def _rows(title, rows):
+        print(f"\n{title}")
+        print(f"  {'group':<34}{'n':>7}{'10d':>9}{'21d':>9}{'63d':>9}{'hit21':>8}")
+        for r in rows:
+            s21 = r["21"]["rel"]
+            flag = "  (low n)" if s21["low_sample"] else ""
+            print(f"  {r['group']:<34}{s21['n']:>7}{pct(r['10']['rel']['mean']):>9}"
+                  f"{pct(s21['mean']):>9}{pct(r['63']['rel']['mean']):>9}"
+                  f"{(str(s21['hit_rate_pct']) + '%') if s21['hit_rate_pct'] is not None else '—':>8}{flag}")
+
+    d = result.get("descriptive") or {}
+    _rows("BY ACTION (mean date-demeaned return)", d.get("by_action") or [])
+    _rows("UPTREND: EXHAUSTION-SIGN COUNT", d.get("fuel_gradient") or [])
+    _rows("UPTREND: EACH EXHAUSTION CHECK", d.get("exhaustion_checks") or [])
+    _rows("UPTREND: (PRICE − SMA50) / ATR", d.get("extension_atr") or [])
+
+    print("\nLimitations:")
+    for lim in result.get("limitations") or []:
+        print(f"  - {lim}")
+    print(f"\n{result.get('disclaimer')}")
 
 
 def _parse_as_of(value: str) -> date:
@@ -3348,6 +3555,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bt_swing.add_argument(
         "--no-save", action="store_true", help="Do not persist the study result to the database.",
+    )
+
+    bt_action = backtest_sub.add_parser(
+        "action",
+        help=(
+            "Validate the technical action's fixed thresholds against forward returns "
+            "(pre-registered; see sec_analyzer/backtest/ACTION_STUDY_SPEC.md)."
+        ),
+    )
+    bt_action.add_argument("--start", type=str, default="2015-01-01", help="ISO start date (default 2015-01-01).")
+    bt_action.add_argument("--end", type=str, default=None, help="ISO end date (default: latest bar).")
+    bt_action.add_argument(
+        "--sample-every", type=int, default=4,
+        help="Use every Nth S&P 500 ticker, alphabetical (default 4; 1 = full index).",
+    )
+    bt_action.add_argument("--workers", type=int, default=None, help="Process-pool size (default min(8, cpu)).")
+    bt_action.add_argument("--json", type=str, default=None, help="Also write the full result to this JSON file.")
+    bt_action.add_argument(
+        "--checkpoint", type=str, default=None,
+        help="JSON-lines file: each finished ticker is saved as it completes; re-running with the same "
+             "file and options resumes instead of recomputing.",
+    )
+
+    bt_factors = backtest_sub.add_parser(
+        "factors",
+        help=(
+            "Price-factor study v1: momentum, reversal, 52-week-high, low volatility "
+            "(pre-registered; see sec_analyzer/backtest/FACTOR_STUDY_SPEC.md)."
+        ),
+    )
+    bt_factors.add_argument("--start", type=str, default="2005-01-01", help="ISO start date (default 2005-01-01).")
+    bt_factors.add_argument("--end", type=str, default=None, help="ISO end date (default: latest bar).")
+    bt_factors.add_argument("--json", type=str, default=None, help="Also write the full result to this JSON file.")
+    bt_factors.add_argument(
+        "--pit", action="store_true",
+        help="v2: point-in-time S&P 500 membership, offline price cache only (FACTOR_STUDY_SPEC.md §10).",
     )
 
     backtest_parser.set_defaults(func=cmd_backtest)

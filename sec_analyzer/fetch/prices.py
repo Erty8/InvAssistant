@@ -886,6 +886,22 @@ def get_price_history(
     return df, source
 
 
+def load_cached_history(ticker: str) -> "Optional[tuple[pd.DataFrame, str]]":
+    """The on-disk cached price history for ``ticker`` and its recorded
+    source, or ``None`` if there is no cache file. Never touches the network
+    and ignores cache age -- for backtests that must read a fixed, already
+    fetched snapshot (a live path should use :func:`get_price_history`)."""
+    path = _cache_path(ticker)
+    if not os.path.exists(path):
+        return None
+    try:
+        df = _load_cache(path)
+    except (OSError, ValueError, KeyError):
+        logger.warning("Unreadable price cache for %s", ticker, exc_info=True)
+        return None
+    return df, f"cache({_read_cache_source(path)})"
+
+
 def latest_price(df: pd.DataFrame) -> "tuple[float, str]":
     """Return the most recent Close price and its date.
 

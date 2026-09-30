@@ -65,7 +65,7 @@ Triangulation (`val["triangulation"]`):
 
 Determinism & safety:
 - [ ] Re-run step 1A a second time → identical `valuation_json` (same inputs must give same numbers, SPEC intro). A diff is a determinism bug.
-- [ ] No `null`/`NaN`/`None` leaking as display text; every missing piece is `None` + a Turkish `note` in `val["notes"]`.
+- [ ] No `null`/`NaN`/`None` leaking as display text; every missing piece is `None` + an English `note` in `val["notes"]`.
 
 ## 3. Report
 
