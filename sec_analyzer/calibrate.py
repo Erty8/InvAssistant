@@ -113,6 +113,71 @@ def _method_slug(valuation: dict) -> str:
     return "pb-roe"
 
 
+def run_headless_pipeline(
+    ticker: str,
+    years: int = 12,
+    no_cache: bool = False,
+    as_of=None,
+    fred_rate: Optional[dict] = None,
+) -> tuple:
+    """Run the headless script-provider pipeline for ONE ticker.
+
+    The per-ticker body shared by :func:`run_calibration` and the
+    ``funding-screen`` valuation overlay: fetch/normalize/store, price +
+    technical data, ``compute_metrics`` -> ``detect_red_flags`` -> SEC
+    submissions -> catalyst, then ``interpret(provider="script")`` (no LLM).
+    The caller fetches the FRED risk-free rate once and passes it in so a
+    whole run shares one rate.
+
+    The ``cli`` imports are lazy to avoid an import cycle (``cli.py`` imports
+    this module). Exceptions propagate: callers decide how to record a
+    failed ticker.
+
+    Args:
+        ticker: Stock ticker symbol.
+        years: Fiscal years to retain.
+        no_cache: Bypass on-disk caches.
+        as_of: Optional point-in-time ``datetime.date``.
+        fred_rate: Pre-fetched risk-free observation (see
+            ``cli._fetch_risk_free_asof``).
+
+    Returns:
+        ``(result, price, price_as_of, metrics)`` where ``result`` is the
+        ``interpret`` output.
+    """
+    from sec_analyzer.cli import (
+        _fetch_catalyst,
+        _fetch_normalize_store,
+        _fetch_price_and_technical,
+        _fetch_submissions,
+    )
+
+    args = argparse.Namespace(ticker=ticker, years=years, no_cache=no_cache, as_of=as_of)
+    cik, _name, normalized, ratios = _fetch_normalize_store(args)
+    price, price_as_of, technical, price_df = _fetch_price_and_technical(
+        ticker, _CALIBRATION_HORIZON, no_cache, as_of
+    )
+    metrics = compute_metrics(normalized, ratios, price)
+    flags = detect_red_flags(normalized, ratios, metrics, _CALIBRATION_HORIZON)
+    submissions = _fetch_submissions(cik, ticker, no_cache)
+    catalyst = _fetch_catalyst(submissions, ticker, as_of)
+    result = interpret(
+        normalized,
+        ratios,
+        provider="script",
+        horizon=_CALIBRATION_HORIZON,
+        metrics=metrics,
+        technical=technical,
+        red_flags=flags,
+        catalyst=catalyst,
+        submissions=submissions,
+        price_df=price_df,
+        as_of=as_of,
+        fred_rate=fred_rate,
+    )
+    return result, price, price_as_of, metrics
+
+
 def run_calibration(
     tickers: List[str], years: int = 12, no_cache: bool = False, as_of=None
 ) -> List[dict]:
@@ -166,13 +231,7 @@ def run_calibration(
     """
     # Imported here, not at module level, to avoid an import cycle: cli.py
     # imports run_calibration/etc. from this module.
-    from sec_analyzer.cli import (
-        _fetch_catalyst,
-        _fetch_normalize_store,
-        _fetch_price_and_technical,
-        _fetch_risk_free_asof,
-        _fetch_submissions,
-    )
+    from sec_analyzer.cli import _fetch_risk_free_asof
 
     # One (cached) FRED fetch for the whole basket -- the latest observation
     # on a live run, the as-of one on a historical run. Fetched once here so
@@ -184,28 +243,8 @@ def run_calibration(
     rows: List[dict] = []
     for ticker in tickers:
         try:
-            args = argparse.Namespace(ticker=ticker, years=years, no_cache=no_cache, as_of=as_of)
-            cik, _name, normalized, ratios = _fetch_normalize_store(args)
-            price, _price_as_of, technical, price_df = _fetch_price_and_technical(
-                ticker, _CALIBRATION_HORIZON, no_cache, as_of
-            )
-            metrics = compute_metrics(normalized, ratios, price)
-            flags = detect_red_flags(normalized, ratios, metrics, _CALIBRATION_HORIZON)
-            submissions = _fetch_submissions(cik, ticker, no_cache)
-            catalyst = _fetch_catalyst(submissions, ticker, as_of)
-            result = interpret(
-                normalized,
-                ratios,
-                provider="script",
-                horizon=_CALIBRATION_HORIZON,
-                metrics=metrics,
-                technical=technical,
-                red_flags=flags,
-                catalyst=catalyst,
-                submissions=submissions,
-                price_df=price_df,
-                as_of=as_of,
-                fred_rate=fred_rate,
+            result, price, _price_as_of, metrics = run_headless_pipeline(
+                ticker, years, no_cache, as_of, fred_rate
             )
         except Exception as exc:  # noqa: BLE001 - one bad ticker must not abort the basket
             logger.warning("Calibration failed for %s", ticker, exc_info=True)
