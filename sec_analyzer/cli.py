@@ -100,6 +100,7 @@ from sec_analyzer.signals.insider import detect_insider_activity, summarize_insi
 from sec_analyzer.signals.macro import build_macro_context, summarize_macro
 from sec_analyzer.store import assumptions as assumptions_store
 from sec_analyzer.valuation import damodaran
+from sec_analyzer.valuation import reverse_dcf as reverse_dcf_module
 from sec_analyzer.valuation.capm import compute_cost_of_equity
 from sec_analyzer.valuation.sanity import clamp_assumptions, validate_assumptions
 from sec_analyzer.valuation.sector import SECTOR_FINANCIAL, _is_deposit_funded, classify_sector
@@ -889,21 +890,83 @@ def _reverse_dcf_line(result: dict, valuation: dict) -> str:
     provider, or a commentary that left the field empty).
     """
     label = "Reverse DCF:".ljust(_CARD_LABEL_WIDTH)
+    reverse_dcf = valuation.get("reverse_dcf") or {}
+    # SPEC.md Sec.28d: flag the normalized-FCF basis and show the raw solve.
+    suffix = ""
+    if reverse_dcf.get("fcf0_basis") == "normalized":
+        raw_text = _format_bracketed_growth(reverse_dcf.get("implied_growth_raw"), reverse_dcf.get("bracket_status_raw"))
+        suffix = f" [normalized FCF; raw: {raw_text}]"
+
     comment = result.get("reverse_dcf_comment")
     if comment:
-        return f"{label}{comment}"
+        return f"{label}{comment}{suffix}"
 
-    reverse_dcf = valuation.get("reverse_dcf") or {}
     implied = reverse_dcf.get("implied_growth")
-    if implied is None:
+    status = reverse_dcf.get("bracket_status")
+    if implied is None and status not in ("above_bracket", "below_bracket"):
         return f"{label}{_DASH}"
+    implied_text = _format_pct_signed(implied) if implied is not None else _format_bracketed_growth(None, status)
 
     realized_label = reverse_dcf.get("realized_label") or _DASH
     realized_text = _format_pct_signed(reverse_dcf.get("realized_cagr_5y"))
     return (
-        f"{label}price implies a 10y {_format_pct_signed(implied)} CAGR "
-        f"(realized {realized_label}: {realized_text})"
+        f"{label}price implies a 10y {implied_text} CAGR "
+        f"(realized {realized_label}: {realized_text}){suffix}"
     )
+
+
+def _format_growth_pct(value, digits: int = 1) -> str:
+    """Render a decimal-fraction growth rate as ``"21.1%"`` (unicode minus for
+    negatives). Returns :data:`_DASH` for ``None``/non-numeric input."""
+    if value is None:
+        return _DASH
+    try:
+        return f"{float(value) * 100:.{digits}f}%".replace("-", "−")
+    except (TypeError, ValueError):
+        return _DASH
+
+
+def _format_bracketed_growth(value, status: Optional[str]) -> str:
+    """Render a reverse-DCF solve: ``">60%"``/``"<−20%"`` for an out-of-bracket
+    status (bounds from ``reverse_dcf._BRACKET_LO/_HI``), else the growth rate
+    via :func:`_format_growth_pct`."""
+    if status == "above_bracket":
+        return f">{_format_growth_pct(reverse_dcf_module._BRACKET_HI, 0)}"
+    if status == "below_bracket":
+        return f"<{_format_growth_pct(reverse_dcf_module._BRACKET_LO, 0)}"
+    return _format_growth_pct(value)
+
+
+def _rate_sensitivity_line(valuation: dict) -> Optional[str]:
+    """Render the "Rate sens.:" card line (SPEC.md Sec.28d) under the Reverse
+    DCF line, e.g. ``"Rate sens.: r −50bp 21.1% · +50bp 24.8% · +100bp 26.5%
+    (g_t fixed 4.0%)"``. ``None`` (line omitted) when there is no
+    ``reverse_dcf.rate_sensitivity`` block."""
+    block = (valuation.get("reverse_dcf") or {}).get("rate_sensitivity")
+    if not isinstance(block, dict) or not block.get("shifts"):
+        return None
+
+    skip_labels = {
+        "below_rate_floor": "floor",
+        "below_erp_spread": "ERP spread",
+        "rate_at_or_below_terminal_growth": "r ≤ g_t",
+    }
+    parts = []
+    for index, entry in enumerate(block["shifts"]):
+        shift_bp = entry.get("shift_bp")
+        try:
+            shift_text = f"{int(shift_bp):+d}bp".replace("-", "−")
+        except (TypeError, ValueError):
+            shift_text = _DASH
+        status = entry.get("status")
+        if status == "skipped":
+            reason = skip_labels.get(entry.get("skip_reason"))
+            value_text = f"{_DASH} ({reason})" if reason else _DASH
+        else:
+            value_text = _format_bracketed_growth(entry.get("implied_growth"), status)
+        prefix = "r " if index == 0 else ""
+        parts.append(f"{prefix}{shift_text} {value_text}")
+    return f"Rate sens.: {' · '.join(parts)} (g_t fixed {_format_growth_pct(block.get('terminal_growth'))})"
 
 
 def _multiples_line(valuation: dict) -> str:
@@ -1520,6 +1583,9 @@ def _print_verdict_card(
 
     if valuation:
         print(_reverse_dcf_line(result, valuation))
+        rate_sens_line = _rate_sensitivity_line(valuation)
+        if rate_sens_line:
+            print(f"  {rate_sens_line}")
         print(_multiples_line(valuation))
         ev_multiples_line = _ev_multiples_line(valuation)
         if ev_multiples_line:

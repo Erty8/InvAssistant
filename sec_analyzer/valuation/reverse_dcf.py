@@ -170,3 +170,103 @@ def implied_growth(
     """
     growth, _status = implied_growth_with_status(price, fcf0, terminal_growth, discount_rate, shares, dilution_rate)
     return growth
+
+
+#: Discount-rate shifts (basis points) for :func:`implied_growth_rate_sensitivity`,
+#: in display order (SPEC.md Sec.28b).
+RATE_SHIFTS_BP = (-50, 50, 100)
+
+#: Status of a shift that was not solved because it would breach a Sec.3 guard.
+STATUS_SKIPPED = "skipped"
+
+
+def _is_num(value) -> bool:
+    """True for a real (non-bool, non-NaN) number."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value == value
+
+
+def implied_growth_rate_sensitivity(
+    price: Optional[float],
+    fcf0: Optional[float],
+    terminal_growth: float,
+    discount_rate: float,
+    shares: Optional[float],
+    dilution_rate: float = 0.0,
+    *,
+    rate_floor: float,
+    min_erp_spread: float,
+    shifts_bp=RATE_SHIFTS_BP,
+    basis: str = "raw",
+    base_result: "Optional[tuple]" = None,
+) -> Optional[dict]:
+    """Re-solve the implied growth at shifted discount rates (SPEC.md Sec.28b).
+
+    A discount-rate shift with ``terminal_growth`` held fixed (NOT a
+    risk-free-rate shift). A downward shift that would breach, in order,
+    ``r <= terminal_growth``, ``rate_floor`` or the ``min_erp_spread`` is
+    skipped (never clamped). Reporting-only; never raises.
+
+    Args:
+        price: Current market price per share.
+        fcf0: Base-year free cash flow the headline solve used.
+        terminal_growth: Base-scenario terminal growth rate (held fixed).
+        discount_rate: Base-scenario discount rate (already post-clamp).
+        shares: Diluted shares outstanding.
+        dilution_rate: Annual dilution rate (see ``dcf.dcf_per_share``).
+        rate_floor: Minimum admissible discount rate (sanity floor).
+        min_erp_spread: Minimum ``r - terminal_growth`` spread.
+        shifts_bp: Shifts in basis points, in display order.
+        basis: ``"raw"`` or ``"normalized"``; echoed into the block.
+        base_result: Optional already-computed ``(growth, status)`` base
+            solve to reuse instead of re-running it.
+
+    Returns:
+        The ``rate_sensitivity`` block, or ``None`` when ``price``/``fcf0``/
+        ``shares`` are unusable or ``discount_rate``/``terminal_growth`` are
+        not numbers.
+    """
+    if not (_is_num(price) and price > 0 and _is_num(fcf0) and _is_num(shares) and shares > 0):
+        return None
+    if not (_is_num(discount_rate) and _is_num(terminal_growth)):
+        return None
+
+    from sec_analyzer.valuation import sanity  # local: keeps module import light
+
+    if base_result is None:
+        base_result = implied_growth_with_status(price, fcf0, terminal_growth, discount_rate, shares, dilution_rate)
+    base_growth, base_status = base_result
+
+    entries = []
+    for shift_bp in shifts_bp:
+        r_s = round(discount_rate + shift_bp / 10_000, 6)
+        skip_reason = None
+        if shift_bp < 0:
+            if r_s <= terminal_growth:
+                skip_reason = "rate_at_or_below_terminal_growth"
+            elif r_s < rate_floor - 1e-9:
+                skip_reason = "below_rate_floor"
+            elif r_s - terminal_growth < min_erp_spread - sanity._ERP_SPREAD_EPS:
+                skip_reason = "below_erp_spread"
+        if skip_reason is not None:
+            entries.append({
+                "shift_bp": shift_bp, "discount_rate": r_s, "implied_growth": None, "delta_pp": None,
+                "status": STATUS_SKIPPED, "skip_reason": skip_reason,
+            })
+            continue
+        growth, status = implied_growth_with_status(price, fcf0, terminal_growth, r_s, shares, dilution_rate)
+        delta_pp = None
+        if growth is not None and base_growth is not None and status == STATUS_OK and base_status == STATUS_OK:
+            delta_pp = round((growth - base_growth) * 100, 2)
+        entries.append({
+            "shift_bp": shift_bp, "discount_rate": r_s, "implied_growth": growth, "delta_pp": delta_pp,
+            "status": status, "skip_reason": None,
+        })
+
+    return {
+        "basis": basis,
+        "base_discount_rate": round(discount_rate, 6),
+        "terminal_growth": round(terminal_growth, 6),
+        "base_implied_growth": base_growth,
+        "base_status": base_status,
+        "shifts": entries,
+    }

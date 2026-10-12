@@ -519,6 +519,7 @@ def triangulate(
     sector_ratio: Optional[float] = None,
     ev_ebitda_pct: Optional[float] = None,
     net_debt_to_ebitda: Optional[float] = None,
+    normalized_reverse_dcf: bool = False,
 ) -> dict:
     """Combine the three method signals into one confidence + direction view.
 
@@ -644,6 +645,15 @@ def triangulate(
             net debt). ``>= _LEVERAGE_EBITDA_RATIO`` (1.0) flips the multiples
             primary to EV/EBITDA per above. ``None`` (the default) -- not
             leveraged / unknown -- preserves P/E-primary behavior.
+        normalized_reverse_dcf: Whether the reverse DCF was solved on the
+            cyclical normalized fcf0 (SPEC.md Sec.28a, ``fcf0_basis ==
+            "normalized"``). Same :data:`CONFIDENCE_MEDIUM` cap as the
+            headline overrides above: the reverse-DCF leg then shares the
+            DCF leg's cash-flow base, discount rate and terminal growth, and
+            its revenue-CAGR reference is also the default base-growth
+            assumption, so the two legs aren't independent evidence. Applied
+            after the headline caps, so an EPV/FCFE headline keeps its own
+            cap message. ``False`` (the default) preserves existing behavior.
 
     Returns:
         ``{"signals": {"dcf", "reverse_dcf", "multiples"}, "confidence":
@@ -665,7 +675,7 @@ def triangulate(
             price, dcf_base_band, implied_growth, realized_cagr, base_growth, pe_pct, ps_pct, pfcf_pct, sector_type,
             hyper_growth, bull_band, reverse_dcf_status, raw_growth_pair_pct, growth_adj_pct,
             earnings_power_headline, mature_revenue_headline, midgrowth_revenue_headline, pffo_pct,
-            cyclical_fcfe_headline, sector_ratio, ev_ebitda_pct, net_debt_to_ebitda,
+            cyclical_fcfe_headline, sector_ratio, ev_ebitda_pct, net_debt_to_ebitda, normalized_reverse_dcf,
         )
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("triangulate() failed unexpectedly; returning a no-data result.")
@@ -688,6 +698,7 @@ def _triangulate(
     hyper_growth=False, bull_band=None, reverse_dcf_status=None, raw_growth_pair_pct=None, growth_adj_pct=None,
     earnings_power_headline=False, mature_revenue_headline=False, midgrowth_revenue_headline=False, pffo_pct=None,
     cyclical_fcfe_headline=False, sector_ratio=None, ev_ebitda_pct=None, net_debt_to_ebitda=None,
+    normalized_reverse_dcf=False,
 ) -> dict:
     leveraged = net_debt_to_ebitda is not None and net_debt_to_ebitda >= _LEVERAGE_EBITDA_RATIO
     signals = {
@@ -763,6 +774,13 @@ def _triangulate(
         rationale["confidence"] += (
             " (The headline comes from the earnings-based FCFE anchor -- the DCF and multiples legs reflect "
             "suppressed FCF -- so confidence is capped at MEDIUM.)"
+        )
+    elif normalized_reverse_dcf and confidence == CONFIDENCE_HIGH:
+        confidence = CONFIDENCE_MEDIUM
+        rationale["confidence"] += (
+            " (The reverse-DCF was solved on the same mid-cycle normalized FCF as the DCF and is compared "
+            "against revenue growth, which also drives the base assumption; it isn't independent evidence -- "
+            "confidence is capped at MEDIUM.)"
         )
 
     # --- Model–market divergence governor (expectations discipline) --------

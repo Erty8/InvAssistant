@@ -1,0 +1,1063 @@
+{
+ "cyclical_no_variant": {
+  "altman_z": null,
+  "assumptions": {
+   "base": {
+    "discount_rate": 0.1,
+    "growth_5y": 0.1,
+    "story": "Baz.",
+    "terminal_growth": 0.03
+   },
+   "bear": {
+    "discount_rate": 0.12,
+    "growth_5y": 0.05,
+    "story": "Ay\u0131.",
+    "terminal_growth": 0.02
+   },
+   "bull": {
+    "discount_rate": 0.09,
+    "growth_5y": 0.15,
+    "story": "Bo\u011fa.",
+    "terminal_growth": 0.03
+   }
+  },
+  "beneish_m": null,
+  "cycle": null,
+  "cyclical_fcfe_detail": null,
+  "cyclical_fcfe_headline": false,
+  "dcf": {
+   "disabled_reason": null,
+   "enabled": true,
+   "high_growth_flag": false,
+   "normalized_variant": null,
+   "scenarios": {
+    "base": {
+     "hi": 142.68,
+     "lo": 84.41,
+     "per_share": 108.38
+    },
+    "bear": {
+     "hi": 73.99,
+     "lo": 48.79,
+     "per_share": 59.64
+    },
+    "bull": {
+     "hi": 229.34,
+     "lo": 127.63,
+     "per_share": 168.37
+    }
+   }
+  },
+  "earnings_power": null,
+  "earnings_power_headline": false,
+  "fair_value_range": {
+   "base": {
+    "discount_rate": "10%",
+    "growth": "10% growth",
+    "hi": 142.68,
+    "lo": 84.41,
+    "note": "Baz."
+   },
+   "bear": {
+    "discount_rate": "12%",
+    "growth": "5% growth",
+    "hi": 73.99,
+    "lo": 48.79,
+    "note": "Ay\u0131."
+   },
+   "bull": {
+    "discount_rate": "9%",
+    "growth": "15% growth",
+    "hi": 229.34,
+    "lo": 127.63,
+    "note": "Bo\u011fa."
+   }
+  },
+  "fcf0": 50.0,
+  "fcf0_source": "ttm",
+  "ffo": null,
+  "hyper_growth": false,
+  "hyper_growth_detail": null,
+  "lbo_floor_detail": null,
+  "mature_revenue_detail": null,
+  "mature_revenue_headline": false,
+  "merton_dtd": null,
+  "method_summary": [
+   {
+    "key": "raw_fcf_dcf",
+    "label_tr": "Standard FCF-DCF",
+    "reason_tr": "Since a normalized alternative couldn't be computed for the cyclical sector, the headline is based on the standard free-cash-flow DCF.",
+    "role": "headline"
+   },
+   {
+    "key": "reverse_dcf",
+    "label_tr": "Reverse DCF (Price-Implied Growth)",
+    "reason_tr": "The price-implied growth rate is compared against realized growth to test what the market expects from this company.",
+    "role": "cross_check"
+   },
+   {
+    "key": "multiples",
+    "label_tr": "Multiple Comparison (P/E)",
+    "reason_tr": "P/E was used as the standard primary multiple.",
+    "role": "cross_check"
+   }
+  ],
+  "midgrowth_revenue_detail": null,
+  "midgrowth_revenue_headline": false,
+  "multiples": {
+   "current": {
+    "ev_ebit": null,
+    "ev_ebitda": null,
+    "pe": null,
+    "pfcf": 4.0,
+    "pffo": null,
+    "ps": 0.2,
+    "ptbv": null
+   },
+   "ev_applicable": true,
+   "ev_ebit_percentile": null,
+   "ev_ebitda_percentile": null,
+   "growth_adjusted": {
+    "applicable": false,
+    "base_growth_pct": 10.0,
+    "label": "PEG",
+    "metric": "peg",
+    "percentile": null,
+    "raw_label": "P/E",
+    "raw_percentile": null,
+    "reason": "The growth-adjusted multiple (PEG) isn't applicable: TTM earnings aren't positive (no P/E).",
+    "sector_peg": null,
+    "value": null
+   },
+   "history": [],
+   "history_years": 0,
+   "leveraged": false,
+   "net_debt_to_ebitda": null,
+   "pe_percentile": null,
+   "pfcf_percentile": null,
+   "pffo_percentile": null,
+   "ps_percentile": null,
+   "ptbv_percentile": null,
+   "sector": {
+    "available": false,
+    "comparison": {
+     "bucket": null,
+     "current": null,
+     "label": null,
+     "median": null,
+     "ratio": null
+    },
+    "ev_ebitda_median": null,
+    "industry": null,
+    "pe_median": null,
+    "pfcf_median": null,
+    "precedent_transactions": null,
+    "ps_median": null
+   }
+  },
+  "notes": [
+   "Damodaran sector data not found; sector medians cannot be shown.",
+   "Cyclical normalized FCF is not meaningful: the upper-half (mid/peak cycle) average FCF margin is not positive.",
+   "The price implies growth below the reverse-DCF bracket (-20%..60%).",
+   "Multiple history could not be computed because price history is unavailable.",
+   "The current P/S ratio couldn't be aligned with the latest fiscal year's data, so it was computed using fiscal year 2024's data.",
+   "The current P/FCF ratio couldn't be aligned with the latest fiscal year's data, so it was computed using fiscal year 2024's data.",
+   "The growth-adjusted multiple (PEG) isn't applicable: TTM earnings aren't positive (no P/E).",
+   "Cycle position could not be computed: not enough annual net-margin data for a through-cycle statistic (at least 6 fiscal years are required).",
+   "Altman Z-score could not be computed: current-asset/current-liability data is missing.",
+   "Beneish M-score could not be computed: required data for two consecutive fiscal years is missing.",
+   "Merton distance-to-default could not be computed: no risk-free rate available.",
+   "LBO anchor could not be computed: EBITDA, EV/EBITDA multiple, total debt, FCF, or share count is missing/invalid."
+  ],
+  "pb_roe": null,
+  "reverse_dcf": {
+   "bracket_status": "below_bracket",
+   "implied_growth": null,
+   "realized_cagr_5y": null,
+   "realized_label": null
+  },
+  "rim": null,
+  "sector_type": "cyclical",
+  "sensitivity": {
+   "dr_values": [
+    0.09,
+    0.1,
+    0.11
+   ],
+   "growth_values": [
+    0.08,
+    0.1,
+    0.12
+   ],
+   "hi": 142.68,
+   "high_uncertainty": false,
+   "lo": 84.41,
+   "matrix": [
+    [
+     114.07,
+     97.1,
+     84.41
+    ],
+    [
+     127.63,
+     108.38,
+     93.99
+    ],
+    [
+     142.68,
+     120.88,
+     104.6
+    ]
+   ]
+  },
+  "triangulation": {
+   "confidence": "LOW",
+   "direction": "cheap",
+   "divergence": {
+    "action": "verdict",
+    "band_edge": 84.41,
+    "direction": "cheap",
+    "factor": 4.2204999999999995
+   },
+   "rationale": {
+    "confidence": "Model-market divergence: the base valuation band's low end ($84.41) is 4.2x the price ($20). All three methods feed off the same growth/margin assumption, so unanimity isn't independent confirmation -- it's the same assumption reflected in three mirrors. The model is pricing in continued growth, the market is pricing in its end; the judge will be the realized growth of the coming quarters. Confidence is low.",
+    "dcf": "Price $20 is below the base valuation band ($84.41-$142.68) -> cheap.",
+    "multiples": "The multiple percentile could not be computed.",
+    "reverse_dcf": "The price implies an expectation below even the model's most pessimistic growth scenario -> cheap."
+   },
+   "signals": {
+    "dcf": "cheap",
+    "multiples": "no_data",
+    "reverse_dcf": "cheap"
+   }
+  }
+ },
+ "growth_unprofitable_nonhyper": {
+  "altman_z": null,
+  "assumptions": {
+   "base": {
+    "discount_rate": 0.1,
+    "growth_5y": 0.1,
+    "story": "Baz.",
+    "terminal_growth": 0.03
+   },
+   "bear": {
+    "discount_rate": 0.12,
+    "growth_5y": 0.05,
+    "story": "Ay\u0131.",
+    "terminal_growth": 0.02
+   },
+   "bull": {
+    "discount_rate": 0.1,
+    "growth_5y": 0.15,
+    "story": "Bo\u011fa.",
+    "terminal_growth": 0.03
+   }
+  },
+  "beneish_m": null,
+  "cycle": null,
+  "cyclical_fcfe_detail": null,
+  "cyclical_fcfe_headline": false,
+  "dcf": {
+   "disabled_reason": null,
+   "enabled": true,
+   "high_growth_flag": false,
+   "normalized_variant": null,
+   "scenarios": {
+    "base": {
+     "hi": 42.8,
+     "lo": 25.32,
+     "per_share": 32.51
+    },
+    "bear": {
+     "hi": 22.2,
+     "lo": 14.64,
+     "per_share": 17.89
+    },
+    "bull": {
+     "hi": 56.34,
+     "lo": 33.1,
+     "per_share": 42.66
+    }
+   }
+  },
+  "earnings_power": null,
+  "earnings_power_headline": false,
+  "fair_value_range": {
+   "base": {
+    "discount_rate": "10%",
+    "growth": "10% growth",
+    "hi": 42.8,
+    "lo": 25.32,
+    "note": "Baz."
+   },
+   "bear": {
+    "discount_rate": "12%",
+    "growth": "5% growth",
+    "hi": 22.2,
+    "lo": 14.64,
+    "note": "Ay\u0131."
+   },
+   "bull": {
+    "discount_rate": "10%",
+    "growth": "15% growth",
+    "hi": 56.34,
+    "lo": 33.1,
+    "note": "Bo\u011fa."
+   }
+  },
+  "fcf0": 30.0,
+  "fcf0_source": "ttm",
+  "ffo": null,
+  "hyper_growth": false,
+  "hyper_growth_detail": null,
+  "lbo_floor_detail": null,
+  "mature_revenue_detail": null,
+  "mature_revenue_headline": false,
+  "merton_dtd": null,
+  "method_summary": [
+   {
+    "key": "raw_fcf_dcf",
+    "label_tr": "Standard FCF-DCF",
+    "reason_tr": "Since the loss-making growth company doesn't clear the revenue-first DCF's growth gate, the headline falls back to the standard FCF-DCF whenever it can be computed.",
+    "role": "headline"
+   },
+   {
+    "key": "reverse_dcf",
+    "label_tr": "Reverse DCF (Price-Implied Growth)",
+    "reason_tr": "The price-implied growth rate is compared against realized growth to test what the market expects from this company.",
+    "role": "cross_check"
+   },
+   {
+    "key": "multiples",
+    "label_tr": "Multiple Comparison (P/S)",
+    "reason_tr": "Since P/E is meaningless for loss-making growth companies, P/S (Price/Sales) was used as the primary multiple.",
+    "role": "cross_check"
+   }
+  ],
+  "midgrowth_revenue_detail": null,
+  "midgrowth_revenue_headline": false,
+  "multiples": {
+   "current": {
+    "ev_ebit": null,
+    "ev_ebitda": null,
+    "pe": null,
+    "pfcf": 26.6667,
+    "pffo": null,
+    "ps": 0.8,
+    "ptbv": null
+   },
+   "ev_applicable": true,
+   "ev_ebit_percentile": null,
+   "ev_ebitda_percentile": null,
+   "growth_adjusted": {
+    "applicable": false,
+    "base_growth_pct": 10.0,
+    "label": "PEG",
+    "metric": "peg",
+    "percentile": null,
+    "raw_label": "P/E",
+    "raw_percentile": null,
+    "reason": "The growth-adjusted multiple (PEG) isn't applicable: TTM earnings aren't positive (no P/E).",
+    "sector_peg": null,
+    "value": null
+   },
+   "history": [],
+   "history_years": 0,
+   "leveraged": false,
+   "net_debt_to_ebitda": null,
+   "pe_percentile": null,
+   "pfcf_percentile": null,
+   "pffo_percentile": null,
+   "ps_percentile": null,
+   "ptbv_percentile": null,
+   "sector": {
+    "available": false,
+    "comparison": {
+     "bucket": null,
+     "current": null,
+     "label": null,
+     "median": null,
+     "ratio": null
+    },
+    "ev_ebitda_median": null,
+    "industry": null,
+    "pe_median": null,
+    "pfcf_median": null,
+    "precedent_transactions": null,
+    "ps_median": null
+   }
+  },
+  "notes": [
+   "Assumption warning: Bull: discount rate 9.0% is below the lower bound of 10% (for an unprofitable company).",
+   "Bull: discount rate was 9.0%, raised to a floor of 10% (for an unprofitable company).",
+   "The latest year's FCF (net of SBC) deviated more than 50% from the 3-year average; but since FCF follows a stable trend (a structural rise/fall, not a one-off spike) the latest year's figure was still used as the starting FCF (fcf0) for the DCF.",
+   "Damodaran sector data not found; sector medians cannot be shown.",
+   "Realized revenue growth (11.1%) is insufficient for the mid-growth revenue-first DCF (< 12% or below terminal growth); falling back to a multiples-based valuation.",
+   "Multiple history could not be computed because price history is unavailable.",
+   "The current P/S ratio couldn't be aligned with the latest fiscal year's data, so it was computed using fiscal year 2023's data.",
+   "The current P/FCF ratio couldn't be aligned with the latest fiscal year's data, so it was computed using fiscal year 2023's data.",
+   "The growth-adjusted multiple (PEG) isn't applicable: TTM earnings aren't positive (no P/E).",
+   "Altman Z-score could not be computed: current-asset/current-liability data is missing.",
+   "Beneish M-score could not be computed: required data for two consecutive fiscal years is missing.",
+   "Merton distance-to-default could not be computed: no risk-free rate available.",
+   "LBO anchor could not be computed: EBITDA, EV/EBITDA multiple, total debt, FCF, or share count is missing/invalid."
+  ],
+  "pb_roe": null,
+  "reverse_dcf": {
+   "bracket_status": "ok",
+   "implied_growth": 0.138,
+   "realized_cagr_5y": null,
+   "realized_label": null
+  },
+  "rim": null,
+  "sector_type": "growth_unprofitable",
+  "sensitivity": {
+   "dr_values": [
+    0.09,
+    0.1,
+    0.11
+   ],
+   "growth_values": [
+    0.08,
+    0.1,
+    0.12
+   ],
+   "hi": 42.8,
+   "high_uncertainty": false,
+   "lo": 25.32,
+   "matrix": [
+    [
+     34.22,
+     29.13,
+     25.32
+    ],
+    [
+     38.29,
+     32.51,
+     28.2
+    ],
+    [
+     42.8,
+     36.27,
+     31.38
+    ]
+   ]
+  },
+  "triangulation": {
+   "confidence": "LOW",
+   "direction": "unclear",
+   "divergence": null,
+   "rationale": {
+    "confidence": "The methods give conflicting signals; confidence is low since there is no common direction.",
+    "dcf": "Price $40 is within the base valuation band ($25.32-$42.8) -> fair.",
+    "multiples": "The multiple percentile could not be computed.",
+    "reverse_dcf": "Price implies 13.8% growth; assumed growth is 10.0% -- the market is pricing in more growth -> expensive."
+   },
+   "signals": {
+    "dcf": "fair",
+    "multiples": "no_data",
+    "reverse_dcf": "expensive"
+   }
+  }
+ },
+ "hyper_revenue_mode": {
+  "altman_z": null,
+  "assumptions": {
+   "base": {
+    "discount_rate": 0.1,
+    "growth_5y": 0.1,
+    "story": "Baz.",
+    "terminal_growth": 0.03
+   },
+   "bear": {
+    "discount_rate": 0.12,
+    "growth_5y": 0.05,
+    "story": "Ay\u0131.",
+    "terminal_growth": 0.02
+   },
+   "bull": {
+    "discount_rate": 0.1,
+    "growth_5y": 0.15,
+    "story": "Bo\u011fa.",
+    "terminal_growth": 0.03
+   }
+  },
+  "beneish_m": null,
+  "cycle": null,
+  "cyclical_fcfe_detail": null,
+  "cyclical_fcfe_headline": false,
+  "dcf": {
+   "disabled_reason": null,
+   "enabled": true,
+   "high_growth_flag": false,
+   "normalized_variant": null,
+   "scenarios": {
+    "base": {
+     "hi": 13.32,
+     "lo": 7.88,
+     "per_share": 10.12
+    },
+    "bear": {
+     "hi": 6.91,
+     "lo": 4.55,
+     "per_share": 5.57
+    },
+    "bull": {
+     "hi": 17.53,
+     "lo": 10.3,
+     "per_share": 13.27
+    }
+   }
+  },
+  "earnings_power": null,
+  "earnings_power_headline": false,
+  "fair_value_range": {
+   "base": {
+    "discount_rate": "12%",
+    "growth": "50% start -> fading to 2.5% terminal",
+    "hi": 208.25,
+    "lo": 164.97,
+    "note": "Hyper-growth Base: 50% start growth (fading to 2.5% terminal over 10 years), 30% mature FCF margin, 12% discount rate."
+   },
+   "bear": {
+    "discount_rate": "14%",
+    "growth": "30% start -> fading to 2.5% terminal",
+    "hi": 61.77,
+    "lo": 48.17,
+    "note": "Hyper-growth Pessimistic: 30% start growth (fading to 2.5% terminal over 10 years), 21% mature FCF margin, 14% discount rate."
+   },
+   "bull": {
+    "discount_rate": "10%",
+    "growth": "60% start -> fading to 2.5% terminal",
+    "hi": 389.69,
+    "lo": 310.4,
+    "note": "Hyper-growth Optimistic: 60% start growth (fading to 2.5% terminal over 10 years), 36% mature FCF margin, 10% discount rate."
+   }
+  },
+  "fcf0": 46.666666666666664,
+  "fcf0_source": "3y_avg",
+  "ffo": null,
+  "hyper_growth": true,
+  "hyper_growth_detail": {
+   "annual_dilution": 0.0,
+   "arrival_flag": "aggressive",
+   "base_discount_rate": 0.12,
+   "capex_normalization": null,
+   "expected_value": 193.3,
+   "implied": {
+    "discount_rate": 0.2078,
+    "growth": 0.1683,
+    "revenue_10y": 2494.0098866855137,
+    "revenue_multiple": 2.4940098866855136,
+    "steady_state_margin": 0.0871,
+    "tam_share": null
+   },
+   "mature_discount_rate": 0.1,
+   "notes": [
+    "The hyper-growth discount rate was not held fixed: as the cash flows mature, each scenario's own cohort discount rate (bear 14%, base 12%, bull 10%) was linearly faded toward the mature cost of equity (10.0%) by its own steady-state year (year 10 in the base scenario) (Damodaran fade).",
+    "Hyper-growth arrival point: in the base scenario, revenue grows 9.6x over 10 years (aggressive)."
+   ],
+   "probabilities": {
+    "base": 0.5,
+    "bear": 0.25,
+    "bull": 0.25
+   },
+   "reasons": [
+    "Revenue CAGR 50.0% (>25%)",
+    "FCF is zero or negative",
+    "FCF margin is below 5% (suppressed cash flow)"
+   ],
+   "sbc_dilution_excluded": 0.0,
+   "scenarios": {
+    "base": {
+     "base_revenue": 1000.0,
+     "final_year_revenue": 9563.071766331508,
+     "hi": 208.25,
+     "lo": 164.97,
+     "per_share": 185.39,
+     "revenue_multiple": 9.563071766331507,
+     "revenue_path": [
+      1500.0,
+      2170.83,
+      3027.11,
+      4061.37,
+      5234.65,
+      6470.61,
+      7656.89,
+      8656.54,
+      9329.83,
+      9563.07
+     ],
+     "start_growth": 0.5,
+     "steady_state_year": 10,
+     "target_fcf_margin": 0.3,
+     "terminal_growth": 0.025
+    },
+    "bear": {
+     "base_revenue": 1000.0,
+     "final_year_revenue": 4380.158666573722,
+     "hi": 61.77,
+     "lo": 48.17,
+     "per_share": 54.56,
+     "revenue_multiple": 4.380158666573722,
+     "revenue_path": [
+      1300.0,
+      1650.28,
+      2044.51,
+      2470.45,
+      2909.64,
+      3338.01,
+      3727.44,
+      4048.41,
+      4273.33,
+      4380.16
+     ],
+     "start_growth": 0.3,
+     "steady_state_year": 10,
+     "target_fcf_margin": 0.21,
+     "terminal_growth": 0.025
+    },
+    "bull": {
+     "base_revenue": 1000.0,
+     "final_year_revenue": 13733.693897367895,
+     "hi": 389.69,
+     "lo": 310.4,
+     "per_share": 347.85,
+     "revenue_multiple": 13.733693897367896,
+     "revenue_path": [
+      1600.0,
+      2457.78,
+      3618.4,
+      5095.91,
+      6851.16,
+      8773.29,
+      10674.18,
+      12304.95,
+      13398.73,
+      13733.69
+     ],
+     "start_growth": 0.6,
+     "steady_state_year": 10,
+     "target_fcf_margin": 0.36,
+     "terminal_growth": 0.025
+    }
+   },
+   "suppressed": false,
+   "suppressed_reason": null,
+   "tam_usd": null,
+   "target_margin_flag": null,
+   "target_margin_pct": 0.3,
+   "target_margin_source": "gross margin x 0.5"
+  },
+  "lbo_floor_detail": null,
+  "mature_revenue_detail": null,
+  "mature_revenue_headline": false,
+  "merton_dtd": null,
+  "method_summary": [
+   {
+    "key": "hyper_growth_revenue_dcf",
+    "label_tr": "Hyper-Growth Revenue-First DCF",
+    "reason_tr": "Since hyper-growth was detected, the headline is based on a revenue-first DCF that fades revenue growth and converges to a mature target FCF margin.",
+    "role": "headline"
+   },
+   {
+    "key": "raw_fcf_dcf",
+    "label_tr": "Standard FCF-DCF",
+    "reason_tr": "The standard two-stage free-cash-flow DCF was reported as a secondary cross-check.",
+    "role": "secondary"
+   },
+   {
+    "key": "reverse_dcf",
+    "label_tr": "Reverse DCF (Price-Implied Growth)",
+    "reason_tr": "The price-implied growth rate is compared against realized growth to test what the market expects from this company.",
+    "role": "cross_check"
+   },
+   {
+    "key": "multiples",
+    "label_tr": "Multiple Comparison (P/S)",
+    "reason_tr": "Since P/E is meaningless for loss-making growth companies, P/S (Price/Sales) was used as the primary multiple.",
+    "role": "cross_check"
+   }
+  ],
+  "midgrowth_revenue_detail": null,
+  "midgrowth_revenue_headline": false,
+  "multiples": {
+   "current": {
+    "ev_ebit": null,
+    "ev_ebitda": null,
+    "pe": null,
+    "pfcf": 50.0,
+    "pffo": null,
+    "ps": 5.0,
+    "ptbv": null
+   },
+   "ev_applicable": true,
+   "ev_ebit_percentile": null,
+   "ev_ebitda_percentile": null,
+   "growth_adjusted": {
+    "applicable": false,
+    "base_growth_pct": 10.0,
+    "label": "Growth-adjusted EV/Sales",
+    "metric": "growth_adj_ps",
+    "percentile": null,
+    "raw_label": "EV/S",
+    "raw_percentile": null,
+    "reason": "The growth-adjusted multiple (Growth-adjusted EV/Sales) isn't applicable: EV/Sales could not be computed.",
+    "sector_peg": null,
+    "value": null
+   },
+   "history": [],
+   "history_years": 0,
+   "leveraged": false,
+   "net_debt_to_ebitda": null,
+   "pe_percentile": null,
+   "pfcf_percentile": null,
+   "pffo_percentile": null,
+   "ps_percentile": null,
+   "ptbv_percentile": null,
+   "sector": {
+    "available": false,
+    "comparison": {
+     "bucket": null,
+     "current": null,
+     "label": null,
+     "median": null,
+     "ratio": null
+    },
+    "ev_ebitda_median": null,
+    "industry": null,
+    "pe_median": null,
+    "pfcf_median": null,
+    "precedent_transactions": null,
+    "ps_median": null
+   }
+  },
+  "notes": [
+   "Assumption warning: Bull: discount rate 9.0% is below the lower bound of 10% (for an unprofitable company).",
+   "Bull: discount rate was 9.0%, raised to a floor of 10% (for an unprofitable company).",
+   "The 3-year average FCF (net of SBC) was used as the starting FCF (fcf0) for the DCF instead of the latest year's figure (the latest year's data is missing, negative, or deviated more than 50% from the 3-year average).",
+   "Damodaran sector data not found; sector medians cannot be shown.",
+   "The hyper-growth discount rate was not held fixed: as the cash flows mature, each scenario's own cohort discount rate (bear 14%, base 12%, bull 10%) was linearly faded toward the mature cost of equity (10.0%) by its own steady-state year (year 10 in the base scenario) (Damodaran fade).",
+   "Hyper-growth arrival point: in the base scenario, revenue grows 9.6x over 10 years (aggressive).",
+   "Hyper-growth mode: the headline range came from the revenue-first DCF (growth fade + mature target margin); the standard FCF-DCF is secondary, in 'dcf.scenarios'.",
+   "Multiple history could not be computed because price history is unavailable.",
+   "The current P/S ratio couldn't be aligned with the latest fiscal year's data, so it was computed using fiscal year 2023's data.",
+   "The current P/FCF ratio couldn't be aligned with the latest fiscal year's data, so it was computed using fiscal year 2022's data.",
+   "The growth-adjusted multiple (Growth-adjusted EV/Sales) isn't applicable: EV/Sales could not be computed.",
+   "Altman Z-score could not be computed: current-asset/current-liability data is missing.",
+   "Beneish M-score could not be computed: required data for two consecutive fiscal years is missing.",
+   "Merton distance-to-default could not be computed: no risk-free rate available.",
+   "LBO anchor could not be computed: EBITDA, EV/EBITDA multiple, total debt, FCF, or share count is missing/invalid."
+  ],
+  "pb_roe": null,
+  "reverse_dcf": {
+   "bracket_status": "ok",
+   "implied_growth": 0.1683,
+   "realized_cagr_5y": 0.5,
+   "realized_label": "revenue 5y"
+  },
+  "rim": null,
+  "sector_type": "growth_unprofitable",
+  "sensitivity": {
+   "dr_values": [
+    0.09,
+    0.1,
+    0.11
+   ],
+   "growth_values": [
+    0.08,
+    0.1,
+    0.12
+   ],
+   "hi": 13.32,
+   "high_uncertainty": false,
+   "lo": 7.88,
+   "matrix": [
+    [
+     10.65,
+     9.06,
+     7.88
+    ],
+    [
+     11.91,
+     10.12,
+     8.77
+    ],
+    [
+     13.32,
+     11.28,
+     9.76
+    ]
+   ]
+  },
+  "triangulation": {
+   "confidence": "LOW",
+   "direction": "cheap",
+   "divergence": {
+    "action": "verdict",
+    "band_edge": 164.97,
+    "direction": "cheap",
+    "factor": 3.2994
+   },
+   "rationale": {
+    "confidence": "Model-market divergence: the base valuation band's low end ($164.97) is 3.3x the price ($50). All three methods feed off the same growth/margin assumption, so unanimity isn't independent confirmation -- it's the same assumption reflected in three mirrors. The model is pricing in continued growth, the market is pricing in its end; the judge will be the realized growth of the coming quarters. Confidence is low.",
+    "dcf": "Price $50 is below the base valuation band ($164.97-$208.25) -> cheap.",
+    "multiples": "The multiple percentile could not be computed.",
+    "reverse_dcf": "Price implies 16.8% growth; realized growth is 50.0% -- the market is pricing in less growth -> cheap."
+   },
+   "signals": {
+    "dcf": "cheap",
+    "multiples": "no_data",
+    "reverse_dcf": "cheap"
+   }
+  }
+ },
+ "mature_profitable": {
+  "altman_z": null,
+  "assumptions": {
+   "base": {
+    "discount_rate": 0.1,
+    "growth_5y": 0.1,
+    "story": "Baz.",
+    "terminal_growth": 0.03
+   },
+   "bear": {
+    "discount_rate": 0.12,
+    "growth_5y": 0.05,
+    "story": "Ay\u0131.",
+    "terminal_growth": 0.02
+   },
+   "bull": {
+    "discount_rate": 0.09,
+    "growth_5y": 0.15,
+    "story": "Bo\u011fa.",
+    "terminal_growth": 0.03
+   }
+  },
+  "beneish_m": null,
+  "cycle": null,
+  "cyclical_fcfe_detail": null,
+  "cyclical_fcfe_headline": false,
+  "dcf": {
+   "disabled_reason": null,
+   "enabled": true,
+   "high_growth_flag": false,
+   "normalized_variant": null,
+   "scenarios": {
+    "base": {
+     "hi": 331.02,
+     "lo": 195.84,
+     "per_share": 251.45
+    },
+    "bear": {
+     "hi": 171.66,
+     "lo": 113.19,
+     "per_share": 138.37
+    },
+    "bull": {
+     "hi": 532.07,
+     "lo": 296.1,
+     "per_share": 390.62
+    }
+   }
+  },
+  "earnings_power": {
+   "cost_of_equity": 0.1,
+   "normalized_net_income": 110.0,
+   "per_share": 110.0,
+   "sanity_applied": false,
+   "scenarios": {
+    "base": {
+     "hi": 122.22,
+     "lo": 100.0,
+     "per_share": 110.0
+    },
+    "bear": {
+     "hi": 97.78,
+     "lo": 80.0,
+     "per_share": 88.0
+    },
+    "bull": {
+     "hi": 146.67,
+     "lo": 120.0,
+     "per_share": 132.0
+    }
+   }
+  },
+  "earnings_power_headline": false,
+  "fair_value_range": {
+   "base": {
+    "discount_rate": "10%",
+    "growth": "10% growth",
+    "hi": 331.02,
+    "lo": 195.84,
+    "note": "Baz."
+   },
+   "bear": {
+    "discount_rate": "12%",
+    "growth": "5% growth",
+    "hi": 171.66,
+    "lo": 113.19,
+    "note": "Ay\u0131."
+   },
+   "bull": {
+    "discount_rate": "9%",
+    "growth": "15% growth",
+    "hi": 532.07,
+    "lo": 296.1,
+    "note": "Bo\u011fa."
+   }
+  },
+  "fcf0": 116.0,
+  "fcf0_source": "ttm",
+  "ffo": null,
+  "hyper_growth": false,
+  "hyper_growth_detail": null,
+  "lbo_floor_detail": null,
+  "mature_revenue_detail": null,
+  "mature_revenue_headline": false,
+  "merton_dtd": null,
+  "method_summary": [
+   {
+    "key": "raw_fcf_dcf",
+    "label_tr": "Standard FCF-DCF",
+    "reason_tr": "Since free cash flow reliably reflects earning power, the headline is based on the standard FCF-DCF.",
+    "role": "headline"
+   },
+   {
+    "key": "reverse_dcf",
+    "label_tr": "Reverse DCF (Price-Implied Growth)",
+    "reason_tr": "The price-implied growth rate is compared against realized growth to test what the market expects from this company.",
+    "role": "cross_check"
+   },
+   {
+    "key": "multiples",
+    "label_tr": "Multiple Comparison (P/E)",
+    "reason_tr": "P/E was used as the standard primary multiple.",
+    "role": "cross_check"
+   }
+  ],
+  "midgrowth_revenue_detail": null,
+  "midgrowth_revenue_headline": false,
+  "multiples": {
+   "current": {
+    "ev_ebit": null,
+    "ev_ebitda": null,
+    "pe": null,
+    "pfcf": 12.931,
+    "pffo": null,
+    "ps": 1.3889,
+    "ptbv": null
+   },
+   "ev_applicable": true,
+   "ev_ebit_percentile": null,
+   "ev_ebitda_percentile": null,
+   "growth_adjusted": {
+    "applicable": false,
+    "base_growth_pct": 10.0,
+    "label": "PEG",
+    "metric": "peg",
+    "percentile": null,
+    "raw_label": "P/E",
+    "raw_percentile": null,
+    "reason": "The growth-adjusted multiple (PEG) isn't applicable: TTM earnings aren't positive (no P/E).",
+    "sector_peg": null,
+    "value": null
+   },
+   "history": [],
+   "history_years": 0,
+   "leveraged": false,
+   "net_debt_to_ebitda": null,
+   "pe_percentile": null,
+   "pfcf_percentile": null,
+   "pffo_percentile": null,
+   "ps_percentile": null,
+   "ptbv_percentile": null,
+   "sector": {
+    "available": false,
+    "comparison": {
+     "bucket": null,
+     "current": null,
+     "label": null,
+     "median": null,
+     "ratio": null
+    },
+    "ev_ebitda_median": null,
+    "industry": null,
+    "pe_median": null,
+    "pfcf_median": null,
+    "precedent_transactions": null,
+    "ps_median": null
+   }
+  },
+  "notes": [
+   "Damodaran sector data not found; sector medians cannot be shown.",
+   "Multiple history could not be computed because price history is unavailable.",
+   "The current P/S ratio couldn't be aligned with the latest fiscal year's data, so it was computed using fiscal year 2023's data.",
+   "The current P/FCF ratio couldn't be aligned with the latest fiscal year's data, so it was computed using fiscal year 2023's data.",
+   "The growth-adjusted multiple (PEG) isn't applicable: TTM earnings aren't positive (no P/E).",
+   "Altman Z-score could not be computed: current-asset/current-liability data is missing.",
+   "Beneish M-score could not be computed: required data for two consecutive fiscal years is missing.",
+   "Merton distance-to-default could not be computed: no risk-free rate available.",
+   "LBO anchor could not be computed: EBITDA, EV/EBITDA multiple, total debt, FCF, or share count is missing/invalid."
+  ],
+  "pb_roe": null,
+  "reverse_dcf": {
+   "bracket_status": "ok",
+   "implied_growth": 0.0069,
+   "realized_cagr_5y": null,
+   "realized_label": null
+  },
+  "rim": null,
+  "sector_type": "mature",
+  "sensitivity": {
+   "dr_values": [
+    0.09,
+    0.1,
+    0.11
+   ],
+   "growth_values": [
+    0.08,
+    0.1,
+    0.12
+   ],
+   "hi": 331.02,
+   "high_uncertainty": false,
+   "lo": 195.84,
+   "matrix": [
+    [
+     264.63,
+     225.28,
+     195.84
+    ],
+    [
+     296.1,
+     251.45,
+     218.06
+    ],
+    [
+     331.02,
+     280.45,
+     242.67
+    ]
+   ]
+  },
+  "triangulation": {
+   "confidence": "MEDIUM",
+   "direction": "cheap",
+   "divergence": null,
+   "rationale": {
+    "confidence": "Two of the three methods say cheap, one diverges; confidence is medium.",
+    "dcf": "Price $150 is below the base valuation band ($195.84-$331.02) -> cheap.",
+    "multiples": "The multiple percentile could not be computed.",
+    "reverse_dcf": "Price implies 0.7% growth; assumed growth is 10.0% -- the market is pricing in less growth -> cheap."
+   },
+   "signals": {
+    "dcf": "cheap",
+    "multiples": "no_data",
+    "reverse_dcf": "cheap"
+   }
+  }
+ }
+}
