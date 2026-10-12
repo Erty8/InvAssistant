@@ -67,6 +67,22 @@ def _load_template() -> str:
         return f.read()
 
 
+def _reverse_dcf_bounds() -> Optional[dict]:
+    """Return the reverse-DCF solver bracket as ``{"lo", "hi"}`` decimals.
+
+    Read from ``sec_analyzer.valuation.reverse_dcf`` so the template's
+    ``>60%`` / ``<−20%`` labels for out-of-bracket rate-sensitivity shifts
+    never drift from the solver. ``None`` if the constants are unavailable.
+    """
+    try:
+        from sec_analyzer.valuation import reverse_dcf
+
+        return {"lo": float(reverse_dcf._BRACKET_LO), "hi": float(reverse_dcf._BRACKET_HI)}
+    except Exception:  # pragma: no cover - defensive; never break report rendering
+        logger.warning("Could not read reverse-DCF bracket bounds", exc_info=True)
+        return None
+
+
 def _inject_payload(payload: dict) -> str:
     """Serialize ``payload`` and inject it into ``template.html`` in place
     of the ``__DATA_JSON__`` placeholder.
@@ -79,6 +95,8 @@ def _inject_payload(payload: dict) -> str:
         ValueError: If ``template.html`` is missing the ``__DATA_JSON__``
             placeholder (a packaging error).
     """
+    payload = dict(payload)
+    payload.setdefault("reverse_dcf_bounds", _reverse_dcf_bounds())
     data_json = json.dumps(payload, ensure_ascii=False)
     # Defensively guard against a literal "</script" sequence anywhere
     # inside the payload (e.g. inside a free-text LLM-generated field) from

@@ -378,6 +378,7 @@ def _empty_valuation(sector_type: Optional[str], assumptions: dict) -> dict:
         "fair_value_range": _empty_fair_value_range(),
         "reverse_dcf": {
             "implied_growth": None, "realized_cagr_5y": None, "realized_label": None, "bracket_status": "no_data",
+            "fcf0_basis": "raw", "implied_growth_raw": None, "bracket_status_raw": None, "rate_sensitivity": None,
         },
         "multiples": {
             "history": [],
@@ -5197,12 +5198,31 @@ def _run_valuation(
     base_terminal_growth = base_assumptions.get("terminal_growth")
     base_discount_rate = base_assumptions.get("discount_rate")
 
+    # SPEC.md Sec.28a: the FCF reverse-DCF solves on ONE fcf0, picked with the
+    # same condition as `headline_fcf0` (Sensitivity section below).
+    if hyper_growth_active or mature_revenue_headline or midgrowth_revenue_headline:
+        fcf0_basis = "revenue"
+    elif sector_type == "cyclical" and normalized_variant is not None:
+        fcf0_basis = "normalized"
+    else:
+        fcf0_basis = "raw"
+    solve_fcf0 = normalized_fcf0 if fcf0_basis == "normalized" else fcf0
+
     implied = None
     bracket_status = "no_data"
-    if fcf0 is not None and _is_number(base_terminal_growth) and _is_number(base_discount_rate):
+    if solve_fcf0 is not None and _is_number(base_terminal_growth) and _is_number(base_discount_rate):
         implied, bracket_status = reverse_dcf.implied_growth_with_status(
-            price, fcf0, base_terminal_growth, base_discount_rate, shares, dilution_rate
+            price, solve_fcf0, base_terminal_growth, base_discount_rate, shares, dilution_rate
         )
+    # Raw single-year solve, kept for transparency only (never drives a signal).
+    implied_raw = None
+    bracket_status_raw = None
+    if fcf0_basis == "normalized":
+        bracket_status_raw = "no_data"
+        if fcf0 is not None and _is_number(base_terminal_growth) and _is_number(base_discount_rate):
+            implied_raw, bracket_status_raw = reverse_dcf.implied_growth_with_status(
+                price, fcf0, base_terminal_growth, base_discount_rate, shares, dilution_rate
+            )
     # F5: the reverse-DCF bracket (-20%..+60%) can fail to bracket the
     # target price entirely rather than just "not converge" -- distinguish
     # that case (and its direction) from a genuine no-data situation.
@@ -5215,6 +5235,37 @@ def _run_valuation(
     elif implied is None:
         notes.append("Reverse DCF (price-implied growth) could not be computed.")
 
+    if fcf0_basis == "normalized":
+        norm_text = f"${normalized_fcf0 / 1e9:.1f}B" if _is_number(normalized_fcf0) else "—"
+        raw_text = f"${fcf0 / 1e9:.1f}B" if _is_number(fcf0) else "—"
+        implied_text = f"{implied * 100:.1f}%" if _is_number(implied) else "—"
+        implied_raw_text = f"{implied_raw * 100:.1f}%" if _is_number(implied_raw) else "—"
+        notes.append(
+            f"Cyclical: the reverse DCF solves on mid-cycle normalized FCF ({norm_text}; upper-half average "
+            f"FCF margin × latest revenue) instead of the latest single-year FCF ({raw_text}). "
+            f"Price-implied growth: {implied_text} normalized vs {implied_raw_text} on the raw figure. "
+            f"The normalized value drives the reverse-DCF signal, compared against realized revenue growth."
+        )
+
+    # Sec.28b: discount-rate sensitivity of the SAME solve the headline used
+    # (reusing its base result). Reporting-only; None for the revenue modes,
+    # whose displayed implied growth comes from a different model.
+    rate_sensitivity = None
+    if fcf0_basis != "revenue" and _is_number(base_terminal_growth) and _is_number(base_discount_rate):
+        try:
+            rate_sensitivity = reverse_dcf.implied_growth_rate_sensitivity(
+                price, solve_fcf0, base_terminal_growth, base_discount_rate, shares, dilution_rate,
+                rate_floor=(
+                    sanity._DISCOUNT_RATE_MIN_UNPROFITABLE if is_unprofitable else sanity._DISCOUNT_RATE_MIN
+                ),
+                min_erp_spread=sanity._MIN_ERP_SPREAD,
+                basis=fcf0_basis,
+                base_result=(implied, bracket_status),
+            )
+        except Exception:  # noqa: BLE001 - reporting-only block must never crash the CLI
+            logger.exception("reverse-DCF rate sensitivity failed unexpectedly; degrading to None.")
+            rate_sensitivity = None
+
     # F6: the reverse-DCF reference growth rate must match what the implied
     # growth rate actually represents -- FCF growth in standard mode (since
     # reverse_dcf.implied_growth_with_status solves over the FCF-DCF), so
@@ -5223,6 +5274,15 @@ def _run_valuation(
     latest_fy = resolve_fundamental_fy(metrics)
     realized_cagr, realized_fcf_label = _realized_cagr_from_series(sbc_adjusted_fcf_by_fy, latest_fy)
     realized_label = f"FCF {realized_fcf_label}" if realized_fcf_label else None
+    if fcf0_basis == "normalized":
+        # Sec.28a: normalized FCF = margin x latest revenue, so growing it at a
+        # constant margin IS revenue growth -- compare against revenue CAGR.
+        realized_cagr = metrics.get("revenue_cagr_5y")
+        norm_cagr_label = "5y" if realized_cagr is not None else None
+        if realized_cagr is None:
+            realized_cagr = metrics.get("revenue_cagr_3y")
+            norm_cagr_label = "3y" if realized_cagr is not None else None
+        realized_label = f"revenue {norm_cagr_label}" if norm_cagr_label else None
 
     # These four feed the output "reverse_dcf" dict and the triangulation
     # call below; hyper-grower mode overrides them to the revenue-based
@@ -5523,17 +5583,25 @@ def _run_valuation(
     # F(2026-07 refinement, Fix D): for cyclical filers, `headline_fcf0`
     # above became `normalized_fcf0` (the cycle-mid normalized FCF-DCF base)
     # whenever that variant was computable, so the sensitivity grid reflects
-    # THAT base, not the raw/suppressed one -- only reverse-DCF (which always
-    # solves over the raw `fcf0`, see the Reverse DCF section) reflects the
-    # raw base. The mature-sector EPV note below (no `normalized_variant`
+    # THAT base, not the raw/suppressed one -- and (Sec.28a) so does the
+    # reverse-DCF, which keeps the raw solve alongside as `implied_growth_raw`. The mature-sector EPV note below (no `normalized_variant`
     # concept for mature filers) is unaffected and correctly describes both
     # as the same raw FCF-DCF base.
+    # Sec.28a: when the reverse-DCF also solves on the normalized base
+    # (`fcf0_basis == "normalized"`), the two cyclical notes say so instead.
     if epv_headline and sector_type == "cyclical":
-        notes.append(
-            "The sensitivity table reflects the mid-cycle normalized FCF-DCF base, and the reverse-DCF "
-            "reflects the raw (suppressed) FCF base; both differ from the headline EPV anchor and are "
-            "kept as evidence showing why free cash flow is low."
-        )
+        if fcf0_basis == "normalized":
+            notes.append(
+                "The sensitivity table and the reverse-DCF both reflect the mid-cycle normalized FCF-DCF "
+                "base (the raw single-year reverse-DCF solve is shown alongside); both differ from the "
+                "headline EPV anchor and are kept as evidence showing why free cash flow is low."
+            )
+        else:
+            notes.append(
+                "The sensitivity table reflects the mid-cycle normalized FCF-DCF base, and the reverse-DCF "
+                "reflects the raw (suppressed) FCF base; both differ from the headline EPV anchor and are "
+                "kept as evidence showing why free cash flow is low."
+            )
         notes.append(
             "NOTE: this anchor takes the earnings base from the most recent representative (profitable) "
             "years and EXCLUDES severe cycle troughs (e.g. a memory-glut loss year) as an exception "
@@ -5546,11 +5614,18 @@ def _run_valuation(
             "the headline EPV anchor; kept as evidence showing why free cash flow is low."
         )
     elif cyclical_fcfe_headline:
-        notes.append(
-            "The sensitivity table reflects the mid-cycle normalized FCF-DCF base, and the reverse-DCF "
-            "reflects the raw (suppressed) FCF base; both differ from the headline FCFE anchor and are "
-            "kept as evidence showing why free cash flow is low."
-        )
+        if fcf0_basis == "normalized":
+            notes.append(
+                "The sensitivity table and the reverse-DCF both reflect the mid-cycle normalized FCF-DCF "
+                "base (the raw single-year reverse-DCF solve is shown alongside); both differ from the "
+                "headline FCFE anchor and are kept as evidence showing why free cash flow is low."
+            )
+        else:
+            notes.append(
+                "The sensitivity table reflects the mid-cycle normalized FCF-DCF base, and the reverse-DCF "
+                "reflects the raw (suppressed) FCF base; both differ from the headline FCFE anchor and are "
+                "kept as evidence showing why free cash flow is low."
+            )
         notes.append(
             "NOTE: this anchor takes the earnings base from the most recent representative (profitable) "
             "years and EXCLUDES severe cycle troughs (e.g. a memory-glut loss year) as an exception "
@@ -5592,6 +5667,7 @@ def _run_valuation(
         mature_revenue_headline=mature_revenue_headline, midgrowth_revenue_headline=midgrowth_revenue_headline,
         pffo_pct=pffo_pct, cyclical_fcfe_headline=cyclical_fcfe_headline, sector_ratio=sector_ratio,
         ev_ebitda_pct=ev_ebitda_pct, net_debt_to_ebitda=net_debt_to_ebitda,
+        normalized_reverse_dcf=(fcf0_basis == "normalized"),
     )
 
     # --- Altman Z-score distress screen (SPEC.md Sec.8g) --------------------
@@ -5673,6 +5749,10 @@ def _run_valuation(
             "realized_cagr_5y": _round_or_none(output_realized_cagr, 4),
             "realized_label": output_realized_label,
             "bracket_status": output_bracket_status,
+            "fcf0_basis": fcf0_basis,
+            "implied_growth_raw": _round_or_none(implied_raw, 4),
+            "bracket_status_raw": bracket_status_raw,
+            "rate_sensitivity": rate_sensitivity,
         },
         "multiples": multiples_out,
         "sensitivity": sensitivity_out,

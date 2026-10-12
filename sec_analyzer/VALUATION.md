@@ -279,8 +279,9 @@ her seferinde bir notla açıkça bildirir; sessizce varsaymaz.
 
 Duyarlılık tablosu ve ters-DCF, §3b/§3c'yle aynı şekilde, FCFE manşetinin
 kendisini değil ikincil tabanları gösterir (§5 istisnası): duyarlılık tablosu
-döngü-ortası normalize FCF-DCF'i, ters-DCF ise ham (baskılanmış) FCF'i
-yansıtır — ikisi de FCFE çapasından farklıdır. Üçgenleme güveni burada da en
+döngü-ortası normalize FCF-DCF'i yansıtır; ters-DCF de aynı normalize FCF
+üzerinden çözülür, ham çözüm yanında gösterilir — ikisi de FCFE çapasından
+farklıdır. Üçgenleme güveni burada da en
 fazla ORTA ile sınırlanır (DCF bacağı zaten bu kazanç-tabanlı çapadan gelir).
 Tam mekanik: SPEC.md §8e.
 
@@ -499,6 +500,21 @@ Koddan gelen "fiyatın ima ettiği growth" değeri şöyle yorumlanır:
 - İma edilen growth, muhafazakar base senaryonun bile ALTINDAysa → UCUZ yönünde güçlü kanıt.
 - Bu yöntemin gücü: tahmin gerektirmez, sadece fiyatın varsayımını ifşa eder. Verdict özetinde
   mümkünse tek cümleyle kullan: "Bugünkü fiyat X yıl boyunca %Y büyüme ima ediyor."
+- Döngüsel şirketlerde (normalize varyant hesaplanabildiyse) ters-DCF, tek yılın ham
+  FCF'i yerine döngü-ortası normalize FCF üzerinden çözülür. Zirvede ham FCF ima edilen
+  büyümeyi olduğundan düşük, dipte ise yüksek gösterir. Sinyali normalize değer belirler
+  ve bu değer gerçekleşen gelir CAGR'ı ile karşılaştırılır. Ham değer şeffaflık için
+  yanında gösterilir. Sınırlama: normalizasyon marjı düzeltir, son yılın gelirini değil.
+  Tam zirvede normalize değer bile hâlâ biraz düşük kalır. Bu tabanda ters-DCF, DCF ile
+  aynı nakit akışını kullanır ve referansı (gelir CAGR'ı) varsayılan base büyümesiyle
+  aynıdır. Yani iki bacak bağımsız kanıt değildir, bu yüzden üçgenleme güveni en fazla
+  ORTA olur. (Tam mekanik: SPEC.md §28a, §10.)
+- Faiz duyarlılığı: ima edilen büyüme, iskonto oranı −50/+50/+100bp kaydırılarak yeniden
+  çözülür. Terminal büyüme sabit tutulur, yani bu bir risksiz-faiz kaydırması değildir.
+  §3'teki taban veya ERP-marjı kuralını ihlal eden kaydırma atlanır ve '—' olarak
+  gösterilir. +100bp'de ima edilen büyümenin birkaç puan artması normaldir. Oran −20%/+60%
+  sınırına yaklaşıyorsa, fiyatın iskonto oranı varsayımına hassas olduğunun işaretidir.
+  (Tam mekanik: SPEC.md §28b.)
 
 ## 7. Multiples kuralları
 

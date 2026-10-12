@@ -311,7 +311,7 @@ discount_rate, shares, dilution_rate=0.0) -> tuple[Optional[float], str]` is
 the same bisection, plus a `status` that classifies *why* a `None` happened:
 `"ok"` (root found, or price sits exactly on a bracket endpoint),
 `"above_bracket"` (no sign change; model per-share stays below the market
-price at both bracket ends — price implies growth above +40%),
+price at both bracket ends — price implies growth above +60%),
 `"below_bracket"` (no sign change; model per-share stays above the market
 price at both ends — price implies growth below -20%), or `"no_data"` (a
 required input is unusable). `implied_growth` is a thin wrapper that drops the
@@ -340,6 +340,9 @@ the bounds are formatted straight from `reverse_dcf._BRACKET_LO`/
 text to fall out of sync) and is threaded into
 `triangulate.triangulate(..., reverse_dcf_status=...)` so the reverse-DCF
 signal can be "pahalı"/"ucuz" even when `implied_growth` is `None`.
+
+The `fcf0` this section solves on is selected per §28a (`fcf0_basis`); a
+discount-rate sensitivity of the solve is reported per §28b.
 
 ## 6. Multiples — `multiples.multiples_history(normalized, price_df) -> list[dict]`
 
@@ -788,7 +791,8 @@ purposely excludes. Instead, whenever `epv_headline` is `True`:
 
 - The `sensitivity` grid (Sec.9) and `reverse_dcf.implied_growth` (Sec.5)
   BOTH continue to describe the secondary, suppressed FCF-DCF base
-  (`dcf_scenarios`/`fcf0`) — kept on purpose, as evidence of *why* free cash
+  (`dcf_scenarios`/`fcf0`; for a `cyclical` filer with a `normalized_variant`,
+  both describe the mid-cycle normalized FCF-DCF base instead, §28a) — kept on purpose, as evidence of *why* free cash
   flow looks suppressed relative to earnings power, not as a description of
   the EPV headline itself.
 - A Turkish note is appended making the exception explicit to the reader, so
@@ -1214,7 +1218,8 @@ this `sensitivity` key always reflects the standard/cyclical FCF-DCF grid.
 anchor (`earnings_power_headline == True`), this invariant is deliberately
 broken by design — EPV has no growth axis to grid over, so this
 `sensitivity` matrix (and `reverse_dcf.implied_growth`, Sec.5) keep reflecting
-the secondary, suppressed FCF-DCF base instead, as documented evidence of the
+the secondary FCF-DCF base (for `cyclical` filers with a `normalized_variant`,
+the normalized one, §28a) instead, as documented evidence of the
 suppression. See Sec.8a's "Exception to Sec.9's 'same cash-flow base'
 invariant" for the full rationale and the note appended in that case.
 
@@ -1345,6 +1350,18 @@ other caps: the DCF leg IS the earnings-based FCFE anchor here, so three-way
 "agreement" with multiples is not independent confirmation. Mutually
 exclusive in practice with the other headline flags above.
 
+**Normalized reverse-DCF confidence ceiling (Sec.28a):**
+`normalized_reverse_dcf` (default `False`; engine passes `fcf0_basis ==
+"normalized"`) applies the same `HIGH → MEDIUM` cap, with its own appended
+rationale clause. When the reverse DCF solves on the cyclical normalized fcf0,
+it shares the DCF leg's cash-flow base, `r` and `g_t`, and its revenue-CAGR
+reference is the same figure the default (script) base `growth_5y` is anchored
+on (`rule_based._default_growth_anchor`). The reverse-DCF "fair" zone then sits
+inside the DCF band, so the two legs vote together by construction. Evaluated
+after the four headline flags above (an `elif`), so an EPV or FCFE cyclical
+headline, already capped, keeps its own rationale message. In practice the
+new clause fires only for the mid-cycle normalized FCF-DCF headline.
+
 ## 11. Engine — `engine.run_valuation(normalized, ratios, metrics, price, price_df, assumptions, sector_type, damodaran_dir=None, sic_description=None, hyper_growth_extras=None) -> dict`
 
 Orchestrates everything above. Never raises for missing data (only for
@@ -1425,7 +1442,10 @@ consumed by interpret phase 2, CLI card, HTML report, and store):
                         instead and the revenue-first band leads>,
   "reverse_dcf": {"implied_growth": float|None, "realized_cagr_5y": float|None,
                    "realized_label": "FCF 5y"|"FCF 3y"|"gelir 5y"|"gelir 3y"|None,
-                   "bracket_status": "ok"|"above_bracket"|"below_bracket"|"no_data"},
+                   "bracket_status": "ok"|"above_bracket"|"below_bracket"|"no_data",
+                   # + fcf0_basis, implied_growth_raw, bracket_status_raw,
+                   #   rate_sensitivity -- additive WP12 keys, see §28c
+                  },
                   # standard mode: FCF-CAGR reference (Sec.5/F6); hyper-grower
                   # mode: revenue-CAGR reference + revenue_first_dcf's own
                   # implied start-growth (Sec.5/F6); bracket_status from
@@ -2339,17 +2359,19 @@ for `cyclical`:
   engine's `headline_fcf0` selector is unconditional on `sector_type ==
   "cyclical" and normalized_variant is not None`, regardless of which
   headline above actually won.
-- `reverse_dcf.implied_growth` always solves over the raw, suppressed
-  `fcf0` — it never switches to `normalized_fcf0`.
-- Both differ from the FCFE headline itself, and from EACH OTHER. The
-  Turkish note makes this precise (correcting an earlier draft that wrongly
-  described both legs as reflecting the "same suppressed base"):
+- `reverse_dcf.implied_growth` solves on the same mid-cycle normalized FCF as
+  the sensitivity table (§28a); the raw single-year solve is shown alongside
+  (`implied_growth_raw`).
+- Both differ from the FCFE headline itself. The Turkish note is reworded
+  accordingly (WP12; the exact text lives in `engine.py` and is reworded
+  there to match this bullet — the pre-WP12 wording, which said the
+  reverse-DCF reflects the raw (suppressed) FCF base, is superseded):
 
 ```
-"Duyarlılık tablosu döngü-ortası normalize FCF-DCF tabanını, ters-DCF ise ham
-(baskılanmış) FCF tabanını yansıtır; ikisi de manşet FCFE çapasından
-farklıdır ve serbest nakit akışının neden düşük olduğunu gösteren kanıt
-olarak korunur."
+"Duyarlılık tablosu ve ters-DCF döngü-ortası normalize FCF-DCF tabanını
+yansıtır (ham tek-yıllık çözüm ters-DCF yanında ayrıca gösterilir); ikisi de
+manşet FCFE çapasından farklıdır ve serbest nakit akışının neden düşük
+olduğunu gösteren kanıt olarak korunur."
 ```
 
 The same corrected wording is used for the cyclical `epv_headline` case
@@ -3550,6 +3572,7 @@ After the existing lines, following the plan's sample output, add (None-safe,
 ```
 Fair Value (base, DCF): $95–$115   Güven: ORTA      # method label: DCF or P/B×ROE
 Reverse DCF: fiyat 10y %19 CAGR ima ediyor (gerçekleşen 5y: %14)
+  Rate sens.: r −50bp 21.1% · +50bp 24.8% · +100bp 26.5% (g_t fixed 4.0%)   # §28d; omitted when rate_sensitivity is None
 Multiples:   P/E kendi Ny medyanının 88. yüzdeliğinde   # primary multiple used
 Üçgenleme:   DCF pahalı · rDCF pahalı · multiples pahalı → yön net/karışık
 Duyarlılık:  base $87–$131 (g±2pp, r±1pp) [+ " — yüksek belirsizlik" if flagged]
@@ -3592,7 +3615,9 @@ single column on mobile. Layout top→bottom:
 6. Sensitivity mini-table 3×3, base cell highlighted; "yüksek belirsizlik"
    tag when flagged.
 7. Red-flags warning box (only if flags exist).
-8. Catalyst + summary panel; reverse-DCF comment line.
+8. Catalyst + summary panel; reverse-DCF comment line. The reverse-DCF row
+   also carries the single "Rate sens.:" line of §28d (same order and format
+   as the CLI; omitted when `rate_sensitivity is None`).
 9. Senaryo satırları (per-scenario returns): each bear/base/bull row in the
    fan-chart's assumption panel (item 3 above) additionally shows
    `result["scenario_returns"][key]`'s `ret_lo_pct`/`ret_hi_pct` next to that
@@ -4933,3 +4958,223 @@ keeps; that trade-off was not taken here.
 One estimator swap inside `normalize/metrics.py`. No output key added,
 removed or renamed; no valuation formula, anchor or threshold changed. Filers
 whose revenue series is monotone see essentially no movement.
+
+## 28. Reverse-DCF cash-flow basis + discount-rate sensitivity (WP12)
+
+### 28a. Cash-flow basis — `fcf0_basis`
+
+The FCF reverse DCF (§5) solves on exactly one `fcf0`. The engine chooses
+it with the SAME condition that already picks `headline_fcf0` for the §9
+sensitivity grid:
+
+| Condition (evaluated in this order) | `fcf0_basis` | Solve that feeds `implied_growth` |
+|---|---|---|
+| `hyper_growth_active`, `mature_revenue_headline` or `midgrowth_revenue_headline` | `"revenue"` | unchanged: the revenue-first `implied_start_growth` override (§5, §8b, §8d) |
+| `sector_type == "cyclical"` and `normalized_variant is not None` | `"normalized"` | `implied_growth_with_status(price, normalized_fcf0, g_t, r, shares, dilution_rate)` |
+| otherwise | `"raw"` | unchanged: `implied_growth_with_status(price, fcf0, ...)` |
+
+The `"normalized"` row applies whatever the cyclical headline is: the
+mid-cycle FCF-DCF, the §8e FCFE anchor, or the §8a EPV floor. The reason:
+`normalized_variant` exists only when `_normalized_fcf0` succeeded, and the
+raw single-year FCF of a cyclical is the least representative base in all
+three cases. At a peak it understates the implied growth, so the stock looks
+cheap. At a trough, or with capex-suppressed FCF, it overstates the implied
+growth, so the stock looks expensive.
+
+**What drives the signal.** `reverse_dcf.implied_growth` and `bracket_status`
+always carry the **basis-selected** solve. That one value is what
+`triangulate._reverse_dcf_signal` / `_reverse_dcf_rationale`,
+`_build_method_summary`, the CLI card, `rule_based`, and
+`store.database` (thesis anchor) read. No consumer changes its key, so the
+displayed number and the signal can never disagree.
+
+**Raw kept for transparency.** When `fcf0_basis == "normalized"`, the raw
+single-year solve is still run and reported as `implied_growth_raw` /
+`bracket_status_raw`. For the `"raw"` and `"revenue"` bases, both keys are
+`None`. The raw solve never drives a signal.
+
+**Reference growth when normalized.** `normalized_fcf0 = normalized_margin ×
+latest_revenue`, so growing it at a constant margin *is* revenue growth.
+Comparing it against the realized FCF CAGR would compare a margin-stable
+figure against a peak-to-trough FCF CAGR, which is the noisiest series there
+is for a cyclical. So when `fcf0_basis == "normalized"`, the reference is the
+realized **revenue** CAGR (`metrics["revenue_cagr_5y"]`, falling back to
+`_3y`), and `realized_label` is `"revenue 5y"` / `"revenue 3y"`. This mirrors
+the revenue-based overrides. If neither CAGR exists, the reference is `None`
+and `_reverse_dcf_signal` falls back to `base_growth` as it already does.
+
+**Confidence ceiling.** Because this reference is also the default base-growth
+anchor, and the solve shares the DCF leg's cash-flow base, the reverse-DCF vote
+is not independent of the DCF vote on this basis. `triangulate` therefore caps
+`HIGH → MEDIUM` whenever `fcf0_basis == "normalized"`. See §10's "Normalized
+reverse-DCF confidence ceiling".
+
+**Note string** (appended only when `fcf0_basis == "normalized"`; `—` for a
+missing number):
+
+> "Cyclical: the reverse DCF solves on mid-cycle normalized FCF ($X.XB; upper-half
+> average FCF margin × latest revenue) instead of the latest single-year FCF
+> ($Y.YB). Price-implied growth: Z% normalized vs W% on the raw figure. The
+> normalized value drives the reverse-DCF signal, compared against realized
+> revenue growth."
+
+**Known limitation (stated in VALUATION.md, not fixed here):**
+`_normalized_fcf0` multiplies by the *latest* revenue, so at a revenue peak the
+normalized base is de-peaked in margin only, not in revenue. The normalized
+implied growth is therefore still biased low at a full peak, just less than
+the raw figure. Fixing the revenue anchor is out of scope for WP12.
+
+The existing §8a/§8e notes that say "the reverse-DCF reflects the raw
+(suppressed) FCF base" are reworded for this basis (see §8a/§8e).
+
+### 28b. Discount-rate sensitivity — `reverse_dcf.rate_sensitivity`
+
+New pure function in `reverse_dcf.py`:
+
+```python
+RATE_SHIFTS_BP = (-50, 50, 100)   # module constant, ordered as displayed
+
+def implied_growth_rate_sensitivity(
+    price, fcf0, terminal_growth, discount_rate, shares, dilution_rate=0.0,
+    *, rate_floor, min_erp_spread, shifts_bp=RATE_SHIFTS_BP,
+) -> Optional[dict]
+```
+
+This is **a discount-rate shift with terminal growth held fixed.** `fcf0`,
+`terminal_growth`, `shares` and `dilution_rate` do not change. Only `r` moves:
+`r_s = round(discount_rate + shift_bp / 10_000, 6)`. The rounding kills
+float drift, so 0.095 + 0.005 is exactly 0.1.
+
+This is NOT a risk-free-rate shift. In CAPM, `r = rf + β_L × ERP` moves 1:1
+with `rf`. But the engine's terminal growth is `min(rf, 4%)`, so an `rf` shift
+would also move `g_t` whenever `rf < 4%`. Holding `g_t` fixed isolates the
+required-return channel, which is the question this block answers: "how much
+does the priced-in growth depend on the discount rate I chose?" A combined
+rf shift is out of scope for WP12. It would only be exact for the
+CAPM-derived script assumptions, because an LLM-proposed `g_t` need not be
+anchored to rf.
+
+**Guards (same contract as §3's `clamp_assumptions`, but skip, never clamp).**
+The base `discount_rate` is already post-clamp. Upward shifts can never breach
+a floor. A downward shift is **skipped** (the solver is not run) when:
+
+1. `r_s <= terminal_growth`: Gordon undefined → `skip_reason = "rate_at_or_below_terminal_growth"`.
+2. `r_s < rate_floor - 1e-9`, where `rate_floor` is `sanity._DISCOUNT_RATE_MIN`
+   (0.07), or `_DISCOUNT_RATE_MIN_UNPROFITABLE` (0.10) when
+   `sector_type == "growth_unprofitable"` → `skip_reason = "below_rate_floor"`.
+3. `r_s - terminal_growth < min_erp_spread - sanity._ERP_SPREAD_EPS`, where
+   `min_erp_spread = sanity._MIN_ERP_SPREAD` (0.045) →
+   `skip_reason = "below_erp_spread"`.
+
+Checks run in that order, and the first one that fires is reported. A breaching
+shift is skipped, not clamped up to the guard. A clamped shift would label a
+`-50bp` row with a rate that moved less than 50bp. It could even be identical
+to base when the base is already sitting on the guard, which is common for
+low-beta filers at `g_t + 4.5%`. The engine never presents a value at a rate
+§3 would have refused.
+
+**Per-shift entry** (always one entry per configured shift, in order):
+
+```python
+{"shift_bp": -50, "discount_rate": 0.09,        # r_s, 6dp
+ "implied_growth": 0.1234 | None,                # 4dp, from implied_growth_with_status
+ "delta_pp": 1.23 | None,                        # (shifted - base) * 100, 2dp; None unless both are "ok"
+ "status": "ok" | "above_bracket" | "below_bracket" | "no_data" | "skipped",
+ "skip_reason": None | "rate_at_or_below_terminal_growth" | "below_rate_floor" | "below_erp_spread"}
+```
+
+`status` comes straight from `implied_growth_with_status` for a shift that
+runs, and is `"skipped"` otherwise. `delta_pp` uses the two 4dp-rounded growth
+values, so it is reproducible from the displayed numbers.
+
+**Block:**
+
+```python
+"rate_sensitivity": {
+  "basis": "raw" | "normalized",      # same fcf0 the headline implied_growth used
+  "base_discount_rate": 0.095,        # 6dp
+  "terminal_growth": 0.04,            # 6dp, held fixed
+  "base_implied_growth": 0.2310 | None,
+  "base_status": "ok" | ...,
+  "shifts": [ ...3 entries... ],
+}
+```
+
+The function returns `None`, and the engine then sets `rate_sensitivity: None`,
+when `price`/`fcf0`/`shares` are unusable or `discount_rate`/`terminal_growth`
+are not numbers. Any unexpected exception is caught in the engine, logged, and
+degrades to `None` (never crashes the CLI).
+
+**Engine wiring.** Computed once, right after the §28a basis selection, on the
+same `(price, basis_fcf0, base g_t, base r, shares, dilution_rate)` as the
+headline solve. The shifts inherit that solve's `base_implied_growth` /
+`base_status` exactly: the base solve is not re-run, only reused.
+`rate_sensitivity` is **`None` when `fcf0_basis == "revenue"`**. In the
+revenue modes, the displayed `implied_growth` comes from a different model
+(`implied_start_growth`, and the hyper-grower one uses a discount-rate fade,
+§WP3), so an FCF-solve sensitivity would describe a number that is not on the
+card. This block is reporting-only. It never feeds `triangulate`, confidence,
+`fair_value_range` or `method_summary`.
+
+**Monotonicity (a test invariant, not a runtime check).** `dcf_per_share` is
+strictly decreasing in `r` and increasing in `growth_5y`, so across the `"ok"`
+shifts `implied_growth` is non-decreasing in `shift_bp`.
+
+**Sanity reference (informative, not a test target).** An earlier hand
+calculation used TTM SBC-adjusted FCF, not the engine's FY `fcf0`, over INTU,
+ADBE, PYPL, MNST, PAYX, ADSK, NFLX, DXCM, DASH, MSFT, META, AMD and MPWR. It
+found +100bp raised the implied 5-year growth by about +2.4 to +4.1pp. For
+example, AMD went from 52.1% to 55.7%, near the +60% ceiling. Engine values
+differ because the `fcf0` differs, but they should land in the same range.
+
+### 28c. Output shape (additive to §11's `reverse_dcf`)
+
+```python
+"reverse_dcf": {
+  "implied_growth": ...,            # basis-selected (unchanged key; now normalized for cyclicals)
+  "realized_cagr_5y": ...,          # revenue CAGR when fcf0_basis == "normalized"
+  "realized_label": ...,
+  "bracket_status": ...,
+  "fcf0_basis": "raw" | "normalized" | "revenue",   # NEW
+  "implied_growth_raw": float | None,               # NEW, only for "normalized"
+  "bracket_status_raw": str | None,                 # NEW, only for "normalized"
+  "rate_sensitivity": dict | None,                  # NEW, §28b
+}
+```
+
+The early-return / error shape at `engine.py` (~line 379) gains the same four
+keys, set to `"raw"`, `None`, `None`, `None`.
+
+**Non-cyclical invariance:** for any filer where `fcf0_basis != "normalized"`,
+every pre-existing key of the whole `run_valuation` output (not only
+`reverse_dcf`) is byte-for-byte identical to the output before WP12.
+Tests assert this with a golden comparison that ignores only the four new keys.
+
+### 28d. Display (one line, English, `—` for missing)
+
+CLI verdict card, directly under the existing "Reverse DCF:" line:
+
+```
+  Rate sens.: r −50bp 21.1% · +50bp 24.8% · +100bp 26.5% (g_t fixed 4.0%)
+```
+
+- A skipped shift renders as `—` with a short reason in parentheses:
+  `−50bp — (floor)`, `(ERP spread)` or `(r ≤ g_t)`.
+- `above_bracket` renders as `>60%` and `below_bracket` as `<−20%`, using
+  the formatted `reverse_dcf._BRACKET_LO/_HI`, never hard-coded.
+- When `fcf0_basis == "normalized"`, the existing Reverse DCF line gets the
+  suffix `[normalized FCF; raw: W%]`.
+- The line is omitted entirely when `rate_sensitivity is None`.
+
+The HTML report and web UI show the same single line, in the same order and
+format, under the reverse-DCF row. This is owned by `sec-report-frontend`.
+
+### Scope
+
+In: `reverse_dcf.py` (new function + constant), `engine.py` (basis selection,
+wiring, notes, early-return shape), `cli.py` (one line), and the report/web
+templates (one line), `triangulate.py` (only the additive
+`normalized_reverse_dcf` confidence-ceiling flag, §10; signal thresholds
+unchanged). Out: `sanity.py` (constants
+read, not changed), `sensitivity.py`, `_normalized_fcf0`,
+`screener/funding.py`, `normalize/ttm.py`.

@@ -12,7 +12,7 @@
 ## 1. Analiz çıktısının zorunlu bölümleri (sıralı)
 
 1. **Durum özeti** — şirket ne yapıyor, güncel fiyat, son çeyreğin tek cümlelik özeti, aktif katalizörler (tarihli).
-2. **Fair value bandı** — valuation engine'den gelen bear/base/bull; her senaryonun varsayımı görünür. Cyclical trap kontrolü sonucu burada raporlanır (VALUATION.md §3 kuralları).
+2. **Fair value bandı** — valuation engine'den gelen bear/base/bull; her senaryonun varsayımı görünür. Cyclical trap kontrolü sonucu burada raporlanır (VALUATION.md §3 kuralları). Verdict özetinde fiyatın ima ettiği büyüme aktarılırken (VALUATION.md §6): döngüsel şirkette ima edilen büyüme cümlesi normalize FCF tabanını belirtmelidir.
 3. **İkili ucuzluk verdict'i** — HER ZAMAN ayrı ayrı:
    - **Fundamental:** UCUZ / MAKUL / PAHALI (fiyat vs base bandı + üçgenleme + güven seviyesi)
    - **Teknik:** AŞIRI SATIM / NÖTR / AŞIRI ALIM (kural bazlı modülden; vade ağırlığına göre öne çıkar veya not seviyesine iner)

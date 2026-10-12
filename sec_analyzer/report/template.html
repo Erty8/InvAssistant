@@ -2857,6 +2857,61 @@
     );
   }
 
+  // ---- Reverse-DCF rate sensitivity (SPEC Amendment 28c-28d) --------------
+  // Bracket bounds come from the server payload (reverse_dcf._BRACKET_LO/HI);
+  // if absent, out-of-bracket shifts fall back to a bare "—".
+  var RDCF_BOUNDS = (data && data.reverse_dcf_bounds) || null;
+
+  function rdcfBoundText(which) {
+    if (!RDCF_BOUNDS || !isNum(RDCF_BOUNDS[which])) return "—";
+    var t = fmtPctTr(RDCF_BOUNDS[which], 0);
+    return which === "lo" ? "<" + t.replace("-", "−") : ">" + t;
+  }
+
+  var RDCF_SKIP_LABEL = {
+    below_rate_floor: "(floor)",
+    below_erp_spread: "(ERP spread)",
+    rate_at_or_below_terminal_growth: "(r ≤ g_t)",
+  };
+
+  // Suffix for the reverse-DCF value when it was solved on normalized FCF.
+  function reverseDcfBasisSuffix(rdcf) {
+    if (!rdcf || rdcf.fcf0_basis !== "normalized") return "";
+    var raw = rdcf.bracket_status_raw === "above_bracket" ? rdcfBoundText("hi")
+      : rdcf.bracket_status_raw === "below_bracket" ? rdcfBoundText("lo")
+      : fmtPctTr(rdcf.implied_growth_raw);
+    return "[normalized FCF; raw: " + raw + "]";
+  }
+
+  // One line: "Rate sens.: r −50bp 21.1% · +50bp 24.8% (g_t fixed 4.0%)".
+  // "" (line omitted) when rate_sensitivity is absent/malformed.
+  function rateSensLineHtml(rdcf) {
+    var rs = rdcf && rdcf.rate_sensitivity;
+    if (!rs || !Array.isArray(rs.shifts) || !rs.shifts.length) return "";
+    var parts = rs.shifts.map(function (s, i) {
+      s = s || {};
+      var bp = Number(s.shift_bp);
+      var label = isNum(s.shift_bp)
+        ? (bp < 0 ? "−" : "+") + Math.abs(bp) + "bp"
+        : "—";
+      var val;
+      if (s.skip_reason || s.status === "skipped") {
+        val = "— " + (RDCF_SKIP_LABEL[s.skip_reason] || "(skipped)");
+      } else if (s.status === "above_bracket") {
+        val = rdcfBoundText("hi");
+      } else if (s.status === "below_bracket") {
+        val = rdcfBoundText("lo");
+      } else if (s.status === "no_data" || !isNum(s.implied_growth)) {
+        val = "—";
+      } else {
+        val = fmtPctTr(s.implied_growth).replace("-", "−");
+      }
+      return (i === 0 ? "r " : "") + label + " " + val;
+    });
+    var text = "Rate sens.: " + parts.join(" · ") + " (g_t fixed " + fmtPctTr(rs.terminal_growth) + ")";
+    return '<div class="tri-sector sector-cmp-muted">' + escapeHtml(text) + '</div>';
+  }
+
   function triangulationRowHtml(valuation, confidenceOverride) {
     var tri = (valuation || {}).triangulation;
     if (!tri) return "";
@@ -2917,6 +2972,11 @@
       var extra = (m.key === "multiples")
         ? (sectorComparisonLineHtml(valuation) + evMultiplesLineHtml(valuation)
            + tangibleMultiplesLineHtml(valuation)) : "";
+      if (m.key === "reverse_dcf") {
+        var basisSuffix = reverseDcfBasisSuffix(valuation.reverse_dcf);
+        if (basisSuffix) reason = (reason ? reason + " " : "") + basisSuffix;
+        extra = rateSensLineHtml(valuation.reverse_dcf);
+      }
       return (
         '<div class="tri-method">' +
           '<div class="tri-method-head">' +
