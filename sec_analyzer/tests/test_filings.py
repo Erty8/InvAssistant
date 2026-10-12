@@ -9,9 +9,9 @@ from datetime import date, timedelta
 
 from sec_analyzer.fetch.filings import estimate_next_earnings
 
-_TURKISH_MONTH_ABBREVS = (
-    "Oca", "Şub", "Mar", "Nis", "May", "Haz",
-    "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara",
+_MONTH_ABBREVS = (
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
 
 
@@ -45,7 +45,7 @@ def test_estimate_next_earnings_projects_median_gap_forward():
     assert result is not None
     expected_next = anchor + timedelta(days=91)
     assert result["estimate_date"] == expected_next.strftime("%Y-%m-%d")
-    assert any(month in result["label"] for month in _TURKISH_MONTH_ABBREVS)
+    assert any(month in result["label"] for month in _MONTH_ABBREVS)
     assert "9" in result["based_on"]
     assert "91" in result["based_on"]
 

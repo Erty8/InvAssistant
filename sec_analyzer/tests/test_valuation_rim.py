@@ -292,7 +292,7 @@ def test_build_rim_uses_latest_fy_with_equity_ni_and_roe_all_present():
 
     assert result is not None
     assert result["bve0"] == 1000.0
-    assert any("2023" in n and "kullanıldı" in n for n in notes)
+    assert any("2023" in n and "Used fiscal year" in n for n in notes)
 
 
 def test_build_rim_unavailable_when_net_income_missing():
@@ -306,7 +306,7 @@ def test_build_rim_unavailable_when_net_income_missing():
     result, notes = _build_rim(assumptions, normalized, metrics, ratios)
 
     assert result is None
-    assert any("özkaynak, net kâr veya ROE verisi eksik" in n for n in notes)
+    assert any("equity, net income, or ROE data is missing" in n for n in notes)
 
 
 def test_build_rim_unavailable_when_shares_missing():
@@ -320,7 +320,7 @@ def test_build_rim_unavailable_when_shares_missing():
     result, notes = _build_rim(assumptions, normalized, metrics, ratios)
 
     assert result is None
-    assert any("hisse sayısı" in n for n in notes)
+    assert any("no valid share count" in n for n in notes)
 
 
 def test_build_rim_unavailable_when_roe_non_positive():
@@ -334,7 +334,7 @@ def test_build_rim_unavailable_when_roe_non_positive():
     result, notes = _build_rim(assumptions, normalized, metrics, ratios)
 
     assert result is None
-    assert any("pozitif değil" in n for n in notes)
+    assert any("is not positive" in n for n in notes)
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +388,7 @@ def test_run_valuation_financial_sector_falls_back_to_pb_roe_when_rim_unavailabl
     assert result["rim"] is None
     assert result["pb_roe"] is not None
     assert result["pb_roe"]["scenarios"]["base"]["per_share"] is not None
-    assert any("RIM" in n and "geri dönüldü" in n for n in result["notes"])
+    assert any("RIM" in n and "fell back to P/B x ROE" in n for n in result["notes"])
 
     # fair_value_range falls back to pb_roe's band.
     assert result["fair_value_range"]["base"]["lo"] == result["pb_roe"]["scenarios"]["base"]["lo"]

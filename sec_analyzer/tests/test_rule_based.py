@@ -158,7 +158,7 @@ def test_healthy_company_checklist_score_is_high():
 
     assert result["_provider"] == "script"
     assert result["_model"] == "rule-based-v2"
-    assert result["fundamental_verdict"] in ("UCUZ", "MAKUL", "PAHALI")
+    assert result["fundamental_verdict"] in ("CHEAP", "FAIR", "EXPENSIVE")
 
     score = result["score"]
     assert score["max_points"] > 0
@@ -191,13 +191,13 @@ def test_healthy_company_scenario_ordering_and_transparency():
 
     assert fv["bear"]["lo"] <= fv["base"]["lo"] <= fv["bull"]["lo"]
     assert fv["bear"]["hi"] <= fv["base"]["hi"] <= fv["bull"]["hi"]
-    assert fv["bear"]["discount_rate"] == "%12"
-    assert fv["base"]["discount_rate"] == "%10"
-    assert fv["bull"]["discount_rate"] == "%9"
+    assert fv["bear"]["discount_rate"] == "12%"
+    assert fv["base"]["discount_rate"] == "10%"
+    assert fv["bull"]["discount_rate"] == "9%"
 
 
 def test_healthy_company_fundamental_verdict_matches_price_vs_base_band():
-    """UCUZ below the base band's low, MAKUL inside it, PAHALI above its high."""
+    """CHEAP below the base band's low, FAIR inside it, EXPENSIVE above its high."""
     normalized, ratios = _healthy_company()
     metrics = {"fcf_per_share": 5.0, "revenue_cagr_3y": 0.1}
 
@@ -209,9 +209,9 @@ def test_healthy_company_fundamental_verdict_matches_price_vs_base_band():
     fair = rule_based.analyze(normalized, ratios, metrics=dict(metrics, price=(lo + hi) / 2))
     expensive = rule_based.analyze(normalized, ratios, metrics=dict(metrics, price=hi + 1))
 
-    assert cheap["fundamental_verdict"] == "UCUZ"
-    assert fair["fundamental_verdict"] == "MAKUL"
-    assert expensive["fundamental_verdict"] == "PAHALI"
+    assert cheap["fundamental_verdict"] == "CHEAP"
+    assert fair["fundamental_verdict"] == "FAIR"
+    assert expensive["fundamental_verdict"] == "EXPENSIVE"
 
 
 def test_analyze_is_deterministic():
@@ -243,8 +243,8 @@ def test_all_data_missing_reports_null_band_without_raising():
         assert fv[name]["growth"]
         assert fv[name]["discount_rate"]
 
-    assert result["fundamental_verdict"] == "MAKUL"
-    assert "eksik" in result["horizon_note"] or "Not:" in result["horizon_note"]
+    assert result["fundamental_verdict"] == "FAIR"
+    assert "Note:" in result["horizon_note"] and "could not be performed" in result["horizon_note"]
     assert result["score"]["max_points"] == 0
     assert result["score"]["points"] == 0
     assert result["_provider"] == "script"
@@ -314,7 +314,7 @@ def test_weak_balance_sheet_key_risks_include_failed_checks_and_red_flags():
 def test_no_red_flags_yields_yok_comment():
     normalized, ratios = _healthy_company()
     result = rule_based.analyze(normalized, ratios)
-    assert result["red_flags_comment"] == "yok"
+    assert result["red_flags_comment"] == "none"
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +326,7 @@ def test_catalyst_defaults_to_bilinmiyor_and_uses_label_when_given():
     normalized, ratios = _healthy_company()
 
     without_catalyst = rule_based.analyze(normalized, ratios)
-    assert without_catalyst["catalyst"] == "bilinmiyor"
+    assert without_catalyst["catalyst"] == "unknown"
 
     catalyst = {"estimate_date": "2026-08-27", "label": "Q2 earnings ~27 Ağu", "based_on": "x"}
     with_catalyst = rule_based.analyze(normalized, ratios, catalyst=catalyst)
@@ -337,7 +337,7 @@ def test_technical_verdict_text_reflects_technical_arg():
     normalized, ratios = _healthy_company()
 
     without_technical = rule_based.analyze(normalized, ratios)
-    assert without_technical["technical_verdict"] == "VERİ YOK (fiyat verisi alınamadı)"
+    assert without_technical["technical_verdict"] == "NO DATA (price data unavailable)"
 
     technical = {"verdict": "NÖTR", "verdict_detail": "yetersiz veri"}
     with_technical = rule_based.analyze(normalized, ratios, technical=technical)
@@ -350,7 +350,7 @@ def test_profile_fit_is_kismen_and_mentions_missing_file_by_default(monkeypatch,
 
     result = rule_based.analyze(normalized, ratios)
 
-    assert result["profile_fit"]["verdict"] == "KISMEN"
+    assert result["profile_fit"]["verdict"] == "PARTIAL"
     assert "PROFIL.md" in result["profile_fit"]["reason"]
 
 
@@ -362,7 +362,7 @@ def test_profile_fit_is_kismen_and_mentions_llm_when_profile_exists(monkeypatch,
 
     result = rule_based.analyze(normalized, ratios)
 
-    assert result["profile_fit"]["verdict"] == "KISMEN"
+    assert result["profile_fit"]["verdict"] == "PARTIAL"
     assert "LLM" in result["profile_fit"]["reason"]
 
 
@@ -374,7 +374,7 @@ def test_horizon_note_5y_includes_cyclical_trap_flag_message_when_present():
 
     result = rule_based.analyze(normalized, ratios, red_flags=red_flags, horizon="5y")
 
-    assert "5 yıllık" in result["horizon_note"]
+    assert "5-year horizon" in result["horizon_note"]
     assert "Düşük P/E yanıltıcı olabilir" in result["horizon_note"]
 
 
@@ -383,7 +383,7 @@ def test_horizon_note_5y_without_cyclical_trap_says_not_triggered():
 
     result = rule_based.analyze(normalized, ratios, horizon="5y")
 
-    assert "tetiklenmedi" in result["horizon_note"]
+    assert "did not trigger" in result["horizon_note"]
 
 
 def test_horizon_note_3m_mentions_katalizor():
@@ -391,7 +391,7 @@ def test_horizon_note_3m_mentions_katalizor():
 
     result = rule_based.analyze(normalized, ratios, horizon="3m")
 
-    assert "katalizör" in result["horizon_note"]
+    assert "catalyst" in result["horizon_note"]
 
 
 # ---------------------------------------------------------------------------
@@ -562,36 +562,36 @@ def test_commentary_returns_exactly_the_phase2_schema_keys():
 
 
 def test_commentary_fundamental_verdict_matches_dcf_triangulation_signal():
-    assert rule_based.commentary(_valuation(dcf_signal="ucuz"))["fundamental_verdict"] == "UCUZ"
-    assert rule_based.commentary(_valuation(dcf_signal="makul"))["fundamental_verdict"] == "MAKUL"
-    assert rule_based.commentary(_valuation(dcf_signal="pahali"))["fundamental_verdict"] == "PAHALI"
-    assert rule_based.commentary(_valuation(dcf_signal="veri_yok"))["fundamental_verdict"] == "MAKUL"
+    assert rule_based.commentary(_valuation(dcf_signal="ucuz"))["fundamental_verdict"] == "CHEAP"
+    assert rule_based.commentary(_valuation(dcf_signal="makul"))["fundamental_verdict"] == "FAIR"
+    assert rule_based.commentary(_valuation(dcf_signal="pahali"))["fundamental_verdict"] == "EXPENSIVE"
+    assert rule_based.commentary(_valuation(dcf_signal="veri_yok"))["fundamental_verdict"] == "FAIR"
 
 
 def test_commentary_reverse_dcf_comment_reflects_implied_vs_realized_growth():
     expensive = rule_based.commentary(_valuation())["reverse_dcf_comment"]
-    assert "%19" in expensive and "%14" in expensive
-    assert "pahalılık" in expensive
+    assert "19.0%" in expensive and "14.0%" in expensive
+    assert "expensiveness" in expensive
 
     cheap_valuation = _valuation()
     cheap_valuation["reverse_dcf"] = {"implied_growth": 0.05, "realized_cagr_5y": 0.14, "realized_label": "5y"}
     cheap = rule_based.commentary(cheap_valuation)["reverse_dcf_comment"]
-    assert "ucuzluk" in cheap
+    assert "cheapness" in cheap
 
     fair_valuation = _valuation()
     fair_valuation["reverse_dcf"] = {"implied_growth": 0.14, "realized_cagr_5y": 0.13, "realized_label": "5y"}
     fair = rule_based.commentary(fair_valuation)["reverse_dcf_comment"]
-    assert "uyumlu" in fair
+    assert "consistent" in fair
 
     no_data_valuation = _valuation()
     no_data_valuation["reverse_dcf"] = {"implied_growth": None, "realized_cagr_5y": None, "realized_label": None}
     no_data = rule_based.commentary(no_data_valuation)["reverse_dcf_comment"]
-    assert "hesaplanamadı" in no_data
+    assert "could not be computed" in no_data
 
 
 def test_commentary_cyclical_risk_reflects_sector_type_and_cyclical_trap_flag():
     cyclical = rule_based.commentary(_valuation(sector_type="cyclical"))["cyclical_risk"]
-    assert "döngüsel" in cyclical.lower()
+    assert "cyclical" in cyclical.lower()
 
     red_flags = [{"code": "CYCLICAL_TRAP", "message": "Düşük P/E yanıltıcı olabilir", "detail": "..."}]
     with_flag = rule_based.commentary(_valuation(sector_type="cyclical"), red_flags=red_flags)["cyclical_risk"]
@@ -600,10 +600,10 @@ def test_commentary_cyclical_risk_reflects_sector_type_and_cyclical_trap_flag():
 
 def test_commentary_horizon_note_flags_high_uncertainty():
     calm = rule_based.commentary(_valuation(high_uncertainty=False), horizon="1y")["horizon_note"]
-    assert "yüksek belirsizlik" not in calm
+    assert "high uncertainty" not in calm
 
     uncertain = rule_based.commentary(_valuation(high_uncertainty=True), horizon="1y")["horizon_note"]
-    assert "yüksek belirsizlik" in uncertain
+    assert "high uncertainty" in uncertain
 
 
 def test_commentary_key_risks_include_red_flags_and_valuation_notes():
@@ -626,10 +626,10 @@ def test_commentary_key_risks_excludes_safe_advisory_screen_notes():
     valuation["beneish_m"] = {"m_score": -2.30, "partial": False, "flag": False}
     valuation["merton_dtd"] = {"distance_to_default": 16.62, "zone": "safe"}
     valuation["notes"] = [
-        "Altman Z-skoru güvenli bölgede (iflas riski düşük). (Z=12.41)",
-        "Beneish M-skoru -2.3.",
-        "Merton mesafe-temerrüt modeli güvenli bölgede. (DD=16.62, PD=%0.00)",
-        "LBO çapası (bilgi amaçlı, manşete GİRMEZ): ~$130.",
+        "Altman Z-score is in the safe zone (low bankruptcy risk). (Z=12.41)",
+        "Beneish M-score -2.3.",
+        "Merton distance-to-default model is in the safe zone. (DD=16.62, PD=0.00%)",
+        "LBO anchor (informational only, NOT part of the headline): ~$130.",
         "fcf0 = TTM FCF kullanıldı.",  # a genuine engine warning -> stays
     ]
     red_flags = [{"code": "X", "message": "Gerçek bir risk", "detail": "..."}]
@@ -639,10 +639,10 @@ def test_commentary_key_risks_excludes_safe_advisory_screen_notes():
     assert "Gerçek bir risk" in result["key_risks"]
     assert "fcf0 = TTM FCF kullanıldı." in result["key_risks"]
     # No "safe" advisory reading nor the informational LBO floor is a risk.
-    assert not any("Altman Z-skoru" in r for r in result["key_risks"])
-    assert not any("Beneish M-skoru" in r for r in result["key_risks"])
-    assert not any("Merton mesafe-temerrüt" in r for r in result["key_risks"])
-    assert not any("LBO çapası" in r for r in result["key_risks"])
+    assert not any("Altman Z-score" in r for r in result["key_risks"])
+    assert not any("Beneish M-score" in r for r in result["key_risks"])
+    assert not any("Merton distance-to-default" in r for r in result["key_risks"])
+    assert not any("LBO anchor" in r for r in result["key_risks"])
 
 
 def test_commentary_key_risks_surfaces_gated_distress_sentence_once():
@@ -654,8 +654,8 @@ def test_commentary_key_risks_surfaces_gated_distress_sentence_once():
     valuation["beneish_m"] = {"m_score": -1.0, "partial": False, "flag": True}
     valuation["merton_dtd"] = {"distance_to_default": 0.5, "zone": "distress"}
     valuation["notes"] = [
-        "Altman Z-skoru sıkıntı bölgesinde (yüksek iflas riski sinyali). (Z=1.2)",
-        "Beneish M-skoru -1.0 -- olası kazanç manipülasyonu sinyali.",
+        "Altman Z-score is in the distress zone (high bankruptcy-risk signal). (Z=1.2)",
+        "Beneish M-score -1.0 -- possible earnings manipulation signal.",
     ]
 
     result = rule_based.commentary(valuation, red_flags=[])
@@ -663,11 +663,11 @@ def test_commentary_key_risks_surfaces_gated_distress_sentence_once():
 
     # Exactly one entry mentions the distress screens (the combined gated
     # sentence), not one-per-note duplicates.
-    distress_entries = [r for r in key_risks if "iflas riski sinyali" in r or "manipülasyon sinyali" in r]
+    distress_entries = [r for r in key_risks if "bankruptcy-risk signal" in r or "earnings manipulation" in r]
     assert len(distress_entries) == 1
-    assert "Altman Z-skoru" in distress_entries[0]
-    assert "manipülasyon" in distress_entries[0]
-    assert "temerrüt" in distress_entries[0]
+    assert "Altman Z-score" in distress_entries[0]
+    assert "manipulation" in distress_entries[0]
+    assert "default" in distress_entries[0]
 
 
 def test_commentary_beneish_flag_caveated_when_sales_growth_high():
@@ -678,22 +678,22 @@ def test_commentary_beneish_flag_caveated_when_sales_growth_high():
     val_growth["beneish_m"] = {"m_score": -1.67, "flag": True, "components": {"sgi": 1.90}}
     growth_risk = rule_based._distress_risk_from_valuation(val_growth)
     assert growth_risk is not None
-    assert "büyüme yan etkisi" in growth_risk
-    assert "manipülasyon kanıtı değil" in growth_risk
+    assert "growth side effect" in growth_risk
+    assert "not evidence of manipulation" in growth_risk
 
     # A Beneish flag WITHOUT high growth stays a plain manipulation signal.
     val_flat = _valuation()
     val_flat["beneish_m"] = {"m_score": -1.50, "flag": True, "components": {"sgi": 1.05}}
     flat_risk = rule_based._distress_risk_from_valuation(val_flat)
     assert flat_risk is not None
-    assert "olası kazanç manipülasyonu sinyali" in flat_risk
-    assert "büyüme yan etkisi" not in flat_risk
+    assert "possible earnings manipulation" in flat_risk
+    assert "growth side effect" not in flat_risk
 
 
 def test_commentary_catalyst_and_red_flags_comment_defaults():
     result = rule_based.commentary(_valuation())
-    assert result["catalyst"] == "bilinmiyor"
-    assert result["red_flags_comment"] == "yok"
+    assert result["catalyst"] == "unknown"
+    assert result["red_flags_comment"] == "none"
 
     catalyst = {"estimate_date": "2026-08-27", "label": "Q2 earnings ~27 Ağu", "based_on": "x"}
     red_flags = [{"code": "X", "message": "bir bayrak", "detail": "..."}]
@@ -706,7 +706,7 @@ def test_commentary_summary_is_grammatical_with_and_without_fair_value_band():
     # With a band present, the summary reads "...baz senaryoda $X-Y
     # aralığını işaret ediyor; ...".
     with_band = rule_based.commentary(_valuation())["summary"]
-    assert "baz senaryoda $90.00-110.00 aralığını işaret ediyor;" in with_band
+    assert "points to a $90.00-110.00 range in the base scenario;" in with_band
 
     # Without a band, it must NOT glue "hesaplayamadı" and "işaret ediyor"
     # together into the old ungrammatical sentence -- it should read
@@ -717,14 +717,14 @@ def test_commentary_summary_is_grammatical_with_and_without_fair_value_band():
         for key in ("bear", "base", "bull")
     }
     without_band = rule_based.commentary(no_band_valuation)["summary"]
-    assert "baz senaryoda adil değer aralığı hesaplayamadı;" in without_band
-    assert "hesaplayamadı işaret ediyor" not in without_band
+    assert "could not compute a fair-value range in the base scenario;" in without_band
+    assert "could not compute a fair-value range in the base scenario points to" not in without_band
 
 
 def test_commentary_handles_none_valuation_without_raising():
     result = rule_based.commentary(None)
-    assert result["fundamental_verdict"] == "MAKUL"
-    assert result["catalyst"] == "bilinmiyor"
+    assert result["fundamental_verdict"] == "FAIR"
+    assert result["catalyst"] == "unknown"
 
 
 def test_commentary_is_deterministic():

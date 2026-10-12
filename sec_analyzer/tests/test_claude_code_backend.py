@@ -35,7 +35,7 @@ def test_api_key_guard_raises_before_any_subprocess(monkeypatch):
         cc.call_claude_code("sys", "user")
     # Message names the misbilling risk and the remedy.
     assert "ANTHROPIC_API_KEY" in str(excinfo.value)
-    assert "abonelik" in str(excinfo.value)
+    assert "subscription" in str(excinfo.value)
 
 
 def test_api_key_guard_helper_directly(monkeypatch):

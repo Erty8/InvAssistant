@@ -311,10 +311,10 @@ def test_analyst_line_full_dict_upside_when_mean_above_price():
     line = _analyst_line(_full_analyst_dict(), 100.0)
 
     assert line is not None
-    assert "ort" in line
-    assert "34 analist" in line
+    assert "avg" in line
+    assert "34 analysts" in line
     assert "+%28" in line
-    assert "aralık" in line
+    assert "range" in line
     assert "$95" in line and "$160" in line
 
 
@@ -342,12 +342,12 @@ def test_analyst_line_no_upside_segment_when_price_unusable(bad_price):
     line = _analyst_line(_full_analyst_dict(), bad_price)
 
     assert line is not None
-    assert "ort" in line
+    assert "avg" in line
     # No upside marker ("+%" or "-%") should appear when price is unusable,
-    # while the unrelated range segment ("aralık") is still present.
+    # while the unrelated range segment ("range") is still present.
     assert "+%" not in line
     assert "-%" not in line
-    assert "aralık" in line
+    assert "range" in line
 
 
 def test_analyst_line_no_analyst_count_segment_when_missing():

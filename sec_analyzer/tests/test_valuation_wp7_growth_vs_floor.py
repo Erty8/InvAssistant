@@ -121,8 +121,8 @@ def test_cyclical_fcfe_below_epv_floor_sets_destroys_and_appends_both_values_not
 
     # (d) the new both-values note is present, citing both figures.
     assert any(
-        "sürdürülebilir-büyüme FCFE de hesaplandı" in n
-        and "81.35" in n and "111.11" in n and "YARATMADIĞINI" in n
+        "sustainable-growth FCFE was also computed" in n
+        and "81.35" in n and "111.11" in n and "NOT CREATING value" in n
         for n in result["notes"]
     )
 
@@ -152,7 +152,7 @@ def test_cyclical_fcfe_beats_epv_floor_sets_adds_no_destroys_note():
     assert detail["growth_vs_floor"] == "adds"
 
     # No below-floor "destroys" note should be present in the beats-floor case.
-    assert not any("YARATMADIĞINI" in n for n in result["notes"])
+    assert not any("NOT CREATING value" in n for n in result["notes"])
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +258,6 @@ def test_mature_revenue_first_below_epv_floor_sets_destroys():
     # Pre-existing both-values note (unchanged text, only asserting it is
     # still there and still carries both figures).
     assert any(
-        "altında kaldığı için manşet EPV'de tutuldu" in n and "0.33" in n and "6.67" in n
+        "so the headline was kept at EPV" in n and "0.33" in n and "6.67" in n
         for n in result["notes"]
     )

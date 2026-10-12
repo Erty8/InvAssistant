@@ -222,8 +222,8 @@ def test_propose_assumptions_retries_once_on_sanity_violation_then_succeeds(monk
     result = analyzer.propose_assumptions(_normalized(), [], metrics={}, provider="ollama")
 
     assert len(calls) == 2
-    # The revision call must carry the violation list, in Turkish, per SPEC.md Sec.12.
-    assert "ihlal edildi" in calls[1]
+    # The revision call must carry the violation list, per SPEC.md Sec.12.
+    assert "were violated" in calls[1]
     assert result["assumptions"]["base"]["discount_rate"] == 0.11
     assert analyzer.validate_assumptions(result["assumptions"]) == []
 
@@ -385,14 +385,14 @@ def test_interpret_results_overrides_contradicting_fundamental_verdict(monkeypat
     """The LLM says UCUZ, but the deterministic DCF signal says pahali --
     an outright contradiction on the ucuz<->pahali axis must be overridden."""
     monkeypatch.setattr(
-        analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json(fundamental_verdict="UCUZ")
+        analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json(fundamental_verdict="CHEAP")
     )
     valuation = _valuation_fixture(dcf_signal="pahali")
 
     with caplog.at_level("WARNING"):
         result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
 
-    assert result["fundamental_verdict"] == "PAHALI"
+    assert result["fundamental_verdict"] == "EXPENSIVE"
     assert any("overriding" in message for message in caplog.messages)
 
 
@@ -400,24 +400,24 @@ def test_interpret_results_does_not_override_makul_against_a_direction_signal(mo
     """MAKUL vs. a directional (ucuz/pahali) code signal is not a
     contradiction on the ucuz<->pahali axis -- MAKUL must survive."""
     monkeypatch.setattr(
-        analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json(fundamental_verdict="MAKUL")
+        analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json(fundamental_verdict="FAIR")
     )
     valuation = _valuation_fixture(dcf_signal="pahali")
 
     result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
 
-    assert result["fundamental_verdict"] == "MAKUL"
+    assert result["fundamental_verdict"] == "FAIR"
 
 
 def test_interpret_results_keeps_agreeing_fundamental_verdict(monkeypatch):
     monkeypatch.setattr(
-        analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json(fundamental_verdict="UCUZ")
+        analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json(fundamental_verdict="CHEAP")
     )
     valuation = _valuation_fixture(dcf_signal="ucuz")
 
     result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
 
-    assert result["fundamental_verdict"] == "UCUZ"
+    assert result["fundamental_verdict"] == "CHEAP"
 
 
 def test_interpret_results_yuksek_beklenti_signal_always_wins_over_llm_verdict(monkeypatch):
@@ -426,8 +426,8 @@ def test_interpret_results_yuksek_beklenti_signal_always_wins_over_llm_verdict(m
     the hyper-grower 'yuksek_beklenti' code signal always wins outright --
     no provider is ever asked to produce this 4th value itself, so there is
     nothing legitimate for it to contribute here. Covers every verdict a
-    provider's phase-2 contract can actually produce (UCUZ/MAKUL/PAHALI)."""
-    for llm_guess in ("UCUZ", "MAKUL", "PAHALI"):
+    provider's phase-2 contract can actually produce (CHEAP/FAIR/EXPENSIVE)."""
+    for llm_guess in ("CHEAP", "FAIR", "EXPENSIVE"):
         monkeypatch.setattr(
             analyzer, "_call_ollama",
             lambda system, user, model, host, guess=llm_guess: _commentary_json(fundamental_verdict=guess),
@@ -436,7 +436,7 @@ def test_interpret_results_yuksek_beklenti_signal_always_wins_over_llm_verdict(m
 
         result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
 
-        assert result["fundamental_verdict"] == "YÜKSEK BEKLENTİ FİYATLANMIŞ", (
+        assert result["fundamental_verdict"] == "HIGH EXPECTATIONS PRICED IN", (
             f"expected the code signal to win over the provider's {llm_guess!r} guess"
         )
 
@@ -453,7 +453,7 @@ def test_interpret_results_yuksek_beklenti_signal_overrides_script_providers_mak
 
     result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="script")
 
-    assert result["fundamental_verdict"] == "YÜKSEK BEKLENTİ FİYATLANMIŞ"
+    assert result["fundamental_verdict"] == "HIGH EXPECTATIONS PRICED IN"
 
 
 def test_interpret_results_divergence_override_wins_over_any_verdict(monkeypatch):
@@ -463,7 +463,7 @@ def test_interpret_results_divergence_override_wins_over_any_verdict(monkeypatch
     relabel applied last. Confidence comes straight from the (already-floored)
     triangulation.confidence, and the thesis-metric rationale is reframed."""
     up_divergence = {"direction": "ucuz", "action": "verdict", "factor": 3.25, "band_edge": 434.38}
-    for llm_guess in ("UCUZ", "MAKUL", "PAHALI"):
+    for llm_guess in ("CHEAP", "FAIR", "EXPENSIVE"):
         monkeypatch.setattr(
             analyzer, "_call_ollama",
             lambda system, user, model, host, guess=llm_guess: _commentary_json(fundamental_verdict=guess),
@@ -472,21 +472,21 @@ def test_interpret_results_divergence_override_wins_over_any_verdict(monkeypatch
             dcf_signal="ucuz", confidence="DÜŞÜK", divergence=up_divergence,
         )
         result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
-        assert result["fundamental_verdict"] == "MODEL-PİYASA AYRIŞMASI"
+        assert result["fundamental_verdict"] == "MODEL-PRICE DIVERGENCE"
         assert result["confidence"] == "DÜŞÜK"
-        assert "ayrışma" in result["thesis_metric"]["rationale"].lower()
+        assert "divergence" in result["thesis_metric"]["rationale"].lower()
 
 
 def test_interpret_results_downside_divergence_log_only_does_not_relabel(monkeypatch):
     """A down-side divergence is log-only (action="log_only"): the verdict is
     NOT relabeled -- the normal reconcile stands."""
     monkeypatch.setattr(
-        analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json(fundamental_verdict="PAHALI")
+        analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json(fundamental_verdict="EXPENSIVE")
     )
     down_divergence = {"direction": "pahali", "action": "log_only", "factor": 0.4, "band_edge": 40.0}
     valuation = _valuation_fixture(dcf_signal="pahali", divergence=down_divergence)
     result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
-    assert result["fundamental_verdict"] == "PAHALI"
+    assert result["fundamental_verdict"] == "EXPENSIVE"
 
 
 def test_interpret_results_overwrites_technical_verdict_from_technical_arg(monkeypatch):
@@ -509,7 +509,7 @@ def test_interpret_results_technical_verdict_falls_back_when_no_technical_given(
 
     result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
 
-    assert result["technical_verdict"] == "VERİ YOK (fiyat verisi alınamadı)"
+    assert result["technical_verdict"] == "NO DATA (price data unavailable)"
 
 
 def test_interpret_results_stamps_horizon_weights_and_valuation(monkeypatch):
@@ -586,8 +586,8 @@ def test_interpret_results_uses_ratios_and_red_flags_for_thesis_metric_and_stop_
         _normalized(), ratios, {"price": 100.0}, None, red_flags, None, valuation, provider="script",
     )
 
-    assert result["thesis_metric"]["name"] == "Brüt Kâr Marjı"
-    assert result["thesis_metric"]["latest_value"] == "%45.0"
+    assert result["thesis_metric"]["name"] == "Gross Profit Margin"
+    assert result["thesis_metric"]["latest_value"] == "45.0%"
     assert any(s["code"] == "ACTIVE_RED_FLAG" for s in result["stop_adding"])
 
 
@@ -674,9 +674,9 @@ def test_interpret_results_script_provider_is_fully_offline_and_postprocessed():
     assert result["_model"] == "rule-based-v2"
     assert result["confidence"] == "ORTA"
     assert result["fair_value_range"] == valuation["fair_value_range"]
-    assert result["fundamental_verdict"] == "PAHALI"
+    assert result["fundamental_verdict"] == "EXPENSIVE"
     assert result["valuation"] == valuation
-    assert result["technical_verdict"] == "VERİ YOK (fiyat verisi alınamadı)"
+    assert result["technical_verdict"] == "NO DATA (price data unavailable)"
     assert result["reverse_dcf_comment"]
 
 
@@ -714,7 +714,7 @@ def test_interpret_script_provider_end_to_end_offline():
     assert result["valuation"]["sector_type"] == "mature"
     assert result["fair_value_range"] == result["valuation"]["fair_value_range"]
     assert result["confidence"] == result["valuation"]["triangulation"]["confidence"]
-    assert result["fundamental_verdict"] in ("UCUZ", "MAKUL", "PAHALI")
+    assert result["fundamental_verdict"] in ("CHEAP", "FAIR", "EXPENSIVE")
 
 
 def test_interpret_sic_from_submissions_overrides_llm_sector_guess(monkeypatch):
@@ -821,8 +821,8 @@ def test_interpret_backward_compatible_defaults_to_configured_provider(monkeypat
     # the "1y" default horizon.
     assert result["_horizon"] == "1y"
     assert result["_weights"] == {"fundamental": 0.5, "technical": 0.5}
-    assert result["technical_verdict"] == "VERİ YOK (fiyat verisi alınamadı)"
-    assert result["catalyst"] == "bilinmiyor"
+    assert result["technical_verdict"] == "NO DATA (price data unavailable)"
+    assert result["catalyst"] == "unknown"
 
 
 def test_interpret_stamps_horizon_and_weights(monkeypatch):
@@ -854,14 +854,14 @@ def test_interpret_never_raises_on_unexpected_internal_error(monkeypatch):
 def test_build_phase2_system_prompt_includes_asof_instruction_when_set():
     prompt = analyzer._build_phase2_system_prompt("1y", as_of=date(2022, 6, 30))
 
-    assert "ANALİZ TARİHİ: 2022-06-30" in prompt
-    assert "SONRA" in prompt
+    assert "ANALYSIS DATE: 2022-06-30" in prompt
+    assert "AFTER this date" in prompt
 
 
 def test_build_phase2_system_prompt_omits_asof_instruction_when_none():
     prompt = analyzer._build_phase2_system_prompt("1y", as_of=None)
 
-    assert "ANALİZ TARİHİ" not in prompt
+    assert "ANALYSIS DATE" not in prompt
 
 
 def test_interpret_results_ollama_sets_hindsight_leak_risk_when_as_of_given(monkeypatch):

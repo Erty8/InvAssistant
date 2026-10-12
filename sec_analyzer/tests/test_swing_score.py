@@ -232,15 +232,15 @@ def test_textbook_pullback_scores_at_least_70():
     assert result["score"] == 92
     assert result["score"] >= 70
     assert result["s"] == pytest.approx(0.835, abs=0.001)
-    assert result["label"] == "GÜÇLÜ FIRSAT"
-    assert result["setup"] == "TRENDDE GERİ ÇEKİLME"
-    assert result["badges"] == ["SIKIŞMA"]
+    assert result["label"] == "STRONG OPPORTUNITY"
+    assert result["setup"] == "TREND PULLBACK"
+    assert result["badges"] == ["SQUEEZE"]
     assert [c["key"] for c in result["components"]] == [
         "trend", "setup", "trigger", "rel_strength", "volume", "risk_reward",
     ]
     # Everything positive -> a "strongest" driver is named, no "weakest".
-    assert "en güçlü:" in result["summary"]
-    assert "en zayıf" not in result["summary"]
+    assert "strongest:" in result["summary"]
+    assert "weakest" not in result["summary"]
 
 
 def _extended_deteriorating_downtrend():
@@ -298,12 +298,12 @@ def test_extended_deteriorating_downtrend_scores_at_most_30():
     assert result is not None
     assert result["score"] == 8
     assert result["score"] <= 30
-    assert result["label"] == "KAÇIN"
-    assert result["setup"] == "KURULUM YOK"
+    assert result["label"] == "AVOID"
+    assert result["setup"] == "NO SETUP"
     assert result["badges"] == []
     # Everything negative -> a "weakest" driver is named, no "strongest".
-    assert "en zayıf" in result["summary"]
-    assert "en güçlü:" not in result["summary"]
+    assert "weakest" in result["summary"]
+    assert "strongest:" not in result["summary"]
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +346,7 @@ def test_classify_setup_breakout():
 
 def test_classify_setup_trend_pullback():
     ind = {"dist_52w_high_pct": -10.0, "dist_sma50_pct": 0.0}
-    assert _classify_setup(ind, trend_sub=0.5) == "TRENDDE GERİ ÇEKİLME"
+    assert _classify_setup(ind, trend_sub=0.5) == "TREND PULLBACK"
 
 
 def test_classify_setup_squeeze():
@@ -355,7 +355,7 @@ def test_classify_setup_squeeze():
         "dist_sma50_pct": 10.0,       # fails pullback range
         "bb_squeeze": {"active": True},
     }
-    assert _classify_setup(ind, trend_sub=0.1) == "SIKIŞMA"
+    assert _classify_setup(ind, trend_sub=0.1) == "SQUEEZE"
 
 
 def test_classify_setup_oversold_reaction_via_rsi_reclaim():
@@ -365,7 +365,7 @@ def test_classify_setup_oversold_reaction_via_rsi_reclaim():
         "bb_squeeze": {"active": False},
         "rsi_reclaim": "bullish",
     }
-    assert _classify_setup(ind, trend_sub=-0.5) == "AŞIRI SATIM TEPKİSİ"
+    assert _classify_setup(ind, trend_sub=-0.5) == "OVERSOLD BOUNCE"
 
 
 def test_classify_setup_oversold_reaction_via_rsi14_and_divergence():
@@ -377,7 +377,7 @@ def test_classify_setup_oversold_reaction_via_rsi14_and_divergence():
         "rsi14": 35.0,
         "rsi_divergence": "bullish",
     }
-    assert _classify_setup(ind, trend_sub=-0.5) == "AŞIRI SATIM TEPKİSİ"
+    assert _classify_setup(ind, trend_sub=-0.5) == "OVERSOLD BOUNCE"
 
 
 def test_classify_setup_momentum_continuation():
@@ -389,7 +389,7 @@ def test_classify_setup_momentum_continuation():
         "rsi14": None,
         "rsi_divergence": None,
     }
-    assert _classify_setup(ind, trend_sub=0.5) == "MOMENTUM DEVAM"
+    assert _classify_setup(ind, trend_sub=0.5) == "MOMENTUM CONTINUATION"
 
 
 def test_classify_setup_no_setup_fallback():
@@ -401,11 +401,11 @@ def test_classify_setup_no_setup_fallback():
         "rsi14": None,
         "rsi_divergence": None,
     }
-    assert _classify_setup(ind, trend_sub=0.1) == "KURULUM YOK"
+    assert _classify_setup(ind, trend_sub=0.1) == "NO SETUP"
 
 
 def test_classify_setup_first_match_wins_breakout_beats_pullback():
-    # Both the BREAKOUT and TRENDDE GERİ ÇEKİLME conditions hold here --
+    # Both the BREAKOUT and TREND PULLBACK conditions hold here --
     # BREAKOUT must win because it's evaluated first.
     ind = {"dist_52w_high_pct": -1.0, "dist_sma50_pct": 0.0}
     assert _classify_setup(ind, trend_sub=0.5) == "BREAKOUT"
@@ -414,7 +414,7 @@ def test_classify_setup_first_match_wins_breakout_beats_pullback():
 def test_classify_setup_none_fields_and_none_trend_sub_fail_safely():
     # A totally empty indicators dict and a None trend_sub (treated as 0.0,
     # per spec) must fall through every rule without raising.
-    assert _classify_setup({}, trend_sub=None) == "KURULUM YOK"
+    assert _classify_setup({}, trend_sub=None) == "NO SETUP"
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +430,7 @@ def test_badges_all_conditions_emit_in_fixed_order():
         "golden_cross": True,
         "rsi_divergence": "bullish",
     }
-    assert _badges(ind) == ["HACİM", "KAPİTÜLASYON", "SIKIŞMA", "GOLDEN CROSS", "RSI UYUMSUZLUK"]
+    assert _badges(ind) == ["VOLUME", "CAPITULATION", "SQUEEZE", "GOLDEN CROSS", "RSI DIVERGENCE"]
 
 
 def test_badges_empty_when_nothing_qualifies():
@@ -438,12 +438,12 @@ def test_badges_empty_when_nothing_qualifies():
 
 
 def test_badge_hacim_threshold_boundary():
-    assert _badges({"rel_volume": 1.5}) == ["HACİM"]
+    assert _badges({"rel_volume": 1.5}) == ["VOLUME"]
     assert _badges({"rel_volume": 1.49}) == []
 
 
 def test_badge_kapitulasyon_requires_down_direction_and_recency():
-    assert _badges({"volume_climax": {"detected": True, "direction": "down", "bars_ago": 5}}) == ["KAPİTÜLASYON"]
+    assert _badges({"volume_climax": {"detected": True, "direction": "down", "bars_ago": 5}}) == ["CAPITULATION"]
     # One bar too late.
     assert _badges({"volume_climax": {"detected": True, "direction": "down", "bars_ago": 6}}) == []
     # Wrong direction.
@@ -455,7 +455,7 @@ def test_badge_kapitulasyon_requires_down_direction_and_recency():
 def test_badge_golden_cross_and_rsi_divergence_require_exact_values():
     assert _badges({"golden_cross": True}) == ["GOLDEN CROSS"]
     assert _badges({"golden_cross": False}) == []
-    assert _badges({"rsi_divergence": "bullish"}) == ["RSI UYUMSUZLUK"]
+    assert _badges({"rsi_divergence": "bullish"}) == ["RSI DIVERGENCE"]
     assert _badges({"rsi_divergence": "bearish"}) == []
 
 

@@ -384,7 +384,7 @@ def test_price_above_both_regimes_is_reported_not_clamped():
 
     assert cycle["p_implied"] > 1.0
     assert cycle["p_implied_status"] == "above_range"
-    assert "hiçbir olasılık karışımı açıklamıyor" in cycle["verdict_sentence"]
+    assert "no probability mix of the two regimes explains the price" in cycle["verdict_sentence"]
 
 
 def test_price_below_both_regimes_is_reported_not_clamped():
@@ -403,9 +403,9 @@ def test_verdict_sentence_uses_the_required_shape_when_in_range():
 
     sentence = cyclical.two_regime_valuation(stats, _metrics(), price=midpoint)["verdict_sentence"]
 
-    assert "olasılık vermeyi" in sentence
-    assert "zorunlu kılıyor" in sentence
-    assert "üstünde ise fiyat ucuz" in sentence
+    assert "requires assigning" in sentence
+    assert "probability to the structural break" in sentence
+    assert "is above this, the price is cheap" in sentence
 
 
 # ---- flags ----

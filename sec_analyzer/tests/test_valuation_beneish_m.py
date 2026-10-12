@@ -203,7 +203,7 @@ def test_build_beneish_m_matches_pure_function_from_normalized_fixture():
     assert result is not None
     assert result["m_score"] == pytest.approx(-2.10, abs=0.01)
     assert result["partial"] is False
-    assert any("Beneish M-skoru" in n for n in notes)
+    assert any("Beneish M-score" in n for n in notes)
 
 
 def test_build_beneish_m_none_when_fiscal_year_unresolvable():
@@ -222,7 +222,7 @@ def test_build_beneish_m_partial_note_when_sga_missing():
 
     assert result is not None
     assert result["partial"] is True
-    assert any("kısmi" in n for n in notes)
+    assert any("partial" in n for n in notes)
 
 
 # ---------------------------------------------------------------------------

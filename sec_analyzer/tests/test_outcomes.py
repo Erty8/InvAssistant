@@ -32,16 +32,16 @@ def _price_df(rows):
 @pytest.mark.parametrize(
     "verdict, rel_return, expected",
     [
-        ("UCUZ", 0.1, True),
-        ("UCUZ", -0.1, False),
-        ("UCUZ", 0.0, False),  # rel_return > 0 is strict; exactly 0 is not a hit
-        ("PAHALI", -0.1, True),
-        ("PAHALI", 0.1, False),
-        ("PAHALI", 0.0, False),  # rel_return < 0 is strict; exactly 0 is not a hit
-        ("MAKUL", 0.5, None),  # neutral claim -- never a binary hit
-        ("MAKUL", -0.5, None),
-        ("YÜKSEK BEKLENTİ FİYATLANMIŞ", 5.0, None),  # referee label -- not binary
-        ("MODEL-PİYASA AYRIŞMASI", -5.0, None),  # referee label -- not binary
+        ("CHEAP", 0.1, True),
+        ("CHEAP", -0.1, False),
+        ("CHEAP", 0.0, False),  # rel_return > 0 is strict; exactly 0 is not a hit
+        ("EXPENSIVE", -0.1, True),
+        ("EXPENSIVE", 0.1, False),
+        ("EXPENSIVE", 0.0, False),  # rel_return < 0 is strict; exactly 0 is not a hit
+        ("FAIR", 0.5, None),  # neutral claim -- never a binary hit
+        ("FAIR", -0.5, None),
+        ("HIGH EXPECTATIONS PRICED IN", 5.0, None),  # referee label -- not binary
+        ("MODEL-PRICE DIVERGENCE", -5.0, None),  # referee label -- not binary
         (None, 0.1, None),  # missing verdict
         ("", 0.1, None),  # falsy verdict
         ("SOME-UNKNOWN-LABEL", 0.1, None),  # unrecognized label
@@ -53,8 +53,8 @@ def test_classify_hit_branches(verdict, rel_return, expected):
 
 def test_classify_hit_none_rel_return_is_none_even_for_binary_verdicts():
     # A missing realized return means nothing to grade, regardless of verdict.
-    assert outcomes.classify_hit("UCUZ", None) is None
-    assert outcomes.classify_hit("PAHALI", None) is None
+    assert outcomes.classify_hit("CHEAP", None) is None
+    assert outcomes.classify_hit("EXPENSIVE", None) is None
     assert outcomes.classify_hit(None, None) is None
 
 
@@ -116,11 +116,11 @@ def test_close_on_or_before_returns_none_for_none_df():
 @pytest.mark.parametrize(
     "label, expected",
     [
-        ("YÜKSEK BEKLENTİ FİYATLANMIŞ", True),
-        ("MODEL-PİYASA AYRIŞMASI", True),
-        ("UCUZ", False),
-        ("PAHALI", False),
-        ("MAKUL", False),
+        ("HIGH EXPECTATIONS PRICED IN", True),
+        ("MODEL-PRICE DIVERGENCE", True),
+        ("CHEAP", False),
+        ("EXPENSIVE", False),
+        ("FAIR", False),
         (None, False),
         ("", False),
         ("SOME-UNKNOWN-LABEL", False),
@@ -142,7 +142,7 @@ def test_is_referee_label(label, expected):
 #   abs_return = fwd/ref - 1               = 130/100 - 1          = 0.30
 #   spy_return =                           = 330/300 - 1          = 0.10
 #   rel_return = abs_return - spy_return                          = 0.20
-#   hit = classify_hit("UCUZ", 0.20) = (0.20 > 0)                 = True
+#   hit = classify_hit("CHEAP", 0.20) = (0.20 > 0)                 = True
 #
 # `today` = 2021-07-15, so the +1y window (fwd_date 2021-06-30) has
 # matured, but the +3y window (fwd_date 2023-06-30) has not -- it must be
@@ -165,9 +165,9 @@ def _canned_price_history(monkeypatch):
     monkeypatch.setattr(outcomes, "get_price_history", _fake_get_price_history)
 
 
-def _insert_ucuz_verdict(db_path):
+def _insert_cheap_verdict(db_path):
     result = {
-        "fundamental_verdict": "UCUZ",
+        "fundamental_verdict": "CHEAP",
         "fair_value_range": {"bear": {}, "base": {}, "bull": {}},
     }
     return database.save_verdict(
@@ -178,7 +178,7 @@ def _insert_ucuz_verdict(db_path):
 
 def test_evaluate_outcomes_computes_hand_verified_abs_rel_and_hit(tmp_path, monkeypatch):
     db_path = str(tmp_path / "test.sqlite3")
-    verdict_id = _insert_ucuz_verdict(db_path)
+    verdict_id = _insert_cheap_verdict(db_path)
     _canned_price_history(monkeypatch)
 
     counts = outcomes.evaluate_outcomes(db_path=db_path, today=date(2021, 7, 15))
@@ -204,7 +204,7 @@ def test_evaluate_outcomes_computes_hand_verified_abs_rel_and_hit(tmp_path, monk
 
 def test_evaluate_outcomes_is_idempotent_across_repeated_calls(tmp_path, monkeypatch):
     db_path = str(tmp_path / "test.sqlite3")
-    _insert_ucuz_verdict(db_path)
+    _insert_cheap_verdict(db_path)
     _canned_price_history(monkeypatch)
 
     outcomes.evaluate_outcomes(db_path=db_path, today=date(2021, 7, 15))

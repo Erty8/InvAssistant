@@ -287,9 +287,9 @@ def test_compute_entry_plan_breakout_candidates_appear_and_are_ordered_above_dip
     assert len(plan) <= 5
 
     for t in breakout_tranches:
-        assert "seviyesinin üzerine çıkarsa (yükseliş teyidi" in t["trigger"]
+        assert "(upside confirmation" in t["trigger"]
     for t in dip_tranches:
-        assert "seviyesinin altına inerse" in t["trigger"]
+        assert "If the daily close falls below" in t["trigger"]
 
     # Since the final list is sorted by descending price_zone level and every
     # breakout candidate's level is > price > every dip candidate's level,
@@ -308,7 +308,7 @@ def test_compute_entry_plan_dip_only_unchanged_when_technical_has_no_above_price
 
     assert plan
     assert all(t["kind"] == "dip" for t in plan)
-    assert all("seviyesinin altına inerse" in t["trigger"] for t in plan)
+    assert all("If the daily close falls below" in t["trigger"] for t in plan)
     invalidations = {t["invalidation"] for t in plan}
     assert len(invalidations) == 1  # one shared structural invalidation
 
@@ -489,8 +489,9 @@ def test_compute_entry_plan_rr_ters_note_scoped_to_adjacent_dip_pairs_only():
             assert "R:R sırası ters" not in (t["note"] or "")
     above_target_breakout = ordered[0]  # breakout, level=250, entry >= target=200
     assert above_target_breakout["note"] == (
-        "Model üstü: tetik seviyesi model bull hedefinin (200.00 USD) üzerinde; "
-        "değer-çapalı R:R tanımsız -- yalnızca trend-takip girişi."
+        "Above model: the trigger level is above the model's bull target "
+        "(200.00 USD); value-anchored R:R is undefined -- this is a "
+        "trend-following entry only."
     )
     for t in ordered[1:3]:  # breakout130, breakout110 -- both below target
         assert t["kind"] == "breakout"
@@ -545,8 +546,9 @@ def test_compute_entry_plan_model_ustu_note_on_above_target_breakout_only():
 
     assert above["rr"] is None
     assert above["note"] == (
-        "Model üstü: tetik seviyesi model bull hedefinin (150.00 USD) üzerinde; "
-        "değer-çapalı R:R tanımsız -- yalnızca trend-takip girişi."
+        "Above model: the trigger level is above the model's bull target "
+        "(150.00 USD); value-anchored R:R is undefined -- this is a "
+        "trend-following entry only."
     )
 
     assert below["note"] is None
@@ -612,13 +614,13 @@ def test_compute_entry_plan_dip_trigger_names_its_source_level():
 
     assert len(plan) == 5
     by_level = {round((t["price_zone"]["lo"] + t["price_zone"]["hi"]) / 2): t for t in plan}
-    assert "— SMA200 desteği" in by_level[95]["trigger"]
-    assert "— baz senaryo üst bandı" in by_level[80]["trigger"]
-    assert "— baz senaryo alt bandı" in by_level[60]["trigger"]
-    assert "— ayı senaryosu alt bandı" in by_level[40]["trigger"]
-    assert "— 52 hafta dibi" in by_level[35]["trigger"]
+    assert "-- SMA200 support" in by_level[95]["trigger"]
+    assert "-- base scenario upper band" in by_level[80]["trigger"]
+    assert "-- base scenario lower band" in by_level[60]["trigger"]
+    assert "-- bear scenario lower band" in by_level[40]["trigger"]
+    assert "-- 52-week low" in by_level[35]["trigger"]
     # daily-close-only wording is retained
-    assert all("seviyesinin altına inerse" in t["trigger"] for t in plan)
+    assert all("If the daily close falls below" in t["trigger"] for t in plan)
 
 
 def test_compute_entry_plan_support_confluence_note_on_overlapping_dip_only():
@@ -638,7 +640,7 @@ def test_compute_entry_plan_support_confluence_note_on_overlapping_dip_only():
     plan = planning.compute_entry_plan(valuation, technical, 110)
 
     by_level = {round((t["price_zone"]["lo"] + t["price_zone"]["hi"]) / 2): t for t in plan}
-    assert by_level[60]["note"] == "Teknik destek bölgesiyle örtüşüyor (59.00-61.00 USD)."
+    assert by_level[60]["note"] == "Overlaps with a technical support zone (59.00-61.00 USD)."
     assert by_level[80]["note"] is None
     assert by_level[40]["note"] is None
 
@@ -658,7 +660,7 @@ def test_compute_entry_plan_support_confluence_tolerance_edge():
     plan = planning.compute_entry_plan(valuation, technical, 110)
 
     by_level = {round((t["price_zone"]["lo"] + t["price_zone"]["hi"]) / 2, 1): t for t in plan}
-    assert by_level[58.0]["note"] == "Teknik destek bölgesiyle örtüşüyor (59.00-61.00 USD)."
+    assert by_level[58.0]["note"] == "Overlaps with a technical support zone (59.00-61.00 USD)."
     assert by_level[50.0]["note"] is None
 
 
@@ -684,7 +686,7 @@ def test_compute_entry_plan_support_confluence_never_touches_breakout_notes():
 
     assert by_level[120]["kind"] == "breakout"
     assert by_level[120]["note"] is None  # confluence pass is dip-only
-    assert by_level[160]["note"].startswith("Model üstü")
+    assert by_level[160]["note"].startswith("Above model")
 
 
 def test_apply_stabilization_condition_appends_after_confluence_note():
@@ -697,8 +699,8 @@ def test_apply_stabilization_condition_appends_after_confluence_note():
 
     by_level = {round((t["price_zone"]["lo"] + t["price_zone"]["hi"]) / 2): t for t in plan}
     note = by_level[60]["note"]
-    assert note.startswith("Teknik destek bölgesiyle örtüşüyor (59.00-61.00 USD).")
-    assert "Stabilizasyon koşulu" in note
+    assert note.startswith("Overlaps with a technical support zone (59.00-61.00 USD).")
+    assert "Stabilization condition" in note
 
 
 def test_compute_entry_plan_kind_key_present_and_legacy_keys_retained():
@@ -749,9 +751,9 @@ def test_compute_entry_plan_invalidation_reason_names_lowest_kept_level_when_it_
     dip_tranches = [t for t in plan if t["kind"] == "dip"]
     assert dip_tranches
     for t in dip_tranches:
-        assert "en düşük birikim kademesi" in t["invalidation_reason"]
-        assert "%5" in t["invalidation_reason"]
-        assert "PAYLAŞILAN" in t["invalidation_reason"]
+        assert "lowest accumulation tranche" in t["invalidation_reason"]
+        assert "5%" in t["invalidation_reason"]
+        assert "SHARED" in t["invalidation_reason"]
 
 
 def test_compute_entry_plan_invalidation_reason_names_bear_lo_when_it_binds():
@@ -763,8 +765,8 @@ def test_compute_entry_plan_invalidation_reason_names_bear_lo_when_it_binds():
     dip_tranches = [t for t in plan if t["kind"] == "dip"]
     assert dip_tranches
     for t in dip_tranches:
-        assert "ayı senaryosu alt bandı" in t["invalidation_reason"]
-        assert "%5" in t["invalidation_reason"]
+        assert "bear scenario lower band" in t["invalidation_reason"]
+        assert "5%" in t["invalidation_reason"]
 
 
 def test_compute_entry_plan_invalidation_reason_differs_between_dip_and_breakout():
@@ -775,9 +777,9 @@ def test_compute_entry_plan_invalidation_reason_differs_between_dip_and_breakout
     assert dip_reasons.isdisjoint(breakout_reasons)
     # Dip reason names the SHARED structural floor; breakout reason explains
     # its own per-tranche failed-breakout stop -- the two must read differently.
-    assert all("PAYLAŞILAN" in r for r in dip_reasons)
-    assert all("kendine özel" in r for r in breakout_reasons)
-    assert all("%5" in r for r in dip_reasons | breakout_reasons)
+    assert all("SHARED" in r for r in dip_reasons)
+    assert all("its own" in r for r in breakout_reasons)
+    assert all("5%" in r for r in dip_reasons | breakout_reasons)
 
 
 def test_compute_entry_plan_target_reason_names_bull_hi_when_available():
@@ -786,7 +788,7 @@ def test_compute_entry_plan_target_reason_names_bull_hi_when_available():
     assert plan
     for t in plan:
         assert t["target_reason"] == planning._TARGET_REASON_BULL
-        assert "boğa senaryosunun üst bandına" in t["target_reason"]
+        assert "bull scenario's upper band" in t["target_reason"]
 
 
 def test_compute_entry_plan_target_reason_names_base_hi_fallback_when_bull_hi_missing():
@@ -795,7 +797,7 @@ def test_compute_entry_plan_target_reason_names_base_hi_fallback_when_bull_hi_mi
     assert plan
     for t in plan:
         assert t["target_reason"] == planning._TARGET_REASON_BASE_FALLBACK
-        assert "baz senaryonun üst bandına" in t["target_reason"]
+        assert "base scenario's upper band" in t["target_reason"]
 
 
 def test_compute_entry_plan_target_reason_unavailable_when_no_target():
@@ -989,9 +991,9 @@ def test_select_thesis_metric_mature_sector_uses_net_margin():
         {"fy": 2022, "net_margin": 0.20},
     ]
     result = planning.select_thesis_metric("mature", ratios, {})
-    assert result["name"] == "Net Kâr Marjı"
-    assert result["latest_value"] == "%23.4"
-    assert result["trend"] == "iyileşiyor"
+    assert result["name"] == "Net Profit Margin"
+    assert result["latest_value"] == "23.4%"
+    assert result["trend"] == "improving"
     assert planning._THESIS_INVALIDATION_RULE_TR in result["rationale"]
 
 
@@ -999,23 +1001,23 @@ def test_select_thesis_metric_trend_bozuluyor_when_metric_worsens():
     # diff = 0.10 - 0.20 = -0.10 <= -0.01 -> "bozuluyor"
     ratios = [{"fy": 2023, "net_margin": 0.10}, {"fy": 2022, "net_margin": 0.20}]
     result = planning.select_thesis_metric("mature", ratios, {})
-    assert result["trend"] == "bozuluyor"
+    assert result["trend"] == "deteriorating"
 
 
 def test_select_thesis_metric_trend_yatay_within_flat_threshold():
     # diff = 0.205 - 0.20 = 0.005 ; abs(0.005) < 0.01 -> "yatay"
     ratios = [{"fy": 2023, "net_margin": 0.205}, {"fy": 2022, "net_margin": 0.20}]
     result = planning.select_thesis_metric("mature", ratios, {})
-    assert result["trend"] == "yatay"
+    assert result["trend"] == "flat"
 
 
 def test_select_thesis_metric_growth_unprofitable_uses_yoy_revenue_growth():
     ratios = [{"fy": 2023, "yoy_revenue_growth": 0.55}, {"fy": 2022, "yoy_revenue_growth": 0.40}]
     result = planning.select_thesis_metric("growth_unprofitable", ratios, {})
-    assert result["name"] == "Yıllık Gelir Büyümesi (YoY)"
-    assert result["latest_value"] == "%55.0"
+    assert result["name"] == "Annual Revenue Growth (YoY)"
+    assert result["latest_value"] == "55.0%"
     # diff = 0.55 - 0.40 = 0.15 -> iyileşiyor
-    assert result["trend"] == "iyileşiyor"
+    assert result["trend"] == "improving"
 
 
 def test_select_thesis_metric_growth_unprofitable_falls_back_to_metrics_revenue_cagr():
@@ -1024,64 +1026,64 @@ def test_select_thesis_metric_growth_unprofitable_falls_back_to_metrics_revenue_
     result = planning.select_thesis_metric(
         "growth_unprofitable", [], {"revenue_cagr_5y": 0.25, "revenue_cagr_3y": 0.40}
     )
-    assert result["name"] == "Yıllık Gelir Büyümesi (YoY)"
-    assert result["latest_value"] == "%25.0"
+    assert result["name"] == "Annual Revenue Growth (YoY)"
+    assert result["latest_value"] == "25.0%"
     assert result["trend"] is None
 
 
 def test_select_thesis_metric_growth_unprofitable_fallback_uses_3y_when_5y_missing():
     result = planning.select_thesis_metric("growth_unprofitable", [], {"revenue_cagr_3y": 0.40})
-    assert result["latest_value"] == "%40.0"
+    assert result["latest_value"] == "40.0%"
     assert result["trend"] is None
 
 
 def test_select_thesis_metric_financial_uses_roe():
     ratios = [{"fy": 2023, "roe": 0.18}]
     result = planning.select_thesis_metric("financial", ratios, {})
-    assert result["name"] == "Özkaynak Getirisi (ROE, NIM proxy)"
-    assert result["latest_value"] == "%18.0"
+    assert result["name"] == "Return on Equity (ROE, NIM proxy)"
+    assert result["latest_value"] == "18.0%"
     assert result["trend"] is None  # no prior fiscal year to compare
 
 
 def test_select_thesis_metric_reit_uses_fcf_margin():
     ratios = [{"fy": 2023, "fcf_margin": 0.30}]
     result = planning.select_thesis_metric("reit", ratios, {})
-    assert result["name"] == "FCF Marjı (FFO proxy)"
-    assert result["latest_value"] == "%30.0"
+    assert result["name"] == "FCF Margin (FFO proxy)"
+    assert result["latest_value"] == "30.0%"
 
 
 def test_select_thesis_metric_cyclical_uses_gross_margin():
     ratios = [{"fy": 2023, "gross_margin": 0.45}]
     result = planning.select_thesis_metric("cyclical", ratios, {})
-    assert result["name"] == "Brüt Kâr Marjı"
-    assert result["latest_value"] == "%45.0"
+    assert result["name"] == "Gross Profit Margin"
+    assert result["latest_value"] == "45.0%"
 
 
 def test_select_thesis_metric_cyclical_falls_back_to_net_margin_when_gross_margin_missing():
     ratios = [{"fy": 2023, "net_margin": 0.12}]
     result = planning.select_thesis_metric("cyclical", ratios, {})
-    assert result["name"] == "Net Kâr Marjı"
-    assert result["latest_value"] == "%12.0"
+    assert result["name"] == "Net Profit Margin"
+    assert result["latest_value"] == "12.0%"
 
 
 def test_select_thesis_metric_latest_value_none_when_not_computable():
     result = planning.select_thesis_metric("mature", [], {})
     assert result["latest_value"] is None
     assert result["trend"] is None
-    assert "hesaplanamadı" in result["rationale"]
+    assert "could not be computed" in result["rationale"]
     assert planning._THESIS_INVALIDATION_RULE_TR in result["rationale"]
 
 
 def test_select_thesis_metric_unknown_sector_falls_back_to_default_net_margin():
     ratios = [{"fy": 2023, "net_margin": 0.12}]
     result = planning.select_thesis_metric("not-a-real-sector", ratios, {})
-    assert result["name"] == "Net Kâr Marjı"
-    assert result["latest_value"] == "%12.0"
+    assert result["name"] == "Net Profit Margin"
+    assert result["latest_value"] == "12.0%"
 
 
 def test_select_thesis_metric_none_sector_falls_back_to_default_net_margin():
     result = planning.select_thesis_metric(None, [], {})
-    assert result["name"] == "Net Kâr Marjı"
+    assert result["name"] == "Net Profit Margin"
     assert planning._THESIS_INVALIDATION_RULE_TR in result["rationale"]
 
 
@@ -1166,7 +1168,7 @@ def test_select_thesis_metric_cycle_none_for_single_point_metrics_fallback():
     # growth_unprofitable with no ratios series falls back to a single
     # metrics figure -> no derivable trough/peak series -> cycle is None.
     result = planning.select_thesis_metric("growth_unprofitable", [], {"revenue_cagr_5y": 0.25})
-    assert result["latest_value"] == "%25.0"
+    assert result["latest_value"] == "25.0%"
     assert result["cycle"] is None
 
 

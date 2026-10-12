@@ -82,7 +82,7 @@ def test_a_non_earnings_8k_is_not_counted_as_a_release():
     result = estimate_next_earnings(_sofi_submissions(), today=date(2026, 7, 30))
 
     assert result["last_report_date"] == "2026-07-29"
-    assert "18 Haz" not in result["label"]
+    assert "18 Jun" not in result["label"]
 
 
 @pytest.mark.parametrize(
@@ -109,7 +109,7 @@ def test_without_a_10k_the_label_omits_the_quarter():
 
     result = estimate_next_earnings(subs, today=date(2026, 8, 20))
 
-    assert result["label"].startswith("Sonraki bilanço ~")
+    assert result["label"].startswith("Next earnings ~")
 
 
 def test_falls_back_to_periodic_filings_when_items_are_absent():
@@ -120,7 +120,7 @@ def test_falls_back_to_periodic_filings_when_items_are_absent():
 
     assert result["source"] == "10-Q/10-K"
     assert result["last_report_date"] == "2026-05-07"
-    assert "dosyalamanın" in result["based_on"]
+    assert "filings" in result["based_on"]
 
 
 def test_falls_back_when_too_few_releases_exist():
@@ -157,8 +157,8 @@ def test_just_reported_quarter_is_labeled_as_reported():
     result = estimate_next_earnings(_sofi_submissions(), today=date(2026, 7, 30))
 
     assert result["recently_reported"] is True
-    assert result["label"].startswith("29 Tem tarihinde açıklandı")
-    assert "sonraki: Q3 earnings ~28 Eki" in result["label"]
+    assert result["label"].startswith("Reported on 29 Jul")
+    assert "next: Q3 earnings ~28 Oct" in result["label"]
 
 
 def test_recently_reported_window_closes_after_three_days():
@@ -167,7 +167,7 @@ def test_recently_reported_window_closes_after_three_days():
 
     assert on_the_edge["recently_reported"] is True
     assert past_it["recently_reported"] is False
-    assert past_it["label"] == "Q3 earnings ~28 Eki"
+    assert past_it["label"] == "Q3 earnings ~28 Oct"
 
 
 def test_estimate_date_is_far_enough_out_to_silence_the_report_badge():
@@ -198,21 +198,21 @@ def _codes(signals):
 
 
 def test_planning_signal_fires_for_a_near_catalyst():
-    catalyst = {"label": "Q3 earnings ~28 Eki", "days_until": 10,
+    catalyst = {"label": "Q3 earnings ~28 Oct", "days_until": 10,
                 "recently_reported": False}
 
     assert "BINARY_CATALYST_NEAR" in _codes(_stop_adding(catalyst))
 
 
 def test_planning_signal_is_silent_for_a_just_reported_quarter():
-    catalyst = {"label": "29 Tem tarihinde açıklandı · sonraki: Q3 earnings ~28 Eki",
+    catalyst = {"label": "Reported on 29 Jul · next: Q3 earnings ~28 Oct",
                 "days_until": 90, "recently_reported": True}
 
     assert "BINARY_CATALYST_NEAR" not in _codes(_stop_adding(catalyst))
 
 
 def test_planning_signal_is_silent_for_a_distant_catalyst():
-    catalyst = {"label": "Q3 earnings ~28 Eki", "days_until": 90,
+    catalyst = {"label": "Q3 earnings ~28 Oct", "days_until": 90,
                 "recently_reported": False}
 
     assert "BINARY_CATALYST_NEAR" not in _codes(_stop_adding(catalyst))
@@ -221,7 +221,7 @@ def test_planning_signal_is_silent_for_a_distant_catalyst():
 def test_planning_signal_keeps_old_behavior_without_days_until():
     """A hand-built or pre-Sec.21 catalyst dict must not silently lose the
     signal just because it lacks the new key."""
-    catalyst = {"label": "Q3 earnings ~28 Eki"}
+    catalyst = {"label": "Q3 earnings ~28 Oct"}
 
     assert "BINARY_CATALYST_NEAR" in _codes(_stop_adding(catalyst))
 

@@ -213,7 +213,7 @@ def test_financial_filer_gets_a_turkish_note_explaining_the_suppression():
         sector_type="financial",
     )
 
-    assert any("FD/FAVÖK" in note and "tanımsız" in note for note in result["notes"])
+    assert any("EV/EBITDA" in note and "undefined" in note for note in result["notes"])
 
 
 def test_financial_filer_emits_no_derived_ev_multiple_note():
@@ -234,7 +234,7 @@ def test_financial_filer_emits_no_derived_ev_multiple_note():
     )
 
     assert result["multiples"]["current"]["ev_ebitda"] is None
-    assert not any("FD/FAVÖK" in note and "mali yılının" in note for note in result["notes"])
+    assert not any("EV/EBITDA" in note and "computed using fiscal year" in note for note in result["notes"])
 
 
 def test_non_financial_filer_keeps_its_ev_multiples():
@@ -257,7 +257,7 @@ def test_non_financial_filer_keeps_its_ev_multiples():
     assert multiples["current"]["ev_ebitda"] == pytest.approx(8.0)
     assert multiples["current"]["ev_ebit"] == pytest.approx(10.0)
     assert multiples["net_debt_to_ebitda"] == pytest.approx(4.0)
-    assert not any("FD/FAVÖK" in note and "tanımsız" in note for note in result["notes"])
+    assert not any("EV/EBITDA" in note and "undefined" in note for note in result["notes"])
 
 
 def test_reit_keeps_its_ev_multiples():

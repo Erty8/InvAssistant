@@ -80,9 +80,9 @@ def test_sector_capex_floor_higher_than_dep_and_default_applies_and_notes():
     # sector percentage (20.0%) and the Damodaran source, since the sector
     # floor (not the 5% default) actually determined maintenance_capex.
     note = capex_normalization["maintenance_capex_floor_note"]
-    assert "%20.0" in note
+    assert "20.0%" in note
     assert "Damodaran Cap Ex/Sales" in note
-    assert "varsayılan %5" in note
+    assert "default 5%" in note
 
 
 def test_sector_capex_sales_none_matches_omitted_default_byte_for_byte():

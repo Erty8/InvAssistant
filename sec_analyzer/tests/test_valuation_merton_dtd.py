@@ -200,7 +200,7 @@ def test_build_merton_dtd_none_when_risk_free_pct_missing():
     result, notes = _build_merton_dtd(metrics, df, risk_free_pct=None)
 
     assert result is None
-    assert any("risksiz getiri oranı yok" in n for n in notes)
+    assert any("no risk-free rate available" in n for n in notes)
 
 
 def test_build_merton_dtd_none_when_price_history_insufficient():
@@ -210,7 +210,7 @@ def test_build_merton_dtd_none_when_price_history_insufficient():
     result, notes = _build_merton_dtd(metrics, df, risk_free_pct=3.0)
 
     assert result is None
-    assert any("fiyat geçmişi yok" in n for n in notes)
+    assert any("not enough price history" in n for n in notes)
 
 
 def test_build_merton_dtd_none_when_price_df_is_none():
