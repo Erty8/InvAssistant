@@ -536,7 +536,7 @@ def test_run_valuation_cyclical_capex_suppressed_profitable_triggers_fcfe_headli
 
     assert any("sustainable growth" in n and "based on an FCFE anchor" in n for n in result["notes"])
     # Fix D's corrected disclosure note + Fix E's trough-excluded transparency note.
-    assert any("The sensitivity table reflects the mid-cycle normalized FCF-DCF base" in n for n in result["notes"])
+    assert any("The sensitivity table" in n and "mid-cycle normalized FCF-DCF" in n for n in result["notes"])
     assert any("EXCLUDES" in n and "structural re-rating" in n for n in result["notes"])
 
 

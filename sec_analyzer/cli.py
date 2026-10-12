@@ -903,14 +903,22 @@ def _reverse_dcf_line(result: dict, valuation: dict) -> str:
 
     implied = reverse_dcf.get("implied_growth")
     status = reverse_dcf.get("bracket_status")
-    if implied is None and status not in ("above_bracket", "below_bracket"):
+    out_of_bracket = (reverse_dcf_module.STATUS_ABOVE_BRACKET, reverse_dcf_module.STATUS_BELOW_BRACKET)
+    if implied is None and status not in out_of_bracket:
         return f"{label}{_DASH}"
-    implied_text = _format_pct_signed(implied) if implied is not None else _format_bracketed_growth(None, status)
 
     realized_label = reverse_dcf.get("realized_label") or _DASH
     realized_text = _format_pct_signed(reverse_dcf.get("realized_cagr_5y"))
+
+    # The solved rate is a constant 5-year growth followed by a 5-year
+    # linear fade to terminal growth (SPEC.md Sec.4), not a 10-year CAGR.
+    if implied is None:
+        return (
+            f"{label}price implies 5y growth (then fade) {_format_bracketed_growth(None, status)}, "
+            f"outside the model bracket (realized {realized_label}: {realized_text}){suffix}"
+        )
     return (
-        f"{label}price implies a 10y {implied_text} CAGR "
+        f"{label}price implies {_format_pct_signed(implied)} 5y growth (then fade) "
         f"(realized {realized_label}: {realized_text}){suffix}"
     )
 

@@ -702,7 +702,7 @@ def test_cli_reverse_dcf_line_raw_suffix_renders_bracket_status():
     # Headline also out of bracket (no commentary): bracket text, suffix kept.
     line = _reverse_dcf_line({}, {"reverse_dcf": {**base, "implied_growth": None, "bracket_status": "above_bracket",
                                                   "bracket_status_raw": "above_bracket"}})
-    assert "implies a 10y >60% CAGR" in line and line.endswith("[normalized FCF; raw: >60%]")
+    assert "implies 5y growth (then fade) >60%" in line and line.endswith("[normalized FCF; raw: >60%]")
 
 
 def test_cli_reverse_dcf_line_normalized_suffix_and_missing_raw():

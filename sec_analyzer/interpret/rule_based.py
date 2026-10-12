@@ -73,7 +73,7 @@ from typing import Dict, List, Optional, Tuple
 
 from sec_analyzer.config import Config
 from sec_analyzer.normalize.normalizer import to_annual_series
-from sec_analyzer.valuation import sanity
+from sec_analyzer.valuation import reverse_dcf, sanity, triangulate
 from sec_analyzer.valuation.sanity import clamp_assumptions, validate_assumptions
 
 logger = logging.getLogger(__name__)
@@ -1365,18 +1365,65 @@ def _fundamental_verdict_from_valuation(valuation: dict) -> str:
     return _DCF_SIGNAL_TO_VERDICT.get(signal, "FAIR")
 
 
-#: Reverse-DCF comment margin (SPEC.md Sec.6), matching
-#: ``valuation.triangulate._REVERSE_DCF_MARGIN``.
-_REVERSE_DCF_COMMENT_MARGIN = 0.03
+#: What the solved reverse-DCF rate is (SPEC.md Sec.4): a constant growth
+#: rate for years 1-5, then a linear fade to terminal growth over years
+#: 6-10 -- not a 10-year CAGR.
+_REVERSE_DCF_GROWTH_PHRASE = "5-year growth (then a 5-year fade to terminal growth)"
+
+
+def _reverse_dcf_basis_suffix(reverse: dict) -> str:
+    """Sentence noting the normalized-FCF solve base (SPEC.md Sec.28a,
+    METODOLOJI.md Sec.2), or ``""`` for any other basis."""
+    if reverse.get("fcf0_basis") != "normalized":
+        return ""
+    return " Solved on mid-cycle normalized FCF, not the latest single-year FCF (cyclical filer)."
+
+
+def _reverse_dcf_judgment_signal(valuation: dict, reverse: dict) -> str:
+    """The reverse-DCF direction signal the comment narrates.
+
+    Prefers the triangulation's own ``signals["reverse_dcf"]`` so the
+    comment can never disagree with the signal shown next to it (the
+    engine feeds triangulation the unrounded realized CAGR, while
+    ``valuation["reverse_dcf"]`` holds 4-decimal-rounded values). Falls
+    back to running :func:`triangulate._reverse_dcf_signal` itself on the
+    stored pair -- same comparison form and margin -- with the reference
+    restricted to the realized CAGR (no ``base_growth`` fallback here,
+    since the comment only judges against realized growth).
+    """
+    signal = ((valuation.get("triangulation") or {}).get("signals") or {}).get("reverse_dcf")
+    if signal in (triangulate.SIGNAL_CHEAP, triangulate.SIGNAL_FAIR, triangulate.SIGNAL_EXPENSIVE):
+        return signal
+    return triangulate._reverse_dcf_signal(
+        reverse.get("implied_growth"), reverse.get("realized_cagr_5y"), None, reverse.get("bracket_status")
+    )
 
 
 def _reverse_dcf_comment(valuation: dict) -> str:
     """Template-based reverse-DCF comment, built from
-    ``valuation["reverse_dcf"]`` (SPEC.md Sec.6)."""
+    ``valuation["reverse_dcf"]`` (SPEC.md Sec.5/Sec.28a)."""
     reverse = valuation.get("reverse_dcf") or {}
     implied = reverse.get("implied_growth")
     realized = reverse.get("realized_cagr_5y")
     label = reverse.get("realized_label") or "historical"
+    status = reverse.get("bracket_status")
+    basis = _reverse_dcf_basis_suffix(reverse)
+
+    if implied is None and status in (reverse_dcf.STATUS_ABOVE_BRACKET, reverse_dcf.STATUS_BELOW_BRACKET):
+        if status == reverse_dcf.STATUS_ABOVE_BRACKET:
+            head = (
+                f"The price implies {_REVERSE_DCF_GROWTH_PHRASE} above the model's "
+                f"{reverse_dcf._BRACKET_HI * 100:.0f}% upper bound"
+            )
+            judgment = "even the most optimistic growth the model can reach does not justify the price -- an expensiveness signal."
+        else:
+            head = (
+                f"The price implies {_REVERSE_DCF_GROWTH_PHRASE} below the model's "
+                f"{reverse_dcf._BRACKET_LO * 100:.0f}% lower bound"
+            )
+            judgment = "the price sits below even the model's most pessimistic growth scenario -- a cheapness signal."
+        realized_part = f" (realized {label}: {realized * 100:.1f}%)" if realized is not None else ""
+        return f"{head}{realized_part}; {judgment}{basis}"
 
     if implied is None:
         return "Reverse DCF could not be computed; the growth rate implied by the price could not be determined."
@@ -1384,20 +1431,20 @@ def _reverse_dcf_comment(valuation: dict) -> str:
     implied_pct = f"{implied * 100:.1f}%"
     if realized is None:
         return (
-            f"The price implies {implied_pct} growth over a 10-year horizon; no realized "
-            "revenue-growth data is available for comparison."
+            f"The price implies {implied_pct} {_REVERSE_DCF_GROWTH_PHRASE}; no realized "
+            f"growth data is available for comparison.{basis}"
         )
 
     realized_pct = f"{realized * 100:.1f}%"
-    diff = implied - realized
-    if diff > _REVERSE_DCF_COMMENT_MARGIN:
+    signal = _reverse_dcf_judgment_signal(valuation, reverse)
+    if signal == triangulate.SIGNAL_EXPENSIVE:
         judgment = "the market is pricing in faster growth than the company's historical performance -- an expensiveness signal."
-    elif diff < -_REVERSE_DCF_COMMENT_MARGIN:
+    elif signal == triangulate.SIGNAL_CHEAP:
         judgment = "the market is pricing in a more pessimistic scenario than the company's historical performance -- a cheapness signal."
     else:
         judgment = "the price is reasonably consistent with the realized growth trend."
 
-    return f"The price implies {implied_pct} growth over a 10-year horizon (realized {label}: {realized_pct}); {judgment}"
+    return f"The price implies {implied_pct} {_REVERSE_DCF_GROWTH_PHRASE} (realized {label}: {realized_pct}); {judgment}{basis}"
 
 
 def _cyclical_risk_from_valuation(valuation: dict, red_flags: Optional[List[dict]]) -> str:

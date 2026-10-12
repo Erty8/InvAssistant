@@ -131,7 +131,7 @@ def test_print_verdict_card_reverse_dcf_line_built_from_numbers(capsys):
     _print_verdict_card("AAPL", "1y", _result_with_valuation(), metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Reverse DCF: price implies a 10y %19 CAGR (realized 5y: %14)" in out
+    assert "Reverse DCF: price implies %19 5y growth (then fade) (realized 5y: %14)" in out
 
 
 def test_print_verdict_card_reverse_dcf_line_prefers_comment(capsys):
@@ -142,6 +142,38 @@ def test_print_verdict_card_reverse_dcf_line_prefers_comment(capsys):
 
     assert "Reverse DCF: The price implies fairly aggressive growth." in out
     assert "%19 CAGR" not in out
+
+
+def test_reverse_dcf_line_fallback_says_5y_growth_then_fade_not_10y_cagr():
+    from sec_analyzer.cli import _reverse_dcf_line
+
+    valuation = {"reverse_dcf": {"implied_growth": 0.19, "realized_cagr_5y": 0.14, "realized_label": "FCF 5y",
+                                 "bracket_status": "ok"}}
+    line = _reverse_dcf_line({}, valuation)
+
+    assert "price implies %19 5y growth (then fade) (realized FCF 5y: %14)" in line
+    assert "10y" not in line and "CAGR" not in line
+
+
+def test_reverse_dcf_line_fallback_narrates_bracket_status_and_normalized_basis():
+    from sec_analyzer.cli import _reverse_dcf_line
+
+    above = _reverse_dcf_line({}, {"reverse_dcf": {
+        "implied_growth": None, "realized_cagr_5y": None, "realized_label": None,
+        "bracket_status": "above_bracket", "fcf0_basis": "normalized",
+    }})
+    assert "5y growth (then fade) >60%, outside the model bracket" in above
+    assert "[normalized FCF; raw: —]" in above
+    assert "None" not in above
+
+    below = _reverse_dcf_line({}, {"reverse_dcf": {
+        "implied_growth": None, "realized_cagr_5y": 0.05, "realized_label": "FCF 5y",
+        "bracket_status": "below_bracket",
+    }})
+    assert "5y growth (then fade) <−20%, outside the model bracket (realized FCF 5y: %5)" in below
+
+    no_data = _reverse_dcf_line({}, {"reverse_dcf": {"implied_growth": None, "bracket_status": "no_data"}})
+    assert no_data.rstrip().endswith("—")
 
 
 def test_print_verdict_card_multiples_line_primary_pe(capsys):
