@@ -247,7 +247,7 @@ def test_resolve_auto_uses_fresh_frozen_set(db_path):
     assert override["_assumption_set_id"] is not None
     assert vp == "cached:ollama"
     assert stop is False
-    assert "kullanıldı" in (note or "")
+    assert "Used frozen assumption set" in (note or "")
 
 
 def test_resolve_auto_falls_back_to_script_when_no_frozen(db_path):
@@ -265,14 +265,14 @@ def test_resolve_auto_falls_back_when_frozen_is_stale(db_path):
     override, note, stop, vp = _resolve("auto", "100", n, _metrics(fy=2023))
     assert override is not None
     assert override["_provider"] == "script"
-    assert "bayat" in (note or "")
+    assert "stale" in (note or "")
 
 
 def test_resolve_frozen_strict_stops_when_missing(db_path):
     override, note, stop, vp = _resolve("frozen", "100", _normalized(), _metrics())
     assert override is None
     assert stop is True
-    assert "durduruldu" in (note or "")
+    assert "analysis stopped" in (note or "")
 
 
 def test_resolve_frozen_strict_stops_when_stale(db_path):

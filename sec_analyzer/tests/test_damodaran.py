@@ -314,7 +314,7 @@ def test_load_sector_data_as_of_none_without_fred_uses_archived_risk_free(tmp_pa
     assert result["erp"] == pytest.approx(4.23)
     assert result["risk_free"] == pytest.approx(4.20)
     assert result["macro_asof"]["as_of"] is None
-    assert result["macro_asof"]["risk_free_source"] == "erp.csv (arşiv değeri — FRED alınamadı)"
+    assert result["macro_asof"]["risk_free_source"] == "erp.csv (archived value — FRED unavailable)"
 
 
 def test_load_sector_data_as_of_none_prefers_live_fred_over_archived_csv(tmp_path):
@@ -357,7 +357,7 @@ def test_load_sector_data_as_of_year_miss_falls_back_to_current_erp_csv(tmp_path
     result = load_sector_data(dir_path, as_of="2099-01-15")
 
     assert result["erp"] == pytest.approx(4.23)
-    assert result["macro_asof"]["erp_source"] == "erp.csv (güncel değer)"
+    assert result["macro_asof"]["erp_source"] == "erp.csv (current value)"
 
 
 def test_load_sector_data_as_of_risk_free_prefers_fred_over_history_and_current(tmp_path):
@@ -403,7 +403,7 @@ def test_load_sector_data_as_of_risk_free_falls_back_to_current_erp_csv_when_his
     result = load_sector_data(str(tmp_path), as_of="2022-06-30", fred_rate=None)
 
     assert result["risk_free"] == pytest.approx(4.20)
-    assert result["macro_asof"]["risk_free_source"] == "erp.csv (güncel değer)"
+    assert result["macro_asof"]["risk_free_source"] == "erp.csv (current value)"
     # ERP itself still comes from the history row (independent axis).
     assert result["erp"] == pytest.approx(4.24)
 
@@ -503,16 +503,16 @@ def test_load_sector_data_as_of_no_subfolder_falls_back_to_current_multiples_wit
 
     result = load_sector_data(str(tmp_path), as_of=date(2022, 6, 30))
 
-    assert result["macro_asof"]["multiples_source"] == "multiples.csv (güncel snapshot — anakronik)"
+    assert result["macro_asof"]["multiples_source"] == "multiples.csv (current snapshot — anachronistic)"
     assert "warnings" in result["macro_asof"]
-    assert any("Anakronik çarpan/beta" in w for w in result["macro_asof"]["warnings"])
+    assert any("Anachronistic multiple/beta" in w for w in result["macro_asof"]["warnings"])
 
 
 def test_load_sector_data_as_of_no_history_or_subfolder_risk_free_falls_back_with_warning(tmp_path):
     """Anachronic risk-free: as_of set, no fred_rate, no erp_history.csv, no
     per-year subfolder -- the current erp.csv's risk_free is used, and
     because current_risk_free IS available (the only condition that fires
-    this warning), an "Anakronik risk-free" warning is added."""
+    this warning), an "Anachronistic risk-free" warning is added."""
     (tmp_path / "multiples.csv").write_text(
         "industry,pe,ps,pfcf\nSemiconductor,28.4,6.1,24.7\n", encoding="utf-8",
     )
@@ -523,5 +523,5 @@ def test_load_sector_data_as_of_no_history_or_subfolder_risk_free_falls_back_wit
     result = load_sector_data(str(tmp_path), as_of=date(2022, 6, 30), fred_rate=None)
 
     assert result["risk_free"] == pytest.approx(4.20)
-    assert result["macro_asof"]["risk_free_source"] == "erp.csv (güncel değer)"
-    assert any("Anakronik risk-free" in w for w in result["macro_asof"]["warnings"])
+    assert result["macro_asof"]["risk_free_source"] == "erp.csv (current value)"
+    assert any("Anachronistic risk-free" in w for w in result["macro_asof"]["warnings"])

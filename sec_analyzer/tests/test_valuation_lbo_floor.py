@@ -140,7 +140,7 @@ def test_build_lbo_floor_reads_metrics_and_holds_fcf_flat():
     assert result["per_share"] == pytest.approx(5.626286, rel=1e-5)
     # FCF held flat -> level debt paydown, never over-swept by phantom growth.
     assert result["debt_path"] == [pytest.approx(260.0), pytest.approx(220.0), pytest.approx(180.0), pytest.approx(140.0), pytest.approx(100.0)]
-    assert any("bilgi amaçlı" in n and "manşete GİRMEZ" in n for n in notes)
+    assert any("informational only" in n and "NOT part of the headline" in n for n in notes)
 
 
 def test_build_lbo_floor_none_when_ev_ebitda_missing():
@@ -149,7 +149,7 @@ def test_build_lbo_floor_none_when_ev_ebitda_missing():
     result, notes = _build_lbo_floor(metrics, fcf0=40.0)
 
     assert result is None
-    assert any("hesaplanamadı" in n for n in notes)
+    assert any("could not be computed" in n for n in notes)
 
 
 # ---------------------------------------------------------------------------

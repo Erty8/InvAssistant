@@ -38,9 +38,9 @@ def _save_outcome(db_path, verdict_id, horizon, hit, rel_return=0.1, referee_not
 # ---------------------------------------------------------------------------
 # build_report_data -- hit-rate table
 #
-# Bucket A: ("UCUZ", "1y", "dcf")   -- 10 outcomes, 7 hits -> rate = 7/10 = 0.7;
+# Bucket A: ("CHEAP", "1y", "dcf")   -- 10 outcomes, 7 hits -> rate = 7/10 = 0.7;
 #           n = 10 is NOT < 10, so insufficient=False.
-# Bucket B: ("PAHALI", "1y", "dcf") -- 3 outcomes, 1 hit  -> rate = 1/3;
+# Bucket B: ("EXPENSIVE", "1y", "dcf") -- 3 outcomes, 1 hit  -> rate = 1/3;
 #           n = 3 < 10, so insufficient=True.
 # ---------------------------------------------------------------------------
 
@@ -49,24 +49,24 @@ def test_build_report_data_hit_rate_groups_by_type_horizon_route_and_flags_small
     db_path = str(tmp_path / "test.sqlite3")
 
     for i in range(10):
-        vid = _save_hit_rate_verdict(db_path, f"T{i}", "UCUZ")
+        vid = _save_hit_rate_verdict(db_path, f"T{i}", "CHEAP")
         _save_outcome(db_path, vid, "1y", hit=(i < 7))  # 7 True, 3 False
 
     for i in range(3):
-        vid = _save_hit_rate_verdict(db_path, f"P{i}", "PAHALI")
+        vid = _save_hit_rate_verdict(db_path, f"P{i}", "EXPENSIVE")
         _save_outcome(db_path, vid, "1y", hit=(i < 1))  # 1 True, 2 False
 
     data = report.build_report_data(db_path)
 
     by_key = {(r["verdict_type"], r["horizon"], r["route"]): r for r in data["hit_rate"]}
 
-    cheap = by_key[("UCUZ", "1y", "dcf")]
+    cheap = by_key[("CHEAP", "1y", "dcf")]
     assert cheap["n"] == 10
     assert cheap["hits"] == 7
     assert cheap["rate"] == pytest.approx(0.7)
     assert cheap["insufficient"] is False
 
-    expensive = by_key[("PAHALI", "1y", "dcf")]
+    expensive = by_key[("EXPENSIVE", "1y", "dcf")]
     assert expensive["n"] == 3
     assert expensive["hits"] == 1
     assert expensive["rate"] == pytest.approx(1 / 3)
@@ -74,10 +74,10 @@ def test_build_report_data_hit_rate_groups_by_type_horizon_route_and_flags_small
 
 
 def test_build_report_data_hit_rate_excludes_outcomes_with_no_binary_hit(tmp_path):
-    """A MAKUL (neutral) or referee-labeled outcome has hit=None and must not
+    """A FAIR (neutral) or referee-labeled outcome has hit=None and must not
     appear in any hit-rate bucket at all."""
     db_path = str(tmp_path / "test.sqlite3")
-    vid = _save_hit_rate_verdict(db_path, "X", "MAKUL")
+    vid = _save_hit_rate_verdict(db_path, "X", "FAIR")
     _save_outcome(db_path, vid, "1y", hit=None)
 
     data = report.build_report_data(db_path)
@@ -99,7 +99,7 @@ def test_build_report_data_hit_rate_excludes_outcomes_with_no_binary_hit(tmp_pat
 
 def _save_calibration_verdict(db_path, ticker, lo, hi, price=100.0, as_of="2021-01-01"):
     result = {
-        "fundamental_verdict": "MAKUL",
+        "fundamental_verdict": "FAIR",
         "fair_value_range": {"bear": {}, "base": {"lo": lo, "hi": hi}, "bull": {}},
     }
     return database.save_verdict(
@@ -125,7 +125,7 @@ def test_build_report_data_calibration_median_hand_verified(tmp_path):
 def test_build_report_data_calibration_skips_verdicts_missing_price_or_range(tmp_path):
     db_path = str(tmp_path / "test.sqlite3")
     # No fair_value_range at all -> lo/hi are None -> excluded.
-    _save_hit_rate_verdict(db_path, "NOFV", "MAKUL")
+    _save_hit_rate_verdict(db_path, "NOFV", "FAIR")
 
     data = report.build_report_data(db_path)
 
@@ -141,7 +141,7 @@ def test_build_report_data_divergence_picks_up_model_market_divergence_verdict(t
     db_path = str(tmp_path / "test.sqlite3")
     vid = database.save_verdict(
         "TSLA", "1", "1y", "script", 100.0,
-        {"fundamental_verdict": "MODEL-PİYASA AYRIŞMASI"},
+        {"fundamental_verdict": "MODEL-PRICE DIVERGENCE"},
         db_path=db_path, as_of="2021-03-01",
     )
     _save_outcome(db_path, vid, "1y", hit=None, rel_return=0.5, referee_note="hakem notu")
@@ -152,7 +152,7 @@ def test_build_report_data_divergence_picks_up_model_market_divergence_verdict(t
     case = data["divergence"][0]
     assert case["ticker"] == "TSLA"
     assert case["ref_date"] == "2021-03-01"
-    assert case["fundamental_verdict"] == "MODEL-PİYASA AYRIŞMASI"
+    assert case["fundamental_verdict"] == "MODEL-PRICE DIVERGENCE"
     assert case["horizon"] == "1y"
     assert case["rel_return"] == pytest.approx(0.5)
     assert case["referee_note"] == "hakem notu"
@@ -160,7 +160,7 @@ def test_build_report_data_divergence_picks_up_model_market_divergence_verdict(t
 
 def test_build_report_data_divergence_excludes_ordinary_verdicts(tmp_path):
     db_path = str(tmp_path / "test.sqlite3")
-    vid = _save_hit_rate_verdict(db_path, "AAPL", "UCUZ")
+    vid = _save_hit_rate_verdict(db_path, "AAPL", "CHEAP")
     _save_outcome(db_path, vid, "1y", hit=True)
 
     data = report.build_report_data(db_path)
@@ -202,8 +202,8 @@ def test_render_terminal_contains_disclaimer_and_section_headers(tmp_path):
 
     assert BACKTEST_DISCLAIMER in text
     assert "Hit-rate" in text
-    assert "Kalibrasyon" in text
-    assert "Ayrışma" in text
+    assert "Calibration" in text
+    assert "Divergence" in text
 
 
 def test_render_html_is_a_full_document_and_contains_disclaimer(tmp_path):

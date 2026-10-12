@@ -149,11 +149,11 @@ def test_hyper_grower_capex_heavy_negative_base_is_suppressed():
 
     # Triangulation's DCF vote is dropped back to "no data" rather than
     # comparing price against a negative (non-credible) band.
-    assert result["triangulation"]["signals"]["dcf"] == "veri_yok"
+    assert result["triangulation"]["signals"]["dcf"] == "no_data"
 
     # Explanatory Turkish note surfaces at the top level too.
     assert any(
-        "revenue-first DCF baz senaryosu negatif özkaynak" in n or "capex" in n.lower()
+        "CapEx-heavy hyper-growth" in n or "capex" in n.lower()
         for n in result["notes"]
     )
 

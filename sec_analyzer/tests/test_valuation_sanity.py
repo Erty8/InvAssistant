@@ -57,7 +57,7 @@ def test_clamp_then_validate_at_exact_erp_spread_boundary_is_consistent():
     # (a) bull was clamped to the boundary; base was left alone.
     assert clamped["bull"]["discount_rate"] == pytest.approx(0.085)
     assert clamped["base"]["discount_rate"] == pytest.approx(0.09)
-    assert any("Bull" in n and "asgari risk primi" in n for n in notes)
+    assert any("Bull" in n and "minimum equity risk premium" in n for n in notes)
 
     # (b) the clamped set must pass re-validation with zero violations --
     # this is the exact regression: before the fix, the float remainder of

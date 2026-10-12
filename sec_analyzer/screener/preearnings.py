@@ -64,14 +64,12 @@ _MOMENTUM_SIGN = {
     "NEGATIVE": -1,
 }
 
-#: Marker filings.py's label always embeds right after the last-report date
-#: when ``recently_reported`` is True (see ``fetch/filings.py::_build_result``)
-#: -- used to pull that date back out for the "just reported" note without
-#: duplicating the date-formatting logic here. NOTE: ``fetch/filings.py`` is
-#: outside this module's ownership and still renders this marker (and the
-#: date before it) in Turkish; left untranslated here so the substring match
-#: keeps working until that module is translated separately.
-_JUST_REPORTED_MARKER = " tarihinde açıklandı"
+#: Prefix/suffix filings.py's label always wraps around the last-report date
+#: when ``recently_reported`` is True (``"Reported on 7 Aug · next: ..."``, see
+#: ``fetch/filings.py::_build_result``) -- used to pull that date back out for
+#: the "just reported" note without duplicating the date-formatting logic here.
+_JUST_REPORTED_PREFIX = "Reported on "
+_JUST_REPORTED_SUFFIX = " · next:"
 
 
 def _is_num(value) -> bool:
@@ -120,17 +118,16 @@ def _verdict_age_days(analyzed_at: Optional[str], today: date) -> Optional[int]:
 
 def _extract_just_reported_date(catalyst_label: Optional[str]) -> str:
     """Pull the already-formatted report date back out of a
-    ``recently_reported`` catalyst label (``"29 Tem tarihinde açıklandı ·
-    sonraki: ..."``) for reuse in the "just reported" note, without
-    duplicating filings.py's date-formatting logic here. The date text
-    itself may still render in filings.py's Turkish locale (see
-    ``_JUST_REPORTED_MARKER``'s note) until that module is translated
-    separately."""
+    ``recently_reported`` catalyst label (``"Reported on 29 Jul · next:
+    ..."``) for reuse in the "just reported" note, without duplicating
+    filings.py's date-formatting logic here."""
     label = catalyst_label or ""
-    idx = label.find(_JUST_REPORTED_MARKER)
+    if not label.startswith(_JUST_REPORTED_PREFIX):
+        return "Earnings"
+    idx = label.find(_JUST_REPORTED_SUFFIX, len(_JUST_REPORTED_PREFIX))
     if idx == -1:
         return "Earnings"
-    return label[:idx]
+    return label[len(_JUST_REPORTED_PREFIX):idx]
 
 
 def _build_notes(row: dict) -> List[str]:

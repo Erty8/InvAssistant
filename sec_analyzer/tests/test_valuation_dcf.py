@@ -303,7 +303,7 @@ def test_validate_assumptions_rule_terminal_growth_too_high_fires_alone():
     violations = validate_assumptions(assumptions, is_unprofitable=False)
 
     assert len(violations) == 1
-    assert "%4" in violations[0] and "Base" in violations[0]
+    assert "upper bound of 4%" in violations[0] and "Base" in violations[0]
 
 
 def test_validate_assumptions_rule_discount_rate_below_minimum_fires_alone():
@@ -315,7 +315,7 @@ def test_validate_assumptions_rule_discount_rate_below_minimum_fires_alone():
     violations = validate_assumptions(assumptions, is_unprofitable=False)
 
     assert len(violations) == 1
-    assert "alt sınır" in violations[0] and "Base" in violations[0]
+    assert "lower bound" in violations[0] and "Base" in violations[0]
 
 
 def test_validate_assumptions_rule_discount_rate_below_minimum_unprofitable_threshold():
@@ -328,7 +328,7 @@ def test_validate_assumptions_rule_discount_rate_below_minimum_unprofitable_thre
 
     violations = validate_assumptions(assumptions, is_unprofitable=True)
     assert len(violations) == 1
-    assert "zarar eden" in violations[0]
+    assert "unprofitable" in violations[0]
 
 
 def test_validate_assumptions_rule_growth_5y_hard_max_fires_alone():
@@ -337,7 +337,7 @@ def test_validate_assumptions_rule_growth_5y_hard_max_fires_alone():
     violations = validate_assumptions(assumptions, is_unprofitable=False)
 
     assert len(violations) == 1
-    assert "%60" in violations[0] and "Base" in violations[0]
+    assert "exceeds 60%" in violations[0] and "Base" in violations[0]
 
 
 def test_validate_assumptions_growth_5y_between_20_and_40_percent_is_allowed():
@@ -383,8 +383,8 @@ def test_validate_assumptions_rule_gordon_undefined_cannot_fire_in_true_isolatio
 
     assert len(violations) == 3
     assert any("Gordon" in v for v in violations)
-    assert any("%4" in v for v in violations)  # terminal_growth > 0.04
-    assert any("alt sınır" in v for v in violations)  # discount_rate < 0.07
+    assert any("upper bound of 4%" in v for v in violations)  # terminal_growth > 0.04
+    assert any("lower bound" in v for v in violations)  # discount_rate < 0.07
 
 
 def test_validate_assumptions_never_raises_on_missing_scenario():
@@ -411,7 +411,7 @@ def test_clamp_assumptions_caps_terminal_growth():
 
     assert clamped["base"]["terminal_growth"] == pytest.approx(0.04)
     assert len(notes) == 1
-    assert "%4" in notes[0] and "Base" in notes[0]
+    assert "capped at 4%" in notes[0] and "Base" in notes[0]
     # Untouched fields stay exactly as given.
     assert clamped["base"]["growth_5y"] == pytest.approx(0.08)
     assert clamped["base"]["discount_rate"] == pytest.approx(0.10)
@@ -435,7 +435,7 @@ def test_clamp_assumptions_caps_growth_5y():
 
     assert clamped["bull"]["growth_5y"] == pytest.approx(0.60)
     assert len(notes) == 1
-    assert "%60" in notes[0] and "Bull" in notes[0]
+    assert "capped at 60%" in notes[0] and "Bull" in notes[0]
     assert clamped["bear"]["growth_5y"] == pytest.approx(0.05)
     assert clamped["base"]["growth_5y"] == pytest.approx(0.10)
 
@@ -449,8 +449,8 @@ def test_clamp_assumptions_floors_discount_rate_profitable_threshold():
 
     assert clamped["base"]["discount_rate"] == pytest.approx(0.07)
     assert len(notes) == 1
-    assert "%7" in notes[0] and "Base" in notes[0]
-    assert "zarar eden" not in notes[0]
+    assert "floor of 7%" in notes[0] and "Base" in notes[0]
+    assert "unprofitable" not in notes[0]
 
 
 def test_clamp_assumptions_floors_discount_rate_unprofitable_threshold():
@@ -466,7 +466,7 @@ def test_clamp_assumptions_floors_discount_rate_unprofitable_threshold():
     clamped_unprofitable, notes_unprofitable = clamp_assumptions(assumptions, is_unprofitable=True)
     assert clamped_unprofitable["base"]["discount_rate"] == pytest.approx(0.10)
     assert len(notes_unprofitable) == 1
-    assert "zarar eden" in notes_unprofitable[0]
+    assert "unprofitable" in notes_unprofitable[0]
 
 
 def test_clamp_assumptions_does_not_clamp_r_less_equal_g_t_case():
@@ -490,8 +490,8 @@ def test_clamp_assumptions_does_not_clamp_r_less_equal_g_t_case():
     assert clamped["base"]["terminal_growth"] == pytest.approx(0.04)
     assert clamped["base"]["discount_rate"] == pytest.approx(0.085)
     assert len(notes) == 2  # the terminal_growth cap note + the new ERP-spread note
-    assert any("%4" in n for n in notes)
-    assert any("asgari risk primi" in n for n in notes)
+    assert any("capped at 4%" in n for n in notes)
+    assert any("minimum equity risk premium" in n for n in notes)
     assert not any("Gordon" in n for n in notes)
 
     # The raw (pre-clamp) discount_rate <= terminal_growth relationship is
@@ -518,7 +518,7 @@ def test_clamp_assumptions_growth_ordering_violation_is_note_only_no_value_chang
     assert clamped["base"]["growth_5y"] == pytest.approx(0.10)
     assert clamped["bull"]["growth_5y"] == pytest.approx(0.05)
     assert len(notes) == 1
-    assert "sıralama" in notes[0]
+    assert "ordering" in notes[0]
 
 
 def test_clamp_assumptions_fully_valid_set_passes_through_unchanged_with_no_notes():
@@ -568,7 +568,7 @@ def test_validate_assumptions_erp_spread_guard_fires_when_gordon_defined_but_thi
     violations = validate_assumptions(assumptions, is_unprofitable=False)
 
     assert len(violations) == 1
-    assert "asgari risk primi" in violations[0] and "Base" in violations[0]
+    assert "minimum equity risk premium" in violations[0] and "Base" in violations[0]
 
 
 def test_validate_assumptions_erp_spread_guard_does_not_double_report_undefined_gordon():
@@ -582,8 +582,8 @@ def test_validate_assumptions_erp_spread_guard_does_not_double_report_undefined_
 
     assert len(violations) == 2
     assert any("Gordon" in v for v in violations)
-    assert any("alt sınır" in v for v in violations)
-    assert not any("asgari risk primi" in v for v in violations)
+    assert any("lower bound" in v for v in violations)
+    assert not any("minimum equity risk premium" in v for v in violations)
 
 
 def test_validate_assumptions_coherent_erp_spread_passes():
@@ -604,7 +604,7 @@ def test_clamp_assumptions_erp_spread_guard_raises_discount_rate_with_note():
     assert clamped["base"]["discount_rate"] == pytest.approx(0.085)
     assert clamped["base"]["terminal_growth"] == pytest.approx(0.04)  # untouched
     assert len(notes) == 1
-    assert "asgari risk primi" in notes[0] and "Base" in notes[0]
+    assert "minimum equity risk premium" in notes[0] and "Base" in notes[0]
 
 
 def test_clamp_assumptions_coherent_pair_passes_through_untouched():

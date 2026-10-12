@@ -327,8 +327,8 @@ def test_detect_hyper_grower_growth_just_over_and_fcf_non_positive_triggers():
     metrics = _metrics(revenue_cagr_5y=0.26, fcf=0.0)
     triggered, reasons = detect_hyper_grower(metrics, [], _normalized(1000.0))
     assert triggered is True
-    assert "FCF negatif veya sıfır" in reasons
-    assert reasons[0].startswith("Gelir CAGR %26.0")
+    assert "FCF is zero or negative" in reasons
+    assert reasons[0].startswith("Revenue CAGR 26.0%")
 
 
 def test_detect_hyper_grower_fcf_margin_exactly_threshold_clause_b_not_fired():
@@ -346,7 +346,7 @@ def test_detect_hyper_grower_fcf_margin_just_under_threshold_fires():
     metrics = _metrics(revenue_cagr_5y=0.30, fcf=49.0)
     triggered, reasons = detect_hyper_grower(metrics, [], _normalized(1000.0))
     assert triggered is True
-    assert "FCF marjı %5'in altında (bastırılmış nakit akışı)" in reasons
+    assert "FCF margin is below 5% (suppressed cash flow)" in reasons
 
 
 def test_detect_hyper_grower_opex_intensity_exactly_threshold_clause_c_not_fired():
@@ -364,7 +364,7 @@ def test_detect_hyper_grower_opex_intensity_just_over_threshold_fires():
     metrics = _metrics(revenue_cagr_5y=0.30, fcf=100.0, rnd_revenue=0.25, sbc_revenue=0.16)
     triggered, reasons = detect_hyper_grower(metrics, [], _normalized(1000.0))
     assert triggered is True
-    assert "Ar-Ge + SBC / gelir %40'ı aşıyor (agresif büyüme yatırımı)" in reasons
+    assert "R&D + SBC / revenue exceeds 40% (aggressive growth investment)" in reasons
 
 
 def test_detect_hyper_grower_growth_condition_fails_returns_false_empty_regardless_of_clauses():
@@ -406,8 +406,8 @@ def test_detect_hyper_grower_gray_zone_fires_with_clause_a_and_high_ps():
     metrics = _metrics(revenue_cagr_5y=0.22, fcf=-10.0, ps=12.0)
     triggered, reasons = detect_hyper_grower(metrics, [], _normalized(1000.0))
     assert triggered is True
-    assert "gri bölge" in reasons[0]
-    assert "FCF negatif veya sıfır" in reasons
+    assert "gray zone" in reasons[0]
+    assert "FCF is zero or negative" in reasons
     # P/S renders as a plain multiple ("12.0x"), never "%12.0x" (percent AND
     # x is nonsensical).
     assert "(12.0x)" in reasons[0]
@@ -446,7 +446,7 @@ def test_detect_hyper_grower_gray_zone_upper_boundary_at_25_triggers():
     metrics = _metrics(revenue_cagr_5y=0.25, fcf=-10.0, ps=12.0)
     triggered, reasons = detect_hyper_grower(metrics, [], _normalized(1000.0))
     assert triggered is True
-    assert "gri bölge" in reasons[0]
+    assert "gray zone" in reasons[0]
 
 
 def test_detect_hyper_grower_gray_zone_clause_c_via_opex_mrvl_like():
@@ -458,8 +458,8 @@ def test_detect_hyper_grower_gray_zone_clause_c_via_opex_mrvl_like():
     )
     triggered, reasons = detect_hyper_grower(metrics, [], _normalized(1000.0))
     assert triggered is True
-    assert "gri bölge" in reasons[0]
-    assert "Ar-Ge + SBC / gelir %40'ı aşıyor (agresif büyüme yatırımı)" in reasons
+    assert "gray zone" in reasons[0]
+    assert "R&D + SBC / revenue exceeds 40% (aggressive growth investment)" in reasons
 
 
 # ---------------------------------------------------------------------------

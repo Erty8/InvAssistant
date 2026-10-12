@@ -49,8 +49,8 @@ def test_price_momentum_strong_up_is_high_and_labeled():
     m = compute_price_momentum(_strong_up_indicators())
     assert 70 <= m["score"] <= 100
     assert m["direction"] == "up"
-    assert m["label"] in ("YUKARI MOMENTUM", "GÜÇLÜ YUKARI MOMENTUM")
-    assert m["accel"] in ("hızlanıyor", "sabit", "yavaşlıyor")
+    assert m["label"] in ("UPWARD MOMENTUM", "STRONG UPWARD MOMENTUM")
+    assert m["accel"] in ("accelerating", "steady", "slowing")
 
 
 def test_price_momentum_strong_down_is_low():
@@ -63,7 +63,7 @@ def test_price_momentum_strong_down_is_low():
     m = compute_price_momentum(ind)
     assert m["score"] < 30
     assert m["direction"] == "down"
-    assert m["label"] in ("AŞAĞI MOMENTUM", "GÜÇLÜ AŞAĞI MOMENTUM")
+    assert m["label"] in ("DOWNWARD MOMENTUM", "STRONG DOWNWARD MOMENTUM")
 
 
 def test_price_momentum_deterministic_and_json_native():
@@ -94,7 +94,7 @@ def test_price_momentum_renormalizes_over_available_components():
 def test_price_momentum_flat_band():
     m = compute_price_momentum({"return_3m_pct": 0.0, "return_6m_pct": 0.0})
     assert m["direction"] == "flat"
-    assert m["label"] == "YATAY MOMENTUM"
+    assert m["label"] == "FLAT MOMENTUM"
     assert m["score"] == 50
 
 
@@ -193,15 +193,15 @@ def test_yoy_and_acceleration_direction():
     # YoY should be increasing (accelerating).
     assert ys[-1] > ys[0]
     m = compute_fundamental_momentum({"quarterly": {"Revenue": rev}, "annual": {}})
-    assert m["revenue_accel"]["word"] == "hızlanıyor"
-    assert m["label"] == "POZİTİF"
+    assert m["revenue_accel"]["word"] == "accelerating"
+    assert m["label"] == "POSITIVE"
     # Continuous score exposed for the quadrant, consistent with the label.
     assert -1.0 <= m["s"] <= 1.0 and m["s"] > 0
     assert m["score"] == pytest.approx(50 + m["s"] * 50, abs=1.0)
     # The detail must mark the growth read as QUARTERLY, so it never reads as
-    # contradicting the thesis card's annual "Yıllık Gelir Büyümesi (YoY)".
-    assert "Çeyreklik gelir büyümesi" in m["detail"]
-    assert "son çeyrek YoY" in m["detail"]
+    # contradicting the thesis card's annual "Annual Revenue Growth (YoY)".
+    assert "Quarterly revenue growth" in m["detail"]
+    assert "latest quarter YoY" in m["detail"]
 
 
 def test_fundamental_none_when_sparse():
@@ -222,15 +222,15 @@ def test_classify_accel_guards(series, expected):
 
 def test_single_quarter_accel_is_flagged_and_half_weighted():
     # A single-quarter acceleration (RKLB-shaped) is marked unconfirmed and
-    # carries half weight, so it can't alone push the label to POZİTİF.
+    # carries half weight, so it can't alone push the label to POSITIVE.
     rev = _build_revenue({
         2023: [100, 100, 100, 100],
         2024: [136, 148, 135, 163],   # noisy YoY, last quarter jumps
     })
     m = compute_fundamental_momentum({"quarterly": {"Revenue": rev}, "annual": {}})
-    assert m["revenue_accel"]["word"] == "hızlanıyor"
+    assert m["revenue_accel"]["word"] == "accelerating"
     assert m["revenue_accel"]["confirmed"] is False
-    assert "teyit bekliyor" in m["detail"]
+    assert "pending confirmation" in m["detail"]
 
 
 # --------------------------------------------------------------------------
@@ -277,7 +277,7 @@ def test_verdict_momentum_opportunity_when_ratio_rises_price_falls():
     ]
     vm = compute_verdict_momentum(hist)
     assert vm["direction"] == "up"
-    assert vm["label"] == "POZİTİF"
+    assert vm["label"] == "POSITIVE"
     # series ascending by date
     assert vm["series"][0]["date"] < vm["series"][-1]["date"]
 
@@ -289,7 +289,7 @@ def test_verdict_momentum_weakening_when_fv_erodes():
     ]
     vm = compute_verdict_momentum(hist)
     assert vm["direction"] == "down"
-    assert vm["label"] == "NEGATİF"
+    assert vm["label"] == "NEGATIVE"
 
 
 def test_verdict_momentum_none_with_one_point():
@@ -302,39 +302,39 @@ def test_verdict_momentum_none_with_one_point():
 # synthesis + cross-signals
 # --------------------------------------------------------------------------
 def test_synthesis_falling_knife_when_cheap_and_down():
-    price_m = {"label": "AŞAĞI MOMENTUM", "direction": "down", "score": 30}
-    syn = synthesize_momentum(price_m, {"label": "NÖTR", "model_surprise": None}, None, "UCUZ")
+    price_m = {"label": "DOWNWARD MOMENTUM", "direction": "down", "score": 30}
+    syn = synthesize_momentum(price_m, {"label": "NEUTRAL", "model_surprise": None}, None, "CHEAP")
     assert syn["falling_knife"] is True
     assert any(c["type"] == "falling_knife" for c in syn["cross_signals"])
-    assert syn["verdict"] in ("NEGATİF", "NÖTR")
+    assert syn["verdict"] in ("NEGATIVE", "NEUTRAL")
 
 
 def test_synthesis_profile_guardrail_when_expensive_and_strong():
-    price_m = {"label": "GÜÇLÜ YUKARI MOMENTUM", "direction": "up", "score": 90}
-    syn = synthesize_momentum(price_m, {"label": "POZİTİF", "model_surprise": {"direction": "beat"}}, None, "PAHALI")
-    assert syn["verdict"] == "GÜÇLÜ+"
+    price_m = {"label": "STRONG UPWARD MOMENTUM", "direction": "up", "score": 90}
+    syn = synthesize_momentum(price_m, {"label": "POSITIVE", "model_surprise": {"direction": "beat"}}, None, "EXPENSIVE")
+    assert syn["verdict"] == "STRONG+"
     assert any(c["type"] == "profile_guardrail" for c in syn["cross_signals"])
 
 
 def test_synthesis_strong_combo_when_cheap_and_positive():
-    price_m = {"label": "YUKARI MOMENTUM", "direction": "up", "score": 65}
-    syn = synthesize_momentum(price_m, {"label": "POZİTİF", "model_surprise": {"direction": "beat"}}, None, "UCUZ")
+    price_m = {"label": "UPWARD MOMENTUM", "direction": "up", "score": 65}
+    syn = synthesize_momentum(price_m, {"label": "POSITIVE", "model_surprise": {"direction": "beat"}}, None, "CHEAP")
     types = [c["type"] for c in syn["cross_signals"]]
     assert "strong_combo" in types
 
 
 def test_synthesis_none_when_no_layers():
-    assert synthesize_momentum(None, None, None, "UCUZ") is None
+    assert synthesize_momentum(None, None, None, "CHEAP") is None
 
 
 def test_momentum_functions_do_not_mutate_inputs():
     # Invariant guard: momentum is a read-only context signal. The synthesis
     # must not mutate the price/fundamental/verdict dicts it is handed (they are
     # shared with the technical payload / valuation-adjacent structures).
-    price_m = {"label": "YUKARI MOMENTUM", "direction": "up", "score": 65}
-    fund_m = {"label": "POZİTİF", "model_surprise": {"direction": "beat"}}
+    price_m = {"label": "UPWARD MOMENTUM", "direction": "up", "score": 65}
+    fund_m = {"label": "POSITIVE", "model_surprise": {"direction": "beat"}}
     price_copy, fund_copy = json.loads(json.dumps(price_m)), json.loads(json.dumps(fund_m))
-    synthesize_momentum(price_m, fund_m, None, "UCUZ")
+    synthesize_momentum(price_m, fund_m, None, "CHEAP")
     assert price_m == price_copy and fund_m == fund_copy
 
 
@@ -344,7 +344,7 @@ def test_momentum_functions_do_not_mutate_inputs():
 def test_stabilization_appends_to_dip_only():
     plan = [{"n": 1, "kind": "dip", "note": None}, {"n": 2, "kind": "breakout", "note": "x"}]
     apply_stabilization_condition(plan, active=True)
-    assert "Stabilizasyon" in plan[0]["note"]
+    assert "Stabilization condition" in plan[0]["note"]
     assert plan[1]["note"] == "x"   # breakout untouched
 
 
@@ -355,10 +355,10 @@ def test_stabilization_noop_when_inactive():
 
 
 def test_stabilization_appends_not_overwrites_existing_note():
-    plan = [{"n": 1, "kind": "dip", "note": "R:R sırası ters"}]
+    plan = [{"n": 1, "kind": "dip", "note": "R:R order is inverted"}]
     apply_stabilization_condition(plan, active=True)
-    assert plan[0]["note"].startswith("R:R sırası ters")
-    assert "Stabilizasyon" in plan[0]["note"]
+    assert plan[0]["note"].startswith("R:R order is inverted")
+    assert "Stabilization condition" in plan[0]["note"]
 
 
 # --------------------------------------------------------------------------
@@ -366,7 +366,7 @@ def test_stabilization_appends_not_overwrites_existing_note():
 # --------------------------------------------------------------------------
 def _min_result(momentum_verdict=None, fv=(90, 110)):
     result = {
-        "fundamental_verdict": "UCUZ",
+        "fundamental_verdict": "CHEAP",
         "fair_value_range": {"base": {"lo": fv[0], "hi": fv[1]}},
     }
     if momentum_verdict is not None:
@@ -376,17 +376,17 @@ def _min_result(momentum_verdict=None, fv=(90, 110)):
 
 def test_store_persists_momentum_verdict_and_roundtrips(tmp_path):
     db = str(tmp_path / "t.db")
-    save_verdict("AAPL", 320193, "1y", "script", 100.0, _min_result("POZİTİF"),
+    save_verdict("AAPL", 320193, "1y", "script", 100.0, _min_result("POSITIVE"),
                  db_path=db, analyzed_at="2025-01-01T00:00:00")
     rows = load_verdicts("AAPL", db_path=db)
-    assert rows and rows[0]["momentum_verdict"] == "POZİTİF"
+    assert rows and rows[0]["momentum_verdict"] == "POSITIVE"
 
 
 def test_store_live_only_excludes_asof(tmp_path):
     db = str(tmp_path / "t.db")
-    save_verdict("AAPL", 320193, "1y", "script", 100.0, _min_result("POZİTİF"),
+    save_verdict("AAPL", 320193, "1y", "script", 100.0, _min_result("POSITIVE"),
                  db_path=db, analyzed_at="2025-01-01T00:00:00")
-    save_verdict("AAPL", 320193, "1y", "script", 95.0, _min_result("NÖTR"),
+    save_verdict("AAPL", 320193, "1y", "script", 95.0, _min_result("NEUTRAL"),
                  db_path=db, analyzed_at="2025-02-01T00:00:00", as_of="2020-01-01")
     all_rows = load_verdicts("AAPL", db_path=db)
     live_rows = load_verdicts("AAPL", db_path=db, live_only=True)
@@ -399,7 +399,7 @@ def test_load_prior_live_verdict_returns_latest_with_valuation(tmp_path):
     db = str(tmp_path / "t.db")
     valuation = {"sector_type": "growth_unprofitable",
                  "hyper_growth_detail": {"scenarios": {"base": {"base_revenue": 100.0, "revenue_path": [110.0]}}}}
-    result = _min_result("POZİTİF")
+    result = _min_result("POSITIVE")
     save_verdict("NVDA", 1045810, "1y", "script", 100.0, result,
                  db_path=db, analyzed_at="2025-01-01T00:00:00", valuation=valuation)
     prior = load_prior_live_verdict("NVDA", db_path=db)
@@ -409,10 +409,10 @@ def test_load_prior_live_verdict_returns_latest_with_valuation(tmp_path):
 
 def test_load_prior_live_verdict_respects_before_and_skips_asof(tmp_path):
     db = str(tmp_path / "t.db")
-    save_verdict("NVDA", 1045810, "1y", "script", 100.0, _min_result("POZİTİF"),
+    save_verdict("NVDA", 1045810, "1y", "script", 100.0, _min_result("POSITIVE"),
                  db_path=db, analyzed_at="2025-01-01T00:00:00", valuation={"a": 1})
     # An as-of run must be ignored even though it's newer.
-    save_verdict("NVDA", 1045810, "1y", "script", 90.0, _min_result("NÖTR"),
+    save_verdict("NVDA", 1045810, "1y", "script", 90.0, _min_result("NEUTRAL"),
                  db_path=db, analyzed_at="2025-03-01T00:00:00", as_of="2019-01-01", valuation={"a": 2})
     prior = load_prior_live_verdict("NVDA", before="2025-06-01T00:00:00", db_path=db)
     assert prior["analyzed_at"] == "2025-01-01T00:00:00"

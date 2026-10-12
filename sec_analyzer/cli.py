@@ -82,6 +82,7 @@ from sec_analyzer.report.generator import generate_report
 from sec_analyzer.interpret import planning, rule_based
 from sec_analyzer.screener.overview import build_overview, sector_type_label
 from sec_analyzer.screener.peers import (
+    _ordinal_suffix,
     build_peer_snapshot,
     metrics_from_normalized,
     rank_against_peers,
@@ -102,6 +103,7 @@ from sec_analyzer.valuation import damodaran
 from sec_analyzer.valuation.capm import compute_cost_of_equity
 from sec_analyzer.valuation.sanity import clamp_assumptions, validate_assumptions
 from sec_analyzer.valuation.sector import SECTOR_FINANCIAL, _is_deposit_funded, classify_sector
+from sec_analyzer.valuation.triangulate import SIGNAL_MIXED
 from sec_analyzer.signals.momentum import (
     compute_fundamental_momentum,
     compute_verdict_momentum,
@@ -907,7 +909,7 @@ def _multiples_line(valuation: dict) -> str:
     EV/Sales in hyper-grower mode) is applicable, renders the compact
     two-component form -- raw percentile · growth-adjusted value (percentile)
     -- appending "→ mixed signal" when the triangulation multiples signal
-    is ``"karisik"`` (the two components disagree on direction, VALUATION.md
+    is ``SIGNAL_MIXED`` (the two components disagree on direction, VALUATION.md
     Sec.7), e.g. ``"P/E 88. pctile · PEG 1.4 (45. pctile) → mixed
     signal"``. When the growth-adjusted figure is not applicable, falls back
     to the original descriptive form (``"P/E is at the Nth percentile of its
@@ -984,13 +986,17 @@ def _multiples_line(valuation: dict) -> str:
 
         if parts:
             line = " · ".join(parts)
-            if multiples_signal == "karisik":
+            if multiples_signal == SIGNAL_MIXED:
                 line += " → mixed signal"
             return f"{label}{line}"
 
     if primary is not None:
         name, percentile = primary
-        return f"{label}{name} is at the {percentile:.0f}th percentile of its own {history_years}y median"
+        rank = f"{percentile:.0f}"
+        return (
+            f"{label}{name} is at the {rank}{_ordinal_suffix(int(rank))} percentile "
+            f"of its own {history_years}y median"
+        )
 
     return f"{label}insufficient data"
 
@@ -1135,7 +1141,9 @@ def _triangulation_line(valuation: dict) -> str:
     ``"HIGH"`` confidence reads as "clear direction", ``"LOW"``
     as "mixed direction" (mixed signals); anything else (typically ``"MEDIUM"``)
     falls back to the triangulation's own majority ``direction`` word."""
-    label = "Triangulation:".ljust(_CARD_LABEL_WIDTH)
+    # "Triangulation:" (14 chars) is wider than _CARD_LABEL_WIDTH (13), so
+    # ljust alone would glue it to the value; always keep one separating space.
+    label = "Triangulation: "
     triangulation = valuation.get("triangulation") or {}
     signals = triangulation.get("signals") or {}
     confidence = triangulation.get("confidence")

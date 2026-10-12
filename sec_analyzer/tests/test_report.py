@@ -12,6 +12,20 @@ import re
 
 from sec_analyzer.report.generator import generate_report, render_history_page, render_report_html
 
+
+def _embedded_payload_text(content):
+    """The raw JSON text inside the template's ``<script id="report-data"
+    type="application/json">`` element, i.e. the payload alone with none of
+    the surrounding template markup/JS."""
+    match = re.search(
+        r'<script id="report-data" type="application/json">(.*?)</script>',
+        content,
+        re.DOTALL,
+    )
+    assert match, "embedded report-data payload element not found"
+    return match.group(1)
+
+
 _SCENARIO = {
     "lo": 90.0,
     "hi": 110.0,
@@ -299,7 +313,7 @@ def test_generate_report_embeds_events_from_result(tmp_path):
     assert "4.02" in content
     # The events renderer and its card title are present in the template.
     assert "eventsCardHtml" in content
-    assert "Son Dosyalama Olayları" in content
+    assert "Recent Filing Events" in content
 
 
 def test_generate_report_filename_includes_ticker_horizon_and_date(tmp_path):
@@ -379,8 +393,13 @@ def test_generate_report_without_valuation_omits_it_from_the_payload(tmp_path):
     content = open(path, "r", encoding="utf-8").read()
 
     assert "<!DOCTYPE html>" in content and "</html>" in content
-    assert '"valuation"' not in content
-    assert '"reverse_dcf_comment"' not in content
+    # Inspect ONLY the embedded JSON payload: the template itself legitimately
+    # contains the literal ``"valuation"`` (the ``data-view="valuation"`` tab
+    # id), so a whole-document substring check cannot tell payload from markup.
+    payload_text = _embedded_payload_text(content)
+    assert '"valuation"' not in payload_text
+    assert '"reverse_dcf_comment"' not in payload_text
+    assert "valuation" not in json.loads(payload_text)["result"]
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +449,7 @@ def test_generate_report_embeds_financials_and_earnings_payload(tmp_path):
     # the data can actually render.
     assert "financialsTabHtml" in content
     assert "view-tabs" in content
-    assert "Bilanço" in content
+    assert "Balance Sheet" in content
 
 
 def test_generate_report_without_financials_defaults_to_empty_payload(tmp_path):

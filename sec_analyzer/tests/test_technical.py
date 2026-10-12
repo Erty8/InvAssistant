@@ -74,7 +74,7 @@ def test_compute_indicators_falling_series_is_oversold():
     assert ind["rsi14"] is not None and ind["rsi14"] < 30
 
     verdict = technical_verdict(ind)
-    assert verdict["verdict"] == "AŞIRI SATIM"
+    assert verdict["verdict"] == "OVERSOLD"
 
 
 def test_rsi_reclaim_bullish_after_oversold_bounce():
@@ -209,7 +209,7 @@ def test_technical_verdict_overbought_when_rsi_high_and_price_above_sma50():
 
     verdict = technical_verdict(ind)
 
-    assert verdict["verdict"] == "AŞIRI ALIM"
+    assert verdict["verdict"] == "OVERBOUGHT"
     assert "RSI" in verdict["verdict_detail"]
 
 
@@ -230,8 +230,8 @@ def test_compute_indicators_short_flat_series_has_no_exceptions():
     assert ind["death_cross"] is None
 
     verdict = technical_verdict(ind)
-    assert verdict["verdict"] == "NÖTR"
-    assert verdict["verdict_detail"] == "yetersiz veri"
+    assert verdict["verdict"] == "NEUTRAL"
+    assert verdict["verdict_detail"] == "insufficient data"
 
 
 def test_compute_indicators_golden_cross_detected():
@@ -658,8 +658,8 @@ def test_verdict_detail_format_matches_spec_example():
 def test_verdict_neutral_when_rsi_missing():
     ind = _sample_indicators(rsi14=None)
     result = technical_verdict(ind)
-    assert result["verdict"] == "NÖTR"
-    assert result["verdict_detail"] == "yetersiz veri"
+    assert result["verdict"] == "NEUTRAL"
+    assert result["verdict_detail"] == "insufficient data"
 
 
 def test_horizon_summary_3m_mentions_rsi():
@@ -683,7 +683,7 @@ def test_horizon_summary_5y_notes_rsi_not_relevant_and_frames_sma200_as_entry_ti
     assert result["horizon"] == "5y"
     assert "RSI" in result["horizon_summary"]
     assert "SMA200" in result["horizon_summary"]
-    assert "giriş" in result["horizon_summary"].lower()
+    assert "entry" in result["horizon_summary"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -867,9 +867,16 @@ def test_fetch_yfinance_defaults_to_max_period(monkeypatch):
 
 
 def test_get_price_history_raises_when_yfinance_is_unavailable(monkeypatch, tmp_path):
-    """yfinance is the only source, so its absence is fatal -- there is no
-    second upstream left to fall through to."""
+    """With yfinance missing AND both plain-HTTP fallbacks (Yahoo chart,
+    Nasdaq) unreachable, no source is left -- the chain must raise
+    ``PriceDataError`` instead of returning data."""
     monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
+    # The HTTP fallbacks share ``prices.requests.get``; stub that boundary so
+    # the test never touches the network (conftest forbids it).
+    def _http_down(*_a, **_k):
+        raise prices.requests.RequestException("stubbed: network down")
+
+    monkeypatch.setattr(prices.requests, "get", _http_down)
     # Force `import yfinance` inside _fetch_yfinance to raise ImportError:
     # setting a sys.modules entry to None makes any subsequent `import` of
     # that name raise ImportError immediately, without needing the package

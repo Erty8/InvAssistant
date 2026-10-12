@@ -132,7 +132,7 @@ def test_build_altman_z_safe_zone_from_normalized_fixture():
     assert result is not None
     assert result["z_score"] == pytest.approx(3.55, abs=0.005)
     assert result["zone"] == "safe"
-    assert any("güvenli" in n and "3.55" in n for n in notes)
+    assert any("safe zone" in n and "3.55" in n for n in notes)
 
 
 def test_build_altman_z_none_when_fiscal_year_unresolvable():
@@ -158,7 +158,7 @@ def test_build_altman_z_none_when_current_assets_liabilities_missing():
     result, notes = _build_altman_z(normalized, metrics)
 
     assert result is None
-    assert any("dönen varlık" in n for n in notes)
+    assert any("current-asset/current-liability" in n for n in notes)
 
 
 def test_build_altman_z_none_when_retained_earnings_missing():
@@ -178,7 +178,7 @@ def test_build_altman_z_none_when_retained_earnings_missing():
     result, notes = _build_altman_z(normalized, metrics)
 
     assert result is None
-    assert any("gerekli veriler eksik" in n for n in notes)
+    assert any("required data is missing" in n for n in notes)
 
 
 # ---------------------------------------------------------------------------

@@ -408,7 +408,7 @@ def test_corrupt_downscaled_price_flagged_unreliable():
     assert metrics["pe"] == 1.5
     assert metrics["ps"] == 0.3
     assert metrics["price_reliable"] is False
-    assert "güvenilmez" in (metrics["price_reliability_note"] or "")
+    assert "unreliable" in (metrics["price_reliability_note"] or "")
 
 
 def test_genuinely_cheap_stock_low_pe_normal_ps_stays_reliable():

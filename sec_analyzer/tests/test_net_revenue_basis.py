@@ -110,7 +110,7 @@ def test_swap_note_is_turkish_and_names_the_worst_year():
     )
     assert worst_fy == 2025
     assert f"FY{worst_fy}" in note
-    assert "net gelir" in note
+    assert "net revenue" in note
     # Turkish decimal comma, not an English decimal point: 82.9% -> "%82,9".
     assert "%82,9" in note
     assert "%82.9" not in note

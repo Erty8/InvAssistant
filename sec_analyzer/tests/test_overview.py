@@ -116,21 +116,21 @@ def test_value_bucket_cheap_boundary_inclusive():
     row = _row(price=100.0, fv_base_lo=115.0, fv_base_hi=115.0)
     enriched = build_overview([row], today=TODAY)["rows"][0]
     assert enriched["fv_vs_price_pct"] == CHEAP_THRESHOLD_PCT
-    assert enriched["value_bucket"] == "ucuz"
+    assert enriched["value_bucket"] == "cheap"
 
 
 def test_value_bucket_expensive_boundary_inclusive():
     row = _row(price=100.0, fv_base_lo=85.0, fv_base_hi=85.0)
     enriched = build_overview([row], today=TODAY)["rows"][0]
     assert enriched["fv_vs_price_pct"] == EXPENSIVE_THRESHOLD_PCT
-    assert enriched["value_bucket"] == "pahali"
+    assert enriched["value_bucket"] == "expensive"
 
 
 def test_value_bucket_fair_between_thresholds():
     row = _row(price=100.0, fv_base_lo=100.0, fv_base_hi=100.0)
     enriched = build_overview([row], today=TODAY)["rows"][0]
     assert enriched["fv_vs_price_pct"] == 0.0
-    assert enriched["value_bucket"] == "makul"
+    assert enriched["value_bucket"] == "fair"
 
 
 def test_value_bucket_none_when_pct_unknown():
@@ -179,29 +179,29 @@ def test_heat_none_when_pct_missing():
 # ---------------------------------------------------------------------------
 
 
-def test_verdict_drift_true_when_stored_pahali_but_bucket_ucuz():
-    row = _row(price=100.0, fv_base_lo=120.0, fv_base_hi=120.0, fundamental_verdict="PAHALI")
+def test_verdict_drift_true_when_stored_expensive_but_bucket_cheap():
+    row = _row(price=100.0, fv_base_lo=120.0, fv_base_hi=120.0, fundamental_verdict="EXPENSIVE")
     enriched = build_overview([row], today=TODAY)["rows"][0]
-    assert enriched["value_bucket"] == "ucuz"
+    assert enriched["value_bucket"] == "cheap"
     assert enriched["verdict_drift"] is True
 
 
 def test_verdict_drift_false_when_stored_matches_bucket():
-    row = _row(price=100.0, fv_base_lo=120.0, fv_base_hi=120.0, fundamental_verdict="UCUZ")
+    row = _row(price=100.0, fv_base_lo=120.0, fv_base_hi=120.0, fundamental_verdict="CHEAP")
     enriched = build_overview([row], today=TODAY)["rows"][0]
-    assert enriched["value_bucket"] == "ucuz"
+    assert enriched["value_bucket"] == "cheap"
     assert enriched["verdict_drift"] is False
 
 
 def test_verdict_drift_false_when_verdict_unknown():
     row = _row(price=100.0, fv_base_lo=120.0, fv_base_hi=120.0, fundamental_verdict=None)
     enriched = build_overview([row], today=TODAY)["rows"][0]
-    assert enriched["value_bucket"] == "ucuz"
+    assert enriched["value_bucket"] == "cheap"
     assert enriched["verdict_drift"] is False
 
 
 def test_verdict_drift_false_when_bucket_unknown():
-    row = _row(price=None, fv_base_lo=120.0, fv_base_hi=120.0, fundamental_verdict="PAHALI")
+    row = _row(price=None, fv_base_lo=120.0, fv_base_hi=120.0, fundamental_verdict="EXPENSIVE")
     enriched = build_overview([row], today=TODAY)["rows"][0]
     assert enriched["value_bucket"] is None
     assert enriched["verdict_drift"] is False
@@ -283,8 +283,8 @@ def test_legacy_row_missing_insider_and_catalyst_keys():
     result = build_overview([row], today=TODAY)
     enriched = result["rows"][0]
     assert enriched["days_until_earnings"] is None
-    assert result["insider_counts"]["bilinmiyor"] == 1
-    assert result["insider_counts"]["ALIM"] == 0
+    assert result["insider_counts"]["unknown"] == 1
+    assert result["insider_counts"]["BUY"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -303,9 +303,9 @@ def test_sector_grouping_medians_counts_and_unclassified_bucket(monkeypatch):
         },
     )
     rows = [
-        _row(ticker="AAA", price=100.0, fv_base_lo=120.0, fv_base_hi=120.0),  # pct 20 -> ucuz
-        _row(ticker="BBB", price=100.0, fv_base_lo=80.0, fv_base_hi=80.0),  # pct -20 -> pahali
-        _row(ticker="CCC", price=100.0, fv_base_lo=100.0, fv_base_hi=100.0),  # pct 0 -> makul, no sector
+        _row(ticker="AAA", price=100.0, fv_base_lo=120.0, fv_base_hi=120.0),  # pct 20 -> cheap
+        _row(ticker="BBB", price=100.0, fv_base_lo=80.0, fv_base_hi=80.0),  # pct -20 -> expensive
+        _row(ticker="CCC", price=100.0, fv_base_lo=100.0, fv_base_hi=100.0),  # pct 0 -> fair, no sector
     ]
     result = build_overview(rows, today=TODAY)
     sectors = {s["sector"]: s for s in result["sectors"]}
@@ -320,7 +320,7 @@ def test_sector_grouping_medians_counts_and_unclassified_bucket(monkeypatch):
     assert it_sector["tickers"] == ["AAA", "BBB"]
 
     unclassified = sectors[None]
-    assert unclassified["label"] == "Sınıflandırılmamış"
+    assert unclassified["label"] == "Unclassified"
     assert unclassified["n"] == 1
     assert unclassified["fair_n"] == 1
     assert unclassified["tickers"] == ["CCC"]
@@ -411,7 +411,7 @@ def test_sector_none_and_source_none_when_neither_index_nor_sic():
     assert enriched["sector_source"] is None
     unclassified = [s for s in result["sectors"] if s["sector"] is None]
     assert len(unclassified) == 1
-    assert unclassified[0]["label"] == "Sınıflandırılmamış"
+    assert unclassified[0]["label"] == "Unclassified"
     assert "NOBODY" in unclassified[0]["tickers"]
 
 
@@ -436,7 +436,7 @@ def test_sector_from_sic_missing_key_entirely():
 # ---------------------------------------------------------------------------
 
 
-def test_routes_grouping_uses_turkish_labels_and_unknown_bucket():
+def test_routes_grouping_uses_display_labels_and_unknown_bucket():
     rows = [
         _row(ticker="AAA", sector_type="mature"),
         _row(ticker="BBB", sector_type="cyclical"),
@@ -448,13 +448,13 @@ def test_routes_grouping_uses_turkish_labels_and_unknown_bucket():
 
     assert routes["mature"]["label"] == SECTOR_TYPE_LABELS["mature"]
     assert routes["cyclical"]["label"] == SECTOR_TYPE_LABELS["cyclical"]
-    assert routes[None]["label"] == "Bilinmiyor"
+    assert routes[None]["label"] == "Unknown"
     assert routes[None]["tickers"] == ["CCC"]
-    assert routes["not_a_real_route"]["label"] == "Bilinmiyor"
+    assert routes["not_a_real_route"]["label"] == "Unknown"
 
-    assert sector_type_label(None) == "Bilinmiyor"
-    assert sector_type_label("garbage") == "Bilinmiyor"
-    assert sector_type_label("reit") == "GYO"
+    assert sector_type_label(None) == "Unknown"
+    assert sector_type_label("garbage") == "Unknown"
+    assert sector_type_label("reit") == "REIT"
 
 
 # ---------------------------------------------------------------------------
@@ -481,22 +481,22 @@ def test_row_sort_order_descending_pct_none_last_ticker_tiebreak():
 
 
 def test_count_dicts_carry_all_known_keys_even_when_zero():
-    row = _row(fundamental_verdict="UCUZ", confidence="YÜKSEK", momentum_verdict="POZİTİF", insider_verdict="ALIM")
+    row = _row(fundamental_verdict="CHEAP", confidence="HIGH", momentum_verdict="POSITIVE", insider_verdict="BUY")
     result = build_overview([row], today=TODAY)
 
-    assert result["verdict_counts"] == {"UCUZ": 1, "MAKUL": 0, "PAHALI": 0, "bilinmiyor": 0}
-    assert result["confidence_counts"] == {"YÜKSEK": 1, "ORTA": 0, "DÜŞÜK": 0, "bilinmiyor": 0}
-    assert result["momentum_counts"] == {"GÜÇLÜ+": 0, "POZİTİF": 1, "NÖTR": 0, "NEGATİF": 0, "bilinmiyor": 0}
+    assert result["verdict_counts"] == {"CHEAP": 1, "FAIR": 0, "EXPENSIVE": 0, "unknown": 0}
+    assert result["confidence_counts"] == {"HIGH": 1, "MEDIUM": 0, "LOW": 0, "unknown": 0}
+    assert result["momentum_counts"] == {"STRONG+": 0, "POSITIVE": 1, "NEUTRAL": 0, "NEGATIVE": 0, "unknown": 0}
     assert result["insider_counts"] == {
-        "GÜÇLÜ ALIM": 0,
-        "ALIM": 1,
-        "NÖTR": 0,
-        "SATIŞ": 0,
-        "YOĞUN SATIŞ": 0,
-        "bilinmiyor": 0,
+        "STRONG BUY": 0,
+        "BUY": 1,
+        "NEUTRAL": 0,
+        "SELL": 0,
+        "HEAVY SELLING": 0,
+        "unknown": 0,
     }
-    # bucket_counts is derived (value_bucket unset here -> "bilinmiyor")
-    assert result["bucket_counts"]["bilinmiyor"] == 1
+    # bucket_counts is derived (value_bucket unset here -> "unknown")
+    assert result["bucket_counts"]["unknown"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -518,9 +518,9 @@ def test_upcoming_earnings_window_and_sort():
 
 def test_drift_list_sorted_by_abs_pct_desc():
     rows = [
-        _row(ticker="SMALL", price=100.0, fv_base_lo=116.0, fv_base_hi=116.0, fundamental_verdict="PAHALI"),  # +16
-        _row(ticker="BIG", price=100.0, fv_base_lo=140.0, fv_base_hi=140.0, fundamental_verdict="PAHALI"),  # +40
-        _row(ticker="AGREE", price=100.0, fv_base_lo=120.0, fv_base_hi=120.0, fundamental_verdict="UCUZ"),  # no drift
+        _row(ticker="SMALL", price=100.0, fv_base_lo=116.0, fv_base_hi=116.0, fundamental_verdict="EXPENSIVE"),  # +16
+        _row(ticker="BIG", price=100.0, fv_base_lo=140.0, fv_base_hi=140.0, fundamental_verdict="EXPENSIVE"),  # +40
+        _row(ticker="AGREE", price=100.0, fv_base_lo=120.0, fv_base_hi=120.0, fundamental_verdict="CHEAP"),  # no drift
     ]
     result = build_overview(rows, today=TODAY)
     tickers = [r["ticker"] for r in result["drift"]]
@@ -543,7 +543,7 @@ def test_build_overview_empty_rows():
     assert result["upcoming_earnings"] == []
     assert result["drift"] == []
     assert result["median_fv_vs_price_pct"] is None
-    assert result["verdict_counts"] == {"UCUZ": 0, "MAKUL": 0, "PAHALI": 0, "bilinmiyor": 0}
+    assert result["verdict_counts"] == {"CHEAP": 0, "FAIR": 0, "EXPENSIVE": 0, "unknown": 0}
     assert result["today"] == "2026-08-07"
 
 
@@ -590,12 +590,12 @@ def test_no_none_or_nan_substrings_in_rendered_strings():
     tokens "None"/"nan" as whole words -- missing data is the Python
     ``None`` object (which ``json.dumps`` renders as ``null``, never the
     string "None"), not a stringified placeholder. Checked as whole tokens
-    (not raw substring containment) because legitimate Turkish labels can
-    contain "nan" as a substring (e.g. "Finansal")."""
+    (not raw substring containment) because legitimate labels can
+    contain "nan" as a substring (e.g. "Financial")."""
     rows = [
         _row(ticker="AAA"),  # mostly-None row: nothing computable
-        _row(ticker="BBB", price=100.0, fv_base_lo=120.0, fv_base_hi=130.0, fundamental_verdict="UCUZ"),
-        _row(ticker="CCC", sector_type="financial"),  # exercises the "Finansal" label
+        _row(ticker="BBB", price=100.0, fv_base_lo=120.0, fv_base_hi=130.0, fundamental_verdict="CHEAP"),
+        _row(ticker="CCC", sector_type="financial"),  # exercises the "Financial" label
     ]
     result = build_overview(rows, today=TODAY)
     strings = []

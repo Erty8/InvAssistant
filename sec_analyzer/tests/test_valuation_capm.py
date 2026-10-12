@@ -168,7 +168,7 @@ def test_default_assumptions_uses_capm_base_when_present():
 def test_default_assumptions_flat_default_without_capm():
     a = default_assumptions({"revenue_cagr_5y": 0.10}, "mature")
     assert a["base"]["discount_rate"] == pytest.approx(0.10)
-    assert "sınıflandırmasına göre" in a["base"]["story"]
+    assert "sector classification" in a["base"]["story"]
 
 
 def test_default_assumptions_low_capm_base_is_floored_not_discarded():

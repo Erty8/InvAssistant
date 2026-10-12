@@ -146,7 +146,7 @@ def test_cyclical_trap_fires_at_peak_margin_with_low_pe():
     assert "CYCLICAL_TRAP" in _codes(flags)
     flag = next(f for f in flags if f["code"] == "CYCLICAL_TRAP")
     # The 5y-horizon wording should be used since horizon="5y" was passed.
-    assert "5 yıllık" in flag["detail"]
+    assert "5-year horizon" in flag["detail"]
 
 
 def test_cyclical_trap_does_not_fire_with_fewer_than_four_years():

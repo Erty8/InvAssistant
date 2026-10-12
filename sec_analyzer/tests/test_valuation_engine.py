@@ -24,90 +24,90 @@ from sec_analyzer.valuation.triangulate import triangulate
 
 
 def test_triangulate_all_three_agree_gives_high_confidence():
-    # dcf: price=90 < band.lo=100 -> ucuz
-    # reverse_dcf: implied=0.05 < ref(0.10) - 0.03 = 0.07 -> ucuz
-    # multiples: pe_pct=20 < 30 -> ucuz
-    # All three "ucuz" -> YÜKSEK confidence, direction "ucuz".
+    # dcf: price=90 < band.lo=100 -> cheap
+    # reverse_dcf: implied=0.05 < ref(0.10) - 0.03 = 0.07 -> cheap
+    # multiples: pe_pct=20 < 30 -> cheap
+    # All three "cheap" -> HIGH confidence, direction "cheap".
     result = triangulate(
         price=90, dcf_base_band={"lo": 100, "hi": 120}, implied_growth=0.05,
         realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
         sector_type="mature",
     )
-    assert result["signals"] == {"dcf": "ucuz", "reverse_dcf": "ucuz", "multiples": "ucuz"}
-    assert result["confidence"] == "YÜKSEK"
-    assert result["direction"] == "ucuz"
+    assert result["signals"] == {"dcf": "cheap", "reverse_dcf": "cheap", "multiples": "cheap"}
+    assert result["confidence"] == "HIGH"
+    assert result["direction"] == "cheap"
 
 
 def test_triangulate_two_of_three_agree_gives_medium_confidence():
-    # dcf: price=90 < 100 -> ucuz
-    # reverse_dcf: implied=0.05 < 0.07 -> ucuz
-    # multiples: pe_pct=80 > 70 -> pahali
-    # 2 agree (ucuz) / 1 disagrees -> ORTA, direction "ucuz".
+    # dcf: price=90 < 100 -> cheap
+    # reverse_dcf: implied=0.05 < 0.07 -> cheap
+    # multiples: pe_pct=80 > 70 -> expensive
+    # 2 agree (cheap) / 1 disagrees -> MEDIUM, direction "cheap".
     result = triangulate(
         price=90, dcf_base_band={"lo": 100, "hi": 120}, implied_growth=0.05,
         realized_cagr=None, base_growth=0.10, pe_pct=80, ps_pct=None, pfcf_pct=None,
         sector_type="mature",
     )
-    assert result["signals"] == {"dcf": "ucuz", "reverse_dcf": "ucuz", "multiples": "pahali"}
-    assert result["confidence"] == "ORTA"
-    assert result["direction"] == "ucuz"
+    assert result["signals"] == {"dcf": "cheap", "reverse_dcf": "cheap", "multiples": "expensive"}
+    assert result["confidence"] == "MEDIUM"
+    assert result["direction"] == "cheap"
 
 
 def test_triangulate_scattered_signals_give_low_confidence_and_unclear_direction():
-    # dcf: price=110, inside [100,120] -> makul
-    # reverse_dcf: implied=0.15 > ref(0.10)+0.03=0.13 -> pahali
-    # multiples: pe_pct=20 < 30 -> ucuz
-    # All three different -> no majority -> DÜŞÜK, "belirsiz".
+    # dcf: price=110, inside [100,120] -> fair
+    # reverse_dcf: implied=0.15 > ref(0.10)+0.03=0.13 -> expensive
+    # multiples: pe_pct=20 < 30 -> cheap
+    # All three different -> no majority -> LOW, "unclear".
     result = triangulate(
         price=110, dcf_base_band={"lo": 100, "hi": 120}, implied_growth=0.15,
         realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
         sector_type="mature",
     )
-    assert result["signals"] == {"dcf": "makul", "reverse_dcf": "pahali", "multiples": "ucuz"}
-    assert result["confidence"] == "DÜŞÜK"
-    assert result["direction"] == "belirsiz"
+    assert result["signals"] == {"dcf": "fair", "reverse_dcf": "expensive", "multiples": "cheap"}
+    assert result["confidence"] == "LOW"
+    assert result["direction"] == "unclear"
 
 
 def test_triangulate_two_or_more_no_data_signals_give_low_confidence():
-    # price=None -> dcf signal "veri_yok"; implied_growth=None -> reverse_dcf
-    # "veri_yok". Only multiples has data (pe_pct=50 -> makul). 2 "veri_yok"
-    # -> DÜŞÜK regardless of the third signal.
+    # price=None -> dcf signal "no_data"; implied_growth=None -> reverse_dcf
+    # "no_data". Only multiples has data (pe_pct=50 -> fair). 2 "no_data"
+    # -> LOW regardless of the third signal.
     result = triangulate(
         price=None, dcf_base_band=None, implied_growth=None,
         realized_cagr=None, base_growth=0.10, pe_pct=50, ps_pct=None, pfcf_pct=None,
         sector_type="mature",
     )
-    assert result["signals"]["dcf"] == "veri_yok"
-    assert result["signals"]["reverse_dcf"] == "veri_yok"
-    assert result["confidence"] == "DÜŞÜK"
-    assert result["direction"] == "belirsiz"
+    assert result["signals"]["dcf"] == "no_data"
+    assert result["signals"]["reverse_dcf"] == "no_data"
+    assert result["confidence"] == "LOW"
+    assert result["direction"] == "unclear"
 
 
 def test_triangulate_upside_divergence_floors_confidence_and_flags_verdict():
-    # All three say "ucuz" (would normally be YÜKSEK), but the base band low
+    # All three say "cheap" (would normally be HIGH), but the base band low
     # (250) is 2.5x the price (100) -> model-market divergence: three method
     # votes read off the SAME assumption set, so unanimity isn't independent
-    # confirmation. Confidence is floored to DÜŞÜK and a verdict-action
-    # divergence payload is attached. direction stays "ucuz" (the verdict
+    # confirmation. Confidence is floored to LOW and a verdict-action
+    # divergence payload is attached. direction stays "cheap" (the verdict
     # rename is a presentation-layer step, not done here).
     result = triangulate(
         price=100, dcf_base_band={"lo": 250, "hi": 300}, implied_growth=0.05,
         realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
         sector_type="mature",
     )
-    assert result["signals"]["dcf"] == "ucuz"
-    assert result["confidence"] == "DÜŞÜK"
+    assert result["signals"]["dcf"] == "cheap"
+    assert result["confidence"] == "LOW"
     assert result["divergence"] is not None
-    assert result["divergence"]["direction"] == "ucuz"
+    assert result["divergence"]["direction"] == "cheap"
     assert result["divergence"]["action"] == "verdict"
     assert result["divergence"]["factor"] == pytest.approx(2.5)
     assert result["divergence"]["band_edge"] == 250
-    assert "Model-piyasa ayrışması" in result["rationale"]["confidence"]
+    assert "Model-market divergence" in result["rationale"]["confidence"]
 
 
 def test_triangulate_downside_divergence_is_log_only_and_leaves_confidence():
     # price 100, base band [30,40]: hi (40) is 0.4x price (< 0.5x) -> downside
-    # divergence. All three say "pahali" -> confidence must STAY YÜKSEK
+    # divergence. All three say "expensive" -> confidence must STAY HIGH
     # (down-side is log-only this pass); only the payload is recorded, with
     # action="log_only", so the coming low-side pass inherits the data.
     result = triangulate(
@@ -115,11 +115,11 @@ def test_triangulate_downside_divergence_is_log_only_and_leaves_confidence():
         realized_cagr=None, base_growth=0.10, pe_pct=90, ps_pct=None, pfcf_pct=None,
         sector_type="mature",
     )
-    assert result["signals"]["dcf"] == "pahali"
-    assert result["confidence"] == "YÜKSEK"
-    assert result["direction"] == "pahali"
+    assert result["signals"]["dcf"] == "expensive"
+    assert result["confidence"] == "HIGH"
+    assert result["direction"] == "expensive"
     assert result["divergence"]["action"] == "log_only"
-    assert result["divergence"]["direction"] == "pahali"
+    assert result["divergence"]["direction"] == "expensive"
     assert result["divergence"]["factor"] == pytest.approx(0.4)
 
 
@@ -132,7 +132,7 @@ def test_triangulate_no_divergence_within_normal_range():
         sector_type="mature",
     )
     assert result["divergence"] is None
-    assert result["confidence"] == "YÜKSEK"
+    assert result["confidence"] == "HIGH"
 
 
 def test_triangulate_divergence_up_trigger_is_strict():
@@ -145,72 +145,72 @@ def test_triangulate_divergence_up_trigger_is_strict():
 
 
 def test_triangulate_dcf_direction_boundaries_are_strict():
-    # price exactly at band.lo/band.hi must be "makul" (strict < / > only).
+    # price exactly at band.lo/band.hi must be "fair" (strict < / > only).
     at_lo = triangulate(100, {"lo": 100, "hi": 120}, None, None, None, None, None, None, "mature")
     at_hi = triangulate(120, {"lo": 100, "hi": 120}, None, None, None, None, None, None, "mature")
     below_lo = triangulate(99.99, {"lo": 100, "hi": 120}, None, None, None, None, None, None, "mature")
     above_hi = triangulate(120.01, {"lo": 100, "hi": 120}, None, None, None, None, None, None, "mature")
 
-    assert at_lo["signals"]["dcf"] == "makul"
-    assert at_hi["signals"]["dcf"] == "makul"
-    assert below_lo["signals"]["dcf"] == "ucuz"
-    assert above_hi["signals"]["dcf"] == "pahali"
+    assert at_lo["signals"]["dcf"] == "fair"
+    assert at_hi["signals"]["dcf"] == "fair"
+    assert below_lo["signals"]["dcf"] == "cheap"
+    assert above_hi["signals"]["dcf"] == "expensive"
 
 
 def test_triangulate_reverse_dcf_direction_boundaries_are_strict():
     # reference growth = base_growth = 0.10 (realized_cagr is None).
-    # implied exactly at ref+0.03=0.13 or ref-0.03=0.07 -> "makul" (strict
+    # implied exactly at ref+0.03=0.13 or ref-0.03=0.07 -> "fair" (strict
     # inequalities only); just past either edge flips it.
     at_upper = triangulate(None, None, 0.13, None, 0.10, None, None, None, "mature")
     at_lower = triangulate(None, None, 0.07, None, 0.10, None, None, None, "mature")
     past_upper = triangulate(None, None, 0.1301, None, 0.10, None, None, None, "mature")
     past_lower = triangulate(None, None, 0.0699, None, 0.10, None, None, None, "mature")
 
-    assert at_upper["signals"]["reverse_dcf"] == "makul"
-    assert at_lower["signals"]["reverse_dcf"] == "makul"
-    assert past_upper["signals"]["reverse_dcf"] == "pahali"
-    assert past_lower["signals"]["reverse_dcf"] == "ucuz"
+    assert at_upper["signals"]["reverse_dcf"] == "fair"
+    assert at_lower["signals"]["reverse_dcf"] == "fair"
+    assert past_upper["signals"]["reverse_dcf"] == "expensive"
+    assert past_lower["signals"]["reverse_dcf"] == "cheap"
 
 
 def test_triangulate_reverse_dcf_prefers_realized_cagr_over_base_growth():
     # When realized_cagr is provided it is the reference, NOT base_growth.
-    # realized_cagr=0.20, implied=0.10: 0.10 < 0.20-0.03=0.17 -> ucuz (even
-    # though base_growth=0.10 would have made it exactly "makul" against
+    # realized_cagr=0.20, implied=0.10: 0.10 < 0.20-0.03=0.17 -> cheap (even
+    # though base_growth=0.10 would have made it exactly "fair" against
     # itself).
     result = triangulate(None, None, 0.10, 0.20, 0.10, None, None, None, "mature")
-    assert result["signals"]["reverse_dcf"] == "ucuz"
+    assert result["signals"]["reverse_dcf"] == "cheap"
 
 
 def test_triangulate_multiples_direction_boundaries_are_strict():
-    # pct exactly 30/70 -> "makul"; just past either edge flips it.
+    # pct exactly 30/70 -> "fair"; just past either edge flips it.
     at_30 = triangulate(None, None, None, None, None, 30, None, None, "mature")
     at_70 = triangulate(None, None, None, None, None, 70, None, None, "mature")
     below_30 = triangulate(None, None, None, None, None, 29.9, None, None, "mature")
     above_70 = triangulate(None, None, None, None, None, 70.1, None, None, "mature")
 
-    assert at_30["signals"]["multiples"] == "makul"
-    assert at_70["signals"]["multiples"] == "makul"
-    assert below_30["signals"]["multiples"] == "ucuz"
-    assert above_70["signals"]["multiples"] == "pahali"
+    assert at_30["signals"]["multiples"] == "fair"
+    assert at_70["signals"]["multiples"] == "fair"
+    assert below_30["signals"]["multiples"] == "cheap"
+    assert above_70["signals"]["multiples"] == "expensive"
 
 
 def test_triangulate_multiples_uses_ps_first_for_growth_unprofitable():
     # For growth_unprofitable, P/S is primary (fallback P/E then P/FCF).
-    # pe_pct=90 (would be "pahali" if used) but ps_pct=10 is primary here
-    # and must win: "ucuz".
+    # pe_pct=90 (would be "expensive" if used) but ps_pct=10 is primary here
+    # and must win: "cheap".
     result = triangulate(None, None, None, None, None, 90, 10, None, "growth_unprofitable")
-    assert result["signals"]["multiples"] == "ucuz"
+    assert result["signals"]["multiples"] == "cheap"
 
 
 def test_triangulate_multiples_uses_pffo_first_for_reit_not_pe():
     # For reit (Package 2 / SPEC.md Sec.8/FFO), P/FFO is primary, NOT P/E:
-    # pe_pct=90 (would be "pahali" if used) and ps_pct=50 (would be "makul")
-    # are both present, but pffo_pct=10 must win -> "ucuz".
+    # pe_pct=90 (would be "expensive" if used) and ps_pct=50 (would be "fair")
+    # are both present, but pffo_pct=10 must win -> "cheap".
     result = triangulate(
         None, None, None, None, None, pe_pct=90, ps_pct=50, pfcf_pct=None,
         sector_type="reit", pffo_pct=10,
     )
-    assert result["signals"]["multiples"] == "ucuz"
+    assert result["signals"]["multiples"] == "cheap"
     assert "P/FFO" in result["rationale"]["multiples"]
 
 
@@ -221,34 +221,34 @@ def test_triangulate_multiples_reit_falls_back_to_ps_when_pffo_missing():
         None, None, None, None, None, pe_pct=90, ps_pct=10, pfcf_pct=None,
         sector_type="reit", pffo_pct=None,
     )
-    assert result["signals"]["multiples"] == "ucuz"
+    assert result["signals"]["multiples"] == "cheap"
 
 
 # ---------------------------------------------------------------------------
-# 8b. triangulate -- growth-adjusted (PEG / EV-Sales) divergence -> "karisik"
+# 8b. triangulate -- growth-adjusted (PEG / EV-Sales) divergence -> "mixed"
 # multiples signal (VALUATION.md Sec.7).
 # ---------------------------------------------------------------------------
 
 
-def test_triangulate_multiples_karisik_when_raw_and_growth_adjusted_diverge():
+def test_triangulate_multiples_mixed_when_raw_and_growth_adjusted_diverge():
     # Raw P/E percentile 88 (expensive) but growth-adjusted PEG percentile 45
-    # (fair) -> the two components land in different buckets -> "karisik".
+    # (fair) -> the two components land in different buckets -> "mixed".
     result = triangulate(
         None, None, None, None, None, 88, None, None, "mature",
         raw_growth_pair_pct=88, growth_adj_pct=45,
     )
-    assert result["signals"]["multiples"] == "karisik"
-    assert "karışık" in result["rationale"]["multiples"]
+    assert result["signals"]["multiples"] == "mixed"
+    assert "mixed signal" in result["rationale"]["multiples"]
 
 
-def test_triangulate_multiples_not_karisik_when_both_components_agree():
+def test_triangulate_multiples_not_mixed_when_both_components_agree():
     # Raw 88 (expensive) and growth-adjusted 82 (expensive) agree -> the
-    # existing raw signal stands unchanged ("pahali"), not "karisik".
+    # existing raw signal stands unchanged ("expensive"), not "mixed".
     result = triangulate(
         None, None, None, None, None, 88, None, None, "mature",
         raw_growth_pair_pct=88, growth_adj_pct=82,
     )
-    assert result["signals"]["multiples"] == "pahali"
+    assert result["signals"]["multiples"] == "expensive"
 
 
 def test_triangulate_multiples_unchanged_when_growth_adjusted_missing():
@@ -257,19 +257,19 @@ def test_triangulate_multiples_unchanged_when_growth_adjusted_missing():
         None, None, None, None, None, 88, None, None, "mature",
         raw_growth_pair_pct=88, growth_adj_pct=None,
     )
-    assert result["signals"]["multiples"] == "pahali"
+    assert result["signals"]["multiples"] == "expensive"
 
 
-def test_triangulate_multiples_karisik_lowers_confidence_vs_agreement():
-    # DCF + reverse-DCF both say "pahali"; a "karisik" multiples signal can't
-    # join that majority, so confidence is ORTA (2 agree), not YÜKSEK.
+def test_triangulate_multiples_mixed_lowers_confidence_vs_agreement():
+    # DCF + reverse-DCF both say "expensive"; a "mixed" multiples signal can't
+    # join that majority, so confidence is MEDIUM (2 agree), not HIGH.
     result = triangulate(
         110, {"lo": 90, "hi": 100}, 0.20, 0.10, 0.10, 88, None, None, "mature",
         raw_growth_pair_pct=88, growth_adj_pct=45,
     )
-    assert result["signals"]["multiples"] == "karisik"
-    assert result["signals"]["dcf"] == "pahali"
-    assert result["confidence"] == "ORTA"
+    assert result["signals"]["multiples"] == "mixed"
+    assert result["signals"]["dcf"] == "expensive"
+    assert result["confidence"] == "MEDIUM"
 
 
 # ---------------------------------------------------------------------------
@@ -279,58 +279,58 @@ def test_triangulate_multiples_karisik_lowers_confidence_vs_agreement():
 
 
 def test_triangulate_multiples_uses_ev_ebitda_first_when_leveraged():
-    # net_debt/EBITDA = 2.0 >= 1.0 -> leveraged. pe_pct=90 (would be "pahali"),
-    # but ev_ebitda_pct=15 (<30) must win -> "ucuz", and the rationale names
+    # net_debt/EBITDA = 2.0 >= 1.0 -> leveraged. pe_pct=90 (would be "expensive"),
+    # but ev_ebitda_pct=15 (<30) must win -> "cheap", and the rationale names
     # FD/FAVÖK rather than P/E.
     result = triangulate(
         None, None, None, None, None, pe_pct=90, ps_pct=50, pfcf_pct=None,
         sector_type="mature", ev_ebitda_pct=15, net_debt_to_ebitda=2.0,
     )
-    assert result["signals"]["multiples"] == "ucuz"
-    assert "FD/FAVÖK" in result["rationale"]["multiples"]
+    assert result["signals"]["multiples"] == "cheap"
+    assert "EV/EBITDA" in result["rationale"]["multiples"]
 
 
 def test_triangulate_multiples_keeps_pe_when_not_leveraged():
     # net_debt/EBITDA = 0.4 < 1.0 -> NOT leveraged. Even though ev_ebitda_pct
-    # is present, P/E (=90 -> "pahali") stays primary; EV/EBITDA is ignored.
+    # is present, P/E (=90 -> "expensive") stays primary; EV/EBITDA is ignored.
     result = triangulate(
         None, None, None, None, None, pe_pct=90, ps_pct=50, pfcf_pct=None,
         sector_type="mature", ev_ebitda_pct=15, net_debt_to_ebitda=0.4,
     )
-    assert result["signals"]["multiples"] == "pahali"
+    assert result["signals"]["multiples"] == "expensive"
 
 
 def test_triangulate_multiples_leveraged_falls_back_to_pe_when_no_ev_history():
     # Leveraged but ev_ebitda_pct is None (no usable EV history) -> the P/E ->
-    # P/S -> P/FCF fallback order is used, so pe_pct=90 -> "pahali".
+    # P/S -> P/FCF fallback order is used, so pe_pct=90 -> "expensive".
     result = triangulate(
         None, None, None, None, None, pe_pct=90, ps_pct=50, pfcf_pct=None,
         sector_type="mature", ev_ebitda_pct=None, net_debt_to_ebitda=3.0,
     )
-    assert result["signals"]["multiples"] == "pahali"
+    assert result["signals"]["multiples"] == "expensive"
 
 
 def test_triangulate_leveraged_skips_pe_based_peg_divergence():
     # A P/E-vs-PEG divergence (raw 88 vs growth-adj 45) would normally flip the
-    # signal to "karisik". But when EV/EBITDA is primary (leveraged), that
-    # P/E-based axis is skipped, so the EV/EBITDA own-history read (15 -> ucuz)
-    # stands instead of being masked as "karisik".
+    # signal to "mixed". But when EV/EBITDA is primary (leveraged), that
+    # P/E-based axis is skipped, so the EV/EBITDA own-history read (15 -> cheap)
+    # stands instead of being masked as "mixed".
     result = triangulate(
         None, None, None, None, None, pe_pct=88, ps_pct=None, pfcf_pct=None,
         sector_type="mature", ev_ebitda_pct=15, net_debt_to_ebitda=1.5,
         raw_growth_pair_pct=88, growth_adj_pct=45,
     )
-    assert result["signals"]["multiples"] == "ucuz"
+    assert result["signals"]["multiples"] == "cheap"
 
 
 def test_triangulate_leverage_gate_ignored_for_reit():
-    # reit keeps P/FFO primary regardless of leverage: pffo_pct=10 -> "ucuz"
+    # reit keeps P/FFO primary regardless of leverage: pffo_pct=10 -> "cheap"
     # wins over a present ev_ebitda_pct=90.
     result = triangulate(
         None, None, None, None, None, pe_pct=50, ps_pct=50, pfcf_pct=None,
         sector_type="reit", pffo_pct=10, ev_ebitda_pct=90, net_debt_to_ebitda=5.0,
     )
-    assert result["signals"]["multiples"] == "ucuz"
+    assert result["signals"]["multiples"] == "cheap"
     assert "P/FFO" in result["rationale"]["multiples"]
 
 
@@ -341,27 +341,27 @@ def test_triangulate_leverage_gate_ignored_for_reit():
 # ---------------------------------------------------------------------------
 
 
-def test_triangulate_multiples_karisik_when_own_history_and_sector_diverge():
+def test_triangulate_multiples_mixed_when_own_history_and_sector_diverge():
     # Own-history P/E percentile 88 (expensive vs its own past) but the
     # current P/E is 0.5x the sector median (cheap vs peers) -> the two axes
-    # disagree -> "karisik".
+    # disagree -> "mixed".
     result = triangulate(
         None, None, None, None, None, 88, None, None, "mature",
         sector_ratio=0.5,
     )
-    assert result["signals"]["multiples"] == "karisik"
-    assert "sektör medyanına göre" in result["rationale"]["multiples"]
+    assert result["signals"]["multiples"] == "mixed"
+    assert "versus the sector median" in result["rationale"]["multiples"]
 
 
-def test_triangulate_multiples_not_karisik_when_own_history_and_sector_agree():
+def test_triangulate_multiples_not_mixed_when_own_history_and_sector_agree():
     # Own-history expensive (88) AND expensive vs sector (1.5x median) agree
-    # -> raw "pahali" stands, with a sector-confirmation clause appended.
+    # -> raw "expensive" stands, with a sector-confirmation clause appended.
     result = triangulate(
         None, None, None, None, None, 88, None, None, "mature",
         sector_ratio=1.5,
     )
-    assert result["signals"]["multiples"] == "pahali"
-    assert "Sektör medyanına göre de pahalı" in result["rationale"]["multiples"]
+    assert result["signals"]["multiples"] == "expensive"
+    assert "Also expensive versus the sector median" in result["rationale"]["multiples"]
 
 
 def test_triangulate_multiples_sector_axis_disabled_when_ratio_none():
@@ -370,71 +370,71 @@ def test_triangulate_multiples_sector_axis_disabled_when_ratio_none():
         None, None, None, None, None, 88, None, None, "mature",
         sector_ratio=None,
     )
-    assert result["signals"]["multiples"] == "pahali"
-    assert "sektör" not in result["rationale"]["multiples"].lower()
+    assert result["signals"]["multiples"] == "expensive"
+    assert "sector" not in result["rationale"]["multiples"].lower()
 
 
 def test_triangulate_multiples_sector_band_boundaries_are_strict():
-    # Own-history "makul" (pct 50) so any sector divergence is purely axis-b.
-    # ratio exactly 1.25 / 0.80 stays in-line (makul); just past flips it.
+    # Own-history "fair" (pct 50) so any sector divergence is purely axis-b.
+    # ratio exactly 1.25 / 0.80 stays in-line (fair); just past flips it.
     at_hi = triangulate(None, None, None, None, None, 50, None, None, "mature", sector_ratio=1.25)
     above_hi = triangulate(None, None, None, None, None, 50, None, None, "mature", sector_ratio=1.26)
     at_lo = triangulate(None, None, None, None, None, 50, None, None, "mature", sector_ratio=0.80)
     below_lo = triangulate(None, None, None, None, None, 50, None, None, "mature", sector_ratio=0.79)
 
-    assert at_hi["signals"]["multiples"] == "makul"       # in-line, own-history makul
-    assert above_hi["signals"]["multiples"] == "karisik"  # expensive vs sector, makul own -> mixed
-    assert at_lo["signals"]["multiples"] == "makul"
-    assert below_lo["signals"]["multiples"] == "karisik"  # cheap vs sector, makul own -> mixed
+    assert at_hi["signals"]["multiples"] == "fair"       # in-line, own-history fair
+    assert above_hi["signals"]["multiples"] == "mixed"  # expensive vs sector, fair own -> mixed
+    assert at_lo["signals"]["multiples"] == "fair"
+    assert below_lo["signals"]["multiples"] == "mixed"  # cheap vs sector, fair own -> mixed
 
 
 def test_triangulate_multiples_peg_divergence_takes_precedence_over_sector():
     # Both divergences present. PEG divergence (raw 88 vs growth-adj 45) is
     # higher precedence: the rationale shows the PEG sentence, not the sector
-    # one, though both resolve the signal to "karisik".
+    # one, though both resolve the signal to "mixed".
     result = triangulate(
         None, None, None, None, None, 88, None, None, "mature",
         raw_growth_pair_pct=88, growth_adj_pct=45, sector_ratio=1.5,
     )
-    assert result["signals"]["multiples"] == "karisik"
-    assert "büyümeye göre normalize" in result["rationale"]["multiples"]
-    assert "sektör medyanına göre" not in result["rationale"]["multiples"]
+    assert result["signals"]["multiples"] == "mixed"
+    assert "normalized for growth" in result["rationale"]["multiples"]
+    assert "versus the sector median" not in result["rationale"]["multiples"]
 
 
 # ---------------------------------------------------------------------------
-# 8a. triangulate -- hyper-grower "yuksek_beklenti" DCF signal (HYPER_SPEC.md
+# 8a. triangulate -- hyper-grower "high_expectation" DCF signal (HYPER_SPEC.md
 # Sec.4): base band [100,120], bull band hi=150.
 # ---------------------------------------------------------------------------
 
 
-def test_triangulate_hyper_growth_price_between_base_and_bull_hi_is_yuksek_beklenti():
-    # price=130: above base.hi=120 but at/below bull.hi=150 -> "yuksek_beklenti",
-    # not "pahali". With only 1 substantive signal (reverse_dcf/multiples
-    # both "veri_yok" here), the pre-existing "2+ no-data signals -> DÜŞÜK /
-    # belirsiz" rule (unchanged by this milestone) applies exactly as it
-    # would for any other single-signal reading -- "yuksek_beklenti" is not
+def test_triangulate_hyper_growth_price_between_base_and_bull_hi_is_high_expectation():
+    # price=130: above base.hi=120 but at/below bull.hi=150 -> "high_expectation",
+    # not "expensive". With only 1 substantive signal (reverse_dcf/multiples
+    # both "no_data" here), the pre-existing "2+ no-data signals -> LOW /
+    # unclear" rule (unchanged by this milestone) applies exactly as it
+    # would for any other single-signal reading -- "high_expectation" is not
     # special-cased into surfacing as the overall direction on its own.
     result = triangulate(
         price=130, dcf_base_band={"lo": 100, "hi": 120}, implied_growth=None,
         realized_cagr=None, base_growth=None, pe_pct=None, ps_pct=None, pfcf_pct=None,
         sector_type="growth_unprofitable", hyper_growth=True, bull_band={"lo": 130, "hi": 150},
     )
-    assert result["signals"]["dcf"] == "yuksek_beklenti"
-    assert result["confidence"] == "DÜŞÜK"
-    assert result["direction"] == "belirsiz"
+    assert result["signals"]["dcf"] == "high_expectation"
+    assert result["confidence"] == "LOW"
+    assert result["direction"] == "unclear"
 
 
 def test_triangulate_hyper_growth_direction_surfaces_when_reverse_dcf_agrees():
-    # direction only ever mirrors "signals.dcf" == "yuksek_beklenti" via the
+    # direction only ever mirrors "signals.dcf" == "high_expectation" via the
     # ordinary >=2-signals-agree majority rule -- reverse_dcf/multiples never
-    # emit "yuksek_beklenti" themselves, so it can only become the overall
+    # emit "high_expectation" themselves, so it can only become the overall
     # direction by being the (unique) 2-of-3 majority value together with
     # itself... which is structurally impossible since only the DCF method
     # can ever produce this string. This test documents that: even with
-    # reverse_dcf pointing the same *direction* (pahali, i.e. above the
-    # reference growth), it's a different signal STRING ("pahali" != "
-    # yuksek_beklenti"), so no majority forms and the result stays
-    # "belirsiz" -- confirming HYPER_SPEC.md's "participates naturally in
+    # reverse_dcf pointing the same *direction* (expensive, i.e. above the
+    # reference growth), it's a different signal STRING ("expensive" != "
+    # high_expectation"), so no majority forms and the result stays
+    # "unclear" -- confirming HYPER_SPEC.md's "participates naturally in
     # the majority machinery" claim reduces, in practice, to "shows up in
     # signals.dcf", not "can become the top-level direction by itself".
     result = triangulate(
@@ -442,26 +442,26 @@ def test_triangulate_hyper_growth_direction_surfaces_when_reverse_dcf_agrees():
         realized_cagr=0.10, base_growth=None, pe_pct=None, ps_pct=None, pfcf_pct=None,
         sector_type="growth_unprofitable", hyper_growth=True, bull_band={"lo": 130, "hi": 150},
     )
-    assert result["signals"]["dcf"] == "yuksek_beklenti"
-    assert result["signals"]["reverse_dcf"] == "pahali"
-    assert result["direction"] == "belirsiz"
+    assert result["signals"]["dcf"] == "high_expectation"
+    assert result["signals"]["reverse_dcf"] == "expensive"
+    assert result["direction"] == "unclear"
 
 
-def test_triangulate_hyper_growth_price_above_bull_hi_is_pahali():
-    # price=150.01: past bull.hi=150 -> "pahali" (outright expensive), even
+def test_triangulate_hyper_growth_price_above_bull_hi_is_expensive():
+    # price=150.01: past bull.hi=150 -> "expensive" (outright expensive), even
     # in hyper mode.
     result = triangulate(
         price=150.01, dcf_base_band={"lo": 100, "hi": 120}, implied_growth=None,
         realized_cagr=None, base_growth=None, pe_pct=None, ps_pct=None, pfcf_pct=None,
         sector_type="growth_unprofitable", hyper_growth=True, bull_band={"lo": 130, "hi": 150},
     )
-    assert result["signals"]["dcf"] == "pahali"
+    assert result["signals"]["dcf"] == "expensive"
 
 
 def test_triangulate_hyper_growth_boundaries_are_strict():
-    # price exactly at base.hi=120 -> "makul" (inside base band); exactly at
-    # bull.hi=150 -> "yuksek_beklenti" (at/below bull.hi still counts), not
-    # "pahali" (only strictly above).
+    # price exactly at base.hi=120 -> "fair" (inside base band); exactly at
+    # bull.hi=150 -> "high_expectation" (at/below bull.hi still counts), not
+    # "expensive" (only strictly above).
     at_base_hi = triangulate(
         120, {"lo": 100, "hi": 120}, None, None, None, None, None, None,
         "growth_unprofitable", hyper_growth=True, bull_band={"lo": 130, "hi": 150},
@@ -470,8 +470,8 @@ def test_triangulate_hyper_growth_boundaries_are_strict():
         150, {"lo": 100, "hi": 120}, None, None, None, None, None, None,
         "growth_unprofitable", hyper_growth=True, bull_band={"lo": 130, "hi": 150},
     )
-    assert at_base_hi["signals"]["dcf"] == "makul"
-    assert at_bull_hi["signals"]["dcf"] == "yuksek_beklenti"
+    assert at_base_hi["signals"]["dcf"] == "fair"
+    assert at_bull_hi["signals"]["dcf"] == "high_expectation"
 
 
 def test_triangulate_non_hyper_ignores_bull_band_and_keeps_3way_signal():
@@ -482,13 +482,13 @@ def test_triangulate_non_hyper_ignores_bull_band_and_keeps_3way_signal():
         130, {"lo": 100, "hi": 120}, None, None, None, None, None, None,
         "mature", bull_band={"lo": 130, "hi": 150},
     )
-    assert result["signals"]["dcf"] == "pahali"
+    assert result["signals"]["dcf"] == "expensive"
 
 
 def test_triangulate_hyper_growth_without_usable_bull_band_falls_back_to_3way():
     # hyper_growth=True but bull_band is None/unusable (missing "hi") ->
     # falls back to the plain 3-way logic exactly (price=130 > base.hi=120
-    # -> "pahali", the pre-hyper behavior).
+    # -> "expensive", the pre-hyper behavior).
     no_bull = triangulate(
         130, {"lo": 100, "hi": 120}, None, None, None, None, None, None,
         "growth_unprofitable", hyper_growth=True, bull_band=None,
@@ -497,8 +497,8 @@ def test_triangulate_hyper_growth_without_usable_bull_band_falls_back_to_3way():
         130, {"lo": 100, "hi": 120}, None, None, None, None, None, None,
         "growth_unprofitable", hyper_growth=True, bull_band={"lo": 130},
     )
-    assert no_bull["signals"]["dcf"] == "pahali"
-    assert unusable_bull["signals"]["dcf"] == "pahali"
+    assert no_bull["signals"]["dcf"] == "expensive"
+    assert unusable_bull["signals"]["dcf"] == "expensive"
 
 
 # ---------------------------------------------------------------------------
@@ -1197,8 +1197,8 @@ def test_run_valuation_cyclical_normalized_variant_none_when_top_half_margin_not
 
     assert result["dcf"]["normalized_variant"] is None
     assert (
-        "Döngüsel normalize edilmiş FCF anlamlı değil: üst yarı (mid/tepe döngü) ortalama FCF "
-        "marjı pozitif değil."
+        "Cyclical normalized FCF is not meaningful: the upper-half (mid/peak cycle) average FCF "
+        "margin is not positive."
     ) in result["notes"]
 
 
@@ -1213,7 +1213,7 @@ def test_run_valuation_cyclical_headline_uses_normalized_band_over_raw_dcf():
     # Per the new engine wiring (cyclical sector_type + normalized_variant
     # successfully computed): the HEADLINE result["fair_value_range"] must be
     # built from dcf.normalized_variant, NOT from the raw dcf.scenarios, and
-    # a "Döngüsel sektör: manşet..." note must be appended. Both raw and
+    # a "Cyclical sector: the headline..." note must be appended. Both raw and
     # normalized bands remain reported side-by-side under result["dcf"].
     normalized = _normalized({
         "Revenue": [_rec(2021, 1000.0), _rec(2022, 1100.0), _rec(2023, 1200.0)],
@@ -1246,7 +1246,7 @@ def test_run_valuation_cyclical_headline_uses_normalized_band_over_raw_dcf():
     assert result["fair_value_range"]["base"]["lo"] != dcf["scenarios"]["base"]["lo"]
     assert result["fair_value_range"]["base"]["hi"] != dcf["scenarios"]["base"]["hi"]
 
-    assert any(n.startswith("Döngüsel sektör: manşet makul değer aralığı") for n in result["notes"])
+    assert any(n.startswith("Cyclical sector: the headline fair-value range") for n in result["notes"])
 
 
 def test_run_valuation_cyclical_headline_falls_back_to_raw_band_when_normalized_variant_none():
@@ -1261,7 +1261,7 @@ def test_run_valuation_cyclical_headline_falls_back_to_raw_band_when_normalized_
     #
     # Per the new engine wiring, when normalized_variant is None the
     # headline result["fair_value_range"] must fall back to the raw
-    # dcf.scenarios band, and no "Döngüsel sektör: manşet..." note should be
+    # dcf.scenarios band, and no "Cyclical sector: the headline..." note should be
     # appended (there is nothing normalized to prefer over the raw band).
     normalized = _normalized({
         "Revenue": [_rec(2022, 1000.0), _rec(2023, 1000.0), _rec(2024, 1000.0)],
@@ -1284,7 +1284,7 @@ def test_run_valuation_cyclical_headline_falls_back_to_raw_band_when_normalized_
     assert result["fair_value_range"]["base"]["lo"] == pytest.approx(result["dcf"]["scenarios"]["base"]["lo"])
     assert result["fair_value_range"]["base"]["hi"] == pytest.approx(result["dcf"]["scenarios"]["base"]["hi"])
 
-    assert not any(n.startswith("Döngüsel sektör: manşet") for n in result["notes"])
+    assert not any(n.startswith("Cyclical sector: the headline") for n in result["notes"])
 
 
 def test_run_valuation_fcf0_falls_back_to_3y_average_when_latest_is_negative():
@@ -1304,7 +1304,7 @@ def test_run_valuation_fcf0_falls_back_to_3y_average_when_latest_is_negative():
 
     assert result["fcf0"] == pytest.approx(140.0 / 3.0, rel=1e-6)
     assert result["fcf0_source"] == "3y_avg"
-    assert any("3 yıllık ortalama" in n for n in result["notes"])
+    assert any("3-year average" in n for n in result["notes"])
 
 
 def test_run_valuation_fcf0_keeps_latest_when_ramp_is_monotonic_rising():
@@ -1330,10 +1330,10 @@ def test_run_valuation_fcf0_keeps_latest_when_ramp_is_monotonic_rising():
 
     assert result["fcf0"] == pytest.approx(90.0)
     assert result["fcf0_source"] == "ttm"
-    assert any("istikrarlı bir trend" in n for n in result["notes"])
+    assert any("stable trend" in n for n in result["notes"])
     # Must NOT use the "average used instead of latest year" fallback note --
     # the ttm figure was kept, not discarded.
-    assert not any("yerine 3 yıllık ortalama FCF kullanıldı" in n for n in result["notes"])
+    assert not any("3-year average FCF (net of SBC) was used" in n for n in result["notes"])
 
 
 def test_run_valuation_fcf0_keeps_latest_when_ramp_is_monotonic_falling():
@@ -1356,7 +1356,7 @@ def test_run_valuation_fcf0_keeps_latest_when_ramp_is_monotonic_falling():
 
     assert result["fcf0"] == pytest.approx(20.0)
     assert result["fcf0_source"] == "ttm"
-    assert any("istikrarlı bir trend" in n for n in result["notes"])
+    assert any("stable trend" in n for n in result["notes"])
 
 
 def test_run_valuation_fcf0_falls_back_to_3y_average_when_series_is_spiky():
@@ -1384,7 +1384,7 @@ def test_run_valuation_fcf0_falls_back_to_3y_average_when_series_is_spiky():
 
     assert result["fcf0"] == pytest.approx(70.0)
     assert result["fcf0_source"] == "3y_avg"
-    assert any("3 yıllık ortalama" in n for n in result["notes"])
+    assert any("3-year average" in n for n in result["notes"])
 
 
 def test_run_valuation_fcf0_deviation_rule_applies_when_trend_unassessable():
@@ -1434,7 +1434,7 @@ def test_run_valuation_fcf0_catches_a_spike_the_inclusive_average_hid():
 
     assert result["fcf0"] == pytest.approx(26.0 / 3.0, rel=1e-6)
     assert result["fcf0_source"] == "3y_avg"
-    assert any("3 yıllık ortalama" in n for n in result["notes"])
+    assert any("3-year average" in n for n in result["notes"])
 
 
 def test_run_valuation_fcf0_just_under_the_prior_average_threshold_keeps_ttm():
@@ -1529,7 +1529,7 @@ def test_run_valuation_missing_price_df_degrades_multiples_with_a_note():
     assert result["multiples"]["pe_percentile"] is None
     # SPEC-per-the-general-contract expectation: a note should mention the
     # missing price history degrading the multiples analysis.
-    assert any("fiyat" in n.lower() for n in result["notes"])
+    assert any("price history" in n.lower() for n in result["notes"])
 
 
 def test_run_valuation_never_raises_on_completely_empty_inputs():
@@ -1576,9 +1576,9 @@ def test_run_valuation_derives_current_multiples_from_series_when_metrics_are_no
     assert current["pe"] == pytest.approx(10.0)
     assert current["ps"] == pytest.approx(5.0)
     assert current["pfcf"] == pytest.approx(25.0)
-    assert any("2023 mali y" in n and "F/K" in n for n in result["notes"])
-    assert any("2023 mali y" in n and "F/S" in n for n in result["notes"])
-    assert any("2023 mali y" in n and "F/FCF" in n for n in result["notes"])
+    assert any("fiscal year 2023" in n and "P/E" in n for n in result["notes"])
+    assert any("fiscal year 2023" in n and "P/S" in n for n in result["notes"])
+    assert any("fiscal year 2023" in n and "P/FCF" in n for n in result["notes"])
 
 
 def test_run_valuation_derives_current_pfcf_from_ocf_minus_capex_when_ratios_fcf_missing():
@@ -1664,7 +1664,7 @@ def test_run_valuation_pb_roe_uses_latest_fy_where_equity_and_roe_are_aligned():
     assert pb["base"]["per_share"] == pytest.approx(17.14)
     assert pb["base"]["lo"] == pytest.approx(15.0)
     assert pb["base"]["hi"] == pytest.approx(20.0)
-    assert any("2023 mali y" in n and "P/B" in n for n in result["notes"])
+    assert any("fiscal year 2023" in n and "P/B" in n for n in result["notes"])
 
 
 def test_run_valuation_pb_roe_none_when_no_fiscal_year_has_both_equity_and_roe():
@@ -1681,7 +1681,7 @@ def test_run_valuation_pb_roe_none_when_no_fiscal_year_has_both_equity_and_roe()
     )
 
     assert result["pb_roe"] is None
-    assert any("özkaynak" in n.lower() for n in result["notes"])
+    assert any("equity" in n.lower() for n in result["notes"])
 
 
 # ---------------------------------------------------------------------------
@@ -1743,7 +1743,7 @@ def test_build_pb_roe_flags_above_reference_without_clamping():
     assert result["scenarios"]["base"]["per_share"] == pytest.approx(135.0)
     assert result["scenarios"]["bull"]["per_share"] == pytest.approx(162.0)
     assert any(
-        "13.50x" in n and "referans aralığının dışında" in n and "kırpılmadı" in n for n in notes
+        "13.50x" in n and "outside the usual" in n and "not clamped" in n for n in notes
     )
 
 
@@ -1766,7 +1766,7 @@ def test_build_pb_roe_flags_below_reference_without_clamping():
     assert result["scenarios"]["bear"]["per_share"] == pytest.approx(2.0)
     assert result["scenarios"]["base"]["per_share"] == pytest.approx(2.5)
     assert result["scenarios"]["bull"]["per_share"] == pytest.approx(3.0)
-    assert any("0.25x" in n and "referans aralığının dışında" in n for n in notes)
+    assert any("0.25x" in n and "outside the usual" in n for n in notes)
 
 
 def test_build_pb_roe_flag_is_none_when_fair_pb_inside_reference_band():
@@ -1782,7 +1782,7 @@ def test_build_pb_roe_flag_is_none_when_fair_pb_inside_reference_band():
 
     assert result is not None
     assert result["justified_pb_flag"] is None
-    assert not any("referans aralığının dışında" in n for n in notes)
+    assert not any("outside the usual" in n for n in notes)
 
 
 def test_build_pb_roe_unavailable_when_roe_at_or_below_growth():
@@ -1800,7 +1800,7 @@ def test_build_pb_roe_unavailable_when_roe_at_or_below_growth():
     result, notes = _build_pb_roe(assumptions, normalized, metrics, ratios)
 
     assert result is None
-    assert any("pozitif değil" in n and "P/D x ROE çapası hesaplanamadı" in n for n in notes)
+    assert any("not positive" in n and "P/B x ROE anchor could not be computed" in n for n in notes)
 
 
 def test_build_pb_roe_unavailable_when_book_value_non_positive():
@@ -1815,7 +1815,7 @@ def test_build_pb_roe_unavailable_when_book_value_non_positive():
     result, notes = _build_pb_roe(assumptions, normalized, metrics, ratios)
 
     assert result is None
-    assert any("defter değeri" in n and "pozitif değil" in n for n in notes)
+    assert any("book value" in n and "not positive" in n for n in notes)
 
 
 def test_run_valuation_pb_roe_backward_compat_when_terminal_growth_missing():
@@ -1921,7 +1921,7 @@ def test_non_sbc_dilution_nets_sbc_out_when_market_cap_positive():
     assert rate == pytest.approx(0.01)
     assert excluded == pytest.approx(0.02)
     assert note is not None
-    assert "çift sayım önlendi" in note
+    assert "avoiding double counting" in note
 
 
 def test_non_sbc_dilution_clamped_to_zero_when_sbc_exceeds_shares_yoy_but_note_still_fires():
@@ -2049,7 +2049,7 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline(tmp_path)
     #                   7656.89, 8656.54, 9329.83, 9563.07]
     # final_year_revenue=9563.07 (multiple~=9.563x), matching the real
     # run_valuation() output exactly. 9.563 now sits in (8, 15] ->
-    # arrival_flag "agresif" (was "makul" under the old, lower start_growth),
+    # arrival_flag "aggressive" (was "fair" under the old, lower start_growth),
     # unaffected by the discount-rate fade -- the revenue/margin paths never
     # depend on discount_rate.
     #
@@ -2124,7 +2124,7 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline(tmp_path)
     assert result["dcf"]["scenarios"]["base"]["lo"] != result["fair_value_range"]["base"]["lo"]
 
     # hyper_growth_detail is fully populated.
-    assert detail["reasons"][0].startswith("Gelir CAGR %50.0")
+    assert detail["reasons"][0].startswith("Revenue CAGR 50.0%")
     assert detail["scenarios"]["bear"]["start_growth"] == pytest.approx(0.30)
     assert detail["scenarios"]["base"]["start_growth"] == pytest.approx(0.50)
     assert detail["scenarios"]["bull"]["start_growth"] == pytest.approx(0.60)
@@ -2140,18 +2140,18 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline(tmp_path)
         2,
     )
     assert detail["expected_value"] == pytest.approx(expected_ev)
-    assert detail["arrival_flag"] == "agresif"
+    assert detail["arrival_flag"] == "aggressive"
     assert detail["tam_usd"] is None
     assert detail["implied"]["growth"] is not None
     assert detail["implied"]["revenue_10y"] is not None
     assert detail["implied"]["revenue_multiple"] is not None
     assert detail["implied"]["steady_state_margin"] is not None
     assert detail["implied"]["tam_share"] is None  # no tam_usd supplied
-    assert detail["target_margin_source"] == "brüt marj × 0.5"
+    assert detail["target_margin_source"] == "gross margin x 0.5"
 
     # Turkish hyper-mode note is present in the top-level notes.
     assert any(
-        "Hiper-büyüme modu: manşet aralığı revenue-first DCF'ten" in n for n in result["notes"]
+        "Hyper-growth mode: the headline range came from the revenue-first DCF" in n for n in result["notes"]
     )
 
     # WP3: the discount-rate fade is active (mature_discount_rate derived
@@ -2159,7 +2159,7 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline(tmp_path)
     # Turkish note is surfaced.
     assert detail["mature_discount_rate"] == pytest.approx(0.10)
     assert any(
-        "iskonto oranı sabit tutulmadı" in n and "Damodaran fade" in n for n in result["notes"]
+        "discount rate was not held fixed" in n and "Damodaran fade" in n for n in result["notes"]
     )
 
     # Display consistency (Milestone F): fair_value_range's base scenario
@@ -2169,12 +2169,12 @@ def test_run_valuation_hyper_grower_uses_revenue_first_dcf_as_headline(tmp_path)
     # above), which the headline band no longer actually uses once
     # hyper-grower mode takes over.
     base_fvr = result["fair_value_range"]["base"]
-    assert "başlangıç" in base_fvr["growth"]
-    assert "%50" in base_fvr["growth"]
-    assert "%25 büyüme" not in base_fvr["growth"]
-    assert base_fvr["discount_rate"] == "%12"
-    assert "Hiper-büyüme" in base_fvr["note"]
-    assert "%30" in base_fvr["note"]  # mature target FCF margin
+    assert "start" in base_fvr["growth"]
+    assert "50%" in base_fvr["growth"]
+    assert "25% growth" not in base_fvr["growth"]
+    assert base_fvr["discount_rate"] == "12%"
+    assert "Hyper-growth" in base_fvr["note"]
+    assert "30%" in base_fvr["note"]  # mature target FCF margin
 
 
 def test_run_valuation_hyper_grower_deceleration_guard_caps_start_growth(tmp_path):
@@ -2204,7 +2204,7 @@ def test_run_valuation_hyper_grower_deceleration_guard_caps_start_growth(tmp_pat
     # base and bull now share the same (capped) start growth, so bull's only
     # remaining lever is its margin uplift -- the "two 1.2x optimisms compound"
     # problem is gone in rule-based mode.
-    assert any("Yavaşlama koruması" in n for n in result["notes"])
+    assert any("Deceleration guard" in n for n in result["notes"])
 
 
 def test_run_valuation_hyper_grower_start_growth_override_allows_reacceleration(tmp_path):
@@ -2267,19 +2267,19 @@ def test_run_valuation_hyper_grower_terminal_growth_linked_to_risk_free(tmp_path
 
     # Real-data anchor: the WP2 note fires and names the resolved 4.0% rate
     # (engine._build_hyper_growth's f-string uses `terminal_growth * 100:.1f`,
-    # so 0.04 -> "%4.0").
+    # so 0.04 -> "4.0%").
     real_wp2_notes = [
-        n for n in result_real_data["notes"] if "risksiz getiri oranına bağlandı" in n
+        n for n in result_real_data["notes"] if "tied to the risk-free rate" in n
     ]
     assert real_wp2_notes, "expected the WP2 terminal-growth note to fire with real Damodaran data"
-    assert any("%4.0" in n for n in real_wp2_notes)
+    assert any("4.0%" in n for n in real_wp2_notes)
 
     # Nonexistent damodaran_dir: load_sector_data returns None -> risk_free is
     # unavailable -> terminal_growth stays the flat _HYPER_TERMINAL_GROWTH
     # fallback (0.025) and the WP2 note is ABSENT entirely (the note only
     # fires when `terminal_growth != _HYPER_TERMINAL_GROWTH`).
     fallback_wp2_notes = [
-        n for n in result_fallback["notes"] if "risksiz getiri oranına bağlandı" in n
+        n for n in result_fallback["notes"] if "tied to the risk-free rate" in n
     ]
     assert not fallback_wp2_notes, "the WP2 note must not appear when no real risk-free rate was resolved"
 
@@ -2328,7 +2328,7 @@ def test_run_valuation_hyper_grower_nets_sbc_out_of_dilution_via_non_sbc_dilutio
     assert detail is not None
     assert detail["annual_dilution"] == pytest.approx(0.01)
     assert detail["sbc_dilution_excluded"] == pytest.approx(0.02)
-    assert any("çift sayım önlendi" in n for n in result["notes"])
+    assert any("avoiding double counting" in n for n in result["notes"])
 
 
 def test_run_valuation_hyper_grower_target_margin_flag_above_30pct_reference(tmp_path):
@@ -2364,7 +2364,7 @@ def test_run_valuation_hyper_grower_target_margin_flag_above_30pct_reference(tmp
     # 1.0), not clamped down to the old 0.30 ceiling.
     assert detail["scenarios"]["base"]["target_fcf_margin"] == pytest.approx(0.35)
     assert any(
-        "%35" in n and "%30 referans eşiğinin üzerinde" in n for n in result["notes"]
+        "35%" in n and "above the 30%" in n for n in result["notes"]
     )
 
 
@@ -2376,10 +2376,10 @@ def test_run_valuation_hyper_grower_extras_override_target_margin_and_tam(tmp_pa
     # this reuses the headline test's hand-verified/cross-checked
     # final_year_revenue=9563.0718 (WP5: base start_growth=min(0.50,0.60)=
     # 0.50, uncapped, vs. the old min(0.50,0.40)=0.40). tam_share =
-    # 9563.0718 / 14000 ~= 0.6831 -- now ABOVE the 0.60 ("gecersiz")
-    # TAM-share threshold (was ~0.467, "agresif", under the old, lower
-    # start_growth) -> "gecersiz", which OVERRIDES what the revenue-
-    # multiple-based flag would have been (9.563x -> "agresif" without TAM,
+    # 9563.0718 / 14000 ~= 0.6831 -- now ABOVE the 0.60 ("invalid")
+    # TAM-share threshold (was ~0.467, "aggressive", under the old, lower
+    # start_growth) -> "invalid", which OVERRIDES what the revenue-
+    # multiple-based flag would have been (9.563x -> "aggressive" without TAM,
     # per the headline test above).
     #
     # Mechanics test (extras/TAM override), not WP2's macro linkage -- same
@@ -2409,9 +2409,9 @@ def test_run_valuation_hyper_grower_extras_override_target_margin_and_tam(tmp_pa
 
     tam_share = detail["scenarios"]["base"]["final_year_revenue"] / 14000.0
     assert tam_share > 0.60
-    assert detail["arrival_flag"] == "gecersiz"
+    assert detail["arrival_flag"] == "invalid"
 
-    assert "LLM/kullanıcı" in detail["target_margin_source"]
+    assert "LLM/user" in detail["target_margin_source"]
     assert any("TAM" in n for n in detail["notes"])
 
     # implied_tam_share is computed from the implied 10y revenue / tam_usd.
@@ -2421,9 +2421,9 @@ def test_run_valuation_hyper_grower_extras_override_target_margin_and_tam(tmp_pa
         )
 
 
-def test_run_valuation_hyper_grower_triangulation_uses_yuksek_beklenti_signal(tmp_path):
+def test_run_valuation_hyper_grower_triangulation_uses_high_expectation_signal(tmp_path):
     # Same hyper fixture as above, but a higher price this time so the DCF
-    # signal reads "yuksek_beklenti" (price sits between the base and bull
+    # signal reads "high_expectation" (price sits between the base and bull
     # bands' highs). F3 changed the hyper band from a flat +/-10% to a
     # grid-derived one (see the headline test above), which also shifts
     # financing_shares (it's derived from burn/price, so a different price
@@ -2445,7 +2445,7 @@ def test_run_valuation_hyper_grower_triangulation_uses_yuksek_beklenti_signal(tm
     # scenario final_year_revenue=9563.07 -- the bull scenario's own
     # final_year_revenue=13733.69 was spot-checked the same way, by an
     # independent revenue-path re-derivation at start_growth=0.60), so the
-    # triangulation DCF signal must be "yuksek_beklenti" (HYPER_SPEC.md
+    # triangulation DCF signal must be "high_expectation" (HYPER_SPEC.md
     # Sec.4), proving base_band/bull_band are actually threaded from
     # hyper_growth_detail into triangulate.triangulate(), not just computed
     # and left unused.
@@ -2469,7 +2469,7 @@ def test_run_valuation_hyper_grower_triangulation_uses_yuksek_beklenti_signal(tm
     assert base_hi == pytest.approx(208.98, abs=0.05)
     assert bull_hi == pytest.approx(391.05, abs=0.05)
 
-    assert result["triangulation"]["signals"]["dcf"] == "yuksek_beklenti"
+    assert result["triangulation"]["signals"]["dcf"] == "high_expectation"
 
 
 def test_run_valuation_non_hyper_mature_company_regression():
@@ -2493,7 +2493,7 @@ def test_run_valuation_non_hyper_mature_company_regression():
 
     assert result["hyper_growth"] is False
     assert result["hyper_growth_detail"] is None
-    assert not any("Hiper-büyüme" in n for n in result["notes"])
+    assert not any("Hyper-growth" in n for n in result["notes"])
 
     # Headline comes straight from the raw FCF-DCF band, unchanged.
     assert result["dcf"]["scenarios"] is not None
@@ -2503,8 +2503,8 @@ def test_run_valuation_non_hyper_mature_company_regression():
     # Non-hyper filers keep the assumptions-derived growth/discount_rate/note
     # strings (scenario_meta=None path) -- no behavior change here.
     base_fvr = result["fair_value_range"]["base"]
-    assert base_fvr["growth"] == "%10 büyüme"
-    assert base_fvr["discount_rate"] == "%10"
+    assert base_fvr["growth"] == "10% growth"
+    assert base_fvr["discount_rate"] == "10%"
     assert base_fvr["note"] == "Baz."
 
 
@@ -2526,7 +2526,7 @@ def test_run_valuation_hyper_grower_degrades_safely_when_revenue_missing():
 
     assert result["hyper_growth"] is False
     assert result["hyper_growth_detail"] is None
-    assert any("Hiper-büyüme modu tetiklendi ancak" in n for n in result["notes"])
+    assert any("Hyper-growth mode was triggered but" in n for n in result["notes"])
     # The rest of the valuation must still be a fully-shaped, usable result.
     assert isinstance(result["notes"], list)
     assert result["triangulation"] is not None
@@ -2582,9 +2582,9 @@ def test_run_valuation_hyper_grower_gross_margin_missing_floors_target_at_curren
 
     # target_margin_source explains the current-margin flooring (not the
     # old "brüt marj eksik: varsayılan %15 taban brüt marj × 0.5" wording).
-    assert "brüt marj yok" in detail["target_margin_source"]
-    assert "tabanlanmış" in detail["target_margin_source"]
-    assert "%30" in detail["target_margin_source"]
+    assert "no gross margin" in detail["target_margin_source"]
+    assert "floored" in detail["target_margin_source"]
+    assert "30%" in detail["target_margin_source"]
 
 
 # ---------------------------------------------------------------------------
@@ -2705,14 +2705,14 @@ def test_run_valuation_as_of_copies_macro_asof_and_appends_notes(tmp_path):
 
     assert result["macro_asof"] == {
         "as_of": "2022-06-30",
-        "erp_source": "erp.csv (güncel değer)",
+        "erp_source": "erp.csv (current value)",
         "risk_free_source": "DGS10 (2022-06-29)",
-        "multiples_source": "multiples.csv (güncel snapshot — anakronik)",
+        "multiples_source": "multiples.csv (current snapshot — anachronistic)",
     }
     # Single provenance note naming all three macro sources; no warnings key
     # (empty dir -> nothing current substituted for a missing historical file).
     assert any(
-        "Geçmiş tarih" in n and "2022-06-30" in n and "çarpan/beta kaynağı" in n
+        "Historical (as-of)" in n and "2022-06-30" in n and "multiple/beta source" in n
         for n in result["notes"]
     )
     assert "warnings" not in result["macro_asof"]
@@ -2743,6 +2743,6 @@ def test_run_valuation_hyper_grower_terminal_growth_anchor_uses_as_of_fred_rate(
     )
 
     assert result["hyper_growth"] is True
-    wp2_notes = [n for n in result["notes"] if "risksiz getiri oranına bağlandı" in n]
+    wp2_notes = [n for n in result["notes"] if "tied to the risk-free rate" in n]
     assert wp2_notes, "expected the WP2 terminal-growth note to fire with an as-of fred_rate"
-    assert any("%3.0" in n for n in wp2_notes)
+    assert any("3.0%" in n for n in wp2_notes)

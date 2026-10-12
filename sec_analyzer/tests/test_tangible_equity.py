@@ -259,11 +259,11 @@ def test_cli_tangible_line_renders_for_a_financial_filer():
 
     line = _tangible_multiples_line(valuation)
 
-    assert "MDD çarpanı:" in line
+    assert "TBV mult.:" in line
     # The label must not run into the value -- it is exactly one char shorter
     # than the card's label column.
-    assert "MDD çarpanı: " in line
-    assert "F/MDD 2.19×" in line
+    assert "TBV mult.: " in line
+    assert "P/TBV 2.19×" in line
     assert "34. pctile" in line
     assert "ROTCE %5.4" in line
 
@@ -277,7 +277,7 @@ def test_cli_tangible_line_omits_rotce_when_unavailable():
 
     line = _tangible_multiples_line(valuation)
 
-    assert "F/MDD 2.19×" in line
+    assert "P/TBV 2.19×" in line
     assert "pctile" not in line
     assert "ROTCE" not in line
 

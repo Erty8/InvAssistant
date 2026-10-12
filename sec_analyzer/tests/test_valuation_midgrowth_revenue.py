@@ -106,8 +106,8 @@ def test_growth_gate_rejects_below_12pct_min_growth():
     )
 
     assert detail is None
-    assert any("yetersiz" in n for n in notes)
-    assert any("%8.0" in n for n in notes)
+    assert any("insufficient" in n for n in notes)
+    assert any("8.0%" in n for n in notes)
 
 
 def test_growth_gate_rejects_at_or_below_terminal_growth():
@@ -125,8 +125,8 @@ def test_growth_gate_rejects_at_or_below_terminal_growth():
     )
 
     assert detail is None
-    assert any("yetersiz" in n for n in notes)
-    assert any("%12.0" in n for n in notes)
+    assert any("insufficient" in n for n in notes)
+    assert any("12.0%" in n for n in notes)
 
 
 def test_none_without_valid_shares_or_revenue():
@@ -137,7 +137,7 @@ def test_none_without_valid_shares_or_revenue():
         assumptions, _annual(), metrics, ratios=[], price=None, shares=100.0
     )
     assert detail is None
-    assert any("eksik" in n for n in notes)
+    assert any("missing" in n for n in notes)
 
     normalized = _annual(Revenue={2023: 1000.0})
     for bad_shares in (None, 0.0, -5.0):
@@ -202,7 +202,7 @@ def test_full_scenario_build_hand_verified():
     assert detail["start_growth"] == pytest.approx(0.15)
     assert detail["target_margin_base"] == pytest.approx(0.30)
     assert detail["target_margin_flag"] == "above_reference"
-    assert any("referans eşiğinin üzerinde" in n for n in notes)
+    assert any("reference threshold" in n for n in notes)
     assert detail["current_margin"] == pytest.approx(-0.15)
     assert detail["steady_state_year"] == 8
     assert detail["annual_dilution"] == pytest.approx(0.0)
@@ -262,7 +262,7 @@ def test_full_scenario_build_nets_sbc_out_of_dilution_via_non_sbc_dilution():
 
     assert detail is not None
     assert detail["annual_dilution"] == pytest.approx(0.01)
-    assert any("çift sayım önlendi" in n for n in notes)
+    assert any("avoiding double counting" in n for n in notes)
 
 
 # ---------------------------------------------------------------------------
@@ -324,14 +324,14 @@ def test_run_valuation_midgrowth_becomes_headline_hand_verified():
         assert result["fair_value_range"][key]["hi"] is not None
 
     # Reverse-DCF override: revenue-based reference (mirrors hyper-grower/
-    # mature-revenue overrides), "gelir 5y"/"gelir 3y" label.
-    assert result["reverse_dcf"]["realized_label"] in ("gelir 5y", "gelir 3y")
+    # mature-revenue overrides), "revenue 5y"/"revenue 3y" label.
+    assert result["reverse_dcf"]["realized_label"] in ("revenue 5y", "revenue 3y")
     assert result["reverse_dcf"]["realized_cagr_5y"] == pytest.approx(0.15)
     assert result["reverse_dcf"]["bracket_status"] == "ok"
 
-    assert any("revenue-first DCF'e dayandırıldı" in n for n in result["notes"])
+    assert any("based on a revenue-first DCF that fades" in n for n in result["notes"])
     # Sec.9 sensitivity exception note (mirrors EPV/mature).
-    assert any("orta-büyüme revenue-first DCF'i" in n for n in result["notes"])
+    assert any("headline mid-growth revenue-first DCF" in n for n in result["notes"])
 
 
 def test_run_valuation_growth_gate_rejection_falls_back_to_multiples():
@@ -353,8 +353,8 @@ def test_run_valuation_growth_gate_rejection_falls_back_to_multiples():
 
     assert result["midgrowth_revenue_headline"] is False
     assert result["midgrowth_revenue_detail"] is None
-    assert not any("olgun revenue-first DCF için yetersiz" in n for n in result["notes"])  # not the mature note
-    assert any("yetersiz" in n for n in result["notes"])
+    assert not any("insufficient for the mature revenue-first DCF" in n for n in result["notes"])  # not the mature note
+    assert any("insufficient" in n for n in result["notes"])
 
     # Headline falls back to the raw FCF-DCF band (the pre-existing
     # growth_unprofitable behavior) -- fair_value_range must equal
@@ -408,7 +408,7 @@ def test_run_valuation_suppressed_base_falls_back_to_multiples():
     assert base_ps == pytest.approx(-5.30, abs=0.02)
 
     assert any(
-        "negatif özkaynak değeri" in n and "çarpan (multiples)" in n for n in result["notes"]
+        "negative equity value" in n and "multiples-based valuation" in n for n in result["notes"]
     )
 
     # The headline must NEVER equal the suppressed (negative) mid-growth band.
@@ -479,19 +479,19 @@ def test_run_valuation_backward_compat_hyper_active_stays_false():
 
 
 def test_triangulate_midgrowth_headline_caps_high_confidence_to_medium():
-    # Same three-way "ucuz" agreement fixture as the mature-revenue/EPV cap
-    # tests -- would normally be CONFIDENCE_HIGH, direction "ucuz". With
+    # Same three-way "cheap" agreement fixture as the mature-revenue/EPV cap
+    # tests -- would normally be CONFIDENCE_HIGH, direction "cheap". With
     # midgrowth_revenue_headline=True, confidence must be capped to ORTA.
     result = triangulate(
         price=90, dcf_base_band={"lo": 100, "hi": 120}, implied_growth=0.05,
         realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
         sector_type="growth_unprofitable", midgrowth_revenue_headline=True,
     )
-    assert result["signals"] == {"dcf": "ucuz", "reverse_dcf": "ucuz", "multiples": "ucuz"}
-    assert result["confidence"] == "ORTA"
-    assert result["direction"] == "ucuz"
-    assert "orta-büyüme revenue-first DCF'e dayanıyor" in result["rationale"]["confidence"]
-    assert "ORTA ile sınırlandı" in result["rationale"]["confidence"]
+    assert result["signals"] == {"dcf": "cheap", "reverse_dcf": "cheap", "multiples": "cheap"}
+    assert result["confidence"] == "MEDIUM"
+    assert result["direction"] == "cheap"
+    assert "relies on the mid-growth revenue-first DCF" in result["rationale"]["confidence"]
+    assert "capped at MEDIUM" in result["rationale"]["confidence"]
 
 
 def test_triangulate_midgrowth_headline_false_preserves_high_confidence():
@@ -502,8 +502,8 @@ def test_triangulate_midgrowth_headline_false_preserves_high_confidence():
         realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
         sector_type="growth_unprofitable",
     )
-    assert result["confidence"] == "YÜKSEK"
-    assert "ORTA ile sınırlandı" not in result["rationale"]["confidence"]
+    assert result["confidence"] == "HIGH"
+    assert "capped at MEDIUM" not in result["rationale"]["confidence"]
 
 
 def test_triangulate_midgrowth_headline_does_not_alter_already_medium_confidence():
@@ -515,8 +515,8 @@ def test_triangulate_midgrowth_headline_does_not_alter_already_medium_confidence
         realized_cagr=None, base_growth=0.10, pe_pct=80, ps_pct=None, pfcf_pct=None,
         sector_type="growth_unprofitable", midgrowth_revenue_headline=True,
     )
-    assert two_of_three["confidence"] == "ORTA"
-    assert "ORTA ile sınırlandı" not in two_of_three["rationale"]["confidence"]
+    assert two_of_three["confidence"] == "MEDIUM"
+    assert "capped at MEDIUM" not in two_of_three["rationale"]["confidence"]
 
 
 def test_triangulate_earnings_power_and_midgrowth_both_true_ep_message_wins():
@@ -532,6 +532,6 @@ def test_triangulate_earnings_power_and_midgrowth_both_true_ep_message_wins():
         realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
         sector_type="growth_unprofitable", earnings_power_headline=True, midgrowth_revenue_headline=True,
     )
-    assert result["confidence"] == "ORTA"
-    assert "kazanç-gücüne dayanıyor" in result["rationale"]["confidence"]
-    assert "orta-büyüme revenue-first DCF'e dayanıyor" not in result["rationale"]["confidence"]
+    assert result["confidence"] == "MEDIUM"
+    assert "relies on earnings power" in result["rationale"]["confidence"]
+    assert "relies on the mid-growth revenue-first DCF" not in result["rationale"]["confidence"]

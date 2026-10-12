@@ -13,7 +13,7 @@ Two independent codebases live in this repo — do not mix changes across the bo
 
 ## sec_analyzer rules
 
-- User-facing strings (verdict labels, notes, report/UI text) are Turkish; code, comments, and docstrings are English.
+- Everything is English: user-facing strings (verdict labels such as CHEAP/FAIR/EXPENSIVE, signal values such as `cheap`/`expensive`/`mixed`/`no_data`, notes, CLI card, report/UI text) as well as code, comments, and docstrings. Use English number formats (`19.0%`, `4.21`), not Turkish (`%19`, `4,21`). Compare against shared constants (e.g. `triangulate.SIGNAL_MIXED`) instead of hard-coding label literals.
 - Computation must be deterministic: same inputs → same outputs. No randomness, no wall-clock dependence in results.
 - Never let analysis-layer code crash the CLI: catch and convert to error dicts / `None` + log. Missing data renders as "—", never a printed "None"/"NaN".
 - Ground truth, in this order: `sec_analyzer/valuation/SPEC.md` (binding contract — code that contradicts it is wrong), then `sec_analyzer/METODOLOJI.md` and `sec_analyzer/VALUATION.md`.
