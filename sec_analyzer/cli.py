@@ -99,6 +99,7 @@ from sec_analyzer.signals.insider import detect_insider_activity, summarize_insi
 from sec_analyzer.signals.macro import build_macro_context, summarize_macro
 from sec_analyzer.store import assumptions as assumptions_store
 from sec_analyzer.valuation import damodaran
+from sec_analyzer.valuation import reverse_dcf as _reverse_dcf
 from sec_analyzer.valuation.capm import compute_cost_of_equity
 from sec_analyzer.valuation.sanity import clamp_assumptions, validate_assumptions
 from sec_analyzer.valuation.sector import SECTOR_FINANCIAL, _is_deposit_funded, classify_sector
@@ -889,13 +890,27 @@ def _reverse_dcf_line(result: dict, valuation: dict) -> str:
 
     reverse_dcf = valuation.get("reverse_dcf") or {}
     implied = reverse_dcf.get("implied_growth")
+    status = reverse_dcf.get("bracket_status")
+    realized_label = reverse_dcf.get("realized_label") or _DASH
+    realized_text = _format_pct_signed(reverse_dcf.get("realized_cagr_5y"))
+    basis_text = " on normalized FCF" if reverse_dcf.get("fcf0_basis") == "normalized" else ""
+
+    # The solved rate is a constant 5-year growth followed by a 5-year
+    # linear fade to terminal growth (SPEC.md Sec.4), not a 10-year CAGR.
+    if implied is None and status in (_reverse_dcf.STATUS_ABOVE_BRACKET, _reverse_dcf.STATUS_BELOW_BRACKET):
+        if status == _reverse_dcf.STATUS_ABOVE_BRACKET:
+            bound_text = f"above {_format_pct_signed(_reverse_dcf._BRACKET_HI)}"
+        else:
+            bound_text = f"below {_format_pct_signed(_reverse_dcf._BRACKET_LO)}"
+        return (
+            f"{label}price implies 5y growth (then fade) {bound_text}, outside the model bracket{basis_text} "
+            f"(realized {realized_label}: {realized_text})"
+        )
     if implied is None:
         return f"{label}{_DASH}"
 
-    realized_label = reverse_dcf.get("realized_label") or _DASH
-    realized_text = _format_pct_signed(reverse_dcf.get("realized_cagr_5y"))
     return (
-        f"{label}price implies a 10y {_format_pct_signed(implied)} CAGR "
+        f"{label}price implies {_format_pct_signed(implied)} 5y growth (then fade){basis_text} "
         f"(realized {realized_label}: {realized_text})"
     )
 

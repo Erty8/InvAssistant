@@ -570,23 +570,142 @@ def test_commentary_fundamental_verdict_matches_dcf_triangulation_signal():
 
 def test_commentary_reverse_dcf_comment_reflects_implied_vs_realized_growth():
     expensive = rule_based.commentary(_valuation())["reverse_dcf_comment"]
-    assert "%19" in expensive and "%14" in expensive
-    assert "pahalılık" in expensive
+    assert "19.0%" in expensive and "14.0%" in expensive
+    assert "expensiveness signal" in expensive
 
     cheap_valuation = _valuation()
     cheap_valuation["reverse_dcf"] = {"implied_growth": 0.05, "realized_cagr_5y": 0.14, "realized_label": "5y"}
     cheap = rule_based.commentary(cheap_valuation)["reverse_dcf_comment"]
-    assert "ucuzluk" in cheap
+    assert "cheapness signal" in cheap
 
     fair_valuation = _valuation()
     fair_valuation["reverse_dcf"] = {"implied_growth": 0.14, "realized_cagr_5y": 0.13, "realized_label": "5y"}
     fair = rule_based.commentary(fair_valuation)["reverse_dcf_comment"]
-    assert "uyumlu" in fair
+    assert "consistent with the realized growth" in fair
 
     no_data_valuation = _valuation()
     no_data_valuation["reverse_dcf"] = {"implied_growth": None, "realized_cagr_5y": None, "realized_label": None}
     no_data = rule_based.commentary(no_data_valuation)["reverse_dcf_comment"]
-    assert "hesaplanamadı" in no_data
+    assert "could not be computed" in no_data
+
+
+def _reverse_only_valuation(reverse, rdcf_signal=None):
+    """A valuation whose triangulation reverse-DCF signal is ``rdcf_signal``
+    (``None`` = no triangulation signal, so the comment's fallback runs)."""
+    valuation = _valuation()
+    valuation["reverse_dcf"] = reverse
+    valuation["triangulation"]["signals"]["reverse_dcf"] = rdcf_signal
+    return valuation
+
+
+def test_reverse_dcf_comment_above_bracket_narrates_upper_bound_not_could_not_compute():
+    # MU-at-$1,065 shape: the solve fails to bracket from above, so
+    # implied_growth is None but the direction is known.
+    valuation = _reverse_only_valuation(
+        {"implied_growth": None, "realized_cagr_5y": 0.12, "realized_label": "FCF 5y",
+         "bracket_status": "above_bracket"},
+        rdcf_signal="expensive",
+    )
+    comment = rule_based.commentary(valuation)["reverse_dcf_comment"]
+
+    assert "could not be computed" not in comment
+    assert "above the model's 60% upper bound" in comment
+    assert "expensiveness signal" in comment
+    assert "realized FCF 5y: 12.0%" in comment
+    assert "None" not in comment
+
+
+def test_reverse_dcf_comment_below_bracket_narrates_lower_bound():
+    valuation = _reverse_only_valuation(
+        {"implied_growth": None, "realized_cagr_5y": None, "realized_label": None,
+         "bracket_status": "below_bracket"},
+    )
+    comment = rule_based.commentary(valuation)["reverse_dcf_comment"]
+
+    assert "below the model's -20% lower bound" in comment
+    assert "cheapness signal" in comment
+    assert "realized" not in comment
+    assert "None" not in comment
+
+
+def test_reverse_dcf_comment_bracket_bounds_follow_module_constants(monkeypatch):
+    from sec_analyzer.valuation import reverse_dcf
+
+    monkeypatch.setattr(reverse_dcf, "_BRACKET_HI", 0.75)
+    valuation = _reverse_only_valuation(
+        {"implied_growth": None, "realized_cagr_5y": None, "realized_label": None,
+         "bracket_status": "above_bracket"},
+    )
+    assert "75% upper bound" in rule_based.commentary(valuation)["reverse_dcf_comment"]
+
+
+def test_reverse_dcf_comment_no_data_status_still_says_could_not_compute():
+    valuation = _reverse_only_valuation(
+        {"implied_growth": None, "realized_cagr_5y": 0.10, "realized_label": "FCF 5y",
+         "bracket_status": "no_data"},
+    )
+    assert "could not be computed" in rule_based.commentary(valuation)["reverse_dcf_comment"]
+
+
+def test_reverse_dcf_comment_describes_5y_growth_plus_fade_not_10y_cagr():
+    valuation = _reverse_only_valuation(
+        {"implied_growth": 0.19, "realized_cagr_5y": 0.14, "realized_label": "FCF 5y", "bracket_status": "ok"},
+    )
+    comment = rule_based.commentary(valuation)["reverse_dcf_comment"]
+
+    assert "19.0% 5-year growth (then a 5-year fade to terminal growth)" in comment
+    assert "10-year" not in comment and "10y" not in comment and "CAGR" not in comment
+
+
+def test_reverse_dcf_comment_mentions_normalized_fcf_basis_only_when_normalized():
+    base = {"implied_growth": 0.08, "realized_cagr_5y": 0.07, "realized_label": "revenue 5y", "bracket_status": "ok"}
+
+    normalized = rule_based.commentary(_reverse_only_valuation({**base, "fcf0_basis": "normalized"}))
+    assert "normalized FCF" in normalized["reverse_dcf_comment"]
+
+    for basis in ("raw", "revenue", None):
+        other = rule_based.commentary(_reverse_only_valuation({**base, "fcf0_basis": basis}))
+        assert "normalized" not in other["reverse_dcf_comment"]
+
+    above = rule_based.commentary(_reverse_only_valuation(
+        {"implied_growth": None, "realized_cagr_5y": None, "realized_label": None,
+         "bracket_status": "above_bracket", "fcf0_basis": "normalized"},
+    ))
+    assert "normalized FCF" in above["reverse_dcf_comment"]
+    assert "60% upper bound" in above["reverse_dcf_comment"]
+
+
+def test_reverse_dcf_comment_judgment_follows_triangulation_signal():
+    # Stored (4-dp rounded) pair is exactly 3pp apart; triangulation saw
+    # the unrounded realized CAGR and called it expensive. The comment must
+    # narrate the same verdict, not re-judge the rounded pair.
+    reverse = {"implied_growth": 0.17, "realized_cagr_5y": 0.14, "realized_label": "FCF 5y", "bracket_status": "ok"}
+
+    assert "expensiveness signal" in rule_based.commentary(
+        _reverse_only_valuation(reverse, rdcf_signal="expensive")
+    )["reverse_dcf_comment"]
+    assert "consistent with the realized growth" in rule_based.commentary(
+        _reverse_only_valuation(reverse, rdcf_signal="fair")
+    )["reverse_dcf_comment"]
+
+
+def test_reverse_dcf_comment_fallback_matches_triangulate_at_margin_edge():
+    from sec_analyzer.valuation import triangulate
+
+    # Exactly-3pp pairs where `implied - realized > 0.03` and
+    # `implied > realized + 0.03` disagree by float noise (e.g. 0.14/0.11,
+    # 0.01/0.04). The fallback must use triangulate's comparison, not its own.
+    for implied, realized in ((0.14, 0.11), (0.07, 0.04), (0.01, 0.04), (0.25, 0.28), (0.08, 0.05)):
+        reverse = {"implied_growth": implied, "realized_cagr_5y": realized, "realized_label": "FCF 5y",
+                   "bracket_status": "ok"}
+        comment = rule_based.commentary(_reverse_only_valuation(reverse))["reverse_dcf_comment"]
+        expected = triangulate._reverse_dcf_signal(implied, realized, None, "ok")
+        phrase = {
+            triangulate.SIGNAL_EXPENSIVE: "expensiveness signal",
+            triangulate.SIGNAL_CHEAP: "cheapness signal",
+            triangulate.SIGNAL_FAIR: "consistent with the realized growth",
+        }[expected]
+        assert phrase in comment, (implied, realized, expected, comment)
 
 
 def test_commentary_cyclical_risk_reflects_sector_type_and_cyclical_trap_flag():
