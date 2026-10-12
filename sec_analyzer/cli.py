@@ -80,6 +80,12 @@ from sec_analyzer.normalize.red_flags import detect_red_flags
 from sec_analyzer.report.financials import serialize_financials
 from sec_analyzer.report.generator import generate_report
 from sec_analyzer.interpret import planning, rule_based
+from sec_analyzer.screener.funding import (
+    DISCLAIMER as FUNDING_DISCLAIMER,
+    build_payload as build_funding_payload,
+    render_table as render_funding_table,
+    run_funding_screen,
+)
 from sec_analyzer.screener.overview import build_overview, sector_type_label
 from sec_analyzer.screener.peers import (
     build_peer_snapshot,
@@ -93,7 +99,7 @@ from sec_analyzer.screener.preearnings import (
     scan_preearnings,
 )
 from sec_analyzer.screener.swing_scan import DEFAULT_MAX_WORKERS, scan_swing
-from sec_analyzer.screener.universe import load_universe, normalize_index
+from sec_analyzer.screener.universe import load_universe, normalize_index, universe_label
 from sec_analyzer.signals.events import detect_events, summarize_events
 from sec_analyzer.signals.insider import detect_insider_activity, summarize_insider
 from sec_analyzer.signals.macro import build_macro_context, summarize_macro
@@ -1916,6 +1922,52 @@ def cmd_swing(args: argparse.Namespace) -> None:
             print("\nWARNING: could not save swing scan to the database.", file=sys.stderr)
 
 
+def cmd_funding_screen(args: argparse.Namespace) -> None:
+    """Handle the ``funding-screen`` subcommand (screener/FUNDING_SPEC.md Sec.7):
+    screen an index (or ``--tickers``) for growth funded by its own cash flow
+    from TTM SEC filings, print one table per group, optionally write JSON.
+
+    A research filter, not a signal. Never crashes on bad tickers: they
+    become error rows and the command still exits normally. User-facing
+    text is English by the spec's approved exception.
+    """
+    if getattr(args, "tickers", None):
+        tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
+        universe = "custom"
+    else:
+        index = normalize_index(getattr(args, "index", None) or "nasdaq100")
+        try:
+            tickers = [row["ticker"] for row in load_universe(index=index)]
+        except OSError as exc:
+            print(f"Could not read universe file: {exc}", file=sys.stderr)
+            sys.exit(1)
+            return
+        universe = universe_label(index)
+
+    try:
+        rows = run_funding_screen(
+            tickers, valuation=args.valuation, no_cache=args.no_cache
+        )
+    except Exception as exc:  # noqa: BLE001 - must not crash the CLI
+        logger.exception("Funding screen failed")
+        print(f"Funding screen failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+        return
+
+    print()
+    print(render_funding_table(rows, args.valuation))
+
+    if getattr(args, "json", None):
+        try:
+            payload = build_funding_payload(rows, universe)
+            with open(args.json, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2, ensure_ascii=False)
+            print(f"\nWrote JSON: {args.json}")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to write funding-screen JSON")
+            print(f"\nWARNING: could not write JSON: {exc}", file=sys.stderr)
+
+
 #: Column widths for the swing-study decile terminal table (SWING_STUDY_SPEC.md
 #: Sec.5): bucket, n, mean excess return %, median, hit rate %, mean score.
 _SWING_STUDY_DECILE_COL_WIDTHS = [8, 8, 16, 12, 10, 12]
@@ -3176,6 +3228,64 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not persist the scan result to the database.",
     )
     swing_parser.set_defaults(func=cmd_swing)
+
+    # --- funding-screen (self-funded growth screen; screener/FUNDING_SPEC.md) ---
+    funding_parser = subparsers.add_parser(
+        "funding-screen",
+        help=(
+            "Screen an index for growth funded by its own cash flow (TTM SEC "
+            "filings: FCF margin, net debt, dilution). "
+            + FUNDING_DISCLAIMER
+        ),
+        description=(
+            "Self-funded growth screen over TTM SEC filings. "
+            + FUNDING_DISCLAIMER
+        ),
+    )
+    funding_parser.add_argument(
+        "--index",
+        type=str,
+        default="nasdaq100",
+        help=(
+            "Universe: nasdaq100 (default; alias ndx) or sp500. "
+            "Case-insensitive; an unrecognized value falls back to sp500."
+        ),
+    )
+    funding_parser.add_argument(
+        "--tickers",
+        type=str,
+        default=None,
+        help="Comma-separated tickers, e.g. 'AAPL,MSFT'. Overrides --index.",
+    )
+    funding_parser.add_argument(
+        "--valuation",
+        action="store_true",
+        help=(
+            "Add P/FCF, reverse-DCF implied growth (on FCF minus SBC) and a "
+            "heuristic price reading. Runs the full headless pipeline per ticker "
+            "(slower, needs price data); the reading is not a valuation verdict."
+        ),
+    )
+    funding_parser.add_argument(
+        "--json",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Also write the rows and metadata as JSON to PATH.",
+    )
+    funding_parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Bypass the on-disk caches and re-fetch.",
+    )
+    funding_verbosity = funding_parser.add_mutually_exclusive_group()
+    funding_verbosity.add_argument(
+        "--verbose", action="store_true", help="Enable debug logging."
+    )
+    funding_verbosity.add_argument(
+        "--quiet", action="store_true", help="Only log warnings and errors."
+    )
+    funding_parser.set_defaults(func=cmd_funding_screen)
 
     # --- overview (portfolio dashboard over stored verdicts) ---
     overview_parser = subparsers.add_parser(
