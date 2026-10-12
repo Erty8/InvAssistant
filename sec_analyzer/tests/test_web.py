@@ -121,7 +121,7 @@ def test_report_happy_path_returns_full_report_html(monkeypatch):
     assert "AAPL" in body
     # The balance-sheet ("Bilanço") tab is wired into the shared template.
     assert "view-tabs" in body
-    assert "Bilanço" in body
+    assert "Balance Sheet" in body
     assert "financialsTabHtml" in body
 
 

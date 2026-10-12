@@ -46,7 +46,7 @@ def test_classifies_officer_departure_as_warning():
     ev = events[0]
     assert ev["items"] == ["5.02"]
     assert ev["severity"] == "warning"
-    assert ev["categories"] == ["Üst düzey yönetici/kurul değişikliği"]
+    assert ev["categories"] == ["Departure/appointment of officers or directors"]
     assert ev["accession"] == "acc-1"
     assert ev["primary_doc"] == "d1.htm"
 
@@ -66,7 +66,7 @@ def test_event_severity_is_max_over_its_items():
     assert events[0]["severity"] == "critical"
     assert events[0]["items"] == ["5.07", "4.02", "9.01"]
     # Category order follows item order and de-duplicates.
-    assert events[0]["categories"][0] == "Genel kurul oylama sonuçları"
+    assert events[0]["categories"][0] == "Submission of matters to a vote of security holders"
 
 
 def test_non_8k_forms_are_ignored():
@@ -208,7 +208,7 @@ def test_filing_dated_exactly_on_today_is_included():
 
 
 def test_summarize_events_empty():
-    assert summarize_events([]) == "yok"
+    assert summarize_events([]) == "none"
 
 
 def test_summarize_events_tally_and_order():
@@ -223,7 +223,7 @@ def test_summarize_events_tally_and_order():
         today=_TODAY,
     )
     summary = summarize_events(events)
-    assert summary.startswith("1 kritik, 1 uyarı, 1 bilgi")
+    assert summary.startswith("1 critical, 1 warning, 1 info")
     # Most-severe-first: the critical restatement leads the listed events.
     listed = summary.split("—", 1)[1]
-    assert listed.index("güvenilemez") < listed.index("Kazanç")
+    assert listed.index("Non-reliance") < listed.index("Results of operations")

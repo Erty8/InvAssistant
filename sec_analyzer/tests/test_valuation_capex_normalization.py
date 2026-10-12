@@ -358,4 +358,4 @@ def test_run_valuation_with_depreciation_reports_upside_but_headline_stays_suppr
 
     # Explanatory note names the growth-CapEx relief ("büyüme CapEx'i bakım
     # CapEx'inden ... ayrıldı") and flags it as an upside, not the headline.
-    assert any("büyüme CapEx" in n for n in result["notes"])
+    assert any("growth CapEx" in n for n in result["notes"])

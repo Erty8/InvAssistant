@@ -10,6 +10,7 @@ Sec.13) is present.
 from datetime import date, timedelta
 
 import argparse
+import re
 
 import pytest
 
@@ -50,9 +51,9 @@ def _valuation(dcf_enabled=True):
             "pfcf_percentile": None,
         },
         "triangulation": {
-            "signals": {"dcf": "pahali", "reverse_dcf": "pahali", "multiples": "pahali"},
-            "confidence": "YÜKSEK",
-            "direction": "pahali",
+            "signals": {"dcf": "expensive", "reverse_dcf": "expensive", "multiples": "expensive"},
+            "confidence": "HIGH",
+            "direction": "expensive",
         },
         "sensitivity": {"lo": 87.0, "hi": 131.0, "high_uncertainty": False},
     }
@@ -60,7 +61,7 @@ def _valuation(dcf_enabled=True):
 
 def _result_with_valuation(dcf_enabled=True, high_uncertainty=False):
     result = _result_without_valuation()
-    result["confidence"] = "YÜKSEK"
+    result["confidence"] = "HIGH"
     valuation = _valuation(dcf_enabled=dcf_enabled)
     valuation["sensitivity"]["high_uncertainty"] = high_uncertainty
     result["valuation"] = valuation
@@ -78,11 +79,11 @@ def test_print_verdict_card_without_valuation_renders_old_shape(capsys):
 
     assert "Fair Value (base): $95–$115" in out
     # None of the new method-label/confidence/valuation-derived lines appear.
-    assert "Güven:" not in out
+    assert "Confidence:" not in out
     assert "Reverse DCF:" not in out
     assert "Multiples:" not in out
-    assert "Üçgenleme:" not in out
-    assert "Duyarlılık:" not in out
+    assert "Triangulation:" not in out
+    assert "Sensitivity:" not in out
     assert "Fundamental:" in out
     assert "MAKUL" in out
 
@@ -90,7 +91,7 @@ def test_print_verdict_card_without_valuation_renders_old_shape(capsys):
 def test_print_verdict_card_error_result_still_short_circuits(capsys):
     _print_verdict_card("AAPL", "1y", {"error": "boom", "summary": "no dice"}, metrics={"price": 100.0})
     out = capsys.readouterr().out
-    assert "Analiz kullanılamıyor (boom): no dice" in out
+    assert "Analysis unavailable (boom): no dice" in out
     assert "Fair Value" not in out
 
 
@@ -103,14 +104,14 @@ def test_print_verdict_card_with_valuation_dcf_method_label(capsys):
     _print_verdict_card("AAPL", "1y", _result_with_valuation(dcf_enabled=True), metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Fair Value (base, DCF): $95–$115   Güven: YÜKSEK" in out
+    assert "Fair Value (base, DCF): $95–$115   Confidence: HIGH" in out
 
 
 def test_print_verdict_card_with_valuation_pb_roe_method_label_when_dcf_disabled(capsys):
     _print_verdict_card("AAPL", "1y", _result_with_valuation(dcf_enabled=False), metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Fair Value (base, P/B×ROE): $95–$115   Güven: YÜKSEK" in out
+    assert "Fair Value (base, P/B×ROE): $95–$115   Confidence: HIGH" in out
 
 
 def test_print_verdict_card_with_valuation_ffo_method_label_when_reit_populated(capsys):
@@ -123,31 +124,63 @@ def test_print_verdict_card_with_valuation_ffo_method_label_when_reit_populated(
     _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Fair Value (base, FFO): $95–$115   Güven: YÜKSEK" in out
+    assert "Fair Value (base, FFO): $95–$115   Confidence: HIGH" in out
 
 
 def test_print_verdict_card_reverse_dcf_line_built_from_numbers(capsys):
     _print_verdict_card("AAPL", "1y", _result_with_valuation(), metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Reverse DCF: fiyat 10y %19 CAGR ima ediyor (gerçekleşen 5y: %14)" in out
+    assert "Reverse DCF: price implies %19 5y growth (then fade) (realized 5y: %14)" in out
 
 
 def test_print_verdict_card_reverse_dcf_line_prefers_comment(capsys):
     result = _result_with_valuation()
-    result["reverse_dcf_comment"] = "Fiyat oldukça agresif bir büyüme ima ediyor."
+    result["reverse_dcf_comment"] = "The price implies fairly aggressive growth."
     _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Reverse DCF: Fiyat oldukça agresif bir büyüme ima ediyor." in out
+    assert "Reverse DCF: The price implies fairly aggressive growth." in out
     assert "%19 CAGR" not in out
+
+
+def test_reverse_dcf_line_fallback_says_5y_growth_then_fade_not_10y_cagr():
+    from sec_analyzer.cli import _reverse_dcf_line
+
+    valuation = {"reverse_dcf": {"implied_growth": 0.19, "realized_cagr_5y": 0.14, "realized_label": "FCF 5y",
+                                 "bracket_status": "ok"}}
+    line = _reverse_dcf_line({}, valuation)
+
+    assert "price implies %19 5y growth (then fade) (realized FCF 5y: %14)" in line
+    assert "10y" not in line and "CAGR" not in line
+
+
+def test_reverse_dcf_line_fallback_narrates_bracket_status_and_normalized_basis():
+    from sec_analyzer.cli import _reverse_dcf_line
+
+    above = _reverse_dcf_line({}, {"reverse_dcf": {
+        "implied_growth": None, "realized_cagr_5y": None, "realized_label": None,
+        "bracket_status": "above_bracket", "fcf0_basis": "normalized",
+    }})
+    assert "5y growth (then fade) >60%, outside the model bracket" in above
+    assert "[normalized FCF; raw: —]" in above
+    assert "None" not in above
+
+    below = _reverse_dcf_line({}, {"reverse_dcf": {
+        "implied_growth": None, "realized_cagr_5y": 0.05, "realized_label": "FCF 5y",
+        "bracket_status": "below_bracket",
+    }})
+    assert "5y growth (then fade) <−20%, outside the model bracket (realized FCF 5y: %5)" in below
+
+    no_data = _reverse_dcf_line({}, {"reverse_dcf": {"implied_growth": None, "bracket_status": "no_data"}})
+    assert no_data.rstrip().endswith("—")
 
 
 def test_print_verdict_card_multiples_line_primary_pe(capsys):
     _print_verdict_card("AAPL", "1y", _result_with_valuation(), metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Multiples:   P/E kendi 8y medyanının 88. yüzdeliğinde" in out
+    assert "Multiples:   P/E is at the 88th percentile of its own 8y median" in out
 
 
 def test_print_verdict_card_multiples_line_falls_back_and_veri_yetersiz(capsys):
@@ -161,7 +194,7 @@ def test_print_verdict_card_multiples_line_falls_back_and_veri_yetersiz(capsys):
     _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Multiples:   veri yetersiz" in out
+    assert "Multiples:   insufficient data" in out
 
 
 def test_print_verdict_card_multiples_line_peg_applicable_not_mixed(capsys):
@@ -171,12 +204,12 @@ def test_print_verdict_card_multiples_line_peg_applicable_not_mixed(capsys):
         "value": 1.4, "percentile": 82.0, "raw_percentile": 88.0,
         "applicable": True, "reason": None, "base_growth_pct": 12.0, "sector_peg": None,
     }
-    # triangulation multiples signal stays "pahali" (both components agree).
+    # triangulation multiples signal stays "expensive" (both components agree).
     _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
     out = capsys.readouterr().out
 
     assert "Multiples:   P/E 88. pctile · PEG 1.40 (82. pctile)" in out
-    assert "karışık sinyal" not in out
+    assert "mixed signal" not in out
 
 
 def test_print_verdict_card_multiples_line_peg_mixed_signal(capsys):
@@ -186,11 +219,12 @@ def test_print_verdict_card_multiples_line_peg_mixed_signal(capsys):
         "value": 1.4, "percentile": 45.0, "raw_percentile": 88.0,
         "applicable": True, "reason": None, "base_growth_pct": 12.0, "sector_peg": None,
     }
-    result["valuation"]["triangulation"]["signals"]["multiples"] = "karisik"
+    # triangulate.SIGNAL_MIXED is now "mixed"; cli._multiples_line still compares to "karisik".
+    result["valuation"]["triangulation"]["signals"]["multiples"] = "mixed"
     _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Multiples:   P/E 88. pctile · PEG 1.40 (45. pctile) → karışık sinyal" in out
+    assert "Multiples:   P/E 88. pctile · PEG 1.40 (45. pctile) → mixed signal" in out
 
 
 def test_print_verdict_card_multiples_line_reit_uses_pffo_no_peg(capsys):
@@ -214,7 +248,7 @@ def test_print_verdict_card_multiples_line_reit_uses_pffo_no_peg(capsys):
     _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Multiples:   P/FFO kendi 8y medyanının 72. yüzdeliğinde" in out
+    assert "Multiples:   P/FFO is at the 72nd percentile of its own 8y median" in out
     assert "PEG" not in out
     assert "P/E" not in out
 
@@ -233,7 +267,7 @@ def test_print_verdict_card_multiples_line_reit_falls_back_to_ps(capsys):
     _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Multiples:   P/S kendi 5y medyanının 40. yüzdeliğinde" in out
+    assert "Multiples:   P/S is at the 40th percentile of its own 5y median" in out
     assert "PEG" not in out
 
 
@@ -257,7 +291,7 @@ def test_print_verdict_card_multiples_line_reit_pffo_none_degrades_to_veri_yeter
     _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Multiples:   veri yetersiz" in out
+    assert "Multiples:   insufficient data" in out
     assert "PEG" not in out
     assert "P/E" not in out
 
@@ -293,22 +327,22 @@ def test_print_verdict_card_technical_enriched_with_momentum_and_sr(capsys):
     # Verdict line gains the detail suffix.
     assert "NÖTR (RSI 59, SMA50 +%14)" in out
     # Returns/trend sub-line (raw multi-horizon returns + trend).
-    assert "Getiriler:" in out
-    assert "1a +%4" in out and "3a +%12" in out and "6a -%3" in out
-    assert "Trend: yükseliş (GC)" in out
+    assert "Returns:" in out
+    assert "1m +%4" in out and "3m +%12" in out and "6m -%3" in out
+    assert "Trend: up (GC)" in out
     # MACD + volume sub-line.
-    assert "MACD/Hacim:" in out
-    assert "MACD boğa (kesişim ↑)" in out
-    assert "Hacim 1.3×" in out
+    assert "MACD/Volume:" in out
+    assert "MACD bull (cross ↑)" in out
+    assert "Volume 1.3×" in out
     assert "OBV ↑" in out
     # RSI divergence sub-line.
-    assert "RSI uyumsuzluğu (ayı)" in out
+    assert "RSI divergence (bear)" in out
     assert "$140→$142" in out
     # Support/resistance sub-line: price ranges + combined evidence.
-    assert "Destek/Direnç:" in out
-    assert "Direnç $107–$109 (+%8 · 4×)" in out
-    assert "$117–$119 (+%18 · 52h zirve + 2×)" in out   # 52w + touch evidence combined
-    assert "Destek $91–$94 (-%8 · 3×)" in out
+    assert "Support/Resistance:" in out
+    assert "Resistance $107–$109 (+%8 · 4×)" in out
+    assert "$117–$119 (+%18 · 52w high + 2×)" in out   # 52w + touch evidence combined
+    assert "Support $91–$94 (-%8 · 3×)" in out
 
 
 def test_print_verdict_card_technical_omitted_keeps_old_single_line(capsys):
@@ -318,46 +352,50 @@ def test_print_verdict_card_technical_omitted_keeps_old_single_line(capsys):
     _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Teknik:" in out and "NÖTR" in out
+    assert "Technical:" in out and "NÖTR" in out
     assert "Momentum:" not in out
-    assert "MACD/Hacim:" not in out
-    assert "RSI uyumsuzluğu" not in out
-    assert "Destek/Direnç:" not in out
+    assert "MACD/Volume:" not in out
+    assert "RSI divergence" not in out
+    assert "Support/Resistance:" not in out
 
 
 def test_print_verdict_card_triangulation_line_high_confidence_is_yon_net(capsys):
     _print_verdict_card("AAPL", "1y", _result_with_valuation(), metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Üçgenleme:   DCF pahali · rDCF pahali · multiples pahali → yön net" in out
+    # The label must stay separated from its value even though "Triangulation:"
+    # (14 chars) is wider than _CARD_LABEL_WIDTH.
+    assert re.search(
+        r"Triangulation:\s+DCF expensive · rDCF expensive · multiples expensive → clear direction", out
+    )
 
 
 def test_print_verdict_card_triangulation_line_low_confidence_is_yon_karisik(capsys):
     result = _result_with_valuation()
-    result["valuation"]["triangulation"]["confidence"] = "DÜŞÜK"
+    result["valuation"]["triangulation"]["confidence"] = "LOW"
     _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "yön karışık" in out
+    assert "mixed direction" in out
 
 
 def test_print_verdict_card_sensitivity_line_flags_high_uncertainty(capsys):
     _print_verdict_card("AAPL", "1y", _result_with_valuation(high_uncertainty=True), metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Duyarlılık:  base $87–$131 (g±2pp, r±1pp) — yüksek belirsizlik" in out
+    assert "Sensitivity: base $87–$131 (g±2pp, r±1pp) — high uncertainty" in out
 
 
 def test_print_verdict_card_sensitivity_line_without_flag(capsys):
     _print_verdict_card("AAPL", "1y", _result_with_valuation(high_uncertainty=False), metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Duyarlılık:  base $87–$131 (g±2pp, r±1pp)" in out
-    assert "yüksek belirsizlik" not in out
+    assert "Sensitivity: base $87–$131 (g±2pp, r±1pp)" in out
+    assert "high uncertainty" not in out
 
 
 # ---------------------------------------------------------------------------
-# "Olaylar:" line -- recent 8-K event signal attached as result["events"].
+# "Events:" line -- recent 8-K event signal attached as result["events"].
 # ---------------------------------------------------------------------------
 
 
@@ -372,10 +410,10 @@ def test_print_verdict_card_events_line_summarizes_events(capsys):
     _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    assert "Olaylar:" in out
-    assert "1 kritik, 1 uyarı" in out
+    assert "Events:" in out
+    assert "1 critical, 1 warning" in out
     # Most-severe-first: the restatement leads the listed events.
-    assert "güvenilemez" in out
+    assert "restatement" in out
 
 
 def test_print_verdict_card_events_line_reads_yok_when_empty(capsys):
@@ -384,18 +422,18 @@ def test_print_verdict_card_events_line_reads_yok_when_empty(capsys):
     _print_verdict_card("AAPL", "1y", result, metrics={"price": 100.0})
     out = capsys.readouterr().out
 
-    # The line is always present; empty events render "yok".
-    assert "Olaylar:" in out
-    events_line = [ln for ln in out.splitlines() if ln.startswith("Olaylar:")][0]
-    assert events_line.strip().endswith("yok")
+    # The line is always present; empty events render "none".
+    assert "Events:" in out
+    events_line = [ln for ln in out.splitlines() if ln.startswith("Events:")][0]
+    assert events_line.strip().endswith("none")
 
 
 def test_print_verdict_card_events_line_absent_key_is_safe(capsys):
-    # A legacy/stored result with no "events" key must still render "yok",
+    # A legacy/stored result with no "events" key must still render "none",
     # not crash.
     _print_verdict_card("AAPL", "1y", _result_without_valuation(), metrics={"price": 100.0})
     out = capsys.readouterr().out
-    assert "Olaylar:" in out
+    assert "Events:" in out
 
 
 # ---------------------------------------------------------------------------

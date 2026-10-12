@@ -21,7 +21,7 @@ Non-negotiable invariants to check (each violation is a finding):
 - **Determinism**: same inputs → identical numbers. No randomness, no wall-clock in results. Rounding as specified (per-share 2dp, percentiles 1dp, growth 4dp).
 - **Sector routing**: financial/reit → FCF-DCF disabled, P/B×ROE anchor; cyclical → normalized-earnings variant drives the headline band when computed; hyper-grower → revenue-first DCF band takes over the headline; hyper detection gated OFF for financial/reit. Verify the headline `fair_value_range`, the triangulation DCF band, and the reported `sensitivity` grid all describe the SAME cash-flow base.
 - **Triangulation**: signal thresholds and confidence logic (3 agree → YÜKSEK, 2 → ORTA, else DÜŞÜK), reverse-DCF bracket-status forcing, band ordering bear ≤ base ≤ bull.
-- **None-safety**: missing data → None + Turkish note, never a crash and never a printed "None"/"NaN".
+- **None-safety**: missing data → None + English note, never a crash and never a printed "None"/"NaN".
 
 Method:
 - For each finding, give: severity (blocker/major/minor), the exact file:line, the SPEC/METODOLOJI section it violates, a concrete numeric example showing the wrong behavior (small round inputs), and the minimal fix direction. Verify your reasoning arithmetically before asserting a math bug — do the calculation yourself.

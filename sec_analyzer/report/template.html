@@ -1192,6 +1192,37 @@
     .trig-rule { flex-basis: 100%; order: 3; }
   }
 
+  /* ---- Technical action box (t.action, technical/action.py) --------------
+     The one-glance answer at the top of the Technical card: action pill +
+     headline, then "no position / holding" guidance, fuel or reversal
+     checklist, key levels, and the why. Tone follows the action. */
+  .act-box { border-radius: 10px; padding: 12px 14px; margin: 2px 0 14px; border: 1px solid var(--border); }
+  .act-green { background: var(--wash-pos); border-color: var(--line-pos); }
+  .act-amber { background: var(--wash-warn); border-color: var(--line-warn); }
+  .act-red { background: var(--wash-neg); border-color: var(--line-neg); }
+  .act-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .act-head .badge { font-size: 0.85rem; padding: 5px 12px; }
+  .act-headline { font-size: 0.92rem; font-weight: 700; color: var(--text); }
+  .act-guide { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin-bottom: 10px; }
+  .act-guide-item { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 0.8rem; line-height: 1.4; }
+  .act-guide-label { display: block; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+  .act-meter-row { display: flex; align-items: center; gap: 10px; font-size: 0.78rem; margin-bottom: 6px; }
+  .act-meter-label { font-weight: 700; min-width: 0; }
+  .act-pips { display: flex; gap: 3px; }
+  .act-pip { width: 14px; height: 6px; border-radius: 3px; background: var(--border); }
+  .act-pip.on-good { background: var(--green); }
+  .act-pip.on-bad { background: var(--amber); }
+  .act-checks { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 0.74rem; }
+  .act-checks li { color: var(--muted); }
+  .act-checks li.fired { color: var(--text); }
+  .act-checks .act-ic { display: inline-block; width: 14px; font-weight: 700; }
+  .act-levels { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.76rem; font-family: var(--mono); margin-bottom: 6px; }
+  .act-levels b { font-weight: 700; }
+  .act-why { font-size: 0.72rem; color: var(--muted); line-height: 1.45; }
+  .act-note { font-size: 0.7rem; color: var(--muted); font-style: italic; margin-top: 6px; }
+  .act-rsi { font-size: 0.72rem; color: var(--muted); margin-bottom: 8px; }
+  .act-evidence { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--border); font-size: 0.7rem; line-height: 1.4; color: var(--muted); }
+
   /* ---- Price chart (price line + S/R + fair-value bands) -----------------*/
   .pchart-head {
     display: flex;
@@ -1438,33 +1469,54 @@
     font-size: 0.72rem;
     line-height: 1.4;
   }
-  /* .entry-kind-tag shape + tone: pill primitive, alert register -- entry
-     triggers are one of the few things on the page the reader acts on. */
-  .entry-plan-table tr.entry-note-row td {
-    text-align: left;
+  .entry-plan-table .entry-level {
+    font-family: var(--mono);
+    font-weight: 700;
+    color: var(--text);
+  }
+  .entry-plan-table .entry-source {
+    color: var(--muted);
+  }
+  /* t.note (support confluence / above-model) stays inline in the alert
+     tone; the full sentence is on hover. */
+  .entry-plan-table .entry-inline-note {
     color: var(--amber);
+  }
+  /* Group headers + "price now" divider turn the table into a price
+     ladder. .entry-kind-tag shape + tone: pill primitive, alert register --
+     entry triggers are one of the few things on the page the reader acts on. */
+  .entry-plan-table tr.entry-group-row td {
+    text-align: left;
     font-family: var(--sans);
-    font-size: 0.72rem;
+    font-size: 0.7rem;
+    color: var(--muted);
+    padding-top: 10px;
   }
-  /* Per-tranche note row can now stack up to three lines: the original
-     alert-toned t.note, then the newer trigger_reason/invalidation_reason
-     "why" sentences -- those two get a distinct muted tone (higher
-     specificity than the base row rule above) so they read as reference
-     explanation, not as another alert. */
-  .entry-plan-table tr.entry-note-row .entry-note-line + .entry-note-line {
-    margin-top: 4px;
+  .entry-plan-table tr.entry-price-row td {
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--primary);
+    border-top: 1px dashed var(--primary);
+    border-bottom: 1px dashed var(--primary);
   }
-  .entry-plan-table tr.entry-note-row .entry-reason-line {
-    color: var(--outline);
-    font-weight: 400;
-  }
-  /* Plan-level legend (target_reason/size_reason): shown once below the
-     table since both values are identical on every tranche. */
+  /* Collapsed explainer: each distinct "why" sentence once, not per row. */
+  .entry-explain { margin-top: 12px; }
   .entry-legend {
     margin-top: 10px;
     padding-top: 10px;
     border-top: 1px solid var(--border);
   }
+  .entry-explain-list {
+    margin: 4px 0 8px;
+    padding-left: 18px;
+    font-size: 0.72rem;
+    color: var(--outline);
+    line-height: 1.5;
+    text-align: left;
+  }
+  .entry-explain-list li + li { margin-top: 3px; }
+  .entry-explain-list b { color: var(--muted); }
   .entry-legend-line {
     font-size: 0.72rem;
     color: var(--outline);
@@ -2857,6 +2909,61 @@
     );
   }
 
+  // ---- Reverse-DCF rate sensitivity (SPEC Amendment 28c-28d) --------------
+  // Bracket bounds come from the server payload (reverse_dcf._BRACKET_LO/HI);
+  // if absent, out-of-bracket shifts fall back to a bare "—".
+  var RDCF_BOUNDS = (data && data.reverse_dcf_bounds) || null;
+
+  function rdcfBoundText(which) {
+    if (!RDCF_BOUNDS || !isNum(RDCF_BOUNDS[which])) return "—";
+    var t = fmtPctTr(RDCF_BOUNDS[which], 0);
+    return which === "lo" ? "<" + t.replace("-", "−") : ">" + t;
+  }
+
+  var RDCF_SKIP_LABEL = {
+    below_rate_floor: "(floor)",
+    below_erp_spread: "(ERP spread)",
+    rate_at_or_below_terminal_growth: "(r ≤ g_t)",
+  };
+
+  // Suffix for the reverse-DCF value when it was solved on normalized FCF.
+  function reverseDcfBasisSuffix(rdcf) {
+    if (!rdcf || rdcf.fcf0_basis !== "normalized") return "";
+    var raw = rdcf.bracket_status_raw === "above_bracket" ? rdcfBoundText("hi")
+      : rdcf.bracket_status_raw === "below_bracket" ? rdcfBoundText("lo")
+      : fmtPctTr(rdcf.implied_growth_raw);
+    return "[normalized FCF; raw: " + raw + "]";
+  }
+
+  // One line: "Rate sens.: r −50bp 21.1% · +50bp 24.8% (g_t fixed 4.0%)".
+  // "" (line omitted) when rate_sensitivity is absent/malformed.
+  function rateSensLineHtml(rdcf) {
+    var rs = rdcf && rdcf.rate_sensitivity;
+    if (!rs || !Array.isArray(rs.shifts) || !rs.shifts.length) return "";
+    var parts = rs.shifts.map(function (s, i) {
+      s = s || {};
+      var bp = Number(s.shift_bp);
+      var label = isNum(s.shift_bp)
+        ? (bp < 0 ? "−" : "+") + Math.abs(bp) + "bp"
+        : "—";
+      var val;
+      if (s.skip_reason || s.status === "skipped") {
+        val = "— " + (RDCF_SKIP_LABEL[s.skip_reason] || "(skipped)");
+      } else if (s.status === "above_bracket") {
+        val = rdcfBoundText("hi");
+      } else if (s.status === "below_bracket") {
+        val = rdcfBoundText("lo");
+      } else if (s.status === "no_data" || !isNum(s.implied_growth)) {
+        val = "—";
+      } else {
+        val = fmtPctTr(s.implied_growth).replace("-", "−");
+      }
+      return (i === 0 ? "r " : "") + label + " " + val;
+    });
+    var text = "Rate sens.: " + parts.join(" · ") + " (g_t fixed " + fmtPctTr(rs.terminal_growth) + ")";
+    return '<div class="tri-sector sector-cmp-muted">' + escapeHtml(text) + '</div>';
+  }
+
   function triangulationRowHtml(valuation, confidenceOverride) {
     var tri = (valuation || {}).triangulation;
     if (!tri) return "";
@@ -2917,6 +3024,11 @@
       var extra = (m.key === "multiples")
         ? (sectorComparisonLineHtml(valuation) + evMultiplesLineHtml(valuation)
            + tangibleMultiplesLineHtml(valuation)) : "";
+      if (m.key === "reverse_dcf") {
+        var basisSuffix = reverseDcfBasisSuffix(valuation.reverse_dcf);
+        if (basisSuffix) reason = (reason ? reason + " " : "") + basisSuffix;
+        extra = rateSensLineHtml(valuation.reverse_dcf);
+      }
       return (
         '<div class="tri-method">' +
           '<div class="tri-method-head">' +
@@ -3770,7 +3882,7 @@
     var valuation = result.valuation || null;
     var momentum = computeMomentum(t);
     var reversal = computeReversal(t, momentum, payload.horizon);
-    if (!valuation && !reversal) return "";
+    if (!valuation && !reversal && !(t.action && t.action.action)) return "";
 
     var parts = [], score = 0, maxScore = 0;
 
@@ -3784,8 +3896,17 @@
     else parts.push({ state: "none", label: "Value", text: "—" });
 
     // 2. Timing (0-2): bullish reversal confirmation (long-biased).
+    // When the Python technical action is present it is the single source of
+    // truth for timing, so this card can't contradict the Technical card
+    // (the legacy reversal-only read scored every uptrend as "wait").
     maxScore += 2;
-    if (reversal && reversal.bull) {
+    var act = t.action && t.action.action;
+    var actText = t.action ? String(t.action.label || act || "").toLowerCase() : "";
+    if (act) {
+      if (act === "BUY") { score += 2; parts.push({ state: "ok", label: "Timing", text: actText }); }
+      else if (act === "HOLD" || act === "WAIT" || act === "WAIT FOR PULLBACK") { score += 1; parts.push({ state: "pending", label: "Timing", text: actText }); }
+      else parts.push({ state: "bad", label: "Timing", text: actText });
+    } else if (reversal && reversal.bull) {
       if (reversal.confirmed >= 2) { score += 2; parts.push({ state: "ok", label: "Timing", text: "reversal confirmed (" + reversal.confirmed + "/" + reversal.total + ")" }); }
       else if (reversal.confirmed === 1) { score += 1; parts.push({ state: "pending", label: "Timing", text: "early reversal (" + reversal.confirmed + "/" + reversal.total + ")" }); }
       else parts.push({ state: "bad", label: "Timing", text: "no reversal, falling" });
@@ -4392,6 +4513,74 @@
     );
   }
 
+  // ---- Technical action box (t.action from technical/action.py) ----------
+  // Pure render of the Python-side decision: action pill + headline, the
+  // "no position / holding" guidance, then EITHER the fuel meter (uptrend:
+  // how many exhaustion signs fired) OR the reversal meter (otherwise: how
+  // many bullish confirmations vs. how many are needed), key levels, and the
+  // reasons. Re-derives nothing. Returns "" when t.action is absent (older
+  // stored runs), so the card falls back to the RSI badge.
+  function actionBoxHtml(t) {
+    var a = t && t.action;
+    if (!a || !a.action) return "";
+    var tone = a.tone === "green" || a.tone === "red" ? a.tone : "amber";
+
+    function pips(n, total, goodWhenOn) {
+      var out = "";
+      for (var i = 0; i < total; i++) {
+        out += '<span class="act-pip' + (i < n ? (goodWhenOn ? " on-good" : " on-bad") : "") + '"></span>';
+      }
+      return '<span class="act-pips">' + out + '</span>';
+    }
+    function checksHtml(checks, firedIsGood) {
+      if (!Array.isArray(checks) || !checks.length) return "";
+      return '<ul class="act-checks">' + checks.map(function (c) {
+        var ic = c.fired ? (firedIsGood ? "✓" : "!") : "·";
+        return '<li class="' + (c.fired ? "fired" : "") + '"><span class="act-ic">' + ic + '</span>' + escapeHtml(c.label || "—") + '</li>';
+      }).join("") + '</ul>';
+    }
+
+    var meterHtml = "";
+    if (a.fuel) {
+      var f = a.fuel;
+      meterHtml =
+        '<div class="act-meter-row"><span class="act-meter-label">Momentum fuel: ' + escapeHtml(f.label || "—") + '</span>' +
+          pips(f.fired || 0, f.total || 0, false) + '</div>' +
+        checksHtml(f.checks, false);
+    } else if (a.reversal) {
+      var r = a.reversal;
+      meterHtml =
+        '<div class="act-meter-row"><span class="act-meter-label">Reversal confirmations: ' +
+          (r.confirmed || 0) + ' of ' + (r.needed || 0) + ' needed</span>' +
+          pips(r.confirmed || 0, r.total || 0, true) + '</div>' +
+        checksHtml(r.checks, true);
+    }
+
+    var lv = [];
+    if (isNum(a.trigger)) lv.push('<span>' + escapeHtml(a.trigger_label || "Key level") + ' <b>' + fmtMoney(a.trigger) + '</b></span>');
+    if (isNum(a.stop)) lv.push('<span>Stop <b>' + fmtMoney(a.stop) + '</b></span>');
+    var levelsHtml = lv.length ? '<div class="act-levels">' + lv.join("") + '</div>' : "";
+
+    var why = Array.isArray(a.reasons) && a.reasons.length
+      ? '<div class="act-why">Why: ' + escapeHtml(a.reasons.join(" · ")) + '</div>' : "";
+    var note = a.horizon_note ? '<div class="act-note">' + escapeHtml(a.horizon_note) + '</div>' : "";
+
+    return (
+      '<div class="act-box act-' + tone + '">' +
+        // a.label is the trend-state text; a.action is an internal code and is
+        // only a fallback for runs stored before labels existed.
+        '<div class="act-head"><span class="badge badge-' + tone + '">' + escapeHtml(a.label || a.action) + '</span>' +
+          '<span class="act-headline">' + escapeHtml(a.headline || "") + '</span></div>' +
+        '<div class="act-guide">' +
+          '<div class="act-guide-item"><span class="act-guide-label">Entry picture</span>' + escapeHtml(a.for_new || "—") + '</div>' +
+          '<div class="act-guide-item"><span class="act-guide-label">If holding</span>' + escapeHtml(a.for_holder || "—") + '</div>' +
+        '</div>' +
+        meterHtml + levelsHtml + why + note +
+        (a.evidence_note ? '<div class="act-evidence">' + escapeHtml(a.evidence_note) + '</div>' : "") +
+      '</div>'
+    );
+  }
+
   function technicalCardHtml(technical, verdictText, horizon) {
     var t = technical || {};
     // No usable indicators at all -> fall back to the plain verdict card.
@@ -4399,6 +4588,7 @@
       return verdictCardHtml("Technical", verdictText, t.verdict_detail || "Price data unavailable.");
     }
     var color = bucketColor(verdictText);
+    var actionHtml = actionBoxHtml(t);
 
     // ---- Trend regime: price vs SMA50/SMA200 (the two trend lines) --------
     var p = isNum(t.price) ? Number(t.price) : null;
@@ -4621,9 +4811,17 @@
       '<div class="card">' +
         '<div class="card-title">Technical</div>' +
         '<div class="verdict-card-body">' +
-          '<div class="gauge"><div class="gauge-marker" style="left:' + GAUGE_POSITION[color] + '%;"></div></div>' +
-          '<div><span class="badge badge-' + color + '">' + escapeHtml(verdictText || "—") + '</span></div>' +
-          (t.verdict_detail ? '<div class="verdict-note">' + escapeHtml(t.verdict_detail) + '</div>' : "") +
+          (actionHtml
+            // With an action, the RSI read is demoted to a context line: on its
+            // own "OVERBOUGHT" reads like "sell", which it often isn't in a trend.
+            ? actionHtml +
+              '<div class="act-rsi">RSI state: ' + escapeHtml(verdictText || "—") +
+                // result.technical_verdict usually already carries the detail.
+                (t.verdict_detail && String(verdictText || "").indexOf(t.verdict_detail) < 0
+                  ? " (" + escapeHtml(t.verdict_detail) + ")" : "") + '</div>'
+            : '<div class="gauge"><div class="gauge-marker" style="left:' + GAUGE_POSITION[color] + '%;"></div></div>' +
+              '<div><span class="badge badge-' + color + '">' + escapeHtml(verdictText || "—") + '</span></div>' +
+              (t.verdict_detail ? '<div class="verdict-note">' + escapeHtml(t.verdict_detail) + '</div>' : "")) +
           regimeHtml +
           calloutHtml +
           ladderHtml +
@@ -4702,74 +4900,138 @@
     return "";
   }
 
-  function entryPlanHtml(entryPlan) {
-    var sub = '<div class="card-sub">These levels are a mechanical reference -- not a buy order or investment advice. ' +
-      'Includes both accumulation (dip) and uptrend-confirmation (breakout) zones.</div>';
+  // The source label ("SMA50 pullback", "52-week high breakout", ...) only
+  // lives inside the trigger sentence planning.py builds -- it is always the
+  // text between the last "-- " and the closing parenthesis. Returns "" when
+  // the sentence doesn't have that shape (older/hand-built payloads).
+  function entrySourceLabel(trigger) {
+    var m = /--\s*([^()]+?)\)[^)]*$/.exec(String(trigger || ""));
+    return m ? m[1].charAt(0).toUpperCase() + m[1].slice(1) : "";
+  }
+
+  // Compact per-row note: the above-model note is a long sentence whose
+  // headline is the part before the colon; the full text stays on hover.
+  function entryShortNote(note) {
+    var s = String(note || "");
+    var i = s.indexOf(":");
+    return i > 0 && i < 40 ? s.slice(0, i) : s;
+  }
+
+  // escapeHtml() leaves double quotes alone -- fine for text nodes, not for
+  // a title="..." attribute value.
+  function entryAttr(text) {
+    return escapeHtml(text || "").replace(/"/g, "&quot;");
+  }
+
+  function entryPlanHtml(entryPlan, price) {
+    var sub = '<div class="card-sub">Mechanical reference levels -- not a buy order or investment advice. ' +
+      'Triggers use the daily close only; an intraday touch does not count.</div>';
     if (!entryPlan || entryPlan.length === 0) {
       return (
         '<div class="card"><div class="card-title">Staged Entry Plan</div>' + sub +
         '<p class="empty-note">Not enough price or structural reference levels (bear/base/bull range, 52-week low, SMA50/SMA200) to build a mechanical tranche plan.</p></div>'
       );
     }
+
+    // Group header rows replace the per-row kind pill: breakout tranches
+    // (close ABOVE, uptrend confirmation) always sit above the current
+    // price and dip tranches (close BELOW, accumulation) below it, and the
+    // list is already ordered by descending level -- so one header per
+    // group plus a "price now" divider between them reads top-to-bottom
+    // like a price ladder. Older payloads without t.kind get no headers.
+    var groupLabels = {
+      breakout: '<span class="entry-kind-tag entry-kind-breakout">▲ Buy on strength</span>daily close above the level',
+      dip: '<span class="entry-kind-tag entry-kind-dip">▼ Buy on dips</span>daily close below the level'
+    };
+    var lastKind = null;
+    var priceRowDone = !isNum(price);
+    var priceRow = function () {
+      priceRowDone = true;
+      return '<tr class="entry-price-row"><td colspan="7">Price now ' + fmtMoney(price) + '</td></tr>';
+    };
+
     var rows = entryPlan.map(function (t) {
       var zone = t.price_zone || {};
-      // t.kind is a newer field ("breakout" = close ABOVE trigger, uptrend
-      // confirmation; "dip" = close BELOW trigger, accumulation). Older
-      // baked reports/payloads have no t.kind -- kindTag stays empty and the
-      // row renders exactly as before (no glyph, no layout shift).
-      var kindTag = "";
-      if (t.kind === "breakout") {
-        kindTag = '<span class="entry-kind-tag entry-kind-breakout" title="Uptrend confirmation">▲ confirm</span> ';
-      } else if (t.kind === "dip") {
-        kindTag = '<span class="entry-kind-tag entry-kind-dip" title="Accumulation (dip buy)">▼ accumulate</span> ';
+      var html = "";
+      if (!priceRowDone && t.kind === "dip") html += priceRow();
+      if (groupLabels[t.kind] && t.kind !== lastKind) {
+        html += '<tr class="entry-group-row"><td colspan="7">' + groupLabels[t.kind] + '</td></tr>';
       }
-      var mainRow =
+      lastKind = t.kind;
+
+      // The zone is a symmetric band around the trigger level, so its
+      // midpoint is the level itself (to the cent).
+      var level = (isNum(zone.lo) && isNum(zone.hi)) ? (Number(zone.lo) + Number(zone.hi)) / 2 : null;
+      var op = t.kind === "breakout" ? "Close &gt; " : t.kind === "dip" ? "Close &lt; " : "";
+      var source = entrySourceLabel(t.trigger);
+      var levelLine = level !== null
+        ? '<div class="entry-level">' + op + fmtMoney(level) + '</div>'
+        : '<div>' + escapeHtml(t.trigger || "—") + '</div>';
+      var sourceLine = source ? '<div class="entry-source">' + escapeHtml(source) + '</div>' : "";
+      var noteLine = t.note
+        ? '<div class="entry-inline-note" title="' + entryAttr(t.note) + '">' + escapeHtml(entryShortNote(t.note)) + '</div>'
+        : "";
+
+      html +=
         '<tr>' +
           '<td>' + escapeHtml(isNum(t.n) ? String(t.n) : "—") + '</td>' +
-          '<td class="entry-trigger">' + kindTag + escapeHtml(t.trigger || "—") + '</td>' +
+          '<td class="entry-trigger" title="' + entryAttr(t.trigger) + '">' + levelLine + sourceLine + noteLine + '</td>' +
           '<td>' + fmtMoney(zone.lo) + '–' + fmtMoney(zone.hi) + '</td>' +
           '<td>' + fmtRawPct(t.size_pct) + '</td>' +
           '<td>' + fmtMoney(t.invalidation) + '</td>' +
           '<td>' + fmtMoney(t.target) + '</td>' +
           '<td>' + (isNum(t.rr) ? Number(t.rr).toFixed(1) + ":1" : "—") + '</td>' +
         '</tr>';
-      // Per-tranche extra lines, reusing the existing entry-note-row "extra
-      // text attached to this row" pattern: any existing t.note first (kept
-      // in the original alert tone), then the two newer per-tranche "why"
-      // sentences (trigger_reason/invalidation_reason) in a visually
-      // distinct muted tone so they don't collide with the alert-toned
-      // note. Missing/empty fields (older payloads predating these 4
-      // fields, or the documented empty-string edge case) simply contribute
-      // no line -- never an empty/blank line.
-      var noteLines = [];
-      if (t.note) {
-        noteLines.push('<div class="entry-note-line">' + escapeHtml(t.note) + '</div>');
-      }
-      if (t.trigger_reason) {
-        noteLines.push('<div class="entry-note-line entry-reason-line">' + escapeHtml(t.trigger_reason) + '</div>');
-      }
-      if (t.invalidation_reason) {
-        noteLines.push('<div class="entry-note-line entry-reason-line">' + escapeHtml(t.invalidation_reason) + '</div>');
-      }
-      var noteRow = noteLines.length
-        ? '<tr class="entry-note-row"><td colspan="7">' + noteLines.join("") + '</td></tr>'
-        : "";
-      return mainRow + noteRow;
+      return html;
     }).join("");
+    // All tranches were breakouts: the price sits below the whole ladder.
+    if (!priceRowDone && lastKind === "breakout") rows += priceRow();
 
-    // target_reason/size_reason are plan-level facts repeated identically on
-    // every tranche (exactly like target/size_pct's underlying rule already
-    // is) -- show each ONCE below the table rather than once per row.
+    // Every "why" sentence is either plan-level (target/size reasons,
+    // identical on every tranche) or repeats per kind (the two stop rules)
+    // or per source (trigger reasons) -- show each distinct one ONCE in a
+    // collapsed explainer instead of under every row.
+    var explain = [];
+    var seenLevel = {};
+    var levelItems = [];
+    entryPlan.forEach(function (t) {
+      var src = entrySourceLabel(t.trigger);
+      if (t && t.trigger_reason && !seenLevel[t.trigger_reason]) {
+        seenLevel[t.trigger_reason] = true;
+        levelItems.push('<li>' + (src ? '<b>' + escapeHtml(src) + ':</b> ' : '') + escapeHtml(t.trigger_reason) + '</li>');
+      }
+    });
+    if (levelItems.length) {
+      explain.push('<div class="entry-legend-line"><b>Levels</b></div><ul class="entry-explain-list">' + levelItems.join("") + '</ul>');
+    }
+    var stopItems = [];
+    ["breakout", "dip"].forEach(function (kind) {
+      for (var i = 0; i < entryPlan.length; i++) {
+        var t = entryPlan[i];
+        if (t && t.kind === kind && t.invalidation_reason) {
+          stopItems.push('<li><b>' + (kind === "dip" ? "Dip stop (shared)" : "Breakout stop (per row)") + ':</b> ' +
+            escapeHtml(t.invalidation_reason) + '</li>');
+          return;
+        }
+      }
+    });
+    if (stopItems.length) {
+      explain.push('<div class="entry-legend-line"><b>Invalidation</b></div><ul class="entry-explain-list">' + stopItems.join("") + '</ul>');
+    }
     var targetReason = firstTruthyField(entryPlan, "target_reason");
     var sizeReason = firstTruthyField(entryPlan, "size_reason");
-    var legendLines = [];
     if (targetReason) {
-      legendLines.push('<div class="entry-legend-line"><b>Target:</b> ' + escapeHtml(targetReason) + '</div>');
+      explain.push('<div class="entry-legend-line"><b>Target:</b> ' + escapeHtml(targetReason) + '</div>');
     }
     if (sizeReason) {
-      legendLines.push('<div class="entry-legend-line"><b>Sizing:</b> ' + escapeHtml(sizeReason) + '</div>');
+      explain.push('<div class="entry-legend-line"><b>Sizing:</b> ' + escapeHtml(sizeReason) + '</div>');
     }
-    var legend = legendLines.length ? '<div class="entry-legend">' + legendLines.join("") + '</div>' : "";
+    var legend = explain.length
+      ? '<details class="tech-disclosure entry-explain">' +
+          '<summary class="tech-toggle">How this plan works</summary>' +
+          '<div class="entry-legend">' + explain.join("") + '</div>' +
+        '</details>'
+      : "";
 
     return (
       '<div class="card"><div class="card-title">Staged Entry Plan</div>' + sub +
@@ -5728,7 +5990,7 @@
         ? methodSummaryCardHtml(technical, "Technical Analysis Methods Used")
         : "") +
       technicalCardHtml(technical, result.technical_verdict || technical.verdict, payload.horizon) +
-      entryPlanHtml(result.entry_plan) +
+      entryPlanHtml(result.entry_plan, payload.price) +
       stopAddingHtml(result.stop_adding);
 
     // -- Risk: what breaks the thesis. The two open cards are the ones tied

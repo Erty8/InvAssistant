@@ -233,7 +233,7 @@ def test_build_peer_snapshot_shape_and_coverage(patched):
     assert set(snap["indexes"]) == {"SP500", "NDX"}
     assert snap["universe_size"] == 8  # AAA..GGG (6) + HHH, III (2)
     assert snap["covered"] == 7  # everyone except GGG (no cik) has metrics
-    assert snap["skipped"] == [{"ticker": "GGG", "reason": "Kullanılabilir CIK yok"}]
+    assert snap["skipped"] == [{"ticker": "GGG", "reason": "No usable CIK"}]
     assert snap["frames_missing"] == []
     assert snap["frames_fetched"] == 10  # 2x Revenue (cur+prior) + 8 other concepts
 
@@ -478,7 +478,7 @@ def test_note_neutral_fallback_when_nothing_clears_either_band():
     result = peers.rank_against_peers({"net_margin": 0.205}, "Widgets", snap)
     assert result["strengths"] == []
     assert result["weaknesses"] == []
-    assert result["note"] == "40 emsale göre belirgin bir ayrışma yok."
+    assert result["note"] == "No notable divergence versus 40 peers."
 
 
 def test_note_mentions_sector_and_standout_metrics(snapshot):
@@ -493,8 +493,8 @@ def test_note_mentions_sector_and_standout_metrics(snapshot):
     assert result["strengths"] == ["fcf_margin", "net_margin"]  # tie at 80.0, alphabetical tiebreak
     assert result["weaknesses"] == []
     assert result["note"] == (
-        "Information Technology sektöründeki 5 emsale göre "
-        "FCF marjı (80. yüzdelik) ve net marj (80. yüzdelik) güçlü."
+        "Versus 5 peers in the Information Technology sector, "
+        "strong in FCF margin (80th percentile) and net margin (80th percentile)."
     )
     assert "None" not in result["note"]
     assert "nan" not in result["note"].lower()
@@ -521,7 +521,7 @@ def test_rank_against_peers_no_mismatch_when_years_match(snapshot):
     assert result["year"] == _YEAR
     assert result["company_fy"] == _YEAR
     assert result["fy_mismatch"] is False
-    assert "yıllar farklı" not in result["note"]
+    assert "different years" not in result["note"]
 
 
 def test_rank_against_peers_flags_mismatch_when_company_fy_is_newer(snapshot):
@@ -531,7 +531,7 @@ def test_rank_against_peers_flags_mismatch_when_company_fy_is_newer(snapshot):
     assert result["year"] == _YEAR  # 2024, the peer snapshot's fixed year
     assert result["company_fy"] == 2026
     assert result["fy_mismatch"] is True
-    assert result["note"].endswith("(şirket FY2026, emsal kesiti FY2024 — yıllar farklı).")
+    assert result["note"].endswith("(company FY2026, peer snapshot FY2024 — different years).")
 
 
 def test_rank_against_peers_no_mismatch_flag_when_company_fy_unknown(snapshot):
@@ -543,7 +543,7 @@ def test_rank_against_peers_no_mismatch_flag_when_company_fy_unknown(snapshot):
 
     assert result["company_fy"] is None
     assert result["fy_mismatch"] is False
-    assert "yıllar farklı" not in result["note"]
+    assert "different years" not in result["note"]
 
 
 def test_rank_against_peers_mismatch_caveat_appended_to_neutral_note():
@@ -559,7 +559,7 @@ def test_rank_against_peers_mismatch_caveat_appended_to_neutral_note():
             },
         },
     }
-    # Same neutral-band value as the earlier "belirgin bir ayrışma yok" test,
+    # Same neutral-band value as the earlier "No notable divergence" test,
     # but this time the filer's own fy is newer than the snapshot's -- the
     # caveat must still be appended even when neither band fired.
     result = peers.rank_against_peers({"net_margin": 0.205, "fy": 2025}, "Widgets", snap)
@@ -568,8 +568,8 @@ def test_rank_against_peers_mismatch_caveat_appended_to_neutral_note():
     assert result["weaknesses"] == []
     assert result["fy_mismatch"] is True
     assert result["note"] == (
-        "40 emsale göre belirgin bir ayrışma yok. "
-        "(şirket FY2025, emsal kesiti FY2024 — yıllar farklı)."
+        "No notable divergence versus 40 peers. "
+        "(company FY2025, peer snapshot FY2024 — different years)."
     )
 
 

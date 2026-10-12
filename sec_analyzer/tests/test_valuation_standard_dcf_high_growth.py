@@ -38,7 +38,7 @@ def test_no_flag_when_all_scenarios_at_or_below_threshold():
 
     assert scenarios is not None
     assert high_growth_flag is False
-    assert not any("büyüme varsayımı %40" in note for note in notes)
+    assert not any("exceeds 40%" in note for note in notes)
 
 
 def test_flag_set_and_note_added_when_base_growth_exceeds_threshold():
@@ -48,7 +48,7 @@ def test_flag_set_and_note_added_when_base_growth_exceeds_threshold():
 
     assert scenarios is not None
     assert high_growth_flag is True
-    matching = [note for note in notes if "büyüme varsayımı %40" in note]
+    matching = [note for note in notes if "exceeds 40%" in note]
     assert len(matching) == 1
     assert "Base" in matching[0]
     assert "Bull" in matching[0]
@@ -61,7 +61,7 @@ def test_flag_note_mentions_all_triggering_scenarios():
     _, notes, high_growth_flag = _build_dcf_scenarios(assumptions, _FCF0, _SHARES, _DILUTION)
 
     assert high_growth_flag is True
-    matching = [note for note in notes if "büyüme varsayımı %40" in note]
+    matching = [note for note in notes if "exceeds 40%" in note]
     assert len(matching) == 1
     assert "Bear" in matching[0]
     assert "Base" in matching[0]

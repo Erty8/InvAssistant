@@ -464,7 +464,7 @@ def test_cluster_buy_is_strong_alim():
         _txn("2026-07-02", "P", "Bob", shares=500, price=12.0),
     ]
     activity = insider_signal.detect_insider_activity(_fetched(txns), today=_TODAY)
-    assert activity["verdict"] == "GÜÇLÜ ALIM"
+    assert activity["verdict"] == "STRONG BUY"
     assert activity["severity"] == "positive"
     assert activity["cluster_buy"] is True
     assert activity["buyers"] == ["Alice", "Bob"]
@@ -473,7 +473,7 @@ def test_cluster_buy_is_strong_alim():
 def test_single_buy_is_alim():
     txns = [_txn("2026-07-01", "P", "Alice", shares=1000, price=10.0)]
     activity = insider_signal.detect_insider_activity(_fetched(txns), today=_TODAY)
-    assert activity["verdict"] == "ALIM"
+    assert activity["verdict"] == "BUY"
     assert activity["severity"] == "positive"
     assert activity["cluster_buy"] is False
 
@@ -509,7 +509,7 @@ def test_two_derivative_buyers_do_not_trigger_cluster_buy():
     activity = insider_signal.detect_insider_activity(_fetched(txns), today=_TODAY)
 
     assert activity["cluster_buy"] is False
-    assert activity["verdict"] == "NÖTR"
+    assert activity["verdict"] == "NEUTRAL"
     assert activity["severity"] == "neutral"
     assert activity["derivative_buy_count"] == 2
 
@@ -530,7 +530,7 @@ def test_derivative_counts_are_zero_when_no_derivative_open_market_rows():
     activity = insider_signal.detect_insider_activity(_fetched(txns), today=_TODAY)
     assert activity["derivative_buy_count"] == 0
     assert activity["derivative_sell_count"] == 0
-    assert "türev" not in activity["note"]
+    assert "derivative" not in activity["note"]
 
 
 def test_transaction_count_and_recent_still_include_derivative_rows():
@@ -552,8 +552,8 @@ def test_note_carries_derivative_exclusion_clause_when_present():
         _txn("2026-07-03", "S", "Carol", shares=200, price=100.0, derivative=True),
     ]
     activity = insider_signal.detect_insider_activity(_fetched(txns), today=_TODAY)
-    assert "2 türev" in activity["note"]
-    assert "toplamlara dahil edilmedi" in activity["note"]
+    assert "2 derivative" in activity["note"]
+    assert "excluded from the totals" in activity["note"]
 
 
 def test_mixed_non_derivative_and_derivative_buy_counts_separately():
@@ -571,7 +571,7 @@ def test_sells_only_is_satis_agirlikli_neutral():
     with no stake-disposal evidence must NOT read as bearish."""
     txns = [_txn("2026-07-01", "S", "Alice", shares=1000, price=10.0)]
     activity = insider_signal.detect_insider_activity(_fetched(txns), today=_TODAY)
-    assert activity["verdict"] == "SATIŞ AĞIRLIKLI"
+    assert activity["verdict"] == "SELL-WEIGHTED"
     assert activity["severity"] == "neutral"
 
 
@@ -588,7 +588,7 @@ def test_regression_zero_buys_several_sells_small_stake_is_satis_agirlikli_not_y
     assert activity["buy_count"] == 0
     assert activity["cluster_sell"] is True
     assert activity["median_stake_sold_pct"] == pytest.approx(3.0)
-    assert activity["verdict"] == "SATIŞ AĞIRLIKLI"
+    assert activity["verdict"] == "SELL-WEIGHTED"
     assert activity["severity"] == "neutral"
 
 
@@ -600,7 +600,7 @@ def test_cluster_sell_median_stake_at_threshold_is_yogun_satis():
     ]
     activity = insider_signal.detect_insider_activity(_fetched(txns), today=_TODAY)
     assert activity["median_stake_sold_pct"] == pytest.approx(25.0)
-    assert activity["verdict"] == "YOĞUN SATIŞ"
+    assert activity["verdict"] == "HEAVY SELLING"
     assert activity["severity"] == "negative"
 
 
@@ -612,9 +612,9 @@ def test_cluster_sell_median_stake_above_threshold_is_yogun_satis():
     ]
     activity = insider_signal.detect_insider_activity(_fetched(txns), today=_TODAY)
     assert activity["median_stake_sold_pct"] == pytest.approx(41.0)
-    assert activity["verdict"] == "YOĞUN SATIŞ"
+    assert activity["verdict"] == "HEAVY SELLING"
     assert activity["severity"] == "negative"
-    assert "%41,0" in activity["note"]
+    assert "41.0%" in activity["note"]
 
 
 def test_cluster_sell_median_stake_just_below_threshold_is_satis_agirlikli():
@@ -625,7 +625,7 @@ def test_cluster_sell_median_stake_just_below_threshold_is_satis_agirlikli():
     ]
     activity = insider_signal.detect_insider_activity(_fetched(txns), today=_TODAY)
     assert activity["median_stake_sold_pct"] == pytest.approx(24.9)
-    assert activity["verdict"] == "SATIŞ AĞIRLIKLI"
+    assert activity["verdict"] == "SELL-WEIGHTED"
     assert activity["severity"] == "neutral"
 
 
@@ -639,7 +639,7 @@ def test_cluster_sell_with_no_parseable_stake_falls_through_to_satis_agirlikli()
     activity = insider_signal.detect_insider_activity(_fetched(txns), today=_TODAY)
     assert activity["cluster_sell"] is True
     assert activity["median_stake_sold_pct"] is None
-    assert activity["verdict"] == "SATIŞ AĞIRLIKLI"
+    assert activity["verdict"] == "SELL-WEIGHTED"
     assert activity["severity"] == "neutral"
 
 
@@ -651,7 +651,7 @@ def test_buy_outsold_by_value_is_karisik_neutral():
     activity = insider_signal.detect_insider_activity(_fetched(txns), today=_TODAY)
     assert activity["buy_count"] == 1
     assert activity["buy_value"] < activity["sell_value"]
-    assert activity["verdict"] == "KARIŞIK"
+    assert activity["verdict"] == "MIXED"
     assert activity["severity"] == "neutral"
 
 
@@ -699,14 +699,14 @@ def test_truncated_propagates_from_fetched_to_activity_and_summary():
     assert truncated_activity["truncated"] is True
     assert complete_activity["truncated"] is False
 
-    assert insider_signal.summarize_insider(truncated_activity).endswith(" (kısmi)")
-    assert not insider_signal.summarize_insider(complete_activity).endswith(" (kısmi)")
+    assert insider_signal.summarize_insider(truncated_activity).endswith(" (partial)")
+    assert not insider_signal.summarize_insider(complete_activity).endswith(" (partial)")
 
 
 def test_awards_only_is_notr_and_compensation_only():
     txns = [_txn("2026-07-01", "A", "Alice", shares=500, price=0.0)]
     activity = insider_signal.detect_insider_activity(_fetched(txns), today=_TODAY)
-    assert activity["verdict"] == "NÖTR"
+    assert activity["verdict"] == "NEUTRAL"
     assert activity["severity"] == "neutral"
     assert activity["compensation_only"] is True
     assert activity["buy_count"] == 0
@@ -769,15 +769,15 @@ def test_role_label_precedence():
     )
     roles = {r["person"]: r["role"] for r in activity["recent"]}
     assert roles["A"] == "CFO"
-    assert roles["B"] == "Yönetici"
-    assert roles["C"] == "Yönetim Kurulu Üyesi"
-    assert roles["D"] == "%10 Ortak"
-    assert roles["E"] == "İçeriden"
+    assert roles["B"] == "Officer"
+    assert roles["C"] == "Director"
+    assert roles["D"] == "10% Owner"
+    assert roles["E"] == "Insider"
 
 
 def test_summarize_insider_none_is_yok():
-    assert insider_signal.summarize_insider(None) == "yok"
-    assert insider_signal.summarize_insider({}) == "yok"
+    assert insider_signal.summarize_insider(None) == "none"
+    assert insider_signal.summarize_insider({}) == "none"
 
 
 def test_summarize_insider_never_contains_none_or_nan():

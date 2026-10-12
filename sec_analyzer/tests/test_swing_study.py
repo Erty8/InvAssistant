@@ -328,7 +328,7 @@ def test_run_swing_study_carries_limitations_and_disclaimer(monkeypatch, force_t
 
     assert result["disclaimer"] == BACKTEST_DISCLAIMER
     assert result["limitations"]
-    assert "hayatta kal" in result["limitations"][0].lower()  # survivorship bias, listed first/dominant
+    assert "survivorship" in result["limitations"][0].lower()  # survivorship bias, listed first/dominant
 
 
 def test_run_swing_study_never_raises_for_a_bad_ticker(monkeypatch, force_thread_pool):

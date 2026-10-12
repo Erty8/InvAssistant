@@ -72,10 +72,10 @@ def _verdict_row(**overrides):
     row = {
         "analyzed_at": "2026-07-02T10:11:12",
         "price": 100.0,
-        "fundamental_verdict": "UCUZ",
-        "technical_verdict": "NÖTR",
-        "momentum_verdict": "POZİTİF",
-        "confidence": "ORTA",
+        "fundamental_verdict": "CHEAP",
+        "technical_verdict": "NEUTRAL",
+        "momentum_verdict": "POSITIVE",
+        "confidence": "MEDIUM",
         "sector_type": "mature",
         "fv_base_lo": 90.0,
         "fv_base_hi": 110.0,
@@ -311,7 +311,7 @@ def test_no_stored_verdict_yields_stale_and_none_fields(monkeypatch):
     row = scan_preearnings(["AAA"], today=TODAY)["rows"][0]
 
     assert row["stale_verdict"] is True
-    assert any("kayıtlı analiz yok" in n for n in row["notes"])
+    assert any("No analysis on file" in n for n in row["notes"])
     for field in (
         "verdict", "technical_verdict", "momentum_verdict", "confidence", "sector_type",
         "horizon", "verdict_date", "verdict_age_days", "price", "fv_base_lo", "fv_base_hi",
@@ -342,7 +342,7 @@ def test_estimate_next_earnings_none_is_skipped_not_crashed(monkeypatch):
     result = scan_preearnings(["AAA"], today=TODAY)
 
     assert result["rows"] == []
-    assert result["skipped"] == [{"ticker": "AAA", "reason": "kazanç tarihi tahmin edilemedi"}]
+    assert result["skipped"] == [{"ticker": "AAA", "reason": "could not estimate earnings date"}]
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +391,7 @@ def test_notes_never_contain_none_or_nan_strings(monkeypatch):
             label="1 Ağu tarihinde açıklandı · sonraki: Q1 earnings ~1 Kas",
         ),
     }
-    verdicts = {"BBB": _verdict_row(confidence="DÜŞÜK", fundamental_verdict="PAHALI", momentum_verdict="POZİTİF")}
+    verdicts = {"BBB": _verdict_row(confidence="LOW", fundamental_verdict="EXPENSIVE", momentum_verdict="POSITIVE")}
     quarters = [
         {"period": "p1", "eps_estimate": 1.0, "eps_actual": None, "surprise_pct": None},
         {"period": "p2", "eps_estimate": 1.0, "eps_actual": None, "surprise_pct": None},
@@ -413,11 +413,11 @@ def test_notes_never_contain_none_or_nan_strings(monkeypatch):
 
 
 def test_format_surprise_pct_positive():
-    assert format_surprise_pct(8.4) == "+%8,4"
+    assert format_surprise_pct(8.4) == "+8.4%"
 
 
 def test_format_surprise_pct_negative():
-    assert format_surprise_pct(-2.1) == "-%2,1"
+    assert format_surprise_pct(-2.1) == "-2.1%"
 
 
 def test_format_surprise_pct_none():
@@ -448,7 +448,7 @@ def _neutral_row(**overrides):
         "beat_count": 0,
         "avg_surprise_pct": None,
         "events": [],
-        "confidence": "ORTA",
+        "confidence": "MEDIUM",
     }
     row.update(overrides)
     return row
@@ -460,13 +460,13 @@ def test_notes_baseline_neutral_row_has_no_notes():
 
 def test_note_rule1_no_stored_verdict():
     row = _neutral_row(verdict_date=None, verdict_age_days=None)
-    assert _build_notes(row) == ["Bu isim için kayıtlı analiz yok — bilanço öncesi bir analiz çalıştırın."]
+    assert _build_notes(row) == ["No analysis on file for this name — run one before earnings."]
 
 
 def test_note_rule2_stale_verdict_fires_past_threshold():
     row = _neutral_row(verdict_age_days=DEFAULT_STALE_DAYS + 1)
     notes = _build_notes(row)
-    assert notes == [f"Kayıtlı analiz {DEFAULT_STALE_DAYS + 1} günlük — bilanço öncesi yenilenmeli."]
+    assert notes == [f"Stored analysis is {DEFAULT_STALE_DAYS + 1} days old — refresh before earnings."]
 
 
 def test_note_rule2_does_not_fire_at_threshold_boundary():
@@ -478,14 +478,15 @@ def test_note_rule3_just_reported():
     row = _neutral_row(
         just_reported=True,
         days_until=90,
-        catalyst_label="7 Ağu tarihinde açıklandı · sonraki: Q3 earnings ~5 Kas",
+        # Real filings.py format (English since 871d391).
+        catalyst_label="Reported on 7 Aug · next: Q3 earnings ~5 Nov",
     )
-    assert _build_notes(row) == ["7 Ağu tarihinde açıklandı; sıradaki katalizör bir sonraki çeyrek."]
+    assert _build_notes(row) == ["Reported on 7 Aug; the next catalyst is the following quarter."]
 
 
 def test_note_rule4_imminent_earnings():
     row = _neutral_row(days_until=2)
-    assert _build_notes(row) == ["Bilanço 2 gün içinde — yeni pozisyon açmak için zamanlama riski yüksek."]
+    assert _build_notes(row) == ["Earnings in 2 days — timing risk is high for opening a new position."]
 
 
 def test_note_rule4_does_not_fire_above_threshold():
@@ -498,53 +499,53 @@ def test_note_rule4_does_not_fire_when_just_reported_even_if_imminent():
         days_until=1, just_reported=True, catalyst_label="6 Ağu tarihinde açıklandı · sonraki: ..."
     )
     notes = _build_notes(row)
-    assert not any("gün içinde" in n for n in notes)
+    assert not any("days — timing risk" in n for n in notes)
 
 
-@pytest.mark.parametrize("momentum", ["POZİTİF", "GÜÇLÜ+"])
-def test_note_rule5_ucuz_with_positive_momentum(momentum):
-    row = _neutral_row(verdict="UCUZ", momentum_verdict=momentum)
-    assert _build_notes(row) == ["UCUZ değerleme ile pozitif momentum aynı yönde — bilanço teyit edici olabilir."]
+@pytest.mark.parametrize("momentum", ["POSITIVE", "STRONG+"])
+def test_note_rule5_cheap_with_positive_momentum(momentum):
+    row = _neutral_row(verdict="CHEAP", momentum_verdict=momentum)
+    assert _build_notes(row) == ["A CHEAP valuation lines up with positive momentum — earnings could be confirmatory."]
 
 
-def test_note_rule5_ucuz_with_negative_momentum():
-    row = _neutral_row(verdict="UCUZ", momentum_verdict="NEGATİF")
-    assert _build_notes(row) == ["Model UCUZ diyor ama momentum negatif; bilanço bu ayrışmayı çözebilecek katalizör."]
+def test_note_rule5_cheap_with_negative_momentum():
+    row = _neutral_row(verdict="CHEAP", momentum_verdict="NEGATIVE")
+    assert _build_notes(row) == ["The model says CHEAP but momentum is negative; earnings could be the catalyst that resolves this divergence."]
 
 
-def test_note_rule5_pahali_with_positive_momentum():
-    row = _neutral_row(verdict="PAHALI", momentum_verdict="POZİTİF")
-    assert _build_notes(row) == ["PAHALI değerleme momentumla taşınıyor; bilanço bir kırılma noktası."]
+def test_note_rule5_expensive_with_positive_momentum():
+    row = _neutral_row(verdict="EXPENSIVE", momentum_verdict="POSITIVE")
+    assert _build_notes(row) == ["An EXPENSIVE valuation is being carried by momentum; earnings is a potential inflection point."]
 
 
-def test_note_rule5_pahali_with_negative_momentum_no_note():
-    row = _neutral_row(verdict="PAHALI", momentum_verdict="NEGATİF")
+def test_note_rule5_expensive_with_negative_momentum_no_note():
+    row = _neutral_row(verdict="EXPENSIVE", momentum_verdict="NEGATIVE")
     assert _build_notes(row) == []
 
 
 def test_note_rule5_neutral_momentum_no_note():
-    row = _neutral_row(verdict="UCUZ", momentum_verdict="NÖTR")
+    row = _neutral_row(verdict="CHEAP", momentum_verdict="NEUTRAL")
     assert _build_notes(row) == []
 
 
 def test_note_rule5_unrecognized_momentum_no_note():
-    row = _neutral_row(verdict="UCUZ", momentum_verdict="BILINMIYOR")
+    row = _neutral_row(verdict="CHEAP", momentum_verdict="BILINMIYOR")
     assert _build_notes(row) == []
 
 
 def test_note_rule5_no_note_when_verdict_unknown():
-    row = _neutral_row(verdict=None, momentum_verdict="NEGATİF")
+    row = _neutral_row(verdict=None, momentum_verdict="NEGATIVE")
     assert _build_notes(row) == []
 
 
 def test_note_rule6_beat_record():
     row = _neutral_row(surprises=[{}, {}, {}, {}], beat_count=3, avg_surprise_pct=8.4)
-    assert _build_notes(row) == ["Son 4 çeyrekte 3 kez beklentiyi aştı (ort. +%8,4)."]
+    assert _build_notes(row) == ["Beat consensus 3 times in the last 4 quarters (avg. +8.4%)."]
 
 
 def test_note_rule6_all_miss():
     row = _neutral_row(surprises=[{}, {}, {}], beat_count=0, avg_surprise_pct=-5.0)
-    assert _build_notes(row) == ["Son 3 çeyrekte hiç beklentiyi aşamadı."]
+    assert _build_notes(row) == ["Missed consensus in all of the last 3 quarters."]
 
 
 def test_note_rule6_does_not_fire_below_three_quarters():
@@ -555,7 +556,7 @@ def test_note_rule6_does_not_fire_below_three_quarters():
 def test_note_rule7_material_events():
     row = _neutral_row(events=[{"categories": ["Üst düzey yönetici/kurul değişikliği"]}])
     assert _build_notes(row) == [
-        f"Son {preearnings._EVENTS_LOOKBACK_DAYS} günde materyal dosyalama olayı var: "
+        f"Material filing event in the last {preearnings._EVENTS_LOOKBACK_DAYS} days: "
         "Üst düzey yönetici/kurul değişikliği."
     ]
 
@@ -566,10 +567,10 @@ def test_note_rule7_does_not_fire_without_events():
 
 
 def test_note_rule8_low_confidence():
-    row = _neutral_row(confidence="DÜŞÜK")
-    assert _build_notes(row) == ["Değerleme güveni DÜŞÜK; bilanço sonrası bandın kayması olası."]
+    row = _neutral_row(confidence="LOW")
+    assert _build_notes(row) == ["Valuation confidence is LOW; the band may shift after earnings."]
 
 
 def test_note_rule8_does_not_fire_for_other_confidence():
-    row = _neutral_row(confidence="YÜKSEK")
+    row = _neutral_row(confidence="HIGH")
     assert _build_notes(row) == []

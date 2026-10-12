@@ -80,8 +80,15 @@ from sec_analyzer.normalize.red_flags import detect_red_flags
 from sec_analyzer.report.financials import serialize_financials
 from sec_analyzer.report.generator import generate_report
 from sec_analyzer.interpret import planning, rule_based
+from sec_analyzer.screener.funding import (
+    DISCLAIMER as FUNDING_DISCLAIMER,
+    build_payload as build_funding_payload,
+    render_table as render_funding_table,
+    run_funding_screen,
+)
 from sec_analyzer.screener.overview import build_overview, sector_type_label
 from sec_analyzer.screener.peers import (
+    _ordinal_suffix,
     build_peer_snapshot,
     metrics_from_normalized,
     rank_against_peers,
@@ -93,15 +100,17 @@ from sec_analyzer.screener.preearnings import (
     scan_preearnings,
 )
 from sec_analyzer.screener.swing_scan import DEFAULT_MAX_WORKERS, scan_swing
-from sec_analyzer.screener.universe import load_universe, normalize_index
+from sec_analyzer.screener.universe import load_universe, normalize_index, universe_label
 from sec_analyzer.signals.events import detect_events, summarize_events
 from sec_analyzer.signals.insider import detect_insider_activity, summarize_insider
 from sec_analyzer.signals.macro import build_macro_context, summarize_macro
 from sec_analyzer.store import assumptions as assumptions_store
 from sec_analyzer.valuation import damodaran
+from sec_analyzer.valuation import reverse_dcf as reverse_dcf_module
 from sec_analyzer.valuation.capm import compute_cost_of_equity
 from sec_analyzer.valuation.sanity import clamp_assumptions, validate_assumptions
 from sec_analyzer.valuation.sector import SECTOR_FINANCIAL, _is_deposit_funded, classify_sector
+from sec_analyzer.valuation.triangulate import SIGNAL_MIXED
 from sec_analyzer.signals.momentum import (
     compute_fundamental_momentum,
     compute_verdict_momentum,
@@ -120,6 +129,7 @@ from sec_analyzer.store.database import (
     save_verdict,
 )
 from sec_analyzer.technical.indicators import compute_indicators, relative_strength
+from sec_analyzer.technical.action import compute_technical_action
 from sec_analyzer.technical.momentum import compute_price_momentum, sector_etf_for_sic
 from sec_analyzer.technical.verdict import technical_verdict
 
@@ -286,6 +296,7 @@ def _fetch_price_and_technical(
         indicators["momentum"] = compute_price_momentum(indicators)
         verdict_result = technical_verdict(indicators, horizon)
         technical = {**indicators, **verdict_result}
+        technical["action"] = compute_technical_action(technical, horizon)
         # Provenance of the price series these indicators were computed from,
         # carried here rather than widening this function's return tuple
         # (four call sites plus test fakes). The report names the source
@@ -385,8 +396,10 @@ def _enrich_sector_momentum(ticker, technical, price_df, submissions, no_cache, 
             sector_rs = _fetch_relative_strength(ticker, price_df, no_cache, as_of, benchmark=etf)
             if sector_rs is not None:
                 technical["relative_strength_sector"] = sector_rs
-        # Recompute momentum so the sector-relative component is included.
+        # Recompute momentum so the sector-relative component is included,
+        # then the action that reads it.
         technical["momentum"] = compute_price_momentum(technical)
+        technical["action"] = compute_technical_action(technical, technical.get("horizon") or "1y")
     except Exception:  # noqa: BLE001 - display-only enrichment, never fatal
         logger.warning("Could not enrich sector momentum for %s", ticker, exc_info=True)
 
@@ -883,21 +896,91 @@ def _reverse_dcf_line(result: dict, valuation: dict) -> str:
     provider, or a commentary that left the field empty).
     """
     label = "Reverse DCF:".ljust(_CARD_LABEL_WIDTH)
+    reverse_dcf = valuation.get("reverse_dcf") or {}
+    # SPEC.md Sec.28d: flag the normalized-FCF basis and show the raw solve.
+    suffix = ""
+    if reverse_dcf.get("fcf0_basis") == "normalized":
+        raw_text = _format_bracketed_growth(reverse_dcf.get("implied_growth_raw"), reverse_dcf.get("bracket_status_raw"))
+        suffix = f" [normalized FCF; raw: {raw_text}]"
+
     comment = result.get("reverse_dcf_comment")
     if comment:
-        return f"{label}{comment}"
+        return f"{label}{comment}{suffix}"
 
-    reverse_dcf = valuation.get("reverse_dcf") or {}
     implied = reverse_dcf.get("implied_growth")
-    if implied is None:
+    status = reverse_dcf.get("bracket_status")
+    out_of_bracket = (reverse_dcf_module.STATUS_ABOVE_BRACKET, reverse_dcf_module.STATUS_BELOW_BRACKET)
+    if implied is None and status not in out_of_bracket:
         return f"{label}{_DASH}"
 
     realized_label = reverse_dcf.get("realized_label") or _DASH
     realized_text = _format_pct_signed(reverse_dcf.get("realized_cagr_5y"))
+
+    # The solved rate is a constant 5-year growth followed by a 5-year
+    # linear fade to terminal growth (SPEC.md Sec.4), not a 10-year CAGR.
+    if implied is None:
+        return (
+            f"{label}price implies 5y growth (then fade) {_format_bracketed_growth(None, status)}, "
+            f"outside the model bracket (realized {realized_label}: {realized_text}){suffix}"
+        )
     return (
-        f"{label}price implies a 10y {_format_pct_signed(implied)} CAGR "
-        f"(realized {realized_label}: {realized_text})"
+        f"{label}price implies {_format_pct_signed(implied)} 5y growth (then fade) "
+        f"(realized {realized_label}: {realized_text}){suffix}"
     )
+
+
+def _format_growth_pct(value, digits: int = 1) -> str:
+    """Render a decimal-fraction growth rate as ``"21.1%"`` (unicode minus for
+    negatives). Returns :data:`_DASH` for ``None``/non-numeric input."""
+    if value is None:
+        return _DASH
+    try:
+        return f"{float(value) * 100:.{digits}f}%".replace("-", "−")
+    except (TypeError, ValueError):
+        return _DASH
+
+
+def _format_bracketed_growth(value, status: Optional[str]) -> str:
+    """Render a reverse-DCF solve: ``">60%"``/``"<−20%"`` for an out-of-bracket
+    status (bounds from ``reverse_dcf._BRACKET_LO/_HI``), else the growth rate
+    via :func:`_format_growth_pct`."""
+    if status == "above_bracket":
+        return f">{_format_growth_pct(reverse_dcf_module._BRACKET_HI, 0)}"
+    if status == "below_bracket":
+        return f"<{_format_growth_pct(reverse_dcf_module._BRACKET_LO, 0)}"
+    return _format_growth_pct(value)
+
+
+def _rate_sensitivity_line(valuation: dict) -> Optional[str]:
+    """Render the "Rate sens.:" card line (SPEC.md Sec.28d) under the Reverse
+    DCF line, e.g. ``"Rate sens.: r −50bp 21.1% · +50bp 24.8% · +100bp 26.5%
+    (g_t fixed 4.0%)"``. ``None`` (line omitted) when there is no
+    ``reverse_dcf.rate_sensitivity`` block."""
+    block = (valuation.get("reverse_dcf") or {}).get("rate_sensitivity")
+    if not isinstance(block, dict) or not block.get("shifts"):
+        return None
+
+    skip_labels = {
+        "below_rate_floor": "floor",
+        "below_erp_spread": "ERP spread",
+        "rate_at_or_below_terminal_growth": "r ≤ g_t",
+    }
+    parts = []
+    for index, entry in enumerate(block["shifts"]):
+        shift_bp = entry.get("shift_bp")
+        try:
+            shift_text = f"{int(shift_bp):+d}bp".replace("-", "−")
+        except (TypeError, ValueError):
+            shift_text = _DASH
+        status = entry.get("status")
+        if status == "skipped":
+            reason = skip_labels.get(entry.get("skip_reason"))
+            value_text = f"{_DASH} ({reason})" if reason else _DASH
+        else:
+            value_text = _format_bracketed_growth(entry.get("implied_growth"), status)
+        prefix = "r " if index == 0 else ""
+        parts.append(f"{prefix}{shift_text} {value_text}")
+    return f"Rate sens.: {' · '.join(parts)} (g_t fixed {_format_growth_pct(block.get('terminal_growth'))})"
 
 
 def _multiples_line(valuation: dict) -> str:
@@ -907,7 +990,7 @@ def _multiples_line(valuation: dict) -> str:
     EV/Sales in hyper-grower mode) is applicable, renders the compact
     two-component form -- raw percentile · growth-adjusted value (percentile)
     -- appending "→ mixed signal" when the triangulation multiples signal
-    is ``"karisik"`` (the two components disagree on direction, VALUATION.md
+    is ``SIGNAL_MIXED`` (the two components disagree on direction, VALUATION.md
     Sec.7), e.g. ``"P/E 88. pctile · PEG 1.4 (45. pctile) → mixed
     signal"``. When the growth-adjusted figure is not applicable, falls back
     to the original descriptive form (``"P/E is at the Nth percentile of its
@@ -984,13 +1067,17 @@ def _multiples_line(valuation: dict) -> str:
 
         if parts:
             line = " · ".join(parts)
-            if multiples_signal == "karisik":
+            if multiples_signal == SIGNAL_MIXED:
                 line += " → mixed signal"
             return f"{label}{line}"
 
     if primary is not None:
         name, percentile = primary
-        return f"{label}{name} is at the {percentile:.0f}th percentile of its own {history_years}y median"
+        rank = f"{percentile:.0f}"
+        return (
+            f"{label}{name} is at the {rank}{_ordinal_suffix(int(rank))} percentile "
+            f"of its own {history_years}y median"
+        )
 
     return f"{label}insufficient data"
 
@@ -1135,7 +1222,9 @@ def _triangulation_line(valuation: dict) -> str:
     ``"HIGH"`` confidence reads as "clear direction", ``"LOW"``
     as "mixed direction" (mixed signals); anything else (typically ``"MEDIUM"``)
     falls back to the triangulation's own majority ``direction`` word."""
-    label = "Triangulation:".ljust(_CARD_LABEL_WIDTH)
+    # "Triangulation:" (14 chars) is wider than _CARD_LABEL_WIDTH (13), so
+    # ljust alone would glue it to the value; always keep one separating space.
+    label = "Triangulation: "
     triangulation = valuation.get("triangulation") or {}
     signals = triangulation.get("signals") or {}
     confidence = triangulation.get("confidence")
@@ -1508,6 +1597,9 @@ def _print_verdict_card(
 
     if valuation:
         print(_reverse_dcf_line(result, valuation))
+        rate_sens_line = _rate_sensitivity_line(valuation)
+        if rate_sens_line:
+            print(f"  {rate_sens_line}")
         print(_multiples_line(valuation))
         ev_multiples_line = _ev_multiples_line(valuation)
         if ev_multiples_line:
@@ -1916,6 +2008,52 @@ def cmd_swing(args: argparse.Namespace) -> None:
             print("\nWARNING: could not save swing scan to the database.", file=sys.stderr)
 
 
+def cmd_funding_screen(args: argparse.Namespace) -> None:
+    """Handle the ``funding-screen`` subcommand (screener/FUNDING_SPEC.md Sec.7):
+    screen an index (or ``--tickers``) for growth funded by its own cash flow
+    from TTM SEC filings, print one table per group, optionally write JSON.
+
+    A research filter, not a signal. Never crashes on bad tickers: they
+    become error rows and the command still exits normally. User-facing
+    text is English by the spec's approved exception.
+    """
+    if getattr(args, "tickers", None):
+        tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
+        universe = "custom"
+    else:
+        index = normalize_index(getattr(args, "index", None) or "nasdaq100")
+        try:
+            tickers = [row["ticker"] for row in load_universe(index=index)]
+        except OSError as exc:
+            print(f"Could not read universe file: {exc}", file=sys.stderr)
+            sys.exit(1)
+            return
+        universe = universe_label(index)
+
+    try:
+        rows = run_funding_screen(
+            tickers, valuation=args.valuation, no_cache=args.no_cache
+        )
+    except Exception as exc:  # noqa: BLE001 - must not crash the CLI
+        logger.exception("Funding screen failed")
+        print(f"Funding screen failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+        return
+
+    print()
+    print(render_funding_table(rows, args.valuation))
+
+    if getattr(args, "json", None):
+        try:
+            payload = build_funding_payload(rows, universe)
+            with open(args.json, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2, ensure_ascii=False)
+            print(f"\nWrote JSON: {args.json}")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to write funding-screen JSON")
+            print(f"\nWARNING: could not write JSON: {exc}", file=sys.stderr)
+
+
 #: Column widths for the swing-study decile terminal table (SWING_STUDY_SPEC.md
 #: Sec.5): bucket, n, mean excess return %, median, hit rate %, mean score.
 _SWING_STUDY_DECILE_COL_WIDTHS = [8, 8, 16, 12, 10, 12]
@@ -2103,7 +2241,210 @@ def cmd_backtest(args: argparse.Namespace) -> None:
                 print("\nWARNING: could not save swing study to the database.", file=sys.stderr)
         return
 
-    print("Usage: backtest {run|evaluate|report|swing} ...", file=sys.stderr)
+    if action == "action":
+        from sec_analyzer.backtest.action_study import run_action_study
+
+        def _aprogress(done: int, total: int, ticker: str) -> None:
+            if done % _SWING_PROGRESS_STEP == 0 or done == total:
+                logger.info("Action study progress: %d/%d (last: %s)", done, total, ticker)
+
+        try:
+            result = run_action_study(
+                start=args.start, end=args.end, sample_every=args.sample_every,
+                max_workers=args.workers, progress_cb=_aprogress,
+                checkpoint_path=args.checkpoint,
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed study must not crash the CLI
+            logger.exception("Action study failed")
+            print(f"Action study failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+            return
+        _print_action_study_report(result)
+        if args.json:
+            try:
+                with open(args.json, "w", encoding="utf-8") as f:
+                    json.dump(result, f, ensure_ascii=False, indent=1)
+                print(f"\nFull result written to {args.json}")
+            except OSError as exc:
+                print(f"WARNING: could not write {args.json}: {exc}", file=sys.stderr)
+        return
+
+    if action == "factors":
+        from sec_analyzer.backtest.factor_study import run_factor_study
+
+        try:
+            result = run_factor_study(start=args.start, end=args.end, pit=args.pit)
+        except Exception as exc:  # noqa: BLE001 - a failed study must not crash the CLI
+            logger.exception("Factor study failed")
+            print(f"Factor study failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+            return
+        if args.pit:
+            _print_factor_study_pit_report(result)
+        else:
+            _print_factor_study_report(result)
+        if args.json:
+            try:
+                with open(args.json, "w", encoding="utf-8") as f:
+                    json.dump(result, f, ensure_ascii=False, indent=1)
+                print(f"\nFull result written to {args.json}")
+            except OSError as exc:
+                print(f"WARNING: could not write {args.json}: {exc}", file=sys.stderr)
+        return
+
+    print("Usage: backtest {run|evaluate|report|swing|action|factors} ...", file=sys.stderr)
+
+
+def _print_factor_study_pit_report(result: dict) -> None:
+    """Terminal readout of factor study v2 (FACTOR_STUDY_SPEC.md §10)."""
+    def pp(v) -> str:
+        return f"{v:+.2f}pp" if isinstance(v, (int, float)) and not isinstance(v, bool) else "—"
+
+    print(f"\nPrice-factor study v2 — {result.get('universe')}, {result.get('start')} .. {result.get('end')}")
+    if result.get("error"):
+        print(f"ERROR: {result['error']}")
+        return
+    pit = result.get("pit") or {}
+    cov = pit.get("coverage") or {}
+    print(f"Membership file sha256 {str(pit.get('membership_sha256'))[:12]}…, last change {pit.get('membership_last_date')}; "
+          f"{pit.get('tickers_ever_members')} symbols ever members, "
+          f"{pit.get('tickers_without_cached_prices')} without price data; "
+          f"{pit.get('covered_symbols')} covered, of which {pit.get('covered_symbols_not_current_members')} "
+          "are former members (ticker-recycling exposure).")
+    print(f"Coverage (covered members / members): mean {cov.get('mean')}, "
+          f"{cov.get('dates_at_or_above_90pct')} dates at ≥ 90%.")
+    print("  by year: " + "  ".join(f"{y} {v:.2f}" for y, v in (cov.get("by_year") or {}).items() if v is not None))
+    print("Forward windows dropped (stock stopped trading), % of matured rows: "
+          + "  ".join(f"{h}d {v}%" for h, v in (pit.get("forward_dropped_pct_of_matured_rows") or {}).items()))
+
+    v1 = result.get("v1_confirmation_primary_spreads") or {}
+    for name in ("primary", "secondary"):
+        block = pit.get(name)
+        if not block:
+            print(f"\n{name.upper()}: no usable dates.")
+            continue
+        title = "PRIMARY (verdicts)" if name == "primary" else "SECONDARY (coverage ≥ 90%)"
+        print(f"\n{title}: {block['tickers']} tickers, {block['dates_used']} dates")
+        for fid, f in block["factors"].items():
+            m = f["by_horizon"][str(f["primary_horizon"])]
+            c = f["costs"]
+            robust = f"  robust: {'yes' if f.get('robust') else 'no'}" if name == "primary" else ""
+            print(f"  {fid} [{f['verdict'].upper()}] {f['label']} ({f['primary_horizon']}d){robust}")
+            print(f"      spread {pp(m['mean_spread_pct'])}  CI {pp(m['ci_low'])} .. {pp(m['ci_high'])}"
+                  f"  | 2005–14 {pp(m['sub_2005_2014'])}  2015– {pp(m['sub_2015_end'])}"
+                  f"  | net 21d {pp(c['net_21d_spread_pct'])} (survives costs: {'yes' if c['survives_costs'] else 'no'})"
+                  + (f"  | v1 {pp(v1.get(fid))}" if name == "primary" else ""))
+
+    print("\nLimitations:")
+    for lim in result.get("limitations") or []:
+        print(f"  - {lim}")
+    print(f"\n{result.get('disclaimer')}")
+
+
+def _print_factor_study_report(result: dict) -> None:
+    """Terminal readout of the factor study (FACTOR_STUDY_SPEC.md): verdicts on
+    the confirmation sample first, then quintile tables, then discovery."""
+    def pp(v) -> str:
+        return f"{v:+.2f}pp" if isinstance(v, (int, float)) and not isinstance(v, bool) else "—"
+
+    print(f"\nPrice-factor study v1 — {result.get('universe')}, {result.get('start')} .. {result.get('end')}")
+    print(f"{result.get('tickers')} tickers; failed {len(result.get('failed') or [])}, "
+          f"excluded (not total-return) {len(result.get('excluded_non_total_return') or [])}; "
+          f"cost {result.get('cost_bp_per_side')} bp per side.")
+    conf, disc = result.get("confirmation"), result.get("discovery")
+    if not conf:
+        print("No usable data.")
+        return
+    print(f"Confirmation sample: {conf['tickers']} tickers, {conf['dates_used']} dates "
+          f"({conf['dates_dropped_thin']} dropped for < 100 names). "
+          "Spread = best − worst quintile forward return, mean over dates; block-bootstrap 95% CI.\n")
+    print("VERDICTS (confirmation sample, primary horizon)")
+    for fid, f in conf["factors"].items():
+        m = f["by_horizon"][str(f["primary_horizon"])]
+        c = f["costs"]
+        print(f"  {fid} [{f['verdict'].upper()}] {f['label']} (best = {f['direction']}, primary {f['primary_horizon']}d)")
+        print(f"      {f['primary_horizon']}d spread {pp(m['mean_spread_pct'])}  CI {pp(m['ci_low'])} .. {pp(m['ci_high'])}"
+              f"  | 2005–14 {pp(m['sub_2005_2014'])}  2015– {pp(m['sub_2015_end'])}  | n={m['n_dates']} dates")
+        others = "  ".join(f"{h}d {pp(v['mean_spread_pct'])}" for h, v in f["by_horizon"].items())
+        print(f"      all horizons: {others}")
+        print(f"      costs: monthly {pp(c['mean_monthly_cost_pct'])}, 21d net {pp(c['net_21d_spread_pct'])}"
+              f" -> survives costs: {'yes' if c['survives_costs'] else 'no'}")
+
+    print("\nQUINTILES (confirmation, primary horizon; Q5 = predicted best)")
+    for fid, f in conf["factors"].items():
+        h = str(f["primary_horizon"])
+        print(f"  {fid} {f['label']} ({h}d)")
+        print(f"    {'Q':<3}{'n':>8}{'vs mean':>10}{'raw':>10}{'hit%':>7}{'stdev':>9}{'ret/sd':>8}")
+        for row in f["quintiles"][h]:
+            hit = row["hit_rate_pct"]
+            sd = row["stdev_raw_pct"]
+            rps = row["return_per_stdev"]
+            hit_s = str(hit) if hit is not None else "—"
+            sd_s = f"{sd:.2f}" if sd is not None else "—"
+            rps_s = f"{rps:.3f}" if rps is not None else "—"
+            print(f"    Q{row['quintile']:<2}{row['n']:>8}{pp(row['mean_rel_pct']):>10}{pp(row['mean_raw_pct']):>10}"
+                  f"{hit_s:>7}{sd_s:>9}{rps_s:>8}")
+
+    if disc:
+        print(f"\nDISCOVERY SAMPLE (no verdict; {disc['tickers']} tickers — the action study's names)")
+        for fid, f in disc["factors"].items():
+            m = f["by_horizon"][str(f["primary_horizon"])]
+            print(f"  {fid} {f['label']}: {f['primary_horizon']}d spread {pp(m['mean_spread_pct'])}"
+                  f"  CI {pp(m['ci_low'])} .. {pp(m['ci_high'])}")
+
+    print("\nLimitations:")
+    for lim in result.get("limitations") or []:
+        print(f"  - {lim}")
+    print(f"\n{result.get('disclaimer')}")
+
+
+def _print_action_study_report(result: dict) -> None:
+    """Terminal readout of the action validation study: hypothesis verdicts
+    first (ACTION_STUDY_SPEC.md §3), then the descriptive tables."""
+    def pct(v) -> str:
+        return f"{v:+.2f}pp" if isinstance(v, (int, float)) and not isinstance(v, bool) else "—"
+    print(
+        f"\nTechnical action study — {result.get('index_label')} "
+        f"(every {result.get('sample_every')}th ticker, {result.get('tickers_scanned')} names), "
+        f"{result.get('start')} .. {result.get('end')}"
+    )
+    print(
+        f"{result.get('rebalance_dates')} monthly dates, {result.get('observations')} observations; "
+        f"skipped {len(result.get('skipped') or [])} tickers, "
+        f"no action {result.get('dropped_no_action')}, no forward bars {result.get('dropped_no_forward')}."
+    )
+    print("Primary metric: forward return minus same-date universe mean (pp). "
+          "Verdict at 21 trading days, date-cluster bootstrap 95% CI.\n")
+    print("HYPOTHESES (pre-registered)")
+    for hid, h in (result.get("hypotheses") or {}).items():
+        m = h["by_horizon"][str(result.get("verdict_horizon", 21))]
+        side = ">" if h["predicted_sign"] > 0 else "<"
+        print(f"  {hid} [{h['verdict'].upper()}] {h['description']} (predicted A−B {side} 0)")
+        print(f"      21d: {pct(m['diff'])}  CI {pct(m['ci_low'])} .. {pct(m['ci_high'])}  "
+              f"(nA={m['n_a']}, nB={m['n_b']})  | 10d {pct(h['by_horizon']['10']['diff'])}"
+              f"  63d {pct(h['by_horizon']['63']['diff'])}"
+              f"  | halves {pct(h['stability_21d']['first_half'])} / {pct(h['stability_21d']['second_half'])}")
+
+    def _rows(title, rows):
+        print(f"\n{title}")
+        print(f"  {'group':<34}{'n':>7}{'10d':>9}{'21d':>9}{'63d':>9}{'hit21':>8}")
+        for r in rows:
+            s21 = r["21"]["rel"]
+            flag = "  (low n)" if s21["low_sample"] else ""
+            print(f"  {r['group']:<34}{s21['n']:>7}{pct(r['10']['rel']['mean']):>9}"
+                  f"{pct(s21['mean']):>9}{pct(r['63']['rel']['mean']):>9}"
+                  f"{(str(s21['hit_rate_pct']) + '%') if s21['hit_rate_pct'] is not None else '—':>8}{flag}")
+
+    d = result.get("descriptive") or {}
+    _rows("BY ACTION (mean date-demeaned return)", d.get("by_action") or [])
+    _rows("UPTREND: EXHAUSTION-SIGN COUNT", d.get("fuel_gradient") or [])
+    _rows("UPTREND: EACH EXHAUSTION CHECK", d.get("exhaustion_checks") or [])
+    _rows("UPTREND: (PRICE − SMA50) / ATR", d.get("extension_atr") or [])
+
+    print("\nLimitations:")
+    for lim in result.get("limitations") or []:
+        print(f"  - {lim}")
+    print(f"\n{result.get('disclaimer')}")
 
 
 def _parse_as_of(value: str) -> date:
@@ -3177,6 +3518,64 @@ def build_parser() -> argparse.ArgumentParser:
     )
     swing_parser.set_defaults(func=cmd_swing)
 
+    # --- funding-screen (self-funded growth screen; screener/FUNDING_SPEC.md) ---
+    funding_parser = subparsers.add_parser(
+        "funding-screen",
+        help=(
+            "Screen an index for growth funded by its own cash flow (TTM SEC "
+            "filings: FCF margin, net debt, dilution). "
+            + FUNDING_DISCLAIMER
+        ),
+        description=(
+            "Self-funded growth screen over TTM SEC filings. "
+            + FUNDING_DISCLAIMER
+        ),
+    )
+    funding_parser.add_argument(
+        "--index",
+        type=str,
+        default="nasdaq100",
+        help=(
+            "Universe: nasdaq100 (default; alias ndx) or sp500. "
+            "Case-insensitive; an unrecognized value falls back to sp500."
+        ),
+    )
+    funding_parser.add_argument(
+        "--tickers",
+        type=str,
+        default=None,
+        help="Comma-separated tickers, e.g. 'AAPL,MSFT'. Overrides --index.",
+    )
+    funding_parser.add_argument(
+        "--valuation",
+        action="store_true",
+        help=(
+            "Add P/FCF, reverse-DCF implied growth (on FCF minus SBC) and a "
+            "heuristic price reading. Runs the full headless pipeline per ticker "
+            "(slower, needs price data); the reading is not a valuation verdict."
+        ),
+    )
+    funding_parser.add_argument(
+        "--json",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Also write the rows and metadata as JSON to PATH.",
+    )
+    funding_parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Bypass the on-disk caches and re-fetch.",
+    )
+    funding_verbosity = funding_parser.add_mutually_exclusive_group()
+    funding_verbosity.add_argument(
+        "--verbose", action="store_true", help="Enable debug logging."
+    )
+    funding_verbosity.add_argument(
+        "--quiet", action="store_true", help="Only log warnings and errors."
+    )
+    funding_parser.set_defaults(func=cmd_funding_screen)
+
     # --- overview (portfolio dashboard over stored verdicts) ---
     overview_parser = subparsers.add_parser(
         "overview",
@@ -3348,6 +3747,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bt_swing.add_argument(
         "--no-save", action="store_true", help="Do not persist the study result to the database.",
+    )
+
+    bt_action = backtest_sub.add_parser(
+        "action",
+        help=(
+            "Validate the technical action's fixed thresholds against forward returns "
+            "(pre-registered; see sec_analyzer/backtest/ACTION_STUDY_SPEC.md)."
+        ),
+    )
+    bt_action.add_argument("--start", type=str, default="2015-01-01", help="ISO start date (default 2015-01-01).")
+    bt_action.add_argument("--end", type=str, default=None, help="ISO end date (default: latest bar).")
+    bt_action.add_argument(
+        "--sample-every", type=int, default=4,
+        help="Use every Nth S&P 500 ticker, alphabetical (default 4; 1 = full index).",
+    )
+    bt_action.add_argument("--workers", type=int, default=None, help="Process-pool size (default min(8, cpu)).")
+    bt_action.add_argument("--json", type=str, default=None, help="Also write the full result to this JSON file.")
+    bt_action.add_argument(
+        "--checkpoint", type=str, default=None,
+        help="JSON-lines file: each finished ticker is saved as it completes; re-running with the same "
+             "file and options resumes instead of recomputing.",
+    )
+
+    bt_factors = backtest_sub.add_parser(
+        "factors",
+        help=(
+            "Price-factor study v1: momentum, reversal, 52-week-high, low volatility "
+            "(pre-registered; see sec_analyzer/backtest/FACTOR_STUDY_SPEC.md)."
+        ),
+    )
+    bt_factors.add_argument("--start", type=str, default="2005-01-01", help="ISO start date (default 2005-01-01).")
+    bt_factors.add_argument("--end", type=str, default=None, help="ISO end date (default: latest bar).")
+    bt_factors.add_argument("--json", type=str, default=None, help="Also write the full result to this JSON file.")
+    bt_factors.add_argument(
+        "--pit", action="store_true",
+        help="v2: point-in-time S&P 500 membership, offline price cache only (FACTOR_STUDY_SPEC.md §10).",
     )
 
     backtest_parser.set_defaults(func=cmd_backtest)

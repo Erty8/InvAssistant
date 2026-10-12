@@ -226,10 +226,10 @@ def test_run_valuation_end_to_end_on_minimal_fixture():
     for key in ("bear", "base", "bull"):
         fv = result["fair_value_range"][key]
         assert fv["lo"] is not None and fv["hi"] is not None
-        assert fv["growth"].endswith("büyüme")
-        assert fv["discount_rate"].startswith("%")
+        assert fv["growth"].endswith("growth")
+        assert fv["discount_rate"].endswith("%")
 
-    assert result["triangulation"]["confidence"] in ("YÜKSEK", "ORTA", "DÜŞÜK")
+    assert result["triangulation"]["confidence"] in ("HIGH", "MEDIUM", "LOW")
     assert isinstance(result["notes"], list)
 
     # Sector-relative multiples comparison block (VALUATION.md Sec.7 axis-b)

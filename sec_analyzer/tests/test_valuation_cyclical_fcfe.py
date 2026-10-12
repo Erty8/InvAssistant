@@ -345,7 +345,7 @@ def test_build_cyclical_fcfe_none_when_equity_missing_or_nonpositive():
         assumptions, earnings_power, _annual(), metrics, shares=10.0, dilution_rate=0.0
     )
     assert detail is None
-    assert any("özkaynak verisi eksik/negatif" in n for n in notes)
+    assert any("equity data is missing/negative" in n for n in notes)
 
     # StockholdersEquity present but zero/negative.
     for bad_equity in (0.0, -50.0):
@@ -354,7 +354,7 @@ def test_build_cyclical_fcfe_none_when_equity_missing_or_nonpositive():
             assumptions, earnings_power, normalized, metrics, shares=10.0, dilution_rate=0.0
         )
         assert detail2 is None
-        assert any("özkaynak verisi eksik/negatif" in n for n in notes2)
+        assert any("equity data is missing/negative" in n for n in notes2)
 
 
 def test_build_cyclical_fcfe_none_when_roe_not_positive():
@@ -369,7 +369,7 @@ def test_build_cyclical_fcfe_none_when_roe_not_positive():
         assumptions, earnings_power, normalized, metrics, shares=10.0, dilution_rate=0.0
     )
     assert detail is None
-    assert any("ROE pozitif değil" in n for n in notes)
+    assert any("ROE is not positive" in n for n in notes)
 
 
 def test_build_cyclical_fcfe_builds_all_three_scenarios_with_bands_hand_verified():
@@ -448,7 +448,7 @@ def test_build_cyclical_fcfe_skips_a_scenario_with_discount_rate_at_or_below_ter
 
     assert detail is not None  # bear/base still succeeded -> detail is built
     assert detail["scenarios"]["bull"] == {"per_share": None, "lo": None, "hi": None}
-    assert any("Bull senaryosu için döngüsel FCFE varsayımları eksik veya geçersiz" in n for n in notes)
+    assert any("Cyclical FCFE assumptions for the Bull scenario are missing or invalid" in n for n in notes)
 
     # bear/base unaffected by bull's failure.
     assert detail["scenarios"]["bear"]["per_share"] == pytest.approx(90.18, abs=0.02)
@@ -534,10 +534,10 @@ def test_run_valuation_cyclical_capex_suppressed_profitable_triggers_fcfe_headli
     assert result["fair_value_range"]["base"]["lo"] == pytest.approx(130.96, abs=0.02)
     assert result["fair_value_range"]["base"]["hi"] == pytest.approx(173.42, abs=0.02)
 
-    assert any("sürdürülebilir-büyüme" in n and "FCFE çapasına dayandırıldı" in n for n in result["notes"])
+    assert any("sustainable growth" in n and "based on an FCFE anchor" in n for n in result["notes"])
     # Fix D's corrected disclosure note + Fix E's trough-excluded transparency note.
-    assert any("Duyarlılık tablosu döngü-ortası normalize FCF-DCF tabanını" in n for n in result["notes"])
-    assert any("DIŞLAR" in n and "yapısal re-rating" in n for n in result["notes"])
+    assert any("The sensitivity table" in n and "mid-cycle normalized FCF-DCF" in n for n in result["notes"])
+    assert any("EXCLUDES" in n and "structural re-rating" in n for n in result["notes"])
 
 
 def test_run_valuation_cyclical_fcfe_below_epv_floor_keeps_epv_headline():
@@ -590,7 +590,7 @@ def test_run_valuation_cyclical_fcfe_below_epv_floor_keeps_epv_headline():
     assert result["fair_value_range"]["base"]["lo"] != pytest.approx(81.35, abs=0.02)
 
     assert any(
-        "kazanç gücünü yansıtmıyor" in n and "kazanç-gücü (EPV) çapasına dayandırıldı" in n
+        "doesn't reflect earning power" in n and "earnings-power (EPV) anchor" in n
         for n in result["notes"]
     )
 
@@ -654,7 +654,7 @@ def test_run_valuation_cyclical_fcf_not_suppressed_keeps_normalized_variant_head
         result["dcf"]["scenarios"]["base"]["lo"], abs=0.02
     )
 
-    assert any("döngü-ortası normalize edilmiş FCF'e dayandırıldı" in n for n in result["notes"])
+    assert any("anchored on mid-cycle normalized FCF" in n for n in result["notes"])
 
 
 # ---------------------------------------------------------------------------
@@ -665,7 +665,7 @@ def test_run_valuation_cyclical_fcf_not_suppressed_keeps_normalized_variant_head
 
 
 def test_triangulate_cyclical_fcfe_headline_caps_high_confidence_to_medium():
-    # Same three-way "ucuz" agreement fixture used by every other headline-
+    # Same three-way "cheap" agreement fixture used by every other headline-
     # cap test in this codebase (dcf: price=90 < band.lo=100; reverse_dcf:
     # implied=0.05 < ref(0.10)-0.03=0.07; multiples: pe_pct=20 < 30) --
     # would normally be CONFIDENCE_HIGH. With cyclical_fcfe_headline=True,
@@ -677,11 +677,11 @@ def test_triangulate_cyclical_fcfe_headline_caps_high_confidence_to_medium():
         realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
         sector_type="cyclical", cyclical_fcfe_headline=True,
     )
-    assert result["signals"] == {"dcf": "ucuz", "reverse_dcf": "ucuz", "multiples": "ucuz"}
-    assert result["confidence"] == "ORTA"
-    assert result["direction"] == "ucuz"
-    assert "kazanç-tabanlı FCFE çapasından" in result["rationale"]["confidence"]
-    assert "ORTA'ya sınırlandı" in result["rationale"]["confidence"]
+    assert result["signals"] == {"dcf": "cheap", "reverse_dcf": "cheap", "multiples": "cheap"}
+    assert result["confidence"] == "MEDIUM"
+    assert result["direction"] == "cheap"
+    assert "earnings-based FCFE anchor" in result["rationale"]["confidence"]
+    assert "capped at MEDIUM" in result["rationale"]["confidence"]
 
 
 def test_triangulate_cyclical_fcfe_headline_false_preserves_high_confidence():
@@ -692,8 +692,8 @@ def test_triangulate_cyclical_fcfe_headline_false_preserves_high_confidence():
         realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
         sector_type="cyclical",
     )
-    assert result["confidence"] == "YÜKSEK"
-    assert "ORTA'ya sınırlandı" not in result["rationale"]["confidence"]
+    assert result["confidence"] == "HIGH"
+    assert "capped at MEDIUM" not in result["rationale"]["confidence"]
 
 
 def test_triangulate_cyclical_fcfe_headline_does_not_alter_already_medium_or_low_confidence():
@@ -705,13 +705,13 @@ def test_triangulate_cyclical_fcfe_headline_does_not_alter_already_medium_or_low
         realized_cagr=None, base_growth=0.10, pe_pct=80, ps_pct=None, pfcf_pct=None,
         sector_type="cyclical", cyclical_fcfe_headline=True,
     )
-    assert two_of_three["confidence"] == "ORTA"
-    assert "ORTA'ya sınırlandı" not in two_of_three["rationale"]["confidence"]
+    assert two_of_three["confidence"] == "MEDIUM"
+    assert "capped at MEDIUM" not in two_of_three["rationale"]["confidence"]
 
     scattered = triangulate(
         price=110, dcf_base_band={"lo": 100, "hi": 120}, implied_growth=0.15,
         realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
         sector_type="cyclical", cyclical_fcfe_headline=True,
     )
-    assert scattered["confidence"] == "DÜŞÜK"
-    assert "ORTA'ya sınırlandı" not in scattered["rationale"]["confidence"]
+    assert scattered["confidence"] == "LOW"
+    assert "capped at MEDIUM" not in scattered["rationale"]["confidence"]

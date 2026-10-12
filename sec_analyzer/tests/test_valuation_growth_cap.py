@@ -260,20 +260,20 @@ def test_engine_flags_the_cap_and_builds_the_diagnostic():
 def test_engine_note_names_both_rates_and_the_consequence():
     notes = _run()["notes"]
 
-    note = next(n for n in notes if "içsel finansman kısıtına takıldı" in n)
-    assert "%25.0" in note          # the assumption that was discarded
-    assert "%4.6" in note           # what the model actually used
-    assert "değer yaratmaz, yok eder" in note
+    note = next(n for n in notes if "hit the internal-funding constraint" in n)
+    assert "25.0%" in note          # the assumption that was discarded
+    assert "4.6%" in note           # what the model actually used
+    assert "destroys value rather than creating it" in note
 
 
 def test_fair_value_range_growth_label_reports_the_effective_rate():
     fvr = _run()["fair_value_range"]
 
-    assert fvr["base"]["growth"].startswith("%4.6 büyüme")
-    assert "varsayılan %25.0 içsel finansman kısıtıyla sınırlandı" in fvr["base"]["growth"]
+    assert fvr["base"]["growth"].startswith("4.6% growth")
+    assert "the assumed 25.0% was capped by the internal-funding constraint" in fvr["base"]["growth"]
     # Every scenario row must say so -- the band varies only by discount rate.
-    assert "sınırlandı" in fvr["bear"]["growth"]
-    assert "sınırlandı" in fvr["bull"]["growth"]
+    assert "was capped" in fvr["bear"]["growth"]
+    assert "was capped" in fvr["bull"]["growth"]
 
 
 def test_no_cap_no_diagnostic_and_a_plain_growth_label():
@@ -284,8 +284,8 @@ def test_no_cap_no_diagnostic_and_a_plain_growth_label():
 
     assert rim["growth_capped"] is False
     assert rim["external_growth"] is None
-    assert not any("içsel finansman kısıtına takıldı" in n for n in result["notes"])
-    assert result["fair_value_range"]["base"]["growth"] == "%5.0 büyüme (kazanç + sürdürülebilir büyüme)"
+    assert not any("hit the internal-funding constraint" in n for n in result["notes"])
+    assert result["fair_value_range"]["base"]["growth"] == "5.0% growth (earnings + sustainable growth)"
 
 
 def test_the_disclosure_does_not_move_the_fair_value():

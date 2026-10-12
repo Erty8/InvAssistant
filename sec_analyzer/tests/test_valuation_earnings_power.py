@@ -176,7 +176,7 @@ def test_build_earnings_power_sanity_guard_triggers_when_latest_margin_deviates_
     # per_share must be built off the normalized figure (100.0), not the
     # raw, distrusted one (200.0): 100/0.10/10 = 100.0, not 200.0.
     assert detail["scenarios"]["base"]["per_share"] == pytest.approx(100.0)
-    assert any("marj medyanından" in n for n in notes)
+    assert any("median for the earnings-power base" in n for n in notes)
     assert any("200" in n for n in notes)  # cites the distrusted raw figure
 
 
@@ -201,7 +201,7 @@ def test_build_earnings_power_sanity_guard_does_not_trigger_under_50pct_deviatio
     assert detail["sanity_applied"] is False
     assert detail["normalized_net_income"] == pytest.approx(140.0)
     assert detail["scenarios"]["base"]["per_share"] == pytest.approx(140.0 / 0.10 / 10.0)
-    assert not any("marj medyanından" in n for n in notes)
+    assert not any("median for the earnings-power base" in n for n in notes)
 
 
 def test_build_earnings_power_adds_advisory_note_for_high_implied_roe_but_does_not_clamp_value():
@@ -222,7 +222,7 @@ def test_build_earnings_power_adds_advisory_note_for_high_implied_roe_but_does_n
 
     assert detail is not None
     assert detail["scenarios"]["base"]["per_share"] == pytest.approx(100.0)
-    assert any("yukarı-yanlı okumayın" in n for n in notes)
+    assert any("read the EPV value as upward-biased" in n for n in notes)
 
 
 def test_build_earnings_power_none_without_valid_shares():
@@ -231,7 +231,7 @@ def test_build_earnings_power_none_without_valid_shares():
 
     detail, notes = _build_earnings_power(assumptions, normalized, {"shares": None, "latest_fy": 2023}, ratios=[])
     assert detail is None
-    assert any("hisse sayısı" in n for n in notes)
+    assert any("share count" in n for n in notes)
 
     detail2, _ = _build_earnings_power(assumptions, normalized, {"shares": 0, "latest_fy": 2023}, ratios=[])
     assert detail2 is None
@@ -246,7 +246,7 @@ def test_build_earnings_power_none_without_valid_discount_rate():
 
     detail, notes = _build_earnings_power({"base": {}}, normalized, metrics, ratios=[])
     assert detail is None
-    assert any("iskonto oranı" in n for n in notes)
+    assert any("discount rate" in n for n in notes)
 
     detail2, _ = _build_earnings_power({"base": {"discount_rate": -0.05}}, normalized, metrics, ratios=[])
     assert detail2 is None
@@ -266,7 +266,7 @@ def test_build_earnings_power_none_when_latest_net_income_not_positive():
     normalized_missing = _annual(Revenue={2023: 1000.0})
     detail, notes = _build_earnings_power(assumptions, normalized_missing, metrics, ratios=[])
     assert detail is None
-    assert any(("negatif" in n) or ("eksik" in n) for n in notes)
+    assert any(("negative" in n) or ("missing" in n) for n in notes)
 
     # Negative NI.
     normalized_negative = _annual(NetIncome={2023: -50.0}, Revenue={2023: 1000.0})
@@ -319,7 +319,7 @@ def test_fcf_dcf_unreliable_gate_refuses_and_flags_quality_when_not_cash_backed(
     unreliable, note = _fcf_dcf_unreliable(dcf_scenarios, earnings_power, normalized, metrics)
     assert unreliable is False
     assert note is not None
-    assert "kazanç-kalitesi/nakde-çevirme uyarısıdır" in note
+    assert "earnings-quality/cash-conversion warning" in note
     assert "OCF < 0.8" in note
 
 
@@ -459,10 +459,10 @@ def test_run_valuation_mature_fcf_suppressed_and_earnings_backed_triggers_epv_he
     # Headline fair_value_range must reflect the EPV band, not the DCF one.
     assert result["fair_value_range"]["base"]["lo"] == pytest.approx(90.91)
     assert result["fair_value_range"]["base"]["hi"] == pytest.approx(111.11)
-    assert result["fair_value_range"]["base"]["growth"] == "sıfır büyüme (kazanç gücü çapası)"
-    assert result["fair_value_range"]["base"]["discount_rate"] == "%10"
+    assert result["fair_value_range"]["base"]["growth"] == "zero growth (earnings-power anchor)"
+    assert result["fair_value_range"]["base"]["discount_rate"] == "10%"
 
-    assert any("kazanç-gücü (EPV) çapasına" in n for n in result["notes"])
+    assert any("earnings-power (EPV) anchor" in n for n in result["notes"])
 
 
 def test_run_valuation_mature_fcf_suppressed_but_not_cash_backed_stays_fcf_dcf_headline():
@@ -493,8 +493,8 @@ def test_run_valuation_mature_fcf_suppressed_but_not_cash_backed_stays_fcf_dcf_h
     assert result["fair_value_range"]["base"]["lo"] == pytest.approx(result["dcf"]["scenarios"]["base"]["lo"])
     assert result["fair_value_range"]["base"]["hi"] == pytest.approx(result["dcf"]["scenarios"]["base"]["hi"])
 
-    assert any("kazanç-kalitesi/nakde-çevirme uyarısıdır" in n for n in result["notes"])
-    assert not any("kazanç-gücü (EPV) çapasına" in n for n in result["notes"])
+    assert any("earnings-quality/cash-conversion warning" in n for n in result["notes"])
+    assert not any("earnings-power (EPV) anchor" in n for n in result["notes"])
 
 
 def test_run_valuation_mature_healthy_fcf_keeps_fcf_dcf_headline_regression():
@@ -535,11 +535,11 @@ def test_run_valuation_mature_healthy_fcf_keeps_fcf_dcf_headline_regression():
 
     assert result["fair_value_range"]["base"]["lo"] == pytest.approx(dcf_base["lo"])
     assert result["fair_value_range"]["base"]["hi"] == pytest.approx(dcf_base["hi"])
-    assert result["fair_value_range"]["base"]["growth"] == "%10 büyüme"
+    assert result["fair_value_range"]["base"]["growth"] == "10% growth"
     # Must NOT be (or collide with) the EPV band.
     assert result["fair_value_range"]["base"]["lo"] != pytest.approx(90.91)
 
-    assert not any("kazanç-gücü (EPV) çapasına" in n for n in result["notes"])
+    assert not any("earnings-power (EPV) anchor" in n for n in result["notes"])
 
 
 def test_run_valuation_earnings_power_not_applicable_outside_mature_sector():
@@ -586,11 +586,11 @@ def test_run_valuation_earnings_power_not_applicable_outside_mature_sector():
 
 
 def test_triangulate_earnings_power_headline_caps_high_confidence_to_medium():
-    # Same three-way "ucuz" agreement as test_valuation_engine.py's
+    # Same three-way "cheap" agreement as test_valuation_engine.py's
     # test_triangulate_all_three_agree_gives_high_confidence (dcf: price=90
     # < band.lo=100; reverse_dcf: implied=0.05 < ref(0.10)-0.03=0.07;
     # multiples: pe_pct=20 < 30) -- would normally be CONFIDENCE_HIGH,
-    # direction "ucuz". With earnings_power_headline=True, confidence must
+    # direction "cheap". With earnings_power_headline=True, confidence must
     # be capped to ORTA (not YÜKSEK): DCF and multiples both ultimately
     # derive from the same underlying earnings signal in EPV-headline mode,
     # so three-way agreement is weaker evidence than usual.
@@ -599,10 +599,10 @@ def test_triangulate_earnings_power_headline_caps_high_confidence_to_medium():
         realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
         sector_type="mature", earnings_power_headline=True,
     )
-    assert result["signals"] == {"dcf": "ucuz", "reverse_dcf": "ucuz", "multiples": "ucuz"}
-    assert result["confidence"] == "ORTA"
-    assert result["direction"] == "ucuz"
-    assert "ORTA ile sınırlandı" in result["rationale"]["confidence"]
+    assert result["signals"] == {"dcf": "cheap", "reverse_dcf": "cheap", "multiples": "cheap"}
+    assert result["confidence"] == "MEDIUM"
+    assert result["direction"] == "cheap"
+    assert "capped at MEDIUM" in result["rationale"]["confidence"]
 
 
 def test_triangulate_earnings_power_headline_false_preserves_high_confidence():
@@ -614,8 +614,8 @@ def test_triangulate_earnings_power_headline_false_preserves_high_confidence():
         realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
         sector_type="mature",
     )
-    assert result["confidence"] == "YÜKSEK"
-    assert "ORTA ile sınırlandı" not in result["rationale"]["confidence"]
+    assert result["confidence"] == "HIGH"
+    assert "capped at MEDIUM" not in result["rationale"]["confidence"]
 
 
 def test_triangulate_earnings_power_headline_does_not_alter_already_medium_or_low_confidence():
@@ -629,13 +629,13 @@ def test_triangulate_earnings_power_headline_does_not_alter_already_medium_or_lo
         realized_cagr=None, base_growth=0.10, pe_pct=80, ps_pct=None, pfcf_pct=None,
         sector_type="mature", earnings_power_headline=True,
     )
-    assert two_of_three["confidence"] == "ORTA"
-    assert "ORTA ile sınırlandı" not in two_of_three["rationale"]["confidence"]
+    assert two_of_three["confidence"] == "MEDIUM"
+    assert "capped at MEDIUM" not in two_of_three["rationale"]["confidence"]
 
     scattered = triangulate(
         price=110, dcf_base_band={"lo": 100, "hi": 120}, implied_growth=0.15,
         realized_cagr=None, base_growth=0.10, pe_pct=20, ps_pct=None, pfcf_pct=None,
         sector_type="mature", earnings_power_headline=True,
     )
-    assert scattered["confidence"] == "DÜŞÜK"
-    assert "ORTA ile sınırlandı" not in scattered["rationale"]["confidence"]
+    assert scattered["confidence"] == "LOW"
+    assert "capped at MEDIUM" not in scattered["rationale"]["confidence"]
