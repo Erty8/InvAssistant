@@ -456,8 +456,9 @@ Deterministic from SIC (int or str), with financial-statement overrides:
   through to the profitability check below like any other SIC, so a
   secular-growth semi classifies as `"mature"`/`"growth_unprofitable"` and
   can independently enter hyper-grower mode (see the gray-zone tier
-  cross-referenced below). The advisory cycle block (Sec.26) still runs for
-  every SIC 3674 filer, whatever bucket it lands in
+  cross-referenced below). The advisory cycle block (Sec.26) also runs for a
+  SIC 3674 filer outside the cyclical bucket, but only when its through-cycle
+  window contains a loss year (trough annual net margin < 0, strictly)
 - else if latest-FY `NetIncome < 0` → `"growth_unprofitable"`, UNLESS the firm
   is normally profitable (>= 2 prior fiscal years of `NetIncome` data, a
   profitable majority among them, AND the immediately prior year profitable),
@@ -4790,8 +4791,12 @@ observed multiple).
 
 `cyclical.two_regime_valuation(stats, shares, price) -> Optional[dict]`, wired
 into the engine as an **advisory block** for `sector_type == "cyclical"` AND for
-any SIC 3674 filer regardless of its sector bucket (`run_valuation(..., sic=...)`;
-valuation routing per the Sec.8 semiconductor bullet is unchanged).
+any SIC 3674 filer outside that bucket whose through-cycle window contains a loss
+year (trough annual net margin < 0, strictly; `run_valuation(..., sic=...)`;
+valuation routing per the Sec.8 semiconductor bullet is unchanged). Rationale:
+memory/commodity-type semis swing into losses at the trough, whereas
+secular-growth semis (positive trough margin) would get memory-style regime-B
+bands that misread them.
 
 **Advisory, exactly like Sec.8g/8j/8k:** it never headlines
 `fair_value_range`, never feeds `primary_dcf_scenarios`, never enters
@@ -4869,11 +4874,13 @@ _REGIME_B_MULTIPLES = (12.0, 13.5, 15.0) # below the semis median: still capital
 ### 26e. Output shape and display
 
 `valuation["cycle"]` (`None` unless `sector_type == "cyclical"` or the filer is
-SIC 3674 (advisory only, regardless of bucket), and whenever
+SIC 3674 outside the cyclical bucket with a loss year in the through-cycle window
+(trough annual net margin < 0, strictly; advisory only), and whenever
 `through_cycle_stats` returns `None`; the "Cycle position could not be computed"
-note is emitted only for `sector_type == "cyclical"`, and a growth-routed semi
+note is emitted only for `sector_type == "cyclical"`, and a semi-advisory filer
 with a computed block gets one extra note that it is valued outside the cyclical
-bucket):
+bucket but has a loss year in its history. A semi without a loss year gets
+`cycle = None` and no cycle notes at all):
 
 ```python
 {"stats": {...}, "regime_a": {...}, "regime_b": {...},

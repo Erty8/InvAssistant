@@ -40,6 +40,10 @@ _SCENARIO_KEYS = ("bear", "base", "bull")
 #: usable cells (Sec.4/F3). No longer the primary band-construction method.
 _BAND_FRACTION = 0.10
 
+# Semi-advisory cycle block (SPEC.md Sec.26e): kept only when the through-cycle
+# trough annual net margin is strictly below this value (i.e. a loss year).
+_SEMI_ADVISORY_TROUGH_MARGIN_MAX = 0.0
+
 #: Minimum number of usable (non-None) sensitivity-grid cells required to
 #: derive a scenario band from the grid; below this, fall back to the flat
 #: +/-10% band above.
@@ -5541,7 +5545,18 @@ def _run_valuation(
     is_semi_advisory = sector_type != "cyclical" and sector.is_semiconductor_sic(sic)
     if sector_type == "cyclical" or is_semi_advisory:
         cycle_stats = cyclical.through_cycle_stats(normalized, ratios, history, metrics)
-        cycle = cyclical.two_regime_valuation(cycle_stats, metrics, price)
+        # Semi-advisory path only: keep the block only when the through-cycle
+        # window contains a loss year (trough margin strictly below the
+        # threshold). Memory/commodity-type semis swing into losses at the
+        # trough; secular-growth semis (NVDA-type, positive trough margin)
+        # would get memory-style regime-B bands (30-45% margins, 12-15x)
+        # that misread them. Cyclical bucket behaviour is unchanged.
+        if is_semi_advisory:
+            _trough = cycle_stats.get("margin_trough") if isinstance(cycle_stats, dict) else None
+            if not (_is_number(_trough) and _trough < _SEMI_ADVISORY_TROUGH_MARGIN_MAX):
+                cycle_stats = None
+        if sector_type == "cyclical" or cycle_stats is not None:
+            cycle = cyclical.two_regime_valuation(cycle_stats, metrics, price)
         if cycle is None and cycle_stats is None:
             # A growth-routed semi with thin history gets no noise note.
             if sector_type == "cyclical":
@@ -5558,9 +5573,9 @@ def _run_valuation(
                 )
             if is_semi_advisory:
                 notes.append(
-                    "Semiconductor valued outside the cyclical bucket (realized revenue CAGR above 15%); "
-                    "the cycle-position read below is shown as an advisory check on whether current "
-                    "margins are a cycle peak."
+                    "Semiconductor valued outside the cyclical bucket (realized revenue CAGR above 15%) "
+                    "but with a loss year in its history; the cycle-position read below is shown as an "
+                    "advisory check on whether current margins are a cycle peak."
                 )
             notes.append(cycle["verdict_sentence"])
 

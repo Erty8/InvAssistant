@@ -108,3 +108,39 @@ def test_cyclical_with_thin_history_still_emits_cannot_compute_note(sic):
 
     assert result["cycle"] is None
     assert any(_CANNOT_COMPUTE in n for n in result["notes"])
+
+
+_NVDA_LIKE = {
+    2016: 0.123, 2017: 0.25, 2018: 0.30, 2019: 0.26, 2020: 0.26,
+    2021: 0.36, 2022: 0.16, 2023: 0.16, 2024: 0.49, 2025: 0.55,
+}
+_SEMI_NOTE = "valued outside the cyclical bucket"
+
+
+def test_semi_without_loss_year_gets_no_cycle_and_no_notes():
+    with_sic = _run("mature", _NVDA_LIKE, sic=3674)
+    without_sic = _run("mature", _NVDA_LIKE, sic=None)
+
+    assert with_sic["cycle"] is None
+    assert not any(_SEMI_NOTE in n for n in with_sic["notes"])
+    assert not any(_CANNOT_COMPUTE in n for n in with_sic["notes"])
+    assert not any("cycle statistic was computed" in n for n in with_sic["notes"])
+    assert with_sic["notes"] == without_sic["notes"]
+    for key in ("fair_value_range", "primary_dcf_scenarios", "triangulation", "verdict", "sector_type"):
+        assert with_sic.get(key) == without_sic.get(key), key
+
+
+def test_semi_with_trough_exactly_zero_gets_no_cycle():
+    margins = dict(_NVDA_LIKE)
+    margins[2016] = 0.0
+    result = _run("mature", margins, sic=3674)
+
+    assert result["cycle"] is None
+    assert not any(_SEMI_NOTE in n for n in result["notes"])
+
+
+def test_cyclical_with_all_positive_margins_still_gets_cycle_block():
+    result = _run("cyclical", _NVDA_LIKE, sic=3674)
+
+    assert result["cycle"] is not None
+    assert not any(_SEMI_NOTE in n for n in result["notes"])
