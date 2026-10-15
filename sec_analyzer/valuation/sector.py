@@ -125,6 +125,14 @@ def _to_int_sic(sic: Optional[Union[int, str]]) -> Optional[int]:
         return None
 
 
+def is_semiconductor_sic(sic: Optional[Union[int, str]]) -> bool:
+    """Whether ``sic`` is the semiconductor code (3674). Never raises."""
+    try:
+        return _to_int_sic(sic) == _SEMICONDUCTOR_SIC
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _is_cyclical_sic(sic: int) -> bool:
     if sic in _CYCLICAL_SIC_SINGLES:
         return True

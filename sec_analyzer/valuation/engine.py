@@ -18,7 +18,7 @@ here degrades to an empty-but-shaped result instead of crashing the CLI.
 import logging
 import math
 import statistics
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from sec_analyzer.config import Config
 from sec_analyzer.normalize.metrics import resolve_fundamental_fy
@@ -4628,6 +4628,7 @@ def run_valuation(
     as_of=None,
     fred_rate: Optional[dict] = None,
     precedent_transactions_dir: Optional[str] = None,
+    sic: Optional[Union[int, str]] = None,
 ) -> dict:
     """Run the full deterministic valuation engine (SPEC Sec.11).
 
@@ -4682,6 +4683,12 @@ def run_valuation(
             Purely additive/optional -- absent data degrades silently to
             today's behavior (no EV/EBITDA sector-median axis-b comparison
             for leveraged filers).
+        sic: Optional SEC SIC code (int or numeric string). Only used to
+            decide whether the advisory cycle-position block (SPEC.md
+            Sec.26) also runs for a SIC 3674 semiconductor filer routed
+            outside the ``cyclical`` bucket. Never changes valuation
+            routing or any headline number. ``None`` (default) keeps
+            behavior unchanged for every existing caller.
 
     Returns:
         The ``valuation`` dict documented in SPEC Sec.11. Every
@@ -4693,6 +4700,7 @@ def run_valuation(
             normalized or {}, ratios or [], metrics or {}, price, price_df, assumptions or {},
             sector_type, damodaran_dir, sic_description, hyper_growth_extras,
             as_of=as_of, fred_rate=fred_rate, precedent_transactions_dir=precedent_transactions_dir,
+            sic=sic,
         )
     except Exception:  # noqa: BLE001 - this function must never raise
         logger.exception("run_valuation() failed unexpectedly; returning a degraded result.")
@@ -4706,6 +4714,7 @@ def _run_valuation(
     as_of=None,
     fred_rate: Optional[dict] = None,
     precedent_transactions_dir: Optional[str] = None,
+    sic: Optional[Union[int, str]] = None,
 ) -> dict:
     notes: List[str] = []
 
@@ -5529,20 +5538,29 @@ def _run_valuation(
     # primary_dcf_scenarios, never enters triangulation. Same discipline as
     # the Sec.8g/8j/8k screens.
     cycle = None
-    if sector_type == "cyclical":
+    is_semi_advisory = sector_type != "cyclical" and sector.is_semiconductor_sic(sic)
+    if sector_type == "cyclical" or is_semi_advisory:
         cycle_stats = cyclical.through_cycle_stats(normalized, ratios, history, metrics)
         cycle = cyclical.two_regime_valuation(cycle_stats, metrics, price)
         if cycle is None and cycle_stats is None:
-            notes.append(
-                "Cycle position could not be computed: not enough annual net-margin data for a "
-                "through-cycle statistic (at least 6 fiscal years are required)."
-            )
+            # A growth-routed semi with thin history gets no noise note.
+            if sector_type == "cyclical":
+                notes.append(
+                    "Cycle position could not be computed: not enough annual net-margin data for a "
+                    "through-cycle statistic (at least 6 fiscal years are required)."
+                )
         elif cycle is not None:
             if cycle["stats"].get("window_short"):
                 notes.append(
                     f"The cycle statistic was computed over only {cycle['stats']['years']} fiscal years; "
                     "this window spans one cycle, but WHICH cycle it caught dominates the average. Run "
                     "with `--years 12` for a wider base."
+                )
+            if is_semi_advisory:
+                notes.append(
+                    "Semiconductor valued outside the cyclical bucket (realized revenue CAGR above 15%); "
+                    "the cycle-position read below is shown as an advisory check on whether current "
+                    "margins are a cycle peak."
                 )
             notes.append(cycle["verdict_sentence"])
 
