@@ -1831,7 +1831,7 @@ def interpret(
         valuation_result = run_valuation(
             normalized, ratios, metrics, price, price_df, assumptions, sector_type,
             sic_description=sic_description, hyper_growth_extras=phase1.get("hyper_growth_extras"),
-            as_of=as_of, fred_rate=fred_rate,
+            as_of=as_of, fred_rate=fred_rate, sic=sic,
         )
 
         result, backend_note = _interpret_results_with_fallback(

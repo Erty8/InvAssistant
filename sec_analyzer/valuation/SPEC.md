@@ -456,7 +456,9 @@ Deterministic from SIC (int or str), with financial-statement overrides:
   through to the profitability check below like any other SIC, so a
   secular-growth semi classifies as `"mature"`/`"growth_unprofitable"` and
   can independently enter hyper-grower mode (see the gray-zone tier
-  cross-referenced below)
+  cross-referenced below). The advisory cycle block (Sec.26) also runs for a
+  SIC 3674 filer outside the cyclical bucket, but only when its through-cycle
+  window contains a loss year (trough annual net margin < 0, strictly)
 - else if latest-FY `NetIncome < 0` → `"growth_unprofitable"`, UNLESS the firm
   is normally profitable (>= 2 prior fiscal years of `NetIncome` data, a
   profitable majority among them, AND the immediately prior year profitable),
@@ -1362,9 +1364,11 @@ after the four headline flags above (an `elif`), so an EPV or FCFE cyclical
 headline, already capped, keeps its own rationale message. In practice the
 new clause fires only for the mid-cycle normalized FCF-DCF headline.
 
-## 11. Engine — `engine.run_valuation(normalized, ratios, metrics, price, price_df, assumptions, sector_type, damodaran_dir=None, sic_description=None, hyper_growth_extras=None) -> dict`
+## 11. Engine — `engine.run_valuation(normalized, ratios, metrics, price, price_df, assumptions, sector_type, damodaran_dir=None, sic_description=None, hyper_growth_extras=None, ..., sic=None) -> dict`
 
-Orchestrates everything above. Never raises for missing data (only for
+Orchestrates everything above. The optional `sic` kwarg (int or numeric string,
+default `None`) only gates the advisory cycle block (Sec.26); it never affects
+routing or headline numbers. Never raises for missing data (only for
 programmer errors); every unavailable piece is None + a Turkish note in
 `notes`. `hyper_growth_extras` is the optional LLM/user-refined
 hyper-grower input (Sec.3/Sec.5 below); `None` (the default) keeps the
@@ -3840,7 +3844,7 @@ normalize.normalizer.normalize_facts(facts_json, years=5, as_of=None) -> dict
 fetch.prices.slice_asof(df, as_of) -> pd.DataFrame
 fetch.fred.get_risk_free_asof(as_of, no_cache=False) -> Optional[dict]   # as_of=None -> latest observation
 valuation.damodaran.load_sector_data(dir_path, as_of=None, fred_rate=None) -> Optional[dict]
-valuation.engine.run_valuation(..., as_of=None, fred_rate=None) -> dict
+valuation.engine.run_valuation(..., as_of=None, fred_rate=None, sic=None) -> dict
 interpret.analyzer.interpret(..., as_of=None, fred_rate=None) -> dict
 signals.events.detect_events(..., today=as_of) -> List[dict]   # today: Optional[date]
 fetch.filings.estimate_next_earnings(submissions, today=None) -> Optional[dict]
@@ -4786,7 +4790,13 @@ observed multiple).
 ## 26. Two-regime cyclical valuation + implied break probability (WP10)
 
 `cyclical.two_regime_valuation(stats, shares, price) -> Optional[dict]`, wired
-into the engine as an **advisory block** for `sector_type == "cyclical"`.
+into the engine as an **advisory block** for `sector_type == "cyclical"` AND for
+any SIC 3674 filer outside that bucket whose through-cycle window contains a loss
+year (trough annual net margin < 0, strictly; `run_valuation(..., sic=...)`;
+valuation routing per the Sec.8 semiconductor bullet is unchanged). Rationale:
+memory/commodity-type semis swing into losses at the trough, whereas
+secular-growth semis (positive trough margin) would get memory-style regime-B
+bands that misread them.
 
 **Advisory, exactly like Sec.8g/8j/8k:** it never headlines
 `fair_value_range`, never feeds `primary_dcf_scenarios`, never enters
@@ -4863,8 +4873,14 @@ _REGIME_B_MULTIPLES = (12.0, 13.5, 15.0) # below the semis median: still capital
 
 ### 26e. Output shape and display
 
-`valuation["cycle"]` (`None` for every non-cyclical sector and whenever
-`through_cycle_stats` returns `None`):
+`valuation["cycle"]` (`None` unless `sector_type == "cyclical"` or the filer is
+SIC 3674 outside the cyclical bucket with a loss year in the through-cycle window
+(trough annual net margin < 0, strictly; advisory only), and whenever
+`through_cycle_stats` returns `None`; the "Cycle position could not be computed"
+note is emitted only for `sector_type == "cyclical"`, and a semi-advisory filer
+with a computed block gets one extra note that it is valued outside the cyclical
+bucket but has a loss year in its history. A semi without a loss year gets
+`cycle = None` and no cycle notes at all):
 
 ```python
 {"stats": {...}, "regime_a": {...}, "regime_b": {...},
