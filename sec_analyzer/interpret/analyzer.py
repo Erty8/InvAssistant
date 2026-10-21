@@ -127,7 +127,7 @@ from sec_analyzer.interpret import planning, rule_based
 from sec_analyzer.interpret.backends.claude_code import ClaudeCodeError, call_claude_code
 from sec_analyzer.interpret.ollama_client import OllamaError, chat_json
 from sec_analyzer.normalize.normalizer import to_annual_series
-from sec_analyzer.valuation import damodaran, run_valuation, validate_assumptions
+from sec_analyzer.valuation import damodaran, run_valuation, triangulate, validate_assumptions
 from sec_analyzer.valuation.sanity import clamp_assumptions
 from sec_analyzer.valuation.capm import compute_cost_of_equity
 from sec_analyzer.valuation.sector import classify_sector
@@ -1130,12 +1130,12 @@ _HIGH_EXPECTATION_VERDICT = "HIGH EXPECTATIONS PRICED IN"
 _DIVERGENCE_VERDICT = "MODEL-PRICE DIVERGENCE"
 
 #: Map from a triangulation direction signal to the schema's verdict
-#: string; "veri_yok" deliberately has no entry.
+#: string; ``SIGNAL_NO_DATA`` deliberately has no entry.
 _DCF_SIGNAL_TO_VERDICT = {
-    "ucuz": "CHEAP",
-    "makul": "FAIR",
-    "pahali": "EXPENSIVE",
-    "yuksek_beklenti": _HIGH_EXPECTATION_VERDICT,
+    triangulate.SIGNAL_CHEAP: "CHEAP",
+    triangulate.SIGNAL_FAIR: "FAIR",
+    triangulate.SIGNAL_EXPENSIVE: "EXPENSIVE",
+    triangulate.SIGNAL_HIGH_EXPECTATION: _HIGH_EXPECTATION_VERDICT,
 }
 
 #: The only two verdicts that can contradict each other on the
@@ -1148,16 +1148,16 @@ def _reconcile_fundamental_verdict(llm_verdict: Optional[str], dcf_signal: Optio
     """Cross-check a provider's ``fundamental_verdict`` against the
     deterministic DCF (or P/B x ROE) triangulation signal.
 
-    Only an outright contradiction on the ucuz<->pahali axis is overridden:
-    a "FAIR" from either side, or a missing/"veri_yok" code signal, is not
+    Only an outright contradiction on the cheap<->expensive axis is overridden:
+    a "FAIR" from either side, or a missing/"no_data" code signal, is not
     a contradiction (there's nothing to override against). The provider
     can never win a direct disagreement with the code-computed signal.
 
     In hyper-grower mode (HYPER_SPEC.md Sec.4), ``dcf_signal`` may be
-    ``"yuksek_beklenti"`` -- a valid, non-contradictory code-computed state
+    ``"high_expectation"`` -- a valid, non-contradictory code-computed state
     (not an error case) that maps to its own
     :data:`_HIGH_EXPECTATION_VERDICT` label rather than being squeezed into
-    CHEAP/FAIR/EXPENSIVE. Unlike the ucuz<->pahali cross-check above, this
+    CHEAP/FAIR/EXPENSIVE. Unlike the cheap<->expensive cross-check above, this
     mapping always wins outright: no provider (an LLM, or the "script"
     provider's own ``rule_based._fundamental_verdict_from_valuation``
     fallback, which defaults unrecognized signals to "FAIR") is ever asked
@@ -1169,9 +1169,10 @@ def _reconcile_fundamental_verdict(llm_verdict: Optional[str], dcf_signal: Optio
         llm_verdict: The provider's own ``fundamental_verdict`` (or
             ``None``/anything not in ``{"CHEAP", "FAIR", "EXPENSIVE"}``, e.g.
             when JSON parsing failed).
-        dcf_signal: ``valuation["triangulation"]["signals"]["dcf"]`` --
-            ``"ucuz"``, ``"makul"``, ``"pahali"``, ``"yuksek_beklenti"``, or
-            ``"veri_yok"``.
+        dcf_signal: ``valuation["triangulation"]["signals"]["dcf"]`` -- one
+            of the ``triangulate.SIGNAL_*`` constants (``"cheap"``,
+            ``"fair"``, ``"expensive"``, ``"high_expectation"``, or
+            ``"no_data"``).
         provider: Resolved provider name, used only for the log message
             when an override actually happens.
 
@@ -1190,7 +1191,7 @@ def _reconcile_fundamental_verdict(llm_verdict: Optional[str], dcf_signal: Optio
     if _OPPOSITE_VERDICT.get(llm_verdict) == code_verdict:
         logger.warning(
             "%s provider's fundamental_verdict (%s) contradicted the DCF triangulation "
-            "signal (%s) on the ucuz<->pahali axis; overriding with the code signal.",
+            "signal (%s) on the cheap<->expensive axis; overriding with the code signal.",
             provider, llm_verdict, code_verdict,
         )
         return code_verdict
@@ -1221,7 +1222,7 @@ def _postprocess_phase2_result(
     * ``fundamental_verdict`` is cross-checked against
       ``valuation["triangulation"]["signals"]["dcf"]`` via
       :func:`_reconcile_fundamental_verdict` -- an outright contradiction on
-      the ucuz<->pahali axis is overridden (and logged).
+      the cheap<->expensive axis is overridden (and logged).
     * ``scenario_returns``, ``entry_plan``, ``stop_adding``, and
       ``thesis_metric`` are ALWAYS computed by
       :mod:`sec_analyzer.interpret.planning` (METODOLOJI.md Sec.1 items

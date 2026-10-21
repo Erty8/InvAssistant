@@ -17,6 +17,7 @@ import pytest
 
 from sec_analyzer.interpret import analyzer, rule_based
 from sec_analyzer.interpret.ollama_client import OllamaError
+from sec_analyzer.valuation import triangulate
 
 
 def _normalized(annual=None):
@@ -63,7 +64,9 @@ def _financials_for_valuation():
     return normalized, ratios, metrics
 
 
-def _valuation_fixture(dcf_signal="ucuz", confidence="YÜKSEK", sector_type="mature", divergence=None):
+def _valuation_fixture(
+    dcf_signal=triangulate.SIGNAL_CHEAP, confidence=triangulate.CONFIDENCE_HIGH, sector_type="mature", divergence=None,
+):
     """A `valuation` dict matching `sec_analyzer/valuation/SPEC.md` Sec.11
     (the shape `run_valuation` returns), parameterized by the triangulated
     DCF signal so tests can drive the fundamental_verdict cross-check."""
@@ -370,24 +373,24 @@ def test_interpret_results_injects_confidence_and_fair_value_range_from_valuatio
             }
         ),
     )
-    valuation = _valuation_fixture(dcf_signal="makul", confidence="ORTA")
+    valuation = _valuation_fixture(dcf_signal=triangulate.SIGNAL_FAIR, confidence=triangulate.CONFIDENCE_MEDIUM)
 
     result = analyzer.interpret_results(
         _normalized(), [], {}, None, None, None, valuation, provider="ollama",
     )
 
-    assert result["confidence"] == "ORTA"
+    assert result["confidence"] == triangulate.CONFIDENCE_MEDIUM
     assert result["fair_value_range"] == valuation["fair_value_range"]
     assert result["valuation"] is valuation
 
 
 def test_interpret_results_overrides_contradicting_fundamental_verdict(monkeypatch, caplog):
-    """The LLM says UCUZ, but the deterministic DCF signal says pahali --
-    an outright contradiction on the ucuz<->pahali axis must be overridden."""
+    """The LLM says CHEAP, but the deterministic DCF signal says expensive --
+    an outright contradiction on the cheap<->expensive axis must be overridden."""
     monkeypatch.setattr(
         analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json(fundamental_verdict="CHEAP")
     )
-    valuation = _valuation_fixture(dcf_signal="pahali")
+    valuation = _valuation_fixture(dcf_signal=triangulate.SIGNAL_EXPENSIVE)
 
     with caplog.at_level("WARNING"):
         result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
@@ -396,13 +399,13 @@ def test_interpret_results_overrides_contradicting_fundamental_verdict(monkeypat
     assert any("overriding" in message for message in caplog.messages)
 
 
-def test_interpret_results_does_not_override_makul_against_a_direction_signal(monkeypatch):
-    """MAKUL vs. a directional (ucuz/pahali) code signal is not a
-    contradiction on the ucuz<->pahali axis -- MAKUL must survive."""
+def test_interpret_results_does_not_override_fair_against_a_direction_signal(monkeypatch):
+    """FAIR vs. a directional (cheap/expensive) code signal is not a
+    contradiction on the cheap<->expensive axis -- FAIR must survive."""
     monkeypatch.setattr(
         analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json(fundamental_verdict="FAIR")
     )
-    valuation = _valuation_fixture(dcf_signal="pahali")
+    valuation = _valuation_fixture(dcf_signal=triangulate.SIGNAL_EXPENSIVE)
 
     result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
 
@@ -413,17 +416,17 @@ def test_interpret_results_keeps_agreeing_fundamental_verdict(monkeypatch):
     monkeypatch.setattr(
         analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json(fundamental_verdict="CHEAP")
     )
-    valuation = _valuation_fixture(dcf_signal="ucuz")
+    valuation = _valuation_fixture(dcf_signal=triangulate.SIGNAL_CHEAP)
 
     result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
 
     assert result["fundamental_verdict"] == "CHEAP"
 
 
-def test_interpret_results_yuksek_beklenti_signal_always_wins_over_llm_verdict(monkeypatch):
-    """Unlike the ucuz<->pahali cross-check (which only overrides an
-    outright-opposite verdict, letting MAKUL survive unopposed either way),
-    the hyper-grower 'yuksek_beklenti' code signal always wins outright --
+def test_interpret_results_high_expectation_signal_always_wins_over_llm_verdict(monkeypatch):
+    """Unlike the cheap<->expensive cross-check (which only overrides an
+    outright-opposite verdict, letting FAIR survive unopposed either way),
+    the hyper-grower 'high_expectation' code signal always wins outright --
     no provider is ever asked to produce this 4th value itself, so there is
     nothing legitimate for it to contribute here. Covers every verdict a
     provider's phase-2 contract can actually produce (CHEAP/FAIR/EXPENSIVE)."""
@@ -432,7 +435,7 @@ def test_interpret_results_yuksek_beklenti_signal_always_wins_over_llm_verdict(m
             analyzer, "_call_ollama",
             lambda system, user, model, host, guess=llm_guess: _commentary_json(fundamental_verdict=guess),
         )
-        valuation = _valuation_fixture(dcf_signal="yuksek_beklenti")
+        valuation = _valuation_fixture(dcf_signal=triangulate.SIGNAL_HIGH_EXPECTATION)
 
         result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
 
@@ -441,15 +444,15 @@ def test_interpret_results_yuksek_beklenti_signal_always_wins_over_llm_verdict(m
         )
 
 
-def test_interpret_results_yuksek_beklenti_signal_overrides_script_providers_makul_default():
+def test_interpret_results_high_expectation_signal_overrides_script_providers_fair_default():
     """The "script" provider's own rule_based.commentary computes its
-    fundamental_verdict from a SEPARATE, older _DCF_SIGNAL_TO_VERDICT copy
-    (rule_based.py) that doesn't recognize "yuksek_beklenti" and falls back
-    to "MAKUL" for it (rule_based._fundamental_verdict_from_valuation). That
-    "MAKUL" must not survive interpret_results()'s cross-check -- the
-    "yuksek_beklenti" code signal overrides it too, same as it would any
+    fundamental_verdict from a SEPARATE _DCF_SIGNAL_TO_VERDICT copy
+    (rule_based.py) that doesn't recognize "high_expectation" and falls back
+    to "FAIR" for it (rule_based._fundamental_verdict_from_valuation). That
+    "FAIR" must not survive interpret_results()'s cross-check -- the
+    "high_expectation" code signal overrides it too, same as it would any
     other provider's guess."""
-    valuation = _valuation_fixture(dcf_signal="yuksek_beklenti")
+    valuation = _valuation_fixture(dcf_signal=triangulate.SIGNAL_HIGH_EXPECTATION)
 
     result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="script")
 
@@ -458,22 +461,22 @@ def test_interpret_results_yuksek_beklenti_signal_overrides_script_providers_mak
 
 def test_interpret_results_divergence_override_wins_over_any_verdict(monkeypatch):
     """The model-market divergence governor (action="verdict") restates the
-    headline as MODEL-PİYASA AYRIŞMASI regardless of what any provider (or the
-    ucuz<->pahali reconcile) produced -- it's a deterministic, numbers-driven
+    headline as MODEL-PRICE DIVERGENCE regardless of what any provider (or the
+    cheap<->expensive reconcile) produced -- it's a deterministic, numbers-driven
     relabel applied last. Confidence comes straight from the (already-floored)
     triangulation.confidence, and the thesis-metric rationale is reframed."""
-    up_divergence = {"direction": "ucuz", "action": "verdict", "factor": 3.25, "band_edge": 434.38}
+    up_divergence = {"direction": triangulate.SIGNAL_CHEAP, "action": "verdict", "factor": 3.25, "band_edge": 434.38}
     for llm_guess in ("CHEAP", "FAIR", "EXPENSIVE"):
         monkeypatch.setattr(
             analyzer, "_call_ollama",
             lambda system, user, model, host, guess=llm_guess: _commentary_json(fundamental_verdict=guess),
         )
         valuation = _valuation_fixture(
-            dcf_signal="ucuz", confidence="DÜŞÜK", divergence=up_divergence,
+            dcf_signal=triangulate.SIGNAL_CHEAP, confidence=triangulate.CONFIDENCE_LOW, divergence=up_divergence,
         )
         result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
         assert result["fundamental_verdict"] == "MODEL-PRICE DIVERGENCE"
-        assert result["confidence"] == "DÜŞÜK"
+        assert result["confidence"] == triangulate.CONFIDENCE_LOW
         assert "divergence" in result["thesis_metric"]["rationale"].lower()
 
 
@@ -483,8 +486,10 @@ def test_interpret_results_downside_divergence_log_only_does_not_relabel(monkeyp
     monkeypatch.setattr(
         analyzer, "_call_ollama", lambda system, user, model, host: _commentary_json(fundamental_verdict="EXPENSIVE")
     )
-    down_divergence = {"direction": "pahali", "action": "log_only", "factor": 0.4, "band_edge": 40.0}
-    valuation = _valuation_fixture(dcf_signal="pahali", divergence=down_divergence)
+    down_divergence = {
+        "direction": triangulate.SIGNAL_EXPENSIVE, "action": "log_only", "factor": 0.4, "band_edge": 40.0,
+    }
+    valuation = _valuation_fixture(dcf_signal=triangulate.SIGNAL_EXPENSIVE, divergence=down_divergence)
     result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="ollama")
     assert result["fundamental_verdict"] == "EXPENSIVE"
 
@@ -665,14 +670,14 @@ def test_interpret_results_gemma_alias_stamps_canonical_ollama_provider(monkeypa
 
 
 def test_interpret_results_script_provider_is_fully_offline_and_postprocessed():
-    valuation = _valuation_fixture(dcf_signal="pahali", confidence="ORTA")
+    valuation = _valuation_fixture(dcf_signal=triangulate.SIGNAL_EXPENSIVE, confidence=triangulate.CONFIDENCE_MEDIUM)
 
     result = analyzer.interpret_results(_normalized(), [], {}, None, None, None, valuation, provider="script")
 
     assert "error" not in result
     assert result["_provider"] == "script"
     assert result["_model"] == "rule-based-v2"
-    assert result["confidence"] == "ORTA"
+    assert result["confidence"] == triangulate.CONFIDENCE_MEDIUM
     assert result["fair_value_range"] == valuation["fair_value_range"]
     assert result["fundamental_verdict"] == "EXPENSIVE"
     assert result["valuation"] == valuation

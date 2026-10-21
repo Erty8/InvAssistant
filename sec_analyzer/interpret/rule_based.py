@@ -1351,8 +1351,12 @@ def _default_assumptions(
 
 
 #: Map from a triangulation direction signal to the schema's verdict string.
-#: "veri_yok" deliberately has no entry -- there is nothing to map it to.
-_DCF_SIGNAL_TO_VERDICT = {"ucuz": "CHEAP", "makul": "FAIR", "pahali": "EXPENSIVE"}
+#: ``SIGNAL_NO_DATA`` deliberately has no entry -- there is nothing to map it to.
+_DCF_SIGNAL_TO_VERDICT = {
+    triangulate.SIGNAL_CHEAP: "CHEAP",
+    triangulate.SIGNAL_FAIR: "FAIR",
+    triangulate.SIGNAL_EXPENSIVE: "EXPENSIVE",
+}
 
 
 def _fundamental_verdict_from_valuation(valuation: dict) -> str:

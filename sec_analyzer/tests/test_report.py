@@ -11,6 +11,7 @@ import json
 import re
 
 from sec_analyzer.report.generator import generate_report, render_history_page, render_report_html
+from sec_analyzer.valuation import triangulate
 
 
 def _embedded_payload_text(content):
@@ -120,9 +121,13 @@ def _valuation():
             "high_uncertainty": True,
         },
         "triangulation": {
-            "signals": {"dcf": "pahali", "reverse_dcf": "pahali", "multiples": "pahali"},
-            "confidence": "YÜKSEK",
-            "direction": "pahali",
+            "signals": {
+                "dcf": triangulate.SIGNAL_EXPENSIVE,
+                "reverse_dcf": triangulate.SIGNAL_EXPENSIVE,
+                "multiples": triangulate.SIGNAL_EXPENSIVE,
+            },
+            "confidence": triangulate.CONFIDENCE_HIGH,
+            "direction": triangulate.SIGNAL_EXPENSIVE,
         },
         "assumptions": {
             "bear": {"growth_5y": 0.04, "terminal_growth": 0.025, "discount_rate": 0.13, "story": "Muhafazakar senaryo."},
@@ -219,7 +224,7 @@ def _success_result_with_valuation():
     ``fair_value_range``/``confidence`` (see sec_analyzer/interpret/planning.py)."""
     result = _success_result()
     result["valuation"] = _valuation()
-    result["confidence"] = "YÜKSEK"
+    result["confidence"] = triangulate.CONFIDENCE_HIGH
     result["reverse_dcf_comment"] = (
         "Fiyat, 10 yıl boyunca %19 büyüme ima ediyor; gerçekleşen 5y CAGR %14 ile "
         "karşılaştırıldığında iddialı."
@@ -367,7 +372,7 @@ def test_generate_report_with_valuation_embeds_the_full_valuation_payload(tmp_pa
     assert '"sensitivity"' in content
     assert '"high_uncertainty":true' in content.replace(" ", "")
     assert '"reverse_dcf_comment"' in content
-    assert '"confidence":"YÜKSEK"' in content.replace(" ", "")
+    assert f'"confidence":"{triangulate.CONFIDENCE_HIGH}"' in content.replace(" ", "")
     # The template's JS-side section builders for the valuation-only
     # sections must be present so they can actually render this data.
     assert "triangulationRowHtml" in content
@@ -613,7 +618,7 @@ def _history_rows():
             "fv_bear_lo": 130.0, "fv_bear_hi": 140.0,
             "fv_base_lo": 150.0, "fv_base_hi": 170.0,
             "fv_bull_lo": 180.0, "fv_bull_hi": 200.0,
-            "confidence": "YÜKSEK", "sector_type": "mature",
+            "confidence": triangulate.CONFIDENCE_HIGH, "sector_type": "mature",
             "implied_growth": 0.12, "watch_note": None,
         },
         {
@@ -625,7 +630,7 @@ def _history_rows():
             "fv_bear_lo": 110.0, "fv_bear_hi": 120.0,
             "fv_base_lo": 125.0, "fv_base_hi": 140.0,
             "fv_bull_lo": 145.0, "fv_bull_hi": 160.0,
-            "confidence": "ORTA", "sector_type": "mature",
+            "confidence": triangulate.CONFIDENCE_MEDIUM, "sector_type": "mature",
             "implied_growth": 0.08, "watch_note": None,
         },
     ]

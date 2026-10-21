@@ -9,6 +9,7 @@ on-disk database -- ``save_verdict`` is stubbed out too.
 """
 
 import sec_analyzer.web.app as web_app
+from sec_analyzer.valuation import triangulate
 
 _SCENARIO = {
     "lo": 90.0,
@@ -45,9 +46,13 @@ def _valuation():
             "lo": 80.0, "hi": 122.0, "high_uncertainty": False,
         },
         "triangulation": {
-            "signals": {"dcf": "pahali", "reverse_dcf": "pahali", "multiples": "pahali"},
-            "confidence": "YÜKSEK",
-            "direction": "pahali",
+            "signals": {
+                "dcf": triangulate.SIGNAL_EXPENSIVE,
+                "reverse_dcf": triangulate.SIGNAL_EXPENSIVE,
+                "multiples": triangulate.SIGNAL_EXPENSIVE,
+            },
+            "confidence": triangulate.CONFIDENCE_HIGH,
+            "direction": triangulate.SIGNAL_EXPENSIVE,
         },
     }
 
@@ -57,7 +62,7 @@ def _interpret_result():
         "fair_value_range": _fair_value_range(),
         "fundamental_verdict": "PAHALI",
         "technical_verdict": "NÖTR",
-        "confidence": "YÜKSEK",
+        "confidence": triangulate.CONFIDENCE_HIGH,
         "profile_fit": {"verdict": "KISMEN", "reason": "PROFIL.md bulunamadı."},
         "reverse_dcf_comment": "Fiyat 10y %19 CAGR ima ediyor.",
         "red_flags_comment": "yok",
@@ -314,7 +319,7 @@ def _history_rows():
             "fv_bear_lo": 100.0, "fv_bear_hi": 110.0,
             "fv_base_lo": 120.0, "fv_base_hi": 140.0,
             "fv_bull_lo": 150.0, "fv_bull_hi": 170.0,
-            "confidence": "YÜKSEK", "sector_type": "mature",
+            "confidence": triangulate.CONFIDENCE_HIGH, "sector_type": "mature",
             "implied_growth": 0.12, "watch_note": None,
         },
     ]

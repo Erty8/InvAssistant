@@ -13,6 +13,7 @@ document.
 import pytest
 
 from sec_analyzer.interpret import rule_based
+from sec_analyzer.valuation import triangulate
 from sec_analyzer.valuation.sanity import validate_assumptions
 
 # Concepts rule_based.analyze() pulls directly from the normalized dict via
@@ -507,7 +508,10 @@ def test_default_assumptions_capm_risk_free_takes_precedence_over_global_fallbac
 # ---------------------------------------------------------------------------
 
 
-def _valuation(dcf_signal="ucuz", confidence="YÜKSEK", sector_type="mature", high_uncertainty=False):
+def _valuation(
+    dcf_signal=triangulate.SIGNAL_CHEAP, confidence=triangulate.CONFIDENCE_HIGH, sector_type="mature",
+    high_uncertainty=False,
+):
     """A `valuation` dict matching `sec_analyzer/valuation/SPEC.md` Sec.11,
     parameterized by the fields `commentary()` reads from."""
     return {
@@ -562,28 +566,38 @@ def test_commentary_returns_exactly_the_phase2_schema_keys():
 
 
 def test_commentary_fundamental_verdict_matches_dcf_triangulation_signal():
-    assert rule_based.commentary(_valuation(dcf_signal="ucuz"))["fundamental_verdict"] == "CHEAP"
-    assert rule_based.commentary(_valuation(dcf_signal="makul"))["fundamental_verdict"] == "FAIR"
-    assert rule_based.commentary(_valuation(dcf_signal="pahali"))["fundamental_verdict"] == "EXPENSIVE"
-    assert rule_based.commentary(_valuation(dcf_signal="veri_yok"))["fundamental_verdict"] == "FAIR"
+    assert rule_based.commentary(_valuation(dcf_signal=triangulate.SIGNAL_CHEAP))["fundamental_verdict"] == "CHEAP"
+    assert rule_based.commentary(_valuation(dcf_signal=triangulate.SIGNAL_FAIR))["fundamental_verdict"] == "FAIR"
+    assert (
+        rule_based.commentary(_valuation(dcf_signal=triangulate.SIGNAL_EXPENSIVE))["fundamental_verdict"] == "EXPENSIVE"
+    )
+    assert rule_based.commentary(_valuation(dcf_signal=triangulate.SIGNAL_NO_DATA))["fundamental_verdict"] == "FAIR"
+
+
+def _valuation_without_reverse_signal():
+    """``_valuation()`` with no triangulated reverse-DCF signal, so the
+    comment is derived from the implied-vs-realized numbers alone."""
+    valuation = _valuation()
+    del valuation["triangulation"]["signals"]["reverse_dcf"]
+    return valuation
 
 
 def test_commentary_reverse_dcf_comment_reflects_implied_vs_realized_growth():
-    expensive = rule_based.commentary(_valuation())["reverse_dcf_comment"]
+    expensive = rule_based.commentary(_valuation_without_reverse_signal())["reverse_dcf_comment"]
     assert "19.0%" in expensive and "14.0%" in expensive
     assert "expensiveness signal" in expensive
 
-    cheap_valuation = _valuation()
+    cheap_valuation = _valuation_without_reverse_signal()
     cheap_valuation["reverse_dcf"] = {"implied_growth": 0.05, "realized_cagr_5y": 0.14, "realized_label": "5y"}
     cheap = rule_based.commentary(cheap_valuation)["reverse_dcf_comment"]
     assert "cheapness signal" in cheap
 
-    fair_valuation = _valuation()
+    fair_valuation = _valuation_without_reverse_signal()
     fair_valuation["reverse_dcf"] = {"implied_growth": 0.14, "realized_cagr_5y": 0.13, "realized_label": "5y"}
     fair = rule_based.commentary(fair_valuation)["reverse_dcf_comment"]
     assert "consistent with the realized growth" in fair
 
-    no_data_valuation = _valuation()
+    no_data_valuation = _valuation_without_reverse_signal()
     no_data_valuation["reverse_dcf"] = {"implied_growth": None, "realized_cagr_5y": None, "realized_label": None}
     no_data = rule_based.commentary(no_data_valuation)["reverse_dcf_comment"]
     assert "could not be computed" in no_data
@@ -690,8 +704,6 @@ def test_reverse_dcf_comment_judgment_follows_triangulation_signal():
 
 
 def test_reverse_dcf_comment_fallback_matches_triangulate_at_margin_edge():
-    from sec_analyzer.valuation import triangulate
-
     # Exactly-3pp pairs where `implied - realized > 0.03` and
     # `implied > realized + 0.03` disagree by float noise (e.g. 0.14/0.11,
     # 0.01/0.04). The fallback must use triangulate's comparison, not its own.

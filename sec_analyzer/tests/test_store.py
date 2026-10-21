@@ -10,6 +10,7 @@ import json
 import pytest
 
 from sec_analyzer.store import database
+from sec_analyzer.valuation import triangulate
 
 
 def _price_row(date, price):
@@ -215,9 +216,13 @@ def _sample_valuation():
         "multiples": {"history": [], "current": {"pe": None, "ps": None, "pfcf": None}},
         "sensitivity": {"lo": 87.0, "hi": 131.0, "high_uncertainty": False},
         "triangulation": {
-            "signals": {"dcf": "pahali", "reverse_dcf": "pahali", "multiples": "pahali"},
-            "confidence": "YÜKSEK",
-            "direction": "pahali",
+            "signals": {
+                "dcf": triangulate.SIGNAL_EXPENSIVE,
+                "reverse_dcf": triangulate.SIGNAL_EXPENSIVE,
+                "multiples": triangulate.SIGNAL_EXPENSIVE,
+            },
+            "confidence": triangulate.CONFIDENCE_HIGH,
+            "direction": triangulate.SIGNAL_EXPENSIVE,
         },
         "assumptions": {},
         "notes": [],
@@ -227,7 +232,7 @@ def _sample_valuation():
 def test_save_verdict_populates_valuation_derived_columns_when_given(tmp_path):
     db_path = str(tmp_path / "test.sqlite3")
     result = _sample_result()
-    result["confidence"] = "YÜKSEK"
+    result["confidence"] = triangulate.CONFIDENCE_HIGH
     valuation = _sample_valuation()
 
     verdict_id = database.save_verdict(
@@ -240,7 +245,7 @@ def test_save_verdict_populates_valuation_derived_columns_when_given(tmp_path):
     finally:
         conn.close()
 
-    assert row["confidence"] == "YÜKSEK"
+    assert row["confidence"] == triangulate.CONFIDENCE_HIGH
     assert row["sector_type"] == "mature"
     assert row["implied_growth"] == pytest.approx(0.19)
     assert json.loads(row["fair_value_json"]) == valuation["fair_value_range"]
