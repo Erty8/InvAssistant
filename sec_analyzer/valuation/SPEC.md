@@ -5194,3 +5194,97 @@ templates (one line), `triangulate.py` (only the additive
 unchanged). Out: `sanity.py` (constants
 read, not changed), `sensitivity.py`, `_normalized_fcf0`,
 `screener/funding.py`, `normalize/ttm.py`.
+
+## 29. Share-split basis (WP13) — `normalize.splits.detect_share_splits` / `apply_split_basis`
+
+**Problem this fixes (real, currently-shipping defect).** SEC companyfacts
+keeps each filing's own figures. After a stock split, new filings restate
+their comparative periods onto the post-split basis, but two kinds of fact
+are never re-filed and stay pre-split:
+
+- the `dei:EntityCommonStockSharesOutstanding` cover-page count — the
+  preferred `SharesOutstanding` tag — because each filing reports only its
+  own cover, and
+- `EPS` / share counts for periods older than the comparatives the first
+  post-split filings carry.
+
+Netflix (CIK 1065280, 10-for-1 on 2025-11-14): `SharesOutstanding` read
+FY2024 `427.8M`, FY2025 `4,222.2M`. Prices are split-adjusted, so
+`shares_yoy` fired a false ~887% DILUTION red flag, and every historical
+market cap in the multiples history (Sec.6) was 10x too small: P/S
+0.05–0.98 for FY2014–FY2024, EV/EBITDA ~4x, and today's multiples
+therefore read at the 92nd percentile of their own history. EPS for FY2022
+and earlier stayed pre-split (FY2022 `9.95` next to FY2023 `1.20`).
+
+### Detection (`detect_share_splits(facts, as_of_str=None) -> Optional[SplitBasis]`)
+
+- **Source: restatements only.** For every `(tag, start, end)` period of
+  `WeightedAverageNumberOfDilutedSharesOutstanding` /
+  `WeightedAverageNumberOfSharesOutstandingBasic`, rows are ordered by
+  `filed` and each consecutive pair of filing dates is compared. A pair is a
+  candidate when both values are positive and `new / old` is within 0.5% of
+  an accepted split ratio: forward 5:4, 4:3, 3:2, 2, 5:2, 3…50, or the
+  reciprocal of one (a reverse split). The split happened in
+  `(old_filed, new_filed]`. Real share issuance (an offering, a stock-for-
+  stock merger) never rewrites past periods, so it is never a candidate.
+  EPS is not a detection source (restated EPS is rounded to the cent).
+- **Events.** Candidates with the same factor whose intervals still
+  intersect after merging are one event; its window is
+  `(old_basis_until, new_basis_from)` = that intersection. An event needs
+  at least 2 distinct restated periods.
+- **Composite guard.** A period last filed before split A and next re-filed
+  only after split B jumps by `f_A × f_B` in one step. An event whose factor
+  equals the product of two other events with overlapping windows is
+  dropped (Copart's 2:1 splits of 2022 and 2023 otherwise produced a third,
+  4:1 event).
+- **As-of.** Only facts with `filed <= as_of` are visible, the same cutoff
+  `normalize_facts` applies (Sec.18). A split restated after `as_of` is
+  invisible, so Sec.18's limitation 1 (split-adjusted prices vs. historical
+  share counts) still applies in as-of mode.
+
+### Basis per filing (`SplitBasis.factor_for(filed, accn)`)
+
+Cumulative factor (new shares per old share) over all events. For each
+event: `filed <= old_basis_until` → old basis (multiply by the factor);
+`filed >= new_basis_from` → new basis. A filing inside the window is placed
+by its share level (cover-page count summed across classes, else the
+weighted-average count of its latest period): old basis when that level is
+closer, in log terms, to the level of the filing at `old_basis_until` than
+to the one at `new_basis_from`. Without a usable level it is treated as new
+basis.
+
+### Application (`apply_split_basis(records, concept, basis)`)
+
+Called from `normalize_facts` for every concept, after the as-of cutoff and
+before dedup, so every candidate row of a period is on one basis. Only
+`SharesOutstanding` (value × factor) and `EPS` (value ÷ factor, rounded to 6
+decimals) change. An adjusted record gains `reported_value` (as filed) and
+`split_factor`; unadjusted records are unchanged. The filing accession
+travels internally as `_accn` and is dropped with `_priority`.
+
+`normalize_facts` returns the events as `normalized["share_splits"]`:
+
+```python
+[{"factor": 10.0, "old_basis_until": "2025-07-18",
+  "new_basis_from": "2026-01-23", "corroborating_periods": 10}]   # [] when none
+```
+
+**Invariance:** a filer with no detected split gets output identical to
+before, apart from the new `share_splits: []` key.
+
+### Known gaps
+
+- A filer whose share counts are only reported per class with dimensions
+  (e.g. Alphabet) has no restated non-dimensional weighted-average facts, so
+  its splits are not detected and its series stay as reported.
+- `normalize/ttm.py` reads raw facts directly. Its share inputs are the
+  latest cover page and latest-filed weighted averages, which are already on
+  the newest basis, so it is not routed through this adjustment.
+
+### Scope
+
+In: `normalize/splits.py` (new), `normalize/normalizer.py` (wiring, `_accn`,
+`share_splits`). Every consumer of `SharesOutstanding` / `EPS` (`metrics`,
+`red_flags`, `multiples_history`, the engine) picks up the adjusted series
+unchanged. Out: display of the detected events (CLI/report), `ttm.py`,
+`fetch/frames.py` peer data.

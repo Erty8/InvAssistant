@@ -39,6 +39,7 @@ from sec_analyzer.normalize.concepts import (
     FLOW_CONCEPTS,
     TAG_TAXONOMY,
 )
+from sec_analyzer.normalize.splits import apply_split_basis, detect_share_splits
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +184,9 @@ def _build_record(concept: str, tag: str, priority: int, unit: str, row: dict) -
 
     ``priority`` is the fallback-priority index of the tag this row came from
     (0 = highest-priority). It is kept only for dedup winner selection and is
-    not part of the public record contract.
+    not part of the public record contract. The filing's accession number
+    rides along as ``_accn`` for the same reason (share-split basis, SPEC.md
+    Sec.29) and is dropped with ``_priority``.
 
     ``unit`` is the XBRL unit key the row was found under (e.g. ``"USD"``,
     ``"USD/shares"``, ``"shares"`` -- see ``concepts.CONCEPT_UNITS``) and is
@@ -194,6 +197,7 @@ def _build_record(concept: str, tag: str, priority: int, unit: str, row: dict) -
         "concept": concept,
         "tag": tag,
         "_priority": priority,
+        "_accn": row.get("accn"),
         "period_end": period_end,
         "fy": _fiscal_year(period_end),
         "reported_fy": row.get("fy"),
@@ -372,7 +376,16 @@ def normalize_facts(facts_json: dict, years: int = 12, as_of=None) -> dict:
               "quarterly": {"<concept>": [record, ...] or None, ...},
               "missing": [<concept names with no contributing tag>, ...],
               "matched_tags": {"<concept>": [<tag>, ...] or None, ...},
+              "revenue_basis": {...},   # SPEC.md Sec.19
+              "share_splits": [{"factor", "old_basis_until",
+                                "new_basis_from", "corroborating_periods"}, ...],
             }
+
+        ``share_splits`` lists the stock splits detected from restated share
+        counts (SPEC.md Sec.29; ``[]`` when none). ``SharesOutstanding`` and
+        ``EPS`` records filed on an older split basis are converted onto the
+        newest one, keeping the as-filed number as ``reported_value`` next to
+        a ``split_factor``.
 
         ``matched_tags[concept]`` is the list of us-gaap tags that actually
         contributed at least one surviving record for that concept, ordered
@@ -423,6 +436,10 @@ def normalize_facts(facts_json: dict, years: int = 12, as_of=None) -> dict:
     matched_tags: Dict[str, Optional[List[str]]] = {}
     missing: List[str] = []
 
+    # Share-split basis (SPEC.md Sec.29): detected once from restated share
+    # counts, under the same as-of cutoff as the records themselves.
+    split_basis = detect_share_splits(facts, as_of_str)
+
     for concept, tag_list in CONCEPTS.items():
         # Collect rows from ALL present fallback tags (merged across tags),
         # each carrying its fallback-priority index and matched unit key.
@@ -454,6 +471,10 @@ def normalize_facts(facts_json: dict, years: int = 12, as_of=None) -> dict:
                 missing.append(concept)
                 continue
 
+        # Old-basis share counts / per-share figures onto the newest split
+        # basis, before dedup so every candidate row is comparable.
+        apply_split_basis(records, concept, split_basis)
+
         annual_records = [r for r in records if _is_annual_record(r, concept)]
         quarterly_records = [r for r in records if _is_quarterly_record(r)]
 
@@ -478,9 +499,11 @@ def normalize_facts(facts_json: dict, years: int = 12, as_of=None) -> dict:
             tag for tag, _ in sorted(contributing.items(), key=lambda kv: kv[1])
         ]
 
-        # The priority marker is internal-only; drop it from public records.
+        # The priority and accession markers are internal-only; drop them
+        # from public records.
         for record in annual_records + quarterly_records:
             record.pop("_priority", None)
+            record.pop("_accn", None)
 
         if not contributing_tags:
             # Fallback tags were present, but nothing survived the
@@ -551,6 +574,7 @@ def normalize_facts(facts_json: dict, years: int = 12, as_of=None) -> dict:
         "missing": missing,
         "matched_tags": matched_tags,
         "revenue_basis": revenue_basis,
+        "share_splits": split_basis.summary() if split_basis else [],
     }
 
 
