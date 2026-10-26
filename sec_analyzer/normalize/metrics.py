@@ -17,6 +17,7 @@ malformed data.
 
 import logging
 import math
+from datetime import datetime
 from typing import Dict, Optional
 
 from sec_analyzer.normalize.normalizer import to_annual_series, to_quarterly_series
@@ -234,6 +235,75 @@ def _compute_ttm(
     return result
 
 
+#: Newest minus oldest quarter end in a contiguous 4-quarter window: three
+#: quarters (~273 days) plus 52/53-week drift. Wider means a missing quarter.
+_TTM_MAX_WINDOW_DAYS = 300
+
+
+def _empty_ttm_cash() -> dict:
+    return {
+        "ttm_ocf": None, "ttm_capex": None, "ttm_sbc": None,
+        "ttm_fcf_sbc_adj": None, "ttm_cash_period_end": None,
+        "ttm_cash_complete": False, "ttm_cash_newer_than_fy": False,
+    }
+
+
+def _window_days(quarters: list) -> Optional[int]:
+    try:
+        newest = datetime.strptime(quarters[-1]["period_end"], "%Y-%m-%d")
+        oldest = datetime.strptime(quarters[0]["period_end"], "%Y-%m-%d")
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+    return (newest - oldest).days
+
+
+def _compute_ttm_cash(normalized: dict, latest_fundamental_fy: Optional[int]) -> dict:
+    """Trailing-twelve-month SBC-adjusted FCF from the quarterly series (SPEC.md Sec.30a).
+
+    Unlike Sec.24b's display figures this one feeds the DCF base, so a
+    partial window yields no sum at all: OCF and CapEx must each have four
+    quarters ending on the same date within ``_TTM_MAX_WINDOW_DAYS``; SBC
+    may be missing entirely (treated as 0.0, as in Sec.4) but, if present,
+    must cover the same four quarters. Never raises.
+    """
+    result = _empty_ttm_cash()
+    try:
+        ocf_q = to_quarterly_series(normalized, "OperatingCashFlow")[-_TTM_QUARTERS:]
+        capex_q = to_quarterly_series(normalized, "CapEx")[-_TTM_QUARTERS:]
+        sbc_q = to_quarterly_series(normalized, "SBC")[-_TTM_QUARTERS:]
+    except Exception:  # noqa: BLE001 - metrics must never crash the pipeline
+        logger.warning("compute_metrics: TTM cash-flow window could not be built.", exc_info=True)
+        return result
+
+    if not ocf_q or not capex_q:
+        return result
+    result["ttm_cash_period_end"] = ocf_q[-1]["period_end"]
+    result["ttm_ocf"] = sum(q["value"] for q in ocf_q)
+    result["ttm_capex"] = sum(q["value"] for q in capex_q)
+    result["ttm_sbc"] = sum(q["value"] for q in sbc_q) if sbc_q else 0.0
+
+    windows = [ocf_q, capex_q] + ([sbc_q] if sbc_q else [])
+    span = _window_days(ocf_q)
+    complete = (
+        all(len(w) == _TTM_QUARTERS for w in windows)
+        and len({w[-1]["period_end"] for w in windows}) == 1
+        and span is not None and span <= _TTM_MAX_WINDOW_DAYS
+    )
+    if not complete:
+        return result
+    result["ttm_cash_complete"] = True
+    result["ttm_fcf_sbc_adj"] = result["ttm_ocf"] - result["ttm_capex"] - result["ttm_sbc"]
+
+    fy_end = next(
+        (rec.get("period_end")
+         for rec in (normalized.get("annual") or {}).get("OperatingCashFlow") or []
+         if latest_fundamental_fy is not None and rec.get("fy") == latest_fundamental_fy),
+        None,
+    )
+    result["ttm_cash_newer_than_fy"] = fy_end is not None and result["ttm_cash_period_end"] > fy_end
+    return result
+
+
 def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> dict:
     """Compute valuation and quality metrics for the latest fiscal year.
 
@@ -318,6 +388,7 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
             "revenue_cagr_3y": None, "revenue_cagr_5y": None,
             "tangible_equity": None, "tbv_per_share": None, "ptbv": None,
             **_empty_ttm(),
+            **_empty_ttm_cash(),
             "sbc_revenue": None, "shares_yoy": None,
             "buyback_latest": None, "dividends_latest": None,
             "rnd_revenue": None, "fcf": None, "fcf_per_share": None,
@@ -374,6 +445,7 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
         normalized, shares, price,
         to_annual_series(normalized, "NetIncome").get(latest_fundamental_fy),
     )
+    ttm_cash = _compute_ttm_cash(normalized, latest_fundamental_fy)
 
     ratio_by_fy = {r["fy"]: r for r in (ratios or []) if r.get("fy") is not None}
 
@@ -444,6 +516,7 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
         "tbv_per_share": tbv_per_share,
         "ptbv": ptbv,
         **ttm,
+        **ttm_cash,
         "revenue_cagr_3y": revenue_cagr_3y,
         "revenue_cagr_5y": revenue_cagr_5y,
         "sbc_revenue": sbc_revenue,

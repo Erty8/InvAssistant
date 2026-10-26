@@ -1129,7 +1129,7 @@ def test_run_valuation_reit_ffo_unchanged_when_no_re_adjustment_tags():
 def test_run_valuation_cyclical_sector_produces_normalized_variant():
     # Regular fcf0 comes from metrics["fcf"]=200 (ttm; 3y avg of ratios'
     # fcf=[200,110,100] is 136.667, deviation |200-136.667|/136.667=0.463
-    # <=0.50 -> ttm stays valid, source="ttm").
+    # <=0.50 -> ttm stays valid, source="latest_fy").
     #
     # Cyclical normalized_fcf0 = median(fcf_margin over all FYs) * latest
     # revenue. Revenue/OCF/CapEx per FY all give margin exactly 0.10:
@@ -1160,7 +1160,7 @@ def test_run_valuation_cyclical_sector_produces_normalized_variant():
     )
 
     assert result["fcf0"] == pytest.approx(200.0)
-    assert result["fcf0_source"] == "ttm"
+    assert result["fcf0_source"] == "latest_fy"
     assert result["dcf"]["scenarios"]["base"]["per_share"] == pytest.approx(433.54, rel=1e-3)
     assert result["dcf"]["normalized_variant"] is not None
     assert result["dcf"]["normalized_variant"]["base"]["per_share"] == pytest.approx(260.12, rel=1e-3)
@@ -1210,7 +1210,7 @@ def test_run_valuation_cyclical_normalized_variant_uses_upper_half_mean_not_medi
     )
 
     assert result["fcf0"] == pytest.approx(200.0)
-    assert result["fcf0_source"] == "ttm"
+    assert result["fcf0_source"] == "latest_fy"
     assert result["dcf"]["scenarios"]["base"]["per_share"] == pytest.approx(433.5318, rel=1e-3)
 
     normalized_variant = result["dcf"]["normalized_variant"]
@@ -1370,7 +1370,7 @@ def test_run_valuation_fcf0_keeps_latest_when_ramp_is_monotonic_rising():
     #   deviation = |90-35|/35 = 1.5714 -> >0.50 -> deviates=True.
     #   oldest->newest = [20, 50, 90] -> 20<=50<=90 -> non-decreasing ->
     #   monotonic=True.
-    #   -> ttm kept: fcf0=90, source="ttm", plus a trend note (NOT the
+    #   -> ttm kept: fcf0=90, source="latest_fy", plus a trend note (NOT the
     #   3y_avg fallback note).
     normalized = _normalized({})
     ratios = [{"fy": 2023, "fcf": 90.0}, {"fy": 2022, "fcf": 50.0}, {"fy": 2021, "fcf": 20.0}]
@@ -1383,7 +1383,7 @@ def test_run_valuation_fcf0_keeps_latest_when_ramp_is_monotonic_rising():
     )
 
     assert result["fcf0"] == pytest.approx(90.0)
-    assert result["fcf0_source"] == "ttm"
+    assert result["fcf0_source"] == "latest_fy"
     assert any("stable trend" in n for n in result["notes"])
     # Must NOT use the "average used instead of latest year" fallback note --
     # the ttm figure was kept, not discarded.
@@ -1397,7 +1397,7 @@ def test_run_valuation_fcf0_keeps_latest_when_ramp_is_monotonic_falling():
     #   deviation = |20-70|/70 = 0.7143 -> >0.50 -> deviates=True.
     #   oldest->newest = [90, 50, 20] -> 90>=50>=20 -> non-increasing ->
     #   monotonic=True.
-    #   -> ttm kept: fcf0=20, source="ttm", plus a trend note.
+    #   -> ttm kept: fcf0=20, source="latest_fy", plus a trend note.
     normalized = _normalized({})
     ratios = [{"fy": 2023, "fcf": 20.0}, {"fy": 2022, "fcf": 50.0}, {"fy": 2021, "fcf": 90.0}]
     metrics = {"shares": 10.0, "latest_fy": 2023, "fcf": 20.0, "net_debt": 0.0}
@@ -1409,7 +1409,7 @@ def test_run_valuation_fcf0_keeps_latest_when_ramp_is_monotonic_falling():
     )
 
     assert result["fcf0"] == pytest.approx(20.0)
-    assert result["fcf0_source"] == "ttm"
+    assert result["fcf0_source"] == "latest_fy"
     assert any("stable trend" in n for n in result["notes"])
 
 
@@ -1505,7 +1505,7 @@ def test_run_valuation_fcf0_just_under_the_prior_average_threshold_keeps_ttm():
     )
 
     assert result["fcf0"] == pytest.approx(14.0)
-    assert result["fcf0_source"] == "ttm"
+    assert result["fcf0_source"] == "latest_fy"
 
 
 def test_run_valuation_fcf0_without_prior_years_never_fires_the_deviation():
@@ -1522,7 +1522,7 @@ def test_run_valuation_fcf0_without_prior_years_never_fires_the_deviation():
     )
 
     assert result["fcf0"] == pytest.approx(100.0)
-    assert result["fcf0_source"] == "ttm"
+    assert result["fcf0_source"] == "latest_fy"
 
 
 def test_run_valuation_select_fcf0_uses_fundamental_fy_not_ghost_latest_fy():
@@ -1539,7 +1539,7 @@ def test_run_valuation_select_fcf0_uses_fundamental_fy_not_ghost_latest_fy():
     #   avg window = [fcf.get(2024), fcf.get(2023), fcf.get(2022)]
     #             = [100.0, None, None] -> avg_window=[100.0] -> avg_fcf=100.0
     #   deviation = |100.0 - 100.0| / 100.0 = 0 -> NOT > 0.50 -> ttm kept as-is.
-    #   -> fcf0=100.0, source="ttm".
+    #   -> fcf0=100.0, source="latest_fy".
     #
     # Contrast (the pre-fix bug): if latest_fy=2025 had been used instead,
     # sbc_adjusted_fcf_by_fy.get(2025) would be None (ratios has no fy=2025
@@ -1559,7 +1559,7 @@ def test_run_valuation_select_fcf0_uses_fundamental_fy_not_ghost_latest_fy():
     )
 
     assert result["fcf0"] == pytest.approx(100.0)
-    assert result["fcf0_source"] == "ttm"
+    assert result["fcf0_source"] == "latest_fy"
     assert result["dcf"]["scenarios"] is not None
     assert result["dcf"]["scenarios"]["base"]["per_share"] is not None
 
