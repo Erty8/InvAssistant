@@ -459,9 +459,9 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
 
     prev_fy = latest_fy - 1
 
-    shares = shares_series.get(latest_fy)
+    annual_shares = shares_series.get(latest_fy)
     shares_prev = shares_series.get(prev_fy)
-    shares, shares_as_of = _latest_cover_shares(normalized, latest_fy, shares)
+    shares, shares_as_of = _latest_cover_shares(normalized, latest_fy, annual_shares)
     eps = eps_series.get(latest_fundamental_fy)
     ltd = ltd_series.get(latest_fundamental_fy)
     ltdc = ltdc_series.get(latest_fundamental_fy)
@@ -532,10 +532,14 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
     sbc_revenue = _safe_div(sbc, revenue)
     rnd_revenue = _safe_div(rnd, revenue)
 
-    if shares is None or shares_prev is None or shares_prev == 0:
+    # Year over year on the ANNUAL series (SPEC.md Sec.32d): a newer 10-Q
+    # count against last year's annual figure mixes bases (Hims: a loss
+    # quarter's basic count vs. a profitable year's diluted average read as
+    # -2% instead of +9%), and the hyper-growth DCF projects dilution from it.
+    if annual_shares is None or shares_prev is None or shares_prev == 0:
         shares_yoy = None
     else:
-        shares_yoy = shares / shares_prev - 1.0
+        shares_yoy = annual_shares / shares_prev - 1.0
 
     fcf_per_share = None if shares is None or shares == 0 else _safe_div_allow_negative(fcf, shares)
 

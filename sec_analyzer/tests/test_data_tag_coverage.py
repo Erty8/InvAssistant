@@ -157,6 +157,18 @@ def test_out_of_band_cover_count_is_ignored():
     assert m["shares_as_of"] == "2026-02-01"
 
 
+def test_shares_yoy_stays_on_the_annual_series():
+    # Hims: FY2024 236.8M -> FY2025 258.2M (+9%), Q2 2026 231.7M. The YoY that
+    # drives projected dilution must not compare the quarter to last year.
+    m = _share_metrics(usgaap_share_rows=[
+        _row("2024-12-31", 236.8e6, fy=2024, start="2024-01-01"),
+        _row("2025-12-31", 258.2e6, fy=2025, start="2025-01-01"),
+        _row("2026-06-30", 231.7e6, fy=2026, fp="Q2", form="10-Q", start="2026-04-01", filed="2026-08-10"),
+    ])
+    assert m["shares"] == 231.7e6
+    assert round(m["shares_yoy"], 4) == round(258.2 / 236.8 - 1, 4)  # +9.0%, not -2%
+
+
 def test_weighted_average_filer_uses_newer_quarter_of_same_tag():
     # CoreWeave: no dei cover count; FY2025 weighted average includes pre-IPO months.
     m = _share_metrics(usgaap_share_rows=[
