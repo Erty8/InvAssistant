@@ -161,6 +161,19 @@ def _coerce_float(value: Optional[str]) -> Optional[float]:
         return None
 
 
+def _normalize_cik(value) -> Optional[str]:
+    """Unpadded string form of a CIK (``"0001543151"`` -> ``"1543151"``), or ``None``."""
+    try:
+        return str(int(str(value).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_issuer_cik(root: ET.Element) -> Optional[str]:
+    """The ``<issuer><issuerCik>`` of a Form 4: whose shares the transactions are in."""
+    return _normalize_cik(_text(_find(root, "issuer", "issuerCik")))
+
+
 def _parse_reporting_owner(root: ET.Element) -> Tuple[Optional[str], bool, bool, bool, Optional[str]]:
     """Extract attribution fields from the FIRST ``reportingOwner`` element.
 
@@ -245,18 +258,24 @@ def _parse_form4_xml(raw: bytes, filed: str, accession: str) -> List[dict]:
     Never raises: malformed XML or an unexpected structure simply yields no
     transactions.
     """
+    return _parse_form4(raw, filed, accession)[1]
+
+
+def _parse_form4(raw: bytes, filed: str, accession: str) -> Tuple[Optional[str], List[dict]]:
+    """Like :func:`_parse_form4_xml`, also returning the filing's issuer CIK
+    (``None`` when absent or unparseable). Never raises."""
     try:
         root = ET.fromstring(raw)
     except ET.ParseError:
         logger.debug("Form 4 accession %s: XML parse error.", accession, exc_info=True)
-        return []
+        return None, []
     except Exception:  # noqa: BLE001 - any other parse failure is non-fatal
         logger.debug("Form 4 accession %s: unexpected parse failure.", accession, exc_info=True)
-        return []
+        return None, []
 
     if _strip_namespace(root.tag) != "ownershipDocument":
         logger.debug("Form 4 accession %s: unexpected root tag %r.", accession, root.tag)
-        return []
+        return None, []
 
     person, is_director, is_officer, is_ten_percent, officer_title = _parse_reporting_owner(root)
 
@@ -286,7 +305,7 @@ def _parse_form4_xml(raw: bytes, filed: str, accession: str) -> List[dict]:
             if txn is not None:
                 transactions.append(txn)
 
-    return transactions
+    return _parse_issuer_cik(root), transactions
 
 
 def _fetch_one_filing(
@@ -296,11 +315,14 @@ def _fetch_one_filing(
     filed: str,
     client,
     no_cache: bool,
-) -> Optional[List[dict]]:
-    """Fetch (or load from cache) and parse the transactions for one filing.
+) -> Optional[Tuple[Optional[str], List[dict]]]:
+    """Fetch (or load from cache) and parse one filing.
 
-    Returns ``None`` on any failure (network, parse, non-XML primary
-    document) -- the caller counts that as a failed filing and continues.
+    Returns ``(issuer_cik, transactions)``, or ``None`` on any failure
+    (network, parse, non-XML primary document) -- the caller counts that as a
+    failed filing and continues. A cache entry written before the issuer CIK
+    was recorded is re-fetched once; if that fetch fails, its transactions are
+    still used with an unknown issuer rather than dropped.
     """
     accession_stripped = accession.replace("-", "") if accession else None
     if not accession_stripped:
@@ -308,10 +330,14 @@ def _fetch_one_filing(
 
     cache_path = _cache_path(accession_stripped)
 
+    stale = None
     if not no_cache:
         cached = _load_cache(cache_path)
         if cached is not None:
-            return cached.get("transactions") or []
+            if "issuer_cik" in cached:
+                return cached.get("issuer_cik"), cached.get("transactions") or []
+            stale = cached
+    fallback = (None, stale.get("transactions") or []) if stale is not None else None
 
     document = (primary_document or "").split("/")[-1]
     if not document.lower().endswith(".xml"):
@@ -319,19 +345,19 @@ def _fetch_one_filing(
             "Form 4 accession %s: primary document %r is not raw XML; skipping.",
             accession, primary_document,
         )
-        return None
+        return fallback
 
     url = _DOC_URL.format(cik=cik_unpadded, accession=accession_stripped, document=document)
     try:
         raw = client.get_bytes(url)
     except Exception:  # noqa: BLE001 - a single filing failure must not abort the scan
         logger.warning("Failed to fetch Form 4 document at %s", url, exc_info=True)
-        return None
+        return fallback
 
-    transactions = _parse_form4_xml(raw, filed, accession)
+    issuer_cik, transactions = _parse_form4(raw, filed, accession)
 
-    _write_cache(cache_path, {"accession": accession, "transactions": transactions})
-    return transactions
+    _write_cache(cache_path, {"accession": accession, "issuer_cik": issuer_cik, "transactions": transactions})
+    return issuer_cik, transactions
 
 
 def get_insider_transactions(
@@ -374,6 +400,8 @@ def get_insider_transactions(
               "transactions": [...],   # newest transaction date first
               "filings_scanned": 5,    # filings successfully fetched+parsed
               "filings_failed": 1,     # filings that errored or were unparseable
+              "filings_other_issuer": 0,  # Form 4s this filer made as the owner
+                                          # of ANOTHER issuer's shares; skipped
               "lookback_days": 180,
               "source": "SEC Form 4",
               "truncated": False,      # True when more qualifying filings existed
@@ -454,14 +482,23 @@ def _get_insider_transactions(
     all_transactions: List[dict] = []
     filings_scanned = 0
     filings_failed = 0
+    filings_other_issuer = 0
 
     for filed, accession, primary_doc in candidates:
-        transactions = _fetch_one_filing(
+        fetched = _fetch_one_filing(
             cik_unpadded, accession, primary_doc,
             filed.strftime(_DATE_FMT), client, no_cache,
         )
-        if transactions is None:
+        if fetched is None:
             filings_failed += 1
+            continue
+        issuer_cik, transactions = fetched
+        # A filer's submissions also list the Form 4s it files as the
+        # reporting OWNER of another company's shares (Uber reporting a stake
+        # it holds elsewhere). Those trades are not insider activity in this
+        # company. An unknown issuer is kept, as before.
+        if issuer_cik is not None and issuer_cik != cik_unpadded:
+            filings_other_issuer += 1
             continue
         filings_scanned += 1
         all_transactions.extend(transactions)
@@ -472,6 +509,7 @@ def _get_insider_transactions(
         "transactions": all_transactions,
         "filings_scanned": filings_scanned,
         "filings_failed": filings_failed,
+        "filings_other_issuer": filings_other_issuer,
         "lookback_days": lookback_days,
         "source": "SEC Form 4",
         "truncated": truncated,

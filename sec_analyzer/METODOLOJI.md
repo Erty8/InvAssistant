@@ -193,6 +193,16 @@ kırpılmış accession numarasına göre içerik-adresli) TTL TAŞIMAZ, çünk�
 dosyalanmış bir belge değişmezdir — bir önbellek isabeti asla SEC'e karşı
 yeniden doğrulanmaz.
 
+**Başka bir şirketin hisselerine ait Form 4'ler atlanır.** Bir şirketin
+`submissions` listesinde, o şirketin kendisinin başka bir şirketin büyük
+ortağı olarak verdiği Form 4'ler de bulunur (örnek: Uber'in başka bir
+şirketteki ~169M hisselik satışı, Uber yöneticilerinin "$1.1B satışı" gibi
+görünüyordu). Her belgenin `<issuer><issuerCik>` alanı analiz edilen şirketin
+CIK'iyle eşleşmezse belge atlanır ve `filings_other_issuer` sayacına yazılır;
+`issuer` alanı olmayan belge eskisi gibi kabul edilir. Önbellek artık
+`issuer_cik`'i de saklar; bu alan olmadan yazılmış eski bir önbellek kaydı bir
+kez yeniden indirilir (indirme başarısız olursa eski işlemler kullanılır).
+
 **Hangi işlemler sinyal taşır.** `signals/insider.py::_CODE_MAP`, SEC'in
 işlem kodlarını Türkçe etiket + kategoriye eşler. Yalnızca açık piyasa alımı
 (`P`, `open_market_buy`) ve açık piyasa satışı (`S`, `open_market_sell`)

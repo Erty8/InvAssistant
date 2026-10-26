@@ -428,6 +428,92 @@ def test_cache_file_written_under_form4_dir(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# get_insider_transactions: Form 4s about ANOTHER issuer's shares
+# ---------------------------------------------------------------------------
+
+
+def _with_issuer(xml: bytes, issuer_cik: str) -> bytes:
+    """Insert an ``<issuer><issuerCik>`` block, as real Form 4s carry."""
+    return xml.replace(
+        b"<reportingOwner>",
+        f"<issuer><issuerCik>{issuer_cik}</issuerCik></issuer>\n  <reportingOwner>".encode(),
+        1,
+    )
+
+
+def test_form4_about_another_issuer_is_skipped(monkeypatch, tmp_path):
+    # Uber-style: the filer's submissions list its own executives' Form 4s
+    # AND the ones it files as owner of another company's shares.
+    monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
+    subs = _submissions([
+        ("4", "2026-07-02", "0000000001-26-000001", "own.xml"),
+        ("4", "2026-07-01", "0000000001-26-000002", "stake.xml"),
+    ])
+    client = _FakeClient(responses={
+        "000000000126000001": _with_issuer(_form4_xml(person="Exec One"), "0001543151"),
+        "000000000126000002": _with_issuer(
+            _form4_xml(person="Uber Technologies, Inc", nd_code="S", nd_shares=168869611), "0001234567"
+        ),
+    })
+
+    result = insider_fetch.get_insider_transactions("1543151", subs, client, today=_TODAY)
+
+    assert result["filings_scanned"] == 1
+    assert result["filings_other_issuer"] == 1
+    assert {t["person"] for t in result["transactions"]} == {"Exec One"}
+
+
+def test_form4_without_issuer_block_is_kept(monkeypatch, tmp_path):
+    monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
+    subs = _submissions([("4", "2026-07-01", "0000000001-26-000001", "f.xml")])
+    client = _FakeClient(responses={"000000000126000001": _form4_xml()})
+
+    result = insider_fetch.get_insider_transactions("1", subs, client, today=_TODAY)
+
+    assert result["filings_scanned"] == 1
+    assert result["filings_other_issuer"] == 0
+
+
+def test_cache_without_issuer_is_refetched_once(monkeypatch, tmp_path):
+    # Entries cached before the issuer CIK was recorded must not keep
+    # letting another issuer's trades through.
+    import json
+
+    monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
+    form4_dir = tmp_path / "form4"
+    form4_dir.mkdir()
+    cache_file = form4_dir / "form4_000000000126000001.json"
+    cache_file.write_text(json.dumps({"accession": "0000000001-26-000001", "transactions": [{"person": "Old"}]}))
+    subs = _submissions([("4", "2026-07-01", "0000000001-26-000001", "f.xml")])
+    client = _FakeClient(responses={"000000000126000001": _with_issuer(_form4_xml(), "0009999999")})
+
+    result = insider_fetch.get_insider_transactions("1", subs, client, today=_TODAY)
+
+    assert len(client.calls) == 1
+    assert result["filings_other_issuer"] == 1
+    assert json.loads(cache_file.read_text())["issuer_cik"] == "9999999"
+
+
+def test_cache_without_issuer_survives_a_failed_refetch(monkeypatch, tmp_path):
+    import json
+
+    monkeypatch.setattr(Config, "RAW_DIR", str(tmp_path))
+    form4_dir = tmp_path / "form4"
+    form4_dir.mkdir()
+    (form4_dir / "form4_000000000126000001.json").write_text(
+        json.dumps({"accession": "0000000001-26-000001", "transactions": [{"person": "Old", "date": "2026-07-01"}]})
+    )
+    subs = _submissions([("4", "2026-07-01", "0000000001-26-000001", "f.xml")])
+    client = _FakeClient(raise_for={"000000000126000001"})
+
+    result = insider_fetch.get_insider_transactions("1", subs, client, today=_TODAY)
+
+    assert result["filings_scanned"] == 1
+    assert result["filings_failed"] == 0
+    assert result["transactions"][0]["person"] == "Old"
+
+
+# ---------------------------------------------------------------------------
 # signals.insider: verdict rules
 # ---------------------------------------------------------------------------
 
