@@ -317,7 +317,7 @@ if len(sys.argv) > 3:
     ps = wb.create_sheet("Portföy", 0)
     ps["A1"] = "Portföy — Pozisyonlar, Sektörler ve Risk"
     ps["A1"].font = TITLE
-    ps["A2"] = ("Ağırlıklar 26 Ekim 2026 ekran görüntülerinden (mavi = girdi). Oynaklık ve beta son 252 işlem "
+    ps["A2"] = ("Ağırlıklar ekran görüntüsündeki pozisyonlardan; --live ile son fiyatlarla yeniden değerlenir (mavi = girdi). Oynaklık ve beta son 252 işlem "
                 "gününün günlük kapanışlarından (SPY'a göre). Senaryo getirileri Özet sayfasından gelir (yeşil).")
     ps["A2"].font = Font(name=FONT, italic=True, size=9)
     p_cols = [("Ticker", 9), ("Sektör", 34), ("Ağırlık (girdi)", 11), ("Normalize ağırlık", 10), ("Yıllık oynaklık", 10),

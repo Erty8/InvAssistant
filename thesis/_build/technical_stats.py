@@ -4,13 +4,19 @@ Runs the engine's own technical layer (indicators, verdict, momentum, swing,
 action) on sec_analyzer/raw/prices_<TICKER>_full.csv and writes
 technical.json next to this script. Run from the repo root:
 
-    PYTHONPATH=. python thesis/_build/technical_stats.py
+    PYTHONPATH=. python thesis/_build/technical_stats.py [--live]
+
+``--live`` asks the engine's price fetcher for today's in-progress bar
+(``prefer_live=True``) while a US session is open; without it the snapshot
+uses the settled daily closes in the cache.
 """
 import json
 import os
+import sys
 
 import pandas as pd
 
+from sec_analyzer.fetch.prices import get_price_history
 from sec_analyzer.technical.action import compute_technical_action
 from sec_analyzer.technical.indicators import compute_indicators, relative_strength
 from sec_analyzer.technical.momentum import compute_price_momentum
@@ -23,7 +29,12 @@ TICKERS = [d["t"] for d in json.load(open(os.path.join(HERE, "new_theses.json"),
 TICKERS = ["MU", "NVDA", "NFLX", "APP", "UBER"] + TICKERS
 
 
+LIVE = "--live" in sys.argv
+
+
 def prices(t):
+    if LIVE:
+        return get_price_history(t, prefer_live=True)[0].sort_index()
     df = pd.read_csv(os.path.join(RAW, f"prices_{t}_full.csv"), parse_dates=["Date"]).set_index("Date")
     return df.sort_index()
 

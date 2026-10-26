@@ -15,7 +15,13 @@ RAW = "sec_analyzer/raw"
 # thesis/_private/portfolio_positions.json and only weights leave this script.
 PRIVATE = os.path.join(SP, "..", "_private", "portfolio_positions.json")
 if os.path.exists(PRIVATE):
-    POS = json.load(open(PRIVATE, encoding="utf-8"))["positions_usd"]
+    _private = json.load(open(PRIVATE, encoding="utf-8"))
+    POS = _private["positions_usd"]
+    # --live: revalue each position from the screenshot price to the latest
+    # price in technical.json (run technical_stats.py --live first).
+    if "--live" in __import__("sys").argv and _private.get("screenshot_prices"):
+        _tech = json.load(open(os.path.join(SP, "technical.json"), encoding="utf-8"))
+        POS = {t: v * _tech[t]["price"] / _private["screenshot_prices"][t] for t, v in POS.items()}
 else:  # fall back to the committed weights (same tickers, unit total)
     POS = json.load(open(os.path.join(SP, "portfolio_stats.json"), encoding="utf-8"))["weights"]
 SECTOR = {

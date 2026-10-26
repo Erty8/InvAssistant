@@ -3,8 +3,8 @@
 Repo kökünden çalıştırın:
 
 ```bash
-PYTHONPATH=thesis/_build python thesis/_build/portfolio_stats.py
-PYTHONPATH=. python thesis/_build/technical_stats.py
+PYTHONPATH=. python thesis/_build/technical_stats.py [--live]   # önce teknik: --live portföy ağırlıkları için gerekir
+PYTHONPATH=thesis/_build python thesis/_build/portfolio_stats.py [--live]
 PYTHONPATH=thesis/_build python thesis/_build/build_tezler.py thesis/tezler.xlsx thesis/_build/new_theses.json thesis/_build/portfolio_stats.json thesis/_build/technical.json
 ```
 
