@@ -5514,3 +5514,60 @@ material CapEx, are byte-for-byte unchanged.
 In: `normalize/normalizer.py` (`_impute_immaterial_capex`, wiring, the
 `capex_imputation` key), `valuation/engine.py` (disclosure note). No new
 dependency, no valuation formula change.
+
+## 32. Data-reading coverage (WP16) — `normalize/concepts.py`, `normalizer._is_annual_record`, `metrics._latest_cover_shares`
+
+Four input gaps that made the engine value filers on missing or years-old
+data. None changes a valuation formula; each only lets an existing formula see
+the filer's real figures. Tag fallbacks merge per period with the earlier tag
+winning (`_extract_concept`), so a filer that already reported under the
+preferred tag is unchanged.
+
+### 32a. Net income fallbacks
+
+`NetIncome = [NetIncomeLoss, NetIncomeLossAvailableToCommonStockholdersBasic, ProfitLoss]`.
+Some filers stop tagging `NetIncomeLoss`: Caterpillar after 2010, Exelon after
+2012, Freeport never, Broadcom from FY2025 (its TTM net income came from 2019,
+TTM P/E 522). Common-holder income is preferred over the consolidated
+`ProfitLoss`, which includes noncontrolling interests (Freeport FY2025: $2.20B
+vs $4.15B).
+
+### 32b. Debt fallbacks
+
+`LongTermDebt` adds, after `LongTermDebtNoncurrent`:
+`LongTermDebtAndCapitalLeaseObligations` (Broadcom's 10-Ks since FY2022),
+`LongTermNotesPayable`, `LongTermNotesAndLoans` (Oracle),
+`ConvertibleDebtNoncurrent` (Hims & Hers); `LongTermDebt` stays last.
+`LongTermDebtCurrent` adds `LongTermDebtAndCapitalLeaseObligationsCurrent`,
+`DebtCurrent`, `NotesPayableCurrent`. Measured on 152 cached filers: 27
+change, e.g. Broadcom $3.15B → $65.1B, Oracle none → $129.5B, Verizon $18.6B →
+$158.2B, Chevron $2.35B → $42.1B, Coca-Cola none → $43.9B. A filer that splits
+debt across two noncurrent tags (straight + convertible) still reads only the
+higher-priority one.
+
+### 32c. 20-F / 40-F annual reports
+
+`_is_annual_record` accepts `form in ("10-K", "20-F", "40-F")` with
+`fp == "FY"` (amendments and 6-K are still excluded). Foreign private issuers
+reporting under us-gaap (Sea Ltd) now get annual fundamentals; ifrs-full-only
+filers are unchanged (no us-gaap facts). Their 6-K quarterly results are not
+XBRL-tagged, so TTM figures stay unavailable for them.
+
+### 32d. Latest share count — `metrics._latest_cover_shares`
+
+`metrics["shares"]` is the newest 10-Q row of the SAME tag as the latest
+annual `SharesOutstanding` record (the dei cover count for most filers, a
+weighted average for multi-class filers without one) when it is later than the
+annual record AND within `_COVER_SHARES_BAND = (0.8, 1.5)` of it; otherwise
+the annual figure as before. The band keeps a single share class of a
+multi-class filer from replacing the total. New key `shares_as_of` (period
+end of the count used). `shares_yoy` keeps the annual basis. Oklo 173.6M →
+186.0M, Eos 339.4M → 364.2M, Rocket Lab 567.4M → 598.4M, CoreWeave 436.0M →
+551.0M (Q2 2026 weighted average; its FY2025 figure averaged in pre-IPO months).
+
+### Not covered here
+
+Balance sheets are still read from the latest fiscal year, so a large
+mid-year acquisition (Constellation/Calpine) shows pre-deal debt until the
+next 10-K. Revenue still prefers the ASC 606 contract-revenue tag, which
+understates total revenue for some filers (Sea Ltd, Constellation).

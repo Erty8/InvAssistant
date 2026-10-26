@@ -235,6 +235,47 @@ def _compute_ttm(
     return result
 
 
+#: A newer 10-Q share count replaces the annual one only inside this ratio
+#: band. Outside it the newer row is more likely a single share class of a
+#: multi-class filer than real issuance or buybacks.
+_COVER_SHARES_BAND = (0.8, 1.5)
+
+
+def _latest_cover_shares(
+    normalized: dict, latest_fy: Optional[int], annual_shares: Optional[float]
+) -> "tuple[Optional[float], Optional[str]]":
+    """The newest share count from a 10-Q, if newer than the annual one.
+
+    The annual series only moves once a year, so a filer issuing stock through
+    an ATM program (Oklo: 173.6M on the 10-K cover, 186.0M five months later)
+    is valued on a stale count. Only rows of the SAME tag as the annual record
+    qualify -- the dei cover count for most filers, a weighted average for
+    multi-class filers with no cover count (CoreWeave) -- so a cover count is
+    never swapped for an average or vice versa. Returns
+    ``(shares, as_of_period_end)``; falls back to ``annual_shares`` with the
+    annual record's date. Never raises.
+    """
+    try:
+        annual_rows = (normalized.get("annual") or {}).get("SharesOutstanding") or []
+        annual_row = next((r for r in annual_rows if r.get("fy") == latest_fy), None)
+        annual_end = annual_row.get("period_end") if annual_row else None
+        cover_rows = [
+            r for r in (normalized.get("quarterly") or {}).get("SharesOutstanding") or []
+            if annual_row is not None and r.get("tag") == annual_row.get("tag")
+            and r.get("value") and r.get("period_end")
+        ]
+        if not cover_rows or not annual_shares or annual_end is None:
+            return annual_shares, annual_end
+        newest = max(cover_rows, key=lambda r: r["period_end"])
+        lo, hi = _COVER_SHARES_BAND
+        if newest["period_end"] > annual_end and lo <= newest["value"] / annual_shares <= hi:
+            return float(newest["value"]), newest["period_end"]
+        return annual_shares, annual_end
+    except Exception:  # noqa: BLE001 - metrics must never crash the pipeline
+        logger.warning("compute_metrics: latest cover-page share count unavailable.", exc_info=True)
+        return annual_shares, None
+
+
 #: Newest minus oldest quarter end in a contiguous 4-quarter window: three
 #: quarters (~273 days) plus 52/53-week drift. Wider means a missing quarter.
 _TTM_MAX_WINDOW_DAYS = 300
@@ -380,7 +421,7 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
         )
         return {
             "price": _round_or_none(price, 2),
-            "shares": None, "eps": None, "market_cap": None,
+            "shares": None, "shares_as_of": None, "eps": None, "market_cap": None,
             "total_debt": None, "net_debt": None,
             "pe": None, "ps": None, "pfcf": None,
             "operating_income": None, "ebitda": None, "ev": None,
@@ -420,6 +461,7 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
 
     shares = shares_series.get(latest_fy)
     shares_prev = shares_series.get(prev_fy)
+    shares, shares_as_of = _latest_cover_shares(normalized, latest_fy, shares)
     eps = eps_series.get(latest_fundamental_fy)
     ltd = ltd_series.get(latest_fundamental_fy)
     ltdc = ltdc_series.get(latest_fundamental_fy)
@@ -500,6 +542,7 @@ def compute_metrics(normalized: dict, ratios: list, price: Optional[float]) -> d
     result = {
         "price": price,
         "shares": shares,
+        "shares_as_of": shares_as_of,
         "eps": eps,
         "market_cap": market_cap,
         "total_debt": total_debt,

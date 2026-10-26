@@ -51,6 +51,11 @@ _DATE_FMT = "%Y-%m-%d"
 #: a 10-K).
 _ANNUAL_SPAN_DAYS = (350, 380)
 
+#: Annual-report forms whose ``fp == "FY"`` facts form the annual series.
+#: Foreign private issuers file 20-F (40-F for Canadian filers); those that
+#: report under us-gaap (e.g. Sea Ltd) carry the same full-year facts.
+_ANNUAL_FORMS = ("10-K", "20-F", "40-F")
+
 #: A flow concept's quarterly period is preferred when its span falls in
 #: this range (guards against picking a year-to-date figure that a 10-Q
 #: sometimes reports alongside the quarter-only figure).
@@ -226,14 +231,15 @@ def _build_record(concept: str, tag: str, priority: int, unit: str, row: dict) -
 def _is_annual_record(record: dict, concept: str) -> bool:
     """Whether ``record`` belongs in the annual bucket.
 
-    Annual records must come from a 10-K with ``fp == "FY"``. For flow
+    Annual records must come from an annual report (10-K, or 20-F/40-F for
+    foreign private issuers) with ``fp == "FY"``. For flow
     concepts (income statement / cash flow), we additionally require the
     reported period to span roughly a full year, to filter out a stray
     quarter that sometimes appears inside a 10-K's XBRL facts. If the span
     can't be determined (missing ``start``, or a parse error) we accept
     the record rather than discard good data over a formatting quirk.
     """
-    if record.get("form") != "10-K" or record.get("fp") != "FY":
+    if record.get("form") not in _ANNUAL_FORMS or record.get("fp") != "FY":
         return False
 
     if concept in FLOW_CONCEPTS:

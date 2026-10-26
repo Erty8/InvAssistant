@@ -40,6 +40,13 @@ CONCEPTS: Dict[str, List[str]] = {
     ],
     "NetIncome": [
         "NetIncomeLoss",
+        # Filers that stopped tagging NetIncomeLoss (Caterpillar after 2010,
+        # Exelon after 2012, Freeport never; Broadcom from FY2025). Rows merge
+        # per period with NetIncomeLoss winning, so these only fill gaps.
+        # Common-holder income comes first: the consolidated ProfitLoss
+        # includes noncontrolling interests (Freeport FY2025: $4.15B vs $2.20B).
+        "NetIncomeLossAvailableToCommonStockholdersBasic",
+        "ProfitLoss",
     ],
     "TotalAssets": [
         "Assets",
@@ -73,6 +80,13 @@ CONCEPTS: Dict[str, List[str]] = {
     ],
     "LongTermDebt": [
         "LongTermDebtNoncurrent",
+        # Noncurrent debt under the tags filers actually use when they skip
+        # LongTermDebtNoncurrent: Broadcom's 10-Ks since FY2022 (incl.
+        # finance leases), Oracle's notes, Hims & Hers' convertibles.
+        "LongTermDebtAndCapitalLeaseObligations",
+        "LongTermNotesPayable",
+        "LongTermNotesAndLoans",
+        "ConvertibleDebtNoncurrent",
         "LongTermDebt",
     ],
     "CapEx": [
@@ -101,6 +115,9 @@ CONCEPTS: Dict[str, List[str]] = {
     ],
     "LongTermDebtCurrent": [
         "LongTermDebtCurrent",
+        "LongTermDebtAndCapitalLeaseObligationsCurrent",
+        "DebtCurrent",
+        "NotesPayableCurrent",
     ],
     "Buyback": [
         "PaymentsForRepurchaseOfCommonStock",
