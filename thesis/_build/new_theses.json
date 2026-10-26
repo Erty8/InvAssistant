@@ -1,0 +1,1003 @@
+[
+ {
+  "t": "HIMS",
+  "name": "Hims & Hers Health",
+  "price": 27.71,
+  "eps": -0.55,
+  "eps_note": "TTM EPS (2026-06-30'a kadar), zararda. Senaryolarda gelir/hisse x F/S kullanıldı (TTM gelir/hisse $9.98, F/S ~2.8). H1 2026'daki $38M yeniden yapılanma gideri eklense de faaliyet zararı ~$137M; düzeltme yapılmadı.",
+  "growth": 0.382,
+  "margin": -0.055,
+  "stance": "Temkinli",
+  "line": "Motorun $202-253 değeri model hatası; şirket 2026'da zarara geçti, organik büyüme Q1'de %4'e düştü ve son çeyrek büyümesi kısmen satın alınmış, ~2.8x F/S ucuz görünse de dönüş kanıtı beklenmeli.",
+  "verdict": "MODEL-PRICE DIVERGENCE",
+  "lo": 224.85,
+  "hi": 282.12,
+  "dcf_note": "Güvenilir değil: hiper büyüme gelir DCF'si 2020'deki küçük tabandan gelen %74 CAGR ile %59 başlangıç büyümesi ve %37 olgun FCF marjı varsayıyor; son 12 ay faaliyet zararı -$155M ve FCF negatif. $1.37B dönüştürülebilir borç da EV'ye girmiyor.",
+  "analyst": 31.15,
+  "catalyst": "Q3 2026 sonuçları ~9 Kas 2026",
+  "risk": "Marj erimesi ve yavaşlayan organik büyüme sürerken borç, ertelenmiş satın alma ödemeleri ve seyrelme birikiyor.",
+  "scenarios": [
+   [
+    "Ayı: organik büyüme durur, zarar sürer",
+    11.3,
+    1.5
+   ],
+   [
+    "Baz: satın almayla büyüme, zarar daralır",
+    12.8,
+    2.3
+   ],
+   [
+    "Boğa: büyüme ve kârlılık geri döner",
+    14.3,
+    3.2
+   ]
+  ],
+  "scenario_note": "Gelir/hisse x F/S (12 ay sonraki gelir $3.0B/$3.4B/$3.8B, ~265M hisse; Claude'un varsayımı)",
+  "indicators": [
+   [
+    "Çeyreklik gelir büyümesi",
+    "%38 (satın alma dahil; Q1 %4)",
+    "Eucalyptus hariç çift haneli büyüme",
+    "Organik büyüme tek hanede"
+   ],
+   [
+    "Brüt marj",
+    "%63.8 (Q2 2026)",
+    "%70'e doğru toparlanma",
+    "%60'ın altı"
+   ],
+   [
+    "Faaliyet marjı",
+    "-%12.9 (Q2 2026)",
+    "Başa başa yaklaşır",
+    "Zarar derinleşir"
+   ],
+   [
+    "FCF (SBC sonrası, son 12 ay)",
+    "-$92M",
+    "Pozitife döner",
+    "Yeni borç/hisse ihracı"
+   ],
+   [
+    "Hisse sayısı",
+    "yıllık +%9",
+    "Artış yavaşlar",
+    "Dönüşüm/hisseyle ödeme ile hızlanır"
+   ],
+   [
+    "Fiyat",
+    "$27.71",
+    "$35-36 direnci aşılır",
+    "$24 desteği kırılır"
+   ]
+  ],
+  "tool_issues": [
+   "Hyper-growth revenue DCF headline is triggered by a 5y CAGR off a tiny 2020 base (73.9%) and ignores TTM operating losses and organic deceleration; base uses 59% start growth and 37% mature FCF margin.",
+   "ConvertibleDebtNoncurrent ($1.37B) is not mapped to debt: total_debt/net_debt are None and EV equals market cap, so EV/EBITDA and EV/EBIT are wrong.",
+   "Headline P/E (54.3) uses FY2025 EPS while TTM EPS is -$0.55.",
+   "Summary says 'Sector classification: mature' while the headline model is hyper-growth.",
+   "Quarterly NetIncome series labels the 2026-03-31 period as fp Q2 (cosmetic)."
+  ]
+ },
+ {
+  "t": "SOFI",
+  "name": "SoFi Technologies",
+  "price": 14.61,
+  "eps": 0.44,
+  "eps_note": "Temiz TTM EPS: TTM vergi öncesi kâr $738M x (1-%20 normal vergi) = ~$590M, 1,352M seyreltilmiş hisse. Raporlanan TTM net kâr $636M (efektif vergi %13.7); motor TTM EPS $0.50 (temel 1,275M hisse). FY2024'te $265M tek seferlik vergi geliri var.",
+  "growth": 0.426,
+  "margin": 0.137,
+  "stance": "Nötr",
+  "line": "Gelir %43 büyüyor ve kârlılık hızla artıyor, ama ROTCE ~%6-7 ile sermaye maliyetinin altında; 2x P/TBV fiyatı ROTCE'nin ~%15'e çıkacağını peşin ödüyor.",
+  "verdict": "EXPENSIVE",
+  "lo": 4.61,
+  "hi": 5.53,
+  "dcf_note": "RIM bir banka için doğru yöntem ve 'pahalı' yönü adil; ama FY2025 ROE'si (%4.6) $3.2B sermaye artırımıyla bastırılmış ve ROE'nin hiç yükselmeyeceğini varsaydığı için rakam fazla sert.",
+  "analyst": 20.23,
+  "catalyst": "Q3 2026 sonuçları ~28 Eki 2026",
+  "risk": "ROE sermaye maliyetinin altında kalırken sürekli hisse ihracı ve olası kredi kaybı artışı değeri sulandırır.",
+  "scenarios": [
+   [
+    "Ayı: kredi kayıpları artar, büyüme yavaşlar",
+    0.45,
+    20
+   ],
+   [
+    "Baz: kâr ~%30 büyür, ROTCE kademeli artar",
+    0.58,
+    27
+   ],
+   [
+    "Boğa: kâr ~%60 büyür, ROTCE çift haneye çıkar",
+    0.7,
+    33
+   ]
+  ],
+  "scenario_note": null,
+  "indicators": [
+   [
+    "Çeyreklik net gelir büyümesi",
+    "%43 (Q2 2026)",
+    "%35 üzerinde kalır",
+    "%25'in altına iner"
+   ],
+   [
+    "ROTCE",
+    "~%6-7 (son 12 ay)",
+    "%10'un üzerine çıkar",
+    "Yatay kalır"
+   ],
+   [
+    "Vergi öncesi marj",
+    "%16.8 (Q2 2026)",
+    "%20'ye yaklaşır",
+    "Düşer"
+   ],
+   [
+    "Hisse sayısı",
+    "yıllık +%16",
+    "Artış durur",
+    "Yeni hisse ihracı"
+   ],
+   [
+    "Kredi kayıpları / karşılıklar",
+    "araç ölçmüyor",
+    "Stabil",
+    "Belirgin artış"
+   ],
+   [
+    "Fiyat",
+    "$14.61",
+    "$16.64-17.08 direnci aşılır",
+    "$13.74 desteği kırılır"
+   ]
+  ],
+  "tool_issues": [
+   "key_risks revenue-basis note uses Turkish number formats ('4,52 M$', '%99,0') instead of English.",
+   "Red flag 'profitable on paper but operating cash flow is negative' is a false alarm for a lender whose held-for-sale loan originations run through operating cash flow.",
+   "RIM ROE (4.6%) divides FY2025 NI by year-end equity inflated by a $3.2B in-year equity raise; average equity would give ~5.7% (FY2025) / ~7.1% (TTM).",
+   "pe_ttm (29.3) uses the basic 1,275M share count rather than ~1,352M diluted, and does not normalize the low effective tax rate (FY2025 8.5%, TTM 13.7%)."
+  ]
+ },
+ {
+  "t": "HOOD",
+  "name": "Robinhood Markets",
+  "price": 95.07,
+  "eps": 2.18,
+  "eps_note": "Temiz TTM EPS: raporlanan TTM net kâr $2.07B'den Q2 2026'daki $135M faaliyet dışı gelirin ($106M konsolidasyondan çıkarma kazancı + $23M yatırım kazancı) vergi sonrası ~$109M'si çıkarıldı, ~$28M yeniden yapılanma gideri (~$23M vergi sonrası) geri eklendi = ~$1.99B / 912M seyreltilmiş hisse. Tüm döneme %21 vergi uygulanırsa ~$2.00. FY2024'te $347M vergi geliri var.",
+  "growth": 0.323,
+  "margin": 0.403,
+  "stance": "Nötr-temkinli",
+  "line": "%42 net marj ve %21 ROE ile kaliteli bir platform, ama temiz kârın ~44 katı ve defter değerinin 10 katı fiyat, hacme bağlı bir işte yıllarca %25+ büyüme varsayıyor.",
+  "verdict": "EXPENSIVE",
+  "lo": 24.85,
+  "hi": 29.65,
+  "dcf_note": "RIM, ROE'yi 10. yıldan sonra sermaye maliyetine indirdiği için az sermayeyle büyüyen bu platformda değeri düşük gösteriyor; ama kalıcı %20.6 ROE ile bile motorun RIM'i ~$62 veriyor. F/K daha anlamlı.",
+  "analyst": 134.9,
+  "catalyst": "Q3 2026 sonuçları, Kasım başı bekleniyor (motor ~7 Oca diyor; Q3 2025 8-K'sı 5 Kas 2025)",
+  "risk": "İşlem ve kripto hacimleri düşerse yüksek çarpanla fiyatlanan kâr hızla geriler.",
+  "scenarios": [
+   [
+    "Ayı: hacimler düşer, kâr geriler",
+    2.0,
+    25
+   ],
+   [
+    "Baz: kâr ~%20 büyür, çarpan daralır",
+    2.6,
+    35
+   ],
+   [
+    "Boğa: kâr ~%40 büyür, çarpan korunur",
+    3.1,
+    45
+   ]
+  ],
+  "scenario_note": null,
+  "indicators": [
+   [
+    "Çeyreklik gelir büyümesi",
+    "%32 (Q2 2026; Q1 %15)",
+    "%30 üzerinde kalır",
+    "%15'in altına iner"
+   ],
+   [
+    "Vergi öncesi marj (temiz)",
+    "~%46 (Q2 2026)",
+    "%45 üzerinde",
+    "%40'ın altına iner"
+   ],
+   [
+    "Temiz EPS",
+    "~$2.18 (son 12 ay)",
+    "Çeyreklik $0.60+",
+    "Çeyreklik $0.45 altı"
+   ],
+   [
+    "Yönetici işlemleri",
+    "0 alım / 49 satış, -$127.5M",
+    "Satışlar yavaşlar",
+    "Büyük satışlar sürer"
+   ],
+   [
+    "Hisse sayısı",
+    "~912M seyreltilmiş",
+    "Geri alımlarla düşer",
+    "SBC/dönüşümle artar"
+   ],
+   [
+    "Fiyat",
+    "$95.07",
+    "$110-113 direnci aşılır",
+    "$92.73 desteği kırılır"
+   ]
+  ],
+  "tool_issues": [
+   "RIM external-growth note says 'ROE is below the cost of equity -- growth destroys value' although ROE 20.6% > 10% CoE and external value $26.45 > internal $24.28; the text ignores the sign of the gap.",
+   "Catalyst 'Q3 earnings ~7 Jan' is implausible; the prior-year Q3 earnings 8-K (2.02) was filed 2025-11-05.",
+   "Insider stake_sold_pct (Tenev 70%, Bhatt 74%) is likely overstated for dual-class holders: Bhatt's rows show code C (Class B to A conversion) before the sales, so shares_owned_after appears to cover only direct Class A.",
+   "TTM EPS/P/E include the Q2 2026 $106M DeconsolidationGainOrLossAmount one-off gain.",
+   "RIM's terminal ROE fade to cost of equity (SPEC 8f, by design) systematically undervalues capital-light platforms classified as financial."
+  ]
+ },
+ {
+  "t": "SE",
+  "name": "Sea Limited",
+  "price": 74.63,
+  "eps": 2.59,
+  "eps_note": "GAAP seyreltilmiş son 12 ay EPS (Haziran 2026'ya kadar), FY2025 20-F ve Q2 2026 6-K altı aylık tablolarından elle hesaplandı (FY $2.52 + 1Y26 $1.37 - 1Y25 $1.30); motorda veri yoktu. yfinance'in $3.18'i GAAP dışı. Önemli tek seferlik kalem bulunmadı.",
+  "growth": 0.481,
+  "margin": 0.059,
+  "stance": "Bekle, marj netleşsin",
+  "line": "Gelir %48 büyüyor ama kâr yalnızca %11 büyüyor ve yöneticiler yüklü satıyor; fiyat son 12 ay kârının ~29 katına inse de marj baskısı netleşmeden dip aramak erken.",
+  "verdict": "MODEL-PRICE DIVERGENCE",
+  "lo": 298.5,
+  "hi": 579.6,
+  "dcf_note": "20-F verisi artık okunuyor ve motor ilk kez değer üretti ($299–580), ama nakit akışı Monee kredi büyümesini (yatırım faaliyetlerinde) saymadığı için FCF ve DCF şişkin; güvenilir değil.",
+  "analyst": 152.9,
+  "catalyst": "Q3 2026 sonuçları ~Kasım ortası (geçen yıl 12 Kas)",
+  "risk": "Rekabet nedeniyle pazarlama ve kredi karşılığı harcamaları gelirden hızlı büyümeye devam ederse kâr büyümesi durur ve F/K daralır.",
+  "scenarios": [
+   [
+    "Ayı: marj baskısı sürer, kredi kaybı artar",
+    2.6,
+    18
+   ],
+   [
+    "Baz: kâr gelirin yarısı hızında büyür",
+    3.1,
+    24
+   ],
+   [
+    "Boğa: harcama dengelenir, marj geri gelir",
+    3.6,
+    30
+   ]
+  ],
+  "scenario_note": null,
+  "indicators": [
+   [
+    "Çeyreklik gelir büyümesi",
+    "%48.1 (Q2 2026)",
+    "%35 üstünde kalır",
+    "%25 altına iner"
+   ],
+   [
+    "Net kâr büyümesi",
+    "%10.6 (Q2 2026)",
+    "Gelir büyümesine yaklaşır",
+    "Tek hane/negatif"
+   ],
+   [
+    "Faaliyet marjı",
+    "%8.4 (Q2'25: %9.3)",
+    "%9 üstü",
+    "%7 altı"
+   ],
+   [
+    "Monee 90+ gün takip oranı",
+    "%1.0",
+    "~%1.0 kalır",
+    "%1.5 üstü"
+   ],
+   [
+    "İçeriden işlemler (180g)",
+    "-$80M, 7 satıcı",
+    "Satışlar durur",
+    "Satışlar sürer"
+   ],
+   [
+    "Fiyat",
+    "$74.63 (52h dip)",
+    "$98–103 aşılır",
+    "Düşüş sürer"
+   ]
+  ],
+  "tool_issues": [
+   "Normalizer accepts only form 10-K as annual (normalizer.py:236); 20-F us-gaap facts are ignored, so foreign private issuers get no fundamentals.",
+   "Fundamental verdict prints FAIR when all three triangulation signals are no_data.",
+   "For 20-F filers, revenue should use 'Revenues'; RevenueFromContractWithCustomerExcludingAssessedTax excludes Monee credit revenue.",
+   "6-K quarterly results are not XBRL-tagged, so TTM is impossible even with 20-F support.",
+   "yfinance eps_actual is non-GAAP for SE."
+  ]
+ },
+ {
+  "t": "AXON",
+  "name": "Axon Enterprise",
+  "price": 420.37,
+  "eps": 2.48,
+  "eps_note": "Raporlanan GAAP son 12 ay EPS (Haziran 2026), ama neredeyse tamamı Q1 2026'daki $191.1M yatırım kazancından. Temiz EPS ~$0.60 (%21 vergi varsayımı); SBC gelirin %19.7'si olduğu için faaliyet kârı yalnızca $24M. GAAP dışı (yfinance) EPS $6.81. Senaryolar gelir/hisse x F/S ile kuruldu.",
+  "growth": 0.353,
+  "margin": 0.062,
+  "stance": "Nötr, pahalı",
+  "line": "Axon %35 büyüyen kaliteli bir şirket ama SBC kârın tamamını yutuyor, raporlanan kâr yatırım kazancından geliyor ve fiyat gelirin 10.5 katında tarihsel büyümenin üzerinde bir gelecek fiyatlıyor.",
+  "verdict": "HIGH EXPECTATIONS PRICED IN",
+  "lo": 248.19,
+  "hi": 320.35,
+  "dcf_note": "Gelir bazlı hiper büyüme DCF'si (%33 başlangıç büyüme, %30 olgun FCF marjı, %12 iskonto) negatif FCF'li bir şirket için makul; ters DCF %43 büyüme ima ediyor (gerçekleşen %33). EV/FAVÖK 1632x ve TTM F/K 170 ise SBC ve tek seferlik kazanç yüzünden anlamsız.",
+  "analyst": 681.68,
+  "catalyst": "Q3 2026 sonuçları ~4 Kas 2026",
+  "risk": "Büyüme %25'in altına inerse 10.5x F/S çarpanı hızla daralır; yüksek SBC ve yıllık %5 seyrelme hissedar getirisini aşındırmaya devam eder.",
+  "scenarios": [
+   [
+    "Ayı: büyüme %22, çarpan daralır",
+    47,
+    7
+   ],
+   [
+    "Baz: büyüme ~%30",
+    50,
+    9
+   ],
+   [
+    "Boğa: büyüme %35, çarpan korunur",
+    52,
+    12
+   ]
+  ],
+  "scenario_note": "Gelir/hisse x F/S (12 ay sonraki TTM gelir/hisse, ~84M hisse varsayımı)",
+  "indicators": [
+   [
+    "Çeyreklik gelir büyümesi",
+    "%35.3 (Q2 2026)",
+    "%30 üstü",
+    "%25 altı"
+   ],
+   [
+    "SBC / gelir",
+    "%19.7 (TTM)",
+    "%15'e iner",
+    "%20 üstüne çıkar"
+   ],
+   [
+    "GAAP faaliyet kârı",
+    "$47M (Q2 2026)",
+    "Her çeyrek artar",
+    "Negatife döner"
+   ],
+   [
+    "Faaliyet nakit akışı",
+    "$266M (TTM)",
+    "Belirgin artar",
+    "Düşük kalır"
+   ],
+   [
+    "Hisse sayısı artışı",
+    "%4.9 yıllık",
+    "%3 altı",
+    "%5 üstü"
+   ],
+   [
+    "Fiyat",
+    "$420.37",
+    "$469–495 aşılır",
+    "$413 kırılır, hedef $338"
+   ]
+  ],
+  "tool_issues": [
+   "TTM P/E includes a one-off Q1'26 $191.1M GainLossOnInvestments; FY2025 NI includes a $105.7M tax benefit.",
+   "EV/EBITDA 1632x is meaningless when EBITDA is suppressed by SBC; hyper-growth mode should fall back to EV/Sales.",
+   "Key risks still says the DCF cannot be produced although the hyper-growth revenue DCF is the headline.",
+   "SIC description not matched to a Damodaran sector."
+  ]
+ },
+ {
+  "t": "UNH",
+  "name": "UnitedHealth Group",
+  "price": 418.09,
+  "eps": 17.55,
+  "eps_note": "GAAP seyreltilmiş son 12 ay EPS (Eylül 2026'ya kadar): Q4 2025 $0.05 + 2026 ilk 9 ay $17.50 (13 Ekim 2026 Q3 8-K'sından). Q4 2025 portföy/Güney Amerika işlemleriyle bastırılmış (düzeltilmiş $2.11). 2026 beklentisi: GAAP en az $19.50, düzeltilmiş en az $20.50. Motorun son 12 ay EPS'si (Haziran 2026'ya kadar) $15.56.",
+  "growth": -0.004,
+  "margin": 0.035,
+  "stance": "Nötr, toparlanma fiyatlı",
+  "line": "UNH'nin 2025 maliyet şokundan toparlanması gerçek ve beklenti yükseldi, ama fiyat dipten ~%85 yükselip 2026 kârının ~21 katına çıktı; gelir büyümüyor ve DOJ riski sürüyor.",
+  "verdict": "EXPENSIVE",
+  "lo": 127.86,
+  "hi": 152.37,
+  "dcf_note": "RIM çıpası UNH için güvenilir değil: SIC 6324 yüzünden banka gibi değerleniyor, maddi özsermaye -$30.9B ve ROE dip yıl (%12.0) üzerinden hesaplanıyor; motorun kendi duyarlılık tablosu $508–907 veriyor. Ters DCF (%3.5 ima edilen FCF büyümesi) ve ileri F/K (~21) daha anlamlı.",
+  "analyst": 478.12,
+  "catalyst": "Q4 2026 sonuçları ve 2027 beklentisi ~12 Oca 2027",
+  "risk": "Tıbbi maliyet oranı tekrar %89-90'a çıkarsa veya DOJ/Medicare Advantage baskısı artarsa 2027 kârı beklentinin altında kalır ve çarpan daralır.",
+  "scenarios": [
+   [
+    "Ayı: MCR %90'a döner, DOJ/Medicare baskısı",
+    18.0,
+    15
+   ],
+   [
+    "Baz: MCR ~%87-88, gelir yatay",
+    21.5,
+    19
+   ],
+   [
+    "Boğa: MCR %86, büyüme geri gelir",
+    24.0,
+    22
+   ]
+  ],
+  "scenario_note": null,
+  "indicators": [
+   [
+    "Tıbbi maliyet oranı (MCR)",
+    "%88.4 (Q3 2026; $610M olumlu karşılık hariç ~%89.1)",
+    "%87 altı",
+    "%89.5 üstü"
+   ],
+   [
+    "Karşılık düzeltmeleri",
+    "+$610M (Q3)",
+    "Olumlu kalır",
+    "Olumsuza döner"
+   ],
+   [
+    "2027 EPS beklentisi",
+    "Ocak'ta açıklanacak",
+    "$22 üstü",
+    "$20 altı"
+   ],
+   [
+    "Medicare Advantage üye sayısı",
+    "7.61M (YB: 8.45M)",
+    "Dengelenir",
+    "Düşüş sürer"
+   ],
+   [
+    "Optum faaliyet marjı",
+    "%5.6 (Q3'25: %3.6)",
+    "%6 üstü",
+    "%4 altı"
+   ],
+   [
+    "DOJ soruşturması",
+    "Cezai ve hukuki talepler (8-K Tem 2025)",
+    "Kapanış/uzlaşma",
+    "Dava/büyük ceza"
+   ],
+   [
+    "Fiyat",
+    "$418.09",
+    "$526–529 aşılır",
+    "$382 kırılır"
+   ]
+  ],
+  "tool_issues": [
+   "UNH (SIC 6324 health insurer) is routed to the financial RIM path; with tangible equity -$30.9B and trough ROE 12.0% the RIM headline pins value near book.",
+   "Sensitivity line ($508-907) comes from an FCF model while the headline is RIM; the card shows two contradictory base values.",
+   "HIGH confidence arises mechanically from the flawed RIM anchor plus a P/E percentile on trough FY2025 EPS.",
+   "Q3 2026 results (8-K 13 Oct) are not yet in XBRL; engine TTM ends Jun 2026."
+  ]
+ },
+ {
+  "t": "OKLO",
+  "name": "Oklo Inc.",
+  "price": 26.35,
+  "eps": -0.88,
+  "eps_note": "TTM EPS (raporlanan, zarar). Gelir yok (ilk gelir Q2 2026: $1.2M); senaryolarda metrik: hisse başına nakit + menkul kıymet ($3.02B / 186.0M = $16.25)",
+  "growth": null,
+  "margin": null,
+  "stance": "Spekülatif opsiyon",
+  "line": "Fiyatın ~%62'si nakit ve borç yok, bu düşüşü sınırlıyor; ama gelir yok, nakit yakımı hızlanıyor, ATM ile sürekli sulandırma var ve yöneticiler ağır satıyor; yükseliş tamamen lisans/inşa haberine bağlı.",
+  "verdict": "FAIR",
+  "lo": null,
+  "hi": null,
+  "dcf_note": "Motor adil değer üretemedi (pozitif FCF ve gelir yok); 'FAIR' etiketi değerleme değil, veri yokluğu. Nakit/hisse ve fiyat/nakit (1.62x) kullanıldı.",
+  "analyst": 68.95,
+  "catalyst": "Q3 2026 10-Q ~Kasım ortası (motorun '19 Ocak' tarihi yanlış)",
+  "risk": "Lisans/inşa takvimi kayarken yeni $1B ATM'nin düşük fiyattan kullanılması hisse başına değeri sulandırır.",
+  "scenarios": [
+   [
+    "Ayı: lisans gecikir, opsiyon primi sıfırlanır",
+    13.5,
+    1.0
+   ],
+   [
+    "Baz: yavaş ilerleme, prim bugünkü gibi",
+    13.5,
+    2.0
+   ],
+   [
+    "Boğa: lisans/inşa haberi, prim geri gelir",
+    15.0,
+    3.5
+   ]
+  ],
+  "scenario_note": "Hisse başına nakit + menkul kıymet x fiyat/nakit",
+  "indicators": [
+   [
+    "Nakit + menkul kıymet",
+    "$3.02B (Q2 2026)",
+    "$2.8B üzerinde kalır",
+    "Hızla erir"
+   ],
+   [
+    "Yıllık nakit yakımı",
+    "~$385M (H1 2026 hızı)",
+    "$400M altında",
+    "$600M üstü"
+   ],
+   [
+    "Hisse sayısı",
+    "186.0M (Ağu 2026)",
+    "ATM yavaş kullanılır",
+    "200M'yi hızla aşar"
+   ],
+   [
+    "Lisans/inşa 8-K'ları",
+    "Yok",
+    "NRC onayı, inşaat başlangıcı",
+    "Gecikme/ret"
+   ],
+   [
+    "Yönetici işlemleri",
+    "Net -$42.5M (180g)",
+    "Satışlar durur",
+    "Satışlar sürer"
+   ],
+   [
+    "Fiyat",
+    "$26.35",
+    "$36.6 direnci aşılır",
+    "$24.6 desteği kırılır"
+   ]
+  ]
+ },
+ {
+  "t": "CEG",
+  "name": "Constellation Energy",
+  "price": 253.45,
+  "eps": 9.4,
+  "eps_note": "Temiz TTM EPS: gerçekleşmemiş türev kazanç/zararları hariç (TTM net +$132M vergi öncesi), %32.3 efektif vergi, 360M sulandırılmış hisse. Nükleer söküm fonu getirileri ($1.30B TTM) de çıkarılırsa ~$6.9. Raporlanan TTM EPS $9.57.",
+  "growth": 0.23,
+  "margin": 0.108,
+  "stance": "Nötr, ucuz değil",
+  "line": "Calpine ile büyüyen kaliteli nükleer filo; motorun $58–71 EPV'si yapısal olarak düşük, ama türevler hariç F/K ~27 ve borç üç katına çıktığı için belirgin asimetri yok.",
+  "verdict": "EXPENSIVE",
+  "lo": 58.24,
+  "hi": 71.18,
+  "dcf_note": "Güvenilmez. EPV kapısı makul nedenle açıldı (capex ≈ faaliyet nakit akışı), ama EPV = net kâr/%10, yani tanım gereği 10x F/K; üstelik Calpine öncesi FY2025 kârını Calpine sonrası hisse sayısına bölüyor.",
+  "analyst": 338.07,
+  "catalyst": "Q3 2026 sonuçları ~5 Kas 2026",
+  "risk": "Calpine sonrası ~$18.8B net borç ve elektrik fiyatlarına artan duyarlılık, 27 kat F/K'yı taşıyamayabilir.",
+  "scenarios": [
+   [
+    "Ayı: elektrik fiyatları zayıflar, borç maliyeti artar",
+    9.0,
+    22
+   ],
+   [
+    "Baz: Calpine katkısı tam yıla yayılır",
+    10.5,
+    26
+   ],
+   [
+    "Boğa: veri merkezi anlaşmaları, marj artışı",
+    12.0,
+    30
+   ]
+  ],
+  "scenario_note": null,
+  "indicators": [
+   [
+    "Toplam gelir büyümesi",
+    "+%23.0 (Q2 2026)",
+    "Calpine yıl dönümünden sonra organik büyüme",
+    "2027 başında tek hane"
+   ],
+   [
+    "Türevler hariç faaliyet kârı",
+    "$2.32B (H1 2026)",
+    "Artar",
+    "Düşer"
+   ],
+   [
+    "Net borç",
+    "~$18.8B",
+    "Azalır",
+    "Artar, geri alım borçla"
+   ],
+   [
+    "Çeyreklik türev etkisi",
+    "+$1.04B Q1 / -$0.45B Q2",
+    "Küçük kalır",
+    "Büyük zarar"
+   ],
+   [
+    "Yönetici işlemleri",
+    "1 alım, net +$418K",
+    "Alımlar sürer",
+    "Satışlar başlar"
+   ],
+   [
+    "Fiyat",
+    "$253.45",
+    "$277–284 direnci aşılır",
+    "$242 desteği kırılır"
+   ]
+  ]
+ },
+ {
+  "t": "EOSE",
+  "name": "Eos Energy Enterprises",
+  "price": 1.73,
+  "eps": -1.56,
+  "eps_note": "TTM EPS raporlanan, varant/türev değerleme kalemleriyle bozuk (Q1 2026 +$509M 'kâr'). Senaryolarda metrik: 12 ay ileri gelir/hisse. Net marj sütununda TTM faaliyet marjı var (net marj -2.47 anlamsız).",
+  "growth": 3.514,
+  "margin": -1.43,
+  "stance": "Yüksek riskli, spekülatif",
+  "line": "Gelir +%351 büyüyor ama brüt marj -%71, nakit ~9 ay yetiyor ve özsermaye -$1.0B; şirketi ayakta tutan finansman kontrolü Cerberus'a veriyor, asıl soru değerleme değil hayatta kalma.",
+  "verdict": "FAIR",
+  "lo": null,
+  "hi": null,
+  "dcf_note": "Motor adil değer üretemedi (negatif brüt marj, gelir öncelikli DCF negatif özsermaye verdi); doğru davranış. F/S motorda eski veriden 5.14x, güncel ~2.9x.",
+  "analyst": 6.19,
+  "catalyst": "Q3 2026 10-Q ~Kasım başı (motorun '27 Ara' tarihi yanlış)",
+  "risk": "Yakın vadede yeni finansman gerekiyor; çok düşük fiyattan hisse ihracı ya da yeniden yapılandırma hissedarı ağır sulandırabilir.",
+  "scenarios": [
+   [
+    "Ayı: $250M gelir, ~480M hisse",
+    0.52,
+    1.5
+   ],
+   [
+    "Baz: $300M gelir, ~415M hisse",
+    0.72,
+    2.5
+   ],
+   [
+    "Boğa: $380M gelir, ~400M hisse, brüt marj ~0",
+    0.95,
+    4.0
+   ]
+  ],
+  "scenario_note": "12 ay ileri gelir/hisse x F/S",
+  "indicators": [
+   [
+    "Brüt marj",
+    "-%71 (Q2 2026)",
+    "-%30 üstüne çıkar",
+    "-%60 altında kalır"
+   ],
+   [
+    "Çeyreklik gelir",
+    "$68.8M (Q2 2026)",
+    "$80M'yi aşar",
+    "Düşer"
+   ],
+   [
+    "Serbest nakit",
+    "$305.5M (Haz 2026)",
+    "Makul koşullu yeni finansman",
+    "$150M altı, finansman yok"
+   ],
+   [
+    "Hisse sayısı",
+    "364.2M (Ağu 2026)",
+    "400M altında kalır",
+    "450M'yi aşar"
+   ],
+   [
+    "Süreklilik (going concern) notu",
+    "Kontrol edilmedi",
+    "Yok",
+    "10-Q'da yer alır"
+   ],
+   [
+    "Fiyat",
+    "$1.73",
+    "$2.05–2.07 direnci aşılır",
+    "$1.59 desteği kırılır"
+   ]
+  ]
+ },
+ {
+  "t": "RKLB",
+  "name": "Rocket Lab Corp",
+  "price": 52.6,
+  "eps": -0.29,
+  "eps_note": "TTM EPS raporlanan (zarar); senaryolarda metrik: 12 ay ileri gelir/hisse (Iridium hariç, ~600M hisse).",
+  "growth": 0.62,
+  "margin": -0.215,
+  "stance": "Nötr-temkinli",
+  "line": "İş güçleniyor (+%62 büyüme, sipariş birikimi 2.4 kat, $2.4B nakit), ama ~41 kat F/S'de bunun çoğu fiyatta ve $3.6B köprü krediyle Iridium alımı riski değiştiriyor.",
+  "verdict": "EXPENSIVE",
+  "lo": 1.8,
+  "hi": 2.6,
+  "dcf_note": "Bozuk: hiper büyüme DCF'si yakımı iki kez sayıyor (bugünkü değerden düşülüyor + finansman hissesi ekleniyor), $2.39B nakdi yok sayıyor, -%65 başlangıç marjını (büyüme capex'i dahil) 10 yılda yavaşça toparlıyor ve eski FY2025 gelir/hisse verisini kullanıyor. F/S kullanıldı.",
+  "analyst": 102.15,
+  "catalyst": "Q3 2026 sonuçları ~13 Kas 2026; Iridium oylama/onay süreci",
+  "risk": "Çok yüksek F/S ile büyümede bir yavaşlama veya Iridium'un pahalı borçla kapanması çarpanı sert daraltabilir.",
+  "scenarios": [
+   [
+    "Ayı: büyüme %30, $1.0B gelir, çarpan daralır",
+    1.67,
+    15
+   ],
+   [
+    "Baz: büyüme ~%40, $1.1B gelir",
+    1.83,
+    28
+   ],
+   [
+    "Boğa: büyüme %55, $1.2B gelir, Neutron başarılı",
+    2.0,
+    40
+   ]
+  ],
+  "scenario_note": "12 ay ileri gelir/hisse x F/S",
+  "indicators": [
+   [
+    "Çeyreklik gelir büyümesi",
+    "+%62.0 (Q2 2026)",
+    "%50 üstünde kalır",
+    "%35 altına iner"
+   ],
+   [
+    "Sipariş birikimi (RPO)",
+    "$2.36B (Haz 2026)",
+    "Artar",
+    "Düşer"
+   ],
+   [
+    "Brüt marj",
+    "%36.1 (Q2 2026)",
+    "%40'a yaklaşır",
+    "%30 altına iner"
+   ],
+   [
+    "Iridium alımı",
+    "İmzalandı, $3.6B köprü kredi",
+    "Makul faizle finansman, sorunsuz onay",
+    "Pahalı borç, ek hisse ihracı"
+   ],
+   [
+    "Yönetici işlemleri",
+    "Net -$389.8M (180g)",
+    "Satışlar yavaşlar",
+    "Büyük satışlar sürer"
+   ],
+   [
+    "Fiyat",
+    "$52.60",
+    "$53.8–55.2 direnci aşılır",
+    "$41.5 desteği kırılır"
+   ]
+  ]
+ },
+ {
+  "t": "AVGO",
+  "name": "Broadcom",
+  "price": 321.68,
+  "eps": 7.12,
+  "eps_note": "Temiz son 12 ay GAAP EPS (Ağu 2026): vergi %14'e normalleştirildi (Q4 FY25'teki $1.65B vergi geliri hariç). Raporlanan ~$7.83; son çeyrek yıllıklandırılmış $10.72. Margin de bu temiz rakamla (~$34.8B / $89.1B).",
+  "growth": 0.855,
+  "margin": 0.39,
+  "stance": "Temkinli olumlu",
+  "line": "Gelir %85 büyüyor, SBC sonrası FCF $30.9B ve RPO $179B; motorun EXPENSIVE kararı eski FCF tabanı ve 2019'dan kalan kâr verisinden geliyor, ama fiyat hâlâ AI talebinin sürmesine bağlı.",
+  "verdict": "EXPENSIVE",
+  "lo": 151.55,
+  "hi": 252.87,
+  "dcf_note": "Veri düzeltmesi sonrası (doğru kâr ve borç): $152–253, hâlâ fiyatın altında. fcf0 hâlâ 3 yıllık ortalamadan ($20.0B) geliyor; son 12 ay ($30.9B) tabanıyla ~$182–305 olurdu.",
+  "analyst": 529.1,
+  "catalyst": "Q4 FY2026 sonuçları ~2 Ara 2026",
+  "risk": "AI gelirinin birkaç hiper ölçekli müşteriye bağlı olması; sipariş yavaşlarsa yüksek çarpan hızla daralır.",
+  "scenarios": [
+   [
+    "Ayı: AI siparişleri yavaşlar",
+    9.0,
+    25
+   ],
+   [
+    "Baz: RPO gelire döner",
+    11.5,
+    32
+   ],
+   [
+    "Boğa: büyüme %50 üstünde kalır",
+    13.5,
+    38
+   ]
+  ],
+  "scenario_note": null,
+  "indicators": [
+   [
+    "Çeyreklik gelir büyümesi",
+    "%85.5",
+    "%50 üstünde kalır",
+    "%30 altına iner"
+   ],
+   [
+    "RPO",
+    "$179.2B",
+    "Artmaya devam eder",
+    "Düşer/yerinde sayar"
+   ],
+   [
+    "Faaliyet marjı (son 12 ay)",
+    "%48.0",
+    "%45 üstünde",
+    "%40 altına iner"
+   ],
+   [
+    "FCF (SBC sonrası, son 12 ay)",
+    "$30.9B",
+    "$35B'ı aşar",
+    "$25B altına iner"
+   ],
+   [
+    "Fiyat",
+    "$321.68",
+    "$350–369 direnci aşılır",
+    "$278 desteği kırılır"
+   ]
+  ]
+ },
+ {
+  "t": "ORCL",
+  "name": "Oracle",
+  "price": 126.16,
+  "eps": 5.53,
+  "eps_note": "Temiz son 12 ay GAAP EPS (Ağu 2026): Q2 FY26'daki $2.49B yatırım kazancının tamamı düşüldü (vergi etkisi ayrı açıklanmadığı için). Raporlanan ~$6.38. Margin de temiz: ($18.9B - $2.5B) / $71.8B.",
+  "growth": 0.296,
+  "margin": 0.229,
+  "stance": "Nötr, finansman riski",
+  "line": "Büyüme hızlanıyor (%29.6) ve RPO $664B, ama yıllık -$33.5B FCF, bir yılda ~$34B artan borç ve hisse ihracı nedeniyle sonuç finansman maliyetine bağlı.",
+  "verdict": "EXPENSIVE",
+  "lo": 55.96,
+  "hi": 89.94,
+  "dcf_note": "Veri düzeltmesi sonrası $129.5B borç artık hesaba katılıyor: $56–90 (önce $72–123). Olgun gelir-DCF'si; büyüme varsayımı muhafazakâr, marj varsayımı faiz yükü karşısında iyimser olabilir.",
+  "analyst": 236.54,
+  "catalyst": "Q2 FY2027 sonuçları ~10 Ara 2026",
+  "risk": "Borçla finanse edilen ~$75B/yıl capex'in, RPO'yu oluşturan birkaç AI müşterisinin ödeme gücüne bağlı olması.",
+  "scenarios": [
+   [
+    "Ayı: finansman sıkışır, faiz/amortisman kârı ezer",
+    5.5,
+    15
+   ],
+   [
+    "Baz: büyüme ~%25, marj hafif daralır",
+    6.5,
+    21
+   ],
+   [
+    "Boğa: RPO hızla gelire döner, capex zirve yapar",
+    7.5,
+    27
+   ]
+  ],
+  "scenario_note": null,
+  "indicators": [
+   [
+    "Çeyreklik gelir büyümesi",
+    "%29.6",
+    "%30 üstüne çıkar",
+    "%20 altına iner"
+   ],
+   [
+    "RPO",
+    "$664B",
+    "Artmaya devam eder",
+    "Düşer/iptal haberi"
+   ],
+   [
+    "Çeyreklik capex",
+    "$28.5B",
+    "Gelire oranı düşer",
+    "Artmaya devam eder"
+   ],
+   [
+    "Senet+kredi toplamı",
+    "$125.3B",
+    "Sabit kalır",
+    "Hızla artar"
+   ],
+   [
+    "Çeyreklik faiz gideri",
+    "$1.43B",
+    "Faaliyet kârından yavaş artar",
+    "Faaliyet kârından hızlı artar"
+   ],
+   [
+    "Fiyat",
+    "$126.16",
+    "$142 direnci aşılır",
+    "$116 desteği kırılır"
+   ]
+  ]
+ },
+ {
+  "t": "CRWV",
+  "name": "CoreWeave",
+  "price": 54.24,
+  "eps": -3.65,
+  "eps_note": "Zararda: son 12 ay GAAP EPS ~-$3.65 (çeyreklik EPS toplamı; motor 436M hisseyle -$4.42 gösteriyor). Senaryolar EPS ile değil, hisse başına gelir x F/S ile; 580M hisse varsayıldı.",
+  "growth": 1.125,
+  "margin": -0.254,
+  "stance": "Spekülatif, yüksek risk",
+  "line": "Gelir %112 büyüyor ve RPO $104B, ama büyüme %9–10 kuponlu borçla finanse ediliyor, faiz faaliyet kârını aşıyor ve hisse bir kaldıraç ve yeniden finansman bahsine dönüşmüş durumda.",
+  "verdict": "FAIR",
+  "lo": null,
+  "hi": null,
+  "dcf_note": "Adil değer yok, doğru karar: hiper büyüme gelir-DCF'sinin üç senaryosu da negatif hisse değeri verdi (baz -$9.31). FAIR kararı bir değerleme değil, sinyal yokluğu.",
+  "analyst": 135.82,
+  "catalyst": "Q3 2026 sonuçları ~15 Kas 2026",
+  "risk": "Faaliyet zararı ve hızla artan borçla (~$36B, Altman Z 0.12) AI talebi veya borç piyasaları zayıflarsa yeniden finansman krizi.",
+  "scenarios": [
+   [
+    "Ayı: çeyreklik büyüme ~%5, finansman sıkışır",
+    20.0,
+    1.5
+   ],
+   [
+    "Baz: çeyreklik ~%14 büyüme",
+    25.0,
+    2.3
+   ],
+   [
+    "Boğa: çeyreklik ~%20 büyüme, marj pozitife döner",
+    29.0,
+    3.5
+   ]
+  ],
+  "scenario_note": "Gelir/hisse (önümüzdeki 12 ay, 580M hisse) x F/S",
+  "indicators": [
+   [
+    "Çeyreklik gelir büyümesi",
+    "%112.5",
+    "%80 üstünde kalır",
+    "%50 altına iner"
+   ],
+   [
+    "Çeyreklik faaliyet kârı",
+    "-$0.05B",
+    "Pozitife döner",
+    "Zarar derinleşir"
+   ],
+   [
+    "Çeyreklik faiz gideri",
+    "$0.56B",
+    "Gelirden yavaş artar",
+    "Gelirden hızlı artar"
+   ],
+   [
+    "Borç",
+    "$35.6B",
+    "Artış yavaşlar",
+    "Her çeyrek $5B+ artar"
+   ],
+   [
+    "Yeni kredi marjı",
+    "SOFR + %5.50",
+    "Düşer",
+    "Yükselir/ihraç zorlaşır"
+   ],
+   [
+    "Fiyat",
+    "$54.24 (52h dip)",
+    "$65–69 direnci aşılır",
+    "$54 kırılır"
+   ]
+  ]
+ }
+]
