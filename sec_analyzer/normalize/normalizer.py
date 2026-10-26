@@ -61,6 +61,19 @@ _QUARTER_SPAN_DAYS = (80, 100)
 #: above which the as-reported basis is rejected. Strictly above triggers.
 _NET_REVENUE_DIVERGENCE_THRESHOLD = 0.05
 
+#: Immaterial-CapEx imputation gates (SPEC.md Sec.31): the reference year's
+#: CapEx must be at most this share of its OCF, and of its revenue.
+_IMMATERIAL_CAPEX_OCF_MAX = 0.05
+_IMMATERIAL_CAPEX_REVENUE_MAX = 0.02
+
+#: Imputation reaches at most this far past the reference year's period end
+#: (about three fiscal years); an older reference is not extrapolated.
+_IMMATERIAL_CAPEX_MAX_GAP_DAYS = 1200
+
+#: How many of the newest tagged years must ALL pass the OCF gate, so one
+#: unusually light year can't stand in for a capex-heavy history.
+_IMMATERIAL_CAPEX_STABLE_YEARS = 3
+
 
 def _parse_date(value: Optional[str]) -> Optional[datetime]:
     """Parse a ``YYYY-MM-DD`` date string, returning ``None`` on failure."""
@@ -377,6 +390,7 @@ def normalize_facts(facts_json: dict, years: int = 12, as_of=None) -> dict:
               "missing": [<concept names with no contributing tag>, ...],
               "matched_tags": {"<concept>": [<tag>, ...] or None, ...},
               "revenue_basis": {...},   # SPEC.md Sec.19
+              "capex_imputation": {...} or None,   # SPEC.md Sec.31
               "share_splits": [{"factor", "old_basis_until",
                                 "new_basis_from", "corroborating_periods"}, ...],
             }
@@ -559,6 +573,10 @@ def normalize_facts(facts_json: dict, years: int = 12, as_of=None) -> dict:
     # partially undone by the windowing above.
     revenue_basis = _apply_net_revenue_basis(annual, quarterly, matched_tags, missing)
 
+    # Immaterial CapEx a filer stopped tagging (SPEC.md Sec.31). After the
+    # revenue basis, so the materiality gate reads the final revenue series.
+    capex_imputation = _impute_immaterial_capex(annual, quarterly)
+
     if missing:
         logger.warning(
             "CIK %s (%s): no usable us-gaap data found for concepts: %s",
@@ -574,6 +592,7 @@ def normalize_facts(facts_json: dict, years: int = 12, as_of=None) -> dict:
         "missing": missing,
         "matched_tags": matched_tags,
         "revenue_basis": revenue_basis,
+        "capex_imputation": capex_imputation,
         "share_splits": split_basis.summary() if split_basis else [],
     }
 
@@ -741,6 +760,85 @@ def _apply_net_revenue_basis(
             "Revenue series.", exc_info=True,
         )
         return _empty_revenue_basis()
+
+
+def _impute_immaterial_capex(
+    annual: Dict[str, Optional[List[dict]]],
+    quarterly: Dict[str, Optional[List[dict]]],
+) -> Optional[dict]:
+    """Fill CapEx a filer stopped tagging once it became immaterial (SPEC.md Sec.31).
+
+    The reference is the newest fiscal year with both an annual CapEx record
+    and a positive OCF. Only when CapEx was immaterial in each of the newest
+    three such years (<= 5% of OCF) and in the reference year also <= 2% of
+    revenue does every later OCF record -- annual and quarterly,
+    year-to-date rows included -- get a CapEx record of ``ratio * ocf`` that
+    copies the OCF row's period fields, so spans line up for
+    ``to_quarterly_series``. A material CapEx gap stays missing. Mutates
+    ``annual``/``quarterly`` in place; returns the disclosure block or
+    ``None``. Never raises.
+    """
+    try:
+        capex_annual = annual.get("CapEx") or []
+        ocf_annual = annual.get("OperatingCashFlow") or []
+        if not capex_annual or not ocf_annual:
+            return None
+
+        capex_by_fy = {r["fy"]: r for r in capex_annual if r.get("fy") is not None and r.get("value") is not None}
+        ocf_by_fy = {r["fy"]: r for r in ocf_annual if r.get("fy") is not None and r.get("value") is not None}
+        candidates = [fy for fy in capex_by_fy if fy in ocf_by_fy and ocf_by_fy[fy]["value"] > 0]
+        if not candidates:
+            return None
+        ref_fy = max(candidates)
+        capex_ref = capex_by_fy[ref_fy]["value"]
+        ratio = capex_ref / ocf_by_fy[ref_fy]["value"]
+        recent = sorted(candidates, reverse=True)[:_IMMATERIAL_CAPEX_STABLE_YEARS]
+        if any(capex_by_fy[fy]["value"] / ocf_by_fy[fy]["value"] > _IMMATERIAL_CAPEX_OCF_MAX for fy in recent):
+            return None
+        revenue_ref = to_annual_series({"annual": annual}, "Revenue").get(ref_fy)
+        if revenue_ref and revenue_ref > 0 and capex_ref / revenue_ref > _IMMATERIAL_CAPEX_REVENUE_MAX:
+            return None
+
+        ref_end = _parse_date(capex_by_fy[ref_fy].get("period_end"))
+        last_capex_end = max(
+            (r["period_end"] for r in capex_annual + (quarterly.get("CapEx") or []) if r.get("period_end")),
+            default=None,
+        )
+        if ref_end is None or last_capex_end is None:
+            return None
+
+        def imputed_for(ocf_records: List[dict]) -> List[dict]:
+            out = []
+            for r in ocf_records:
+                end = _parse_date(r.get("period_end"))
+                if (
+                    end is None or r.get("value") is None
+                    or r["period_end"] <= last_capex_end
+                    or (end - ref_end).days > _IMMATERIAL_CAPEX_MAX_GAP_DAYS
+                ):
+                    continue
+                out.append({**r, "concept": "CapEx", "tag": None,
+                            "value": max(0.0, ratio * r["value"]), "imputed": True})
+            return out
+
+        new_annual = imputed_for(ocf_annual)
+        new_quarterly = imputed_for(quarterly.get("OperatingCashFlow") or [])
+        if not new_annual and not new_quarterly:
+            return None
+
+        annual["CapEx"] = sorted(capex_annual + new_annual, key=lambda r: r["period_end"] or "", reverse=True)
+        quarterly["CapEx"] = sorted(
+            (quarterly.get("CapEx") or []) + new_quarterly, key=lambda r: r["period_end"] or "", reverse=True
+        )
+        return {
+            "reference_fy": ref_fy,
+            "ratio": ratio,
+            "imputed_annual_fys": sorted(r["fy"] for r in new_annual),
+            "imputed_quarter_ends": sorted({r["period_end"] for r in new_quarterly}),
+        }
+    except Exception:  # noqa: BLE001 - normalization must never crash the pipeline
+        logger.warning("_impute_immaterial_capex: unexpected error; CapEx left as reported.", exc_info=True)
+        return None
 
 
 def to_annual_series(normalized: dict, concept: str) -> Dict[int, float]:

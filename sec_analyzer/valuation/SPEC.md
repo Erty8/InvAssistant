@@ -5433,3 +5433,84 @@ TTM vs latest-FY SBC-adjusted FCF, filers whose TTM window is newer:
 In: `normalize/metrics.py` (`_compute_ttm_cash`), `valuation/engine.py`
 (`_select_fcf0` candidate + label, §24c note sentence). No new dependency, no
 anchor formula change, no change to multiples or percentiles.
+
+## 31. Immaterial CapEx imputation (WP15) — `normalize.normalizer._impute_immaterial_capex`
+
+**Problem.** Some filers stop tagging CapEx once it becomes immaterial
+(it moves into an "other investing" line). `compute_ratios` then yields
+`fcf = None` for those years (deliberately: a missing CapEx must not be read
+as zero), `_select_fcf0` falls back to an older 3-year average, and the §30
+TTM window is incomplete because no quarterly CapEx exists. AppLovin (APP)
+on 2026-10-26:
+
+| | FY2024 | FY2025 | TTM (to 2026-06-30) |
+|---|---|---|---|
+| OCF | `$2.10B` | `$3.97B` | `$4.52B` |
+| CapEx (tagged) | `$4.8M` (0.23% of OCF) | — | — |
+| FCF the engine saw | `$2.09B` | `None` | `None` |
+| **fcf0** | | **`$1.21B` (`3y_avg` of FY2023–24)** | |
+
+A true fcf0 of ~`$3.8–4.2B` means the DCF base band ($131–$248) was about a
+third of what the filer's own cash flow supports, and the verdict read
+EXPENSIVE.
+
+### 31a. Rule
+
+Runs at the end of `normalize_facts`, after §19's revenue-basis step, on the
+same windowed series every consumer reads. Pure, deterministic, never raises.
+
+1. **Reference year**: the newest fiscal year with BOTH an annual `CapEx`
+   record and a strictly positive annual `OperatingCashFlow`.
+2. **Materiality gate**: impute only when `capex / ocf <=
+   _IMMATERIAL_CAPEX_OCF_MAX = 0.05` in EACH of the newest
+   `_IMMATERIAL_CAPEX_STABLE_YEARS = 3` fiscal years that have both a CapEx
+   record and a positive OCF (fewer if fewer exist), AND (when the reference
+   year's `Revenue` exists) the reference year's `capex / revenue <=
+   _IMMATERIAL_CAPEX_REVENUE_MAX = 0.02`. The stability condition keeps one
+   unusually light year from standing in for a capex-heavy history. A filer whose CapEx was material keeps `None` exactly as before:
+   a missing material CapEx is still never zero-filled or guessed.
+3. **Which periods**: every `OperatingCashFlow` record (annual AND
+   quarterly, including year-to-date 10-Q rows) whose `period_end` is later
+   than the newest `CapEx` record of any bucket, and at most
+   `_IMMATERIAL_CAPEX_MAX_GAP_DAYS = 1200` days (about three fiscal years)
+   after the reference year's `period_end`. (800 days was tried first:
+   Airbnb stopped tagging after FY2022, so its FY2025 stayed undefined and
+   fcf0 fell back to an average of two imputed years.) Older gaps are left alone; a stale
+   reference is not extrapolated.
+4. **Value**: `capex = max(0.0, ratio * ocf)` with `ratio = capex_ref /
+   ocf_ref`, written as a new `CapEx` record that copies the OCF record's
+   `period_end`/`start`/`fy`/`fp`/`form`/`filed` (so year-to-date spans line
+   up and `to_quarterly_series` differences them like any other flow row),
+   with `tag = None` and `"imputed": True`.
+
+For APP: ratio `4.8M / 2.10B = 0.23%` → FY2025 CapEx ≈ `$9.1M`, FY2025
+fcf ≈ `$3.96B` (before SBC), and the TTM window completes.
+
+### 31b. Disclosure
+
+`normalized["capex_imputation"]`, always present:
+
+```python
+{"reference_fy": int, "ratio": float,
+ "imputed_annual_fys": [int, ...], "imputed_quarter_ends": [str, ...]}
+# or None when nothing was imputed
+```
+
+When it is not `None` and the imputed fiscal years include the fiscal year
+`_select_fcf0` read (or `fcf0_source == "ttm"`), the engine appends an English
+note naming the reference year, the ratio and the imputed periods.
+
+### 31c. What moves
+
+Every consumer of the annual/quarterly `CapEx` series sees the imputed
+records: `ratios[...]["fcf"]` (and therefore P/FCF), `metrics["fcf"]`, the
+§30 TTM window, the SBC-adjusted fcf0 series, and the §8a/§3.6 CapEx
+intensity checks (which, for an immaterial filer, stay far below their
+thresholds). Filers with any CapEx record in the affected periods, or with
+material CapEx, are byte-for-byte unchanged.
+
+### Scope
+
+In: `normalize/normalizer.py` (`_impute_immaterial_capex`, wiring, the
+`capex_imputation` key), `valuation/engine.py` (disclosure note). No new
+dependency, no valuation formula change.

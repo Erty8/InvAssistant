@@ -1073,6 +1073,23 @@ def _ttm_staleness_notes(metrics: dict, fcf0_source: Optional[str] = None) -> Li
     return [note]
 
 
+def _capex_imputation_notes(normalized: dict, metrics: dict, fcf0_source: Optional[str]) -> List[str]:
+    """Disclose imputed immaterial CapEx when it reaches fcf0 (SPEC.md Sec.31b). Never raises."""
+    block = (normalized or {}).get("capex_imputation")
+    if not isinstance(block, dict):
+        return []
+    fy = resolve_fundamental_fy(metrics or {})
+    if fcf0_source != "ttm" and fy not in (block.get("imputed_annual_fys") or []):
+        return []
+    periods = [f"FY{y}" for y in block.get("imputed_annual_fys") or []]
+    periods += list(block.get("imputed_quarter_ends") or [])
+    return [
+        f"CapEx is not tagged in the filings after FY{block.get('reference_fy')}; it was immaterial then "
+        f"({block.get('ratio', 0.0) * 100:.2f}% of operating cash flow), so the same share of operating "
+        f"cash flow was used for {', '.join(periods)} instead of leaving FCF undefined."
+    ]
+
+
 def _format_usd_short(value: float) -> str:
     """Compact USD magnitude for a note, e.g. ``"$32.8B"``.
 
@@ -4770,6 +4787,7 @@ def _run_valuation(
     # unreported fiscal year can be valued on a base the quarterly filings
     # have already overtaken. Say so rather than letting it pass as current.
     notes.extend(_ttm_staleness_notes(metrics, fcf0_source))
+    notes.extend(_capex_imputation_notes(normalized, metrics, fcf0_source))
 
     # F2: SBC is now expensed directly into fcf0 (via sbc_adjusted_fcf_by_fy)
     # above, so no further dilution adjustment is layered on top of the
