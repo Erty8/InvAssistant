@@ -413,6 +413,79 @@ if len(sys.argv) > 3:
     )).font = Font(name=FONT, italic=True, size=9)
     ps.freeze_panes = f"B{HR + 1}"
 
+# ---------------------------------------------------------------------------
+# Teknik (optional: argv[4] = technical.json from technical_stats.py)
+# ---------------------------------------------------------------------------
+if len(sys.argv) > 4:
+    import json as _json
+
+    tech = _json.load(open(sys.argv[4], encoding="utf-8"))
+    LABEL_TR = {
+        "PULLBACK — NO BOUNCE YET": "Yükseliş içinde geri çekilme — henüz dönüş yok",
+        "DOWNTREND — TURN CONFIRMING": "Düşüş trendi — dönüş teyit ediliyor",
+        "DOWNTREND — NO TURN": "Düşüş trendi — dönüş yok",
+        "DOWNTREND — EARLY TURN SIGNAL": "Düşüş trendi — erken dönüş sinyali",
+        "UPTREND — MOMENTUM FADING": "Yükseliş trendi — ivme zayıflıyor",
+        "UPTREND — HEALTHY": "Yükseliş trendi — sağlıklı",
+    }
+    VERDICT_TR = {"NEUTRAL": "Nötr", "OVERSOLD": "Aşırı satım", "OVERBOUGHT": "Aşırı alım",
+                  "BULLISH": "Olumlu", "BEARISH": "Olumsuz"}
+    ts = wb.create_sheet("Teknik", 2)
+    ts["A1"] = "Teknik Görünüm"
+    ts["A1"].font = TITLE
+    ts["A2"] = ("Motorun teknik katmanı (sec_analyzer.technical), önbellekteki günlük kapanışlarla. Geriye dönük testte "
+                "bu durumların 10–63 günlük getirileri tahmin etme gücü bulunmadı: trend ve risk seviyelerini okumak "
+                "içindir, al/sat sinyali değildir.")
+    ts["A2"].font = Font(name=FONT, italic=True, size=9)
+    t_cols = [("Ticker", 9), ("Tarih", 11), ("Fiyat ($)", 10), ("Teknik karar", 12), ("Aksiyon", 9),
+              ("Durum", 40), ("Momentum (0-100)", 10), ("Swing (0-100)", 9), ("RSI 14", 7),
+              ("SMA50'ye uzaklık", 10), ("SMA200'e uzaklık", 10), ("52h aralıkta konum", 10),
+              ("52h zirveye uzaklık", 10), ("3 ay getiri", 9), ("12 ay getiri", 9), ("3 ay SPY'a göre", 9),
+              ("En yakın destek ($)", 11), ("En yakın direnç ($)", 11), ("Tetikleyici ($)", 11), ("Stop ($)", 10)]
+    header(ts, HR, [c[0] for c in t_cols], [c[1] for c in t_cols])
+    order = [d["t"] for d in THESES if d["t"] in tech]
+    for i, t in enumerate(order):
+        r = HR + 1 + i
+        d = tech[t]
+        pct = lambda v: None if v is None else v / 100.0
+        vals = [t, d["as_of"], d["price"], VERDICT_TR.get(d["verdict"], d["verdict"]), d["action"],
+                LABEL_TR.get(d["action_label"], d["action_label"]), d["momentum"], d["swing"], d["rsi14"],
+                pct(d["dist_sma50_pct"]), pct(d["dist_sma200_pct"]), pct(d["range_position_pct"]),
+                pct(d["dist_52w_high_pct"]), pct(d["return_3m_pct"]), pct(d["return_12m_pct"]),
+                pct(d["rs_3m_pct"]), d["nearest_support"], d["nearest_resistance"], d["trigger"], d["stop"]]
+        for col, v in enumerate(vals, start=1):
+            c = ts.cell(row=r, column=col, value=v)
+            c.font, c.border, c.alignment = BLUE, THIN, (WRAP if col == 6 else TOP)
+        for col in (3, 17, 18, 19, 20):
+            ts.cell(row=r, column=col).number_format = USD
+        for col in range(10, 17):
+            ts.cell(row=r, column=col).number_format = PCT
+        ts.row_dimensions[r].height = 30
+    tlast = HR + len(order)
+    add_table(ts, "TeknikTablo", f"A{HR}:T{tlast}")
+    action_fill = {"BUY": ("C6EFCE", "006100"), "HOLD": ("DDEBF7", "1F4E79"),
+                   "WAIT": ("FFEB9C", "9C5700"), "AVOID": ("FFC7CE", "9C0006")}
+    for code, (bg, fg) in action_fill.items():
+        ts.conditional_formatting.add(f"E{HR + 1}:E{tlast}", CellIsRule(
+            operator="equal", formula=[f'"{code}"'], font=Font(name=FONT, color=fg, bold=True),
+            fill=PatternFill("solid", fgColor=bg)))
+    ts.conditional_formatting.add(f"I{HR + 1}:I{tlast}", CellIsRule(
+        operator="lessThan", formula=["30"], font=Font(name=FONT, color="9C0006", bold=True)))
+    ts.conditional_formatting.add(f"I{HR + 1}:I{tlast}", CellIsRule(
+        operator="greaterThan", formula=["70"], font=Font(name=FONT, color="006100", bold=True)))
+    for col in ("J", "K", "N", "O", "P"):
+        rng = f"{col}{HR + 1}:{col}{tlast}"
+        ts.conditional_formatting.add(rng, CellIsRule(operator="greaterThan", formula=["0"],
+                                      font=Font(name=FONT, color="006100")))
+        ts.conditional_formatting.add(rng, CellIsRule(operator="lessThan", formula=["0"],
+                                      font=Font(name=FONT, color="9C0006")))
+    ts.cell(row=tlast + 2, column=1, value=(
+        "Aksiyon: BUY = düşüş trendinde dönüş teyit ediliyor · HOLD = yükseliş sürüyor · WAIT = sinyal yok, bekle · "
+        "AVOID = düşüş trendi sürüyor, dönüş yok. Tetikleyici: motorun trend onarımı/dönüş için izlediği seviye. "
+        "RSI < 30 aşırı satım (kırmızı), > 70 aşırı alım (yeşil). Kişisel yatırım tavsiyesi değildir."
+    )).font = Font(name=FONT, italic=True, size=9)
+    ts.freeze_panes = f"B{HR + 1}"
+
 for sheet in wb.worksheets:
     for row in sheet.iter_rows():
         for c in row:
