@@ -74,7 +74,7 @@
    }
   },
   "fcf0": 50.0,
-  "fcf0_source": "ttm",
+  "fcf0_source": "latest_fy",
   "ffo": null,
   "hyper_growth": false,
   "hyper_growth_detail": null,
@@ -307,7 +307,7 @@
    }
   },
   "fcf0": 30.0,
-  "fcf0_source": "ttm",
+  "fcf0_source": "latest_fy",
   "ffo": null,
   "hyper_growth": false,
   "hyper_growth_detail": null,
@@ -910,7 +910,7 @@
    }
   },
   "fcf0": 116.0,
-  "fcf0_source": "ttm",
+  "fcf0_source": "latest_fy",
   "ffo": null,
   "hyper_growth": false,
   "hyper_growth_detail": null,

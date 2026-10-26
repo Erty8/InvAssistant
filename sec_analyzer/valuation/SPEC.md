@@ -189,7 +189,10 @@ non-positive, or deviates more than ±50% from the average of the **prior**
 fiscal years in the 3-year window (`latest_fy-1`/`latest_fy-2`, whichever are
 present; also SBC-adjusted), use the 3-year average (which DOES include the
 latest year — smoothing, not exclusion) instead and set `fcf0_source =
-"3y_avg"` plus a Turkish note; else `fcf0_source = "ttm"`. If no positive fcf0
+"3y_avg"` plus a Turkish note; else `fcf0_source = "latest_fy"`. **Amended by
+§30:** when a complete, newer TTM cash-flow window exists, the TTM
+SBC-adjusted FCF replaces the latest-FY figure as the candidate throughout
+this rule and `fcf0_source = "ttm"`. If no positive fcf0
 can be derived at all, DCF returns `None` per-share values with a note (do not
 raise).
 
@@ -212,7 +215,7 @@ Exception: when the >50% deviation trips but the trailing 3 fiscal years
 (`latest_fy, latest_fy-1, latest_fy-2`, all present) form a monotonic ramp
 (non-decreasing throughout, or non-increasing throughout), the deviation is
 treated as structural growth/decline rather than a one-off spike -- the
-latest-FY figure is kept (`fcf0_source` stays `"ttm"`) with a Turkish note
+candidate is kept (`fcf0_source` stays `"latest_fy"`, or `"ttm"` per §30) with a Turkish note
 explaining why the average was not used instead. A spiky/oscillating series
 (not monotonic) still falls back to the 3-year average as before.
 
@@ -5288,3 +5291,133 @@ In: `normalize/splits.py` (new), `normalize/normalizer.py` (wiring, `_accn`,
 `red_flags`, `multiples_history`, the engine) picks up the adjusted series
 unchanged. Out: display of the detected events (CLI/report), `ttm.py`,
 `fetch/frames.py` peer data.
+
+## 30. TTM cash-flow base for `fcf0` (WP14)
+
+**Problem.** §4 picked `fcf0` from the latest **fiscal year** only, and §24b
+computes TTM figures for revenue / net income / P/E but not for cash flow. A
+filer two or three quarters into its fiscal year was therefore DCF-valued on
+cash flow up to 9 months stale; §24c disclosed it in a note but the valuation
+did not change. The label was misleading too: `fcf0_source == "ttm"` meant
+"latest fiscal year kept (not the 3y average)", not a trailing-twelve-month
+figure.
+
+NVDA on 2026-10-26 (fiscal year ends late January):
+
+| | latest FY (FY2026, to 2026-01-25) | true TTM (to 2026-07-26) |
+|---|---|---|
+| OCF | `$102.72B` | `$134.36B` |
+| CapEx | `$6.04B` | `$7.36B` |
+| SBC | `$6.39B` | `$7.24B` |
+| **fcf0 (OCF − CapEx − SBC)** | **`$90.29B`** | **`$119.77B`** (+33%) |
+| DCF base per share (FCFE-direct, linear in fcf0) | `$159.29` | ≈ `$211` |
+
+### 30a. TTM cash-flow metrics — `metrics.compute_metrics`
+
+Additive keys next to §24b's, all `None`-safe:
+
+```python
+"ttm_ocf": float | None,
+"ttm_capex": float | None,          # positive outflow, same convention as the annual CapEx
+"ttm_sbc": float | None,            # 0.0 when the SBC series is missing (same as §4)
+"ttm_fcf_sbc_adj": float | None,    # ttm_ocf - ttm_capex - ttm_sbc; None unless complete
+"ttm_cash_period_end": str | None,
+"ttm_cash_complete": bool,
+"ttm_cash_newer_than_fy": bool,     # window ends after the latest-FY OCF period_end
+```
+
+Built from `to_quarterly_series(normalized, "OperatingCashFlow" / "CapEx" /
+"SBC")[-4:]`, the same accessor and §24a fiscal-year grouping §24b uses
+(deliberately not `normalize/ttm.py`, which reads raw facts for the funding
+screen). `ttm_cash_complete` is `True` only when ALL of the following hold:
+
+1. OCF and CapEx each have exactly 4 quarters in the window (SBC may be
+   missing entirely → `0.0`; if present it must also have 4).
+2. All present series end on the same `period_end`.
+3. The window is contiguous: newest `period_end` minus oldest is at most
+   `_TTM_MAX_WINDOW_DAYS = 300` days (3 quarters ≈ 273 days plus 52/53-week
+   drift). A gap means a missing quarter, and the sum is not a 12-month figure.
+
+When incomplete, `ttm_fcf_sbc_adj` is `None` (no partial sums for cash flow:
+unlike §24b's display figures, this one feeds valuation).
+`ttm_cash_newer_than_fy` compares `ttm_cash_period_end` with the
+`period_end` of the annual `OperatingCashFlow` record for
+`latest_fundamental_fy`; `False` when either is missing.
+
+### 30b. `fcf0` candidate — amends §4 "fcf0 selection"
+
+The **candidate** `fcf0` is:
+
+- `metrics["ttm_fcf_sbc_adj"]` when `ttm_cash_complete` AND
+  `ttm_cash_newer_than_fy` (the TTM window actually contains newer quarters);
+- otherwise the latest-FY SBC-adjusted FCF, exactly as before.
+
+Everything else in §4 operates unchanged on this candidate:
+
+- the ±50% deviation test against the average of the **prior** fiscal years
+  (`latest_fy-1`, `latest_fy-2`);
+- the monotonic-ramp exception, evaluated on `(candidate, latest_fy-1,
+  latest_fy-2)`;
+- the 3-year-average fallback VALUE, which averages `(candidate,
+  latest_fy-1, latest_fy-2)`.
+
+The deviation test remains the guard against a noisy TTM (a one-quarter
+working-capital swing): SMCI's TTM FCF is deeply negative against a positive
+FY, so it still lands on `3y_avg`.
+
+### 30c. `fcf0_source` values
+
+| value | meaning |
+|---|---|
+| `"ttm"` | the true trailing-twelve-month candidate (30b) was used |
+| `"latest_fy"` | the latest fiscal-year figure was used (TTM unavailable or not newer) |
+| `"3y_avg"` | the deviation test fell back to the 3-year average |
+
+Verdicts stored before this change carry `"ttm"` with the old meaning;
+readers (`screener/funding.py` audit fields) treat the field as an audit
+string only, so no migration is needed.
+
+### 30d. What moves and what does not
+
+**Moves** (everything that reads `fcf0`): the standard FCF-DCF scenarios and
+headline band, §9 sensitivity (raw basis), §5/§28a reverse DCF on the `"raw"`
+basis, `scenario_returns`, the §8h LBO floor, and the §8a gate inputs that
+read `dcf_scenarios`.
+
+**Does not move** (stay on the annual series):
+
+- the cyclical `normalized_variant` (margins × latest revenue), per the
+  2026-10-26 decision to keep its revenue base unchanged;
+- EPV (§8a), the cyclical FCFE anchor (§8e), RIM (§8f), FFO (§8c), which
+  read annual net income / book value;
+- the realized FCF CAGR reference (§5/§10 F6) and every multiple/percentile
+  (`pe`, `ps`, `pfcf`): §24b's comparability rule stands;
+- hyper-grower / revenue-first DCFs (revenue-based, not fcf0-based).
+
+**§24c note** gains one sentence when `fcf0_source == "ttm"`: the FCF-DCF
+uses the TTM cash-flow base; the other anchors still use the fiscal year.
+
+**As-of mode (§18):** the quarterly series are already filtered by filing
+date in `normalize_facts(as_of=...)`, so the TTM window only contains
+quarters knowable on the as-of date. No extra handling.
+
+### 30e. Measured effect (cached raw data, 2026-10-26)
+
+TTM vs latest-FY SBC-adjusted FCF, filers whose TTM window is newer:
+
+| | FY fcf0 | TTM fcf0 | change |
+|---|---|---|---|
+| NVDA | `$90.3B` | `$119.8B` | +33% |
+| AAPL | `$85.9B` | `$115.7B` | +35% |
+| CVX | `$16.6B` | `$27.0B` | +63% (deviation test; ramp check decides) |
+| AMD | `$5.1B` | `$6.8B` | +34% |
+| GOOGL | `$48.3B` | `$38.2B` | −21% |
+| WMT | `$14.9B` | `$12.6B` | −16% |
+| MSFT | `$59.6B` | `$60.6B` | +2% |
+| MU, SNDK, STX | FY just ended | = FY | 0% |
+
+### Scope
+
+In: `normalize/metrics.py` (`_compute_ttm_cash`), `valuation/engine.py`
+(`_select_fcf0` candidate + label, §24c note sentence). No new dependency, no
+anchor formula change, no change to multiples or percentiles.

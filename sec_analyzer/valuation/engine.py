@@ -504,8 +504,10 @@ def _select_fcf0(
 ) -> "tuple[Optional[float], Optional[str], Optional[str]]":
     """Select the DCF base-year FCF per SPEC Sec.4 (F2: SBC-adjusted).
 
-    Prefers the latest-FY FCF net of SBC (the "ttm" figure -- see
-    ``_sbc_adjusted_fcf_by_fy``). Falls back to the 3-year average
+    Prefers the latest-FY FCF net of SBC (see ``_sbc_adjusted_fcf_by_fy``),
+    or -- SPEC Sec.30b -- the TTM SBC-adjusted FCF when ``metrics`` carries a
+    complete TTM cash window newer than that fiscal year; whichever wins is
+    the "ttm figure" below and fills the window's newest slot. Falls back to the 3-year average
     SBC-adjusted FCF when the ttm figure is missing, non-positive, or
     deviates more than 50% from the average of the PRIOR years in the
     window (``latest_fy-1``/``latest_fy-2``, whichever exist; no prior year
@@ -519,7 +521,7 @@ def _select_fcf0(
     fallback is only reachable when it is itself usable (positive); if it
     isn't, a positive ttm figure is still preferred over giving up
     entirely. Returns ``(fcf0, source, note)`` where ``source`` is
-    ``"ttm"``/``"3y_avg"``/``None`` and ``note`` is a string to
+    ``"ttm"`` (true TTM)/``"latest_fy"``/``"3y_avg"``/``None`` and ``note`` is a string to
     surface, or ``None``. Both the ttm figure and the 3y window it's
     compared against are SBC-adjusted, so the deviation/monotonic checks
     below compare like with like.
@@ -534,8 +536,20 @@ def _select_fcf0(
     """
     latest_fy = resolve_fundamental_fy(metrics)
     ttm_fcf = sbc_adjusted_fcf_by_fy.get(latest_fy) if latest_fy is not None else None
+    source = "latest_fy"
+    # SPEC Sec.30b: a complete TTM window that ends after the latest fiscal
+    # year replaces the fiscal-year figure as the candidate everywhere below.
+    if (
+        metrics.get("ttm_cash_complete")
+        and metrics.get("ttm_cash_newer_than_fy")
+        and _is_number(metrics.get("ttm_fcf_sbc_adj"))
+    ):
+        ttm_fcf = metrics["ttm_fcf_sbc_adj"]
+        source = "ttm"
 
     window = [sbc_adjusted_fcf_by_fy.get(latest_fy - i) for i in range(3)] if latest_fy is not None else []
+    if window:
+        window[0] = ttm_fcf
     avg_window = [v for v in window if v is not None]
     avg_fcf = sum(avg_window) / len(avg_window) if avg_window else None
 
@@ -563,21 +577,23 @@ def _select_fcf0(
         non_increasing = all(oldest_to_newest[i] >= oldest_to_newest[i + 1] for i in range(2))
         monotonic = non_decreasing or non_increasing
 
+    period = "trailing-twelve-month" if source == "ttm" else "latest year's"
+
     if ttm_usable and not deviates:
-        return ttm_fcf, "ttm", None
+        return ttm_fcf, source, None
 
     if ttm_usable and deviates and monotonic:
         note = (
-            "The latest year's FCF (net of SBC) deviated more than 50% from the 3-year average; but since "
-            "FCF follows a stable trend (a structural rise/fall, not a one-off spike) the latest year's "
+            f"The {period} FCF (net of SBC) deviated more than 50% from the 3-year average; but since "
+            f"FCF follows a stable trend (a structural rise/fall, not a one-off spike) the {period} "
             "figure was still used as the starting FCF (fcf0) for the DCF."
         )
-        return ttm_fcf, "ttm", note
+        return ttm_fcf, source, note
 
     if avg_usable:
         note = (
             "The 3-year average FCF (net of SBC) was used as the starting FCF (fcf0) for the DCF instead of "
-            "the latest year's figure (the latest year's data is missing, negative, or deviated more than "
+            f"the {period} figure (the {period} data is missing, negative, or deviated more than "
             "50% from the 3-year average)."
         )
         return avg_fcf, "3y_avg", note
@@ -586,7 +602,7 @@ def _select_fcf0(
         # Deviates from the average, but the average itself isn't usable
         # (missing or non-positive) -- keep the positive ttm figure rather
         # than discarding perfectly usable data.
-        return ttm_fcf, "ttm", None
+        return ttm_fcf, source, None
 
     return None, None, "A positive starting FCF (fcf0) could not be computed; the DCF cannot be produced for this company."
 
@@ -1026,13 +1042,14 @@ def _rim_scenario_band(
 _TTM_STALENESS_THRESHOLD = 0.25
 
 
-def _ttm_staleness_notes(metrics: dict) -> List[str]:
+def _ttm_staleness_notes(metrics: dict, fcf0_source: Optional[str] = None) -> List[str]:
     """Warn when the annual base the anchors use is materially out of date.
 
     Fires in both directions -- a filer mid-upswing (Micron: TTM net income
     5.9x the latest fiscal year) and one mid-collapse are equally misdescribed
     by a stale annual figure. Reports both P/E readings, since the fiscal-year
-    P/E is what the rest of the card shows. Never raises.
+    P/E is what the rest of the card shows. When the FCF-DCF already runs on
+    a TTM fcf0 (SPEC.md Sec.30), the note says so. Never raises.
     """
     metrics = metrics or {}
     if not metrics.get("ttm_complete"):
@@ -1047,7 +1064,9 @@ def _ttm_staleness_notes(metrics: dict) -> List[str]:
         f"The trailing-12-month (TTM) figure is markedly {direction} the fiscal-year basis the valuation "
         f"anchors use: TTM net income is {_format_usd_short(ttm_ni)} "
         f"({ratio:.1f}x the fiscal year, period ending {metrics.get('ttm_period_end')}). "
-        "Every anchor is computed from the annual series, so it doesn't yet see these quarters."
+        + ("The FCF-DCF uses the TTM cash-flow base; every other anchor is computed"
+           if fcf0_source == "ttm" else "Every anchor is computed")
+        + " from the annual series, so it doesn't yet see these quarters."
     )
     if _is_number(pe_ttm) and _is_number(pe_fy):
         note += f" P/E is {pe_fy:.1f} on a fiscal-year basis, {pe_ttm:.1f} on a TTM basis."
@@ -4728,12 +4747,6 @@ def _run_valuation(
     if revenue_basis_note:
         notes.append(revenue_basis_note)
 
-    # SPEC.md Sec.24c: every anchor below is built on ANNUAL series, so a filer
-    # deep into an unreported fiscal year can be valued on a base that the
-    # quarterly filings have already overtaken. Say so rather than letting the
-    # stale figure pass as current.
-    notes.extend(_ttm_staleness_notes(metrics))
-
     is_unprofitable = sector_type == "growth_unprofitable"
     for violation in sanity.validate_assumptions(assumptions, is_unprofitable=is_unprofitable):
         notes.append(f"Assumption warning: {violation}")
@@ -4751,6 +4764,12 @@ def _run_valuation(
     fcf0, fcf0_source, fcf0_note = _select_fcf0(metrics, sbc_adjusted_fcf_by_fy)
     if fcf0_note:
         notes.append(fcf0_note)
+
+    # SPEC.md Sec.24c: the anchors below are built on ANNUAL series (the
+    # FCF-DCF excepted when Sec.30 picked a TTM fcf0), so a filer deep into an
+    # unreported fiscal year can be valued on a base the quarterly filings
+    # have already overtaken. Say so rather than letting it pass as current.
+    notes.extend(_ttm_staleness_notes(metrics, fcf0_source))
 
     # F2: SBC is now expensed directly into fcf0 (via sbc_adjusted_fcf_by_fy)
     # above, so no further dilution adjustment is layered on top of the
