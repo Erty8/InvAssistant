@@ -452,7 +452,19 @@ Deterministic from SIC (int or str), with financial-statement overrides:
   4400–4599 (shipping/air)
 - 3674 (semiconductors) → no longer unconditionally cyclical: `"cyclical"`
   only when realized revenue CAGR (5y, falling back to 3y) is unknown or
-  `<= 15%` (through-cycle/commodity/memory-type semi); otherwise falls
+  `<= 15%` (through-cycle/commodity/memory-type semi), **or** when the CAGR
+  is above 15% but is a peak-cycle artifact (`sector._is_peak_cycle_semi`):
+  the annual net-margin history (NetIncome / Revenue, at least
+  `cyclical._MIN_CYCLE_YEARS` years) contains a loss year (trough margin
+  < 0, strictly -- the same marker as Sec.26) AND the current net margin
+  (TTM when the TTM window is complete, else latest FY -- the same reading
+  as `through_cycle_stats`) sits at or above
+  `cyclical._PEAK_MARGIN_PERCENTILE` (80th) of that history. A trend window
+  that ends on a memory upswing measures the upswing, not secular growth:
+  Micron's FY2026 (63.8% margin, 92nd percentile) lifted its 5y trend CAGR
+  from 5.3% to 29%, flipped it to `"mature"`, and let the peak single-year
+  FCF headline a raw FCF-DCF ($1,696–$2,860 vs. $878 price) while the
+  `peak_cycle_pe_trap` flag (Sec.26d) fired on the same run. Otherwise falls
   through to the profitability check below like any other SIC, so a
   secular-growth semi classifies as `"mature"`/`"growth_unprofitable"` and
   can independently enter hyper-grower mode (see the gray-zone tier

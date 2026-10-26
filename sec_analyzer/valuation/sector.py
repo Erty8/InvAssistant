@@ -22,6 +22,7 @@ from typing import List, Optional, Tuple, Union
 
 from sec_analyzer.normalize.metrics import resolve_fundamental_fy
 from sec_analyzer.normalize.normalizer import to_annual_series
+from sec_analyzer.valuation import cyclical, multiples
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,44 @@ def _is_reit_like_sic(sic: int) -> bool:
     return any(lo <= sic <= hi for lo, hi in _REIT_LIKE_SIC_RANGES)
 
 
+def _is_peak_cycle_semi(normalized: dict, metrics: dict) -> bool:
+    """Whether a semi's high realized growth is a cycle artifact (SPEC.md Sec.8).
+
+    True when the filer's annual net-margin history (at least
+    ``cyclical._MIN_CYCLE_YEARS`` years) contains a loss year -- the same
+    memory/commodity marker the Sec.26 advisory uses -- AND its current net
+    margin (TTM when complete, else latest FY, as in ``through_cycle_stats``)
+    sits at or above ``cyclical._PEAK_MARGIN_PERCENTILE`` of that history.
+    A trend-growth window that ends on such a peak measures the upswing, not
+    secular growth: Micron's FY2026 pushed its 5y trend from 5.3% to 29%.
+
+    Never raises: any missing input or unexpected shape returns ``False``.
+    """
+    try:
+        revenue = to_annual_series(normalized or {}, "Revenue")
+        net_income = to_annual_series(normalized or {}, "NetIncome")
+        margin_by_fy = {
+            fy: net_income[fy] / revenue[fy]
+            for fy in set(revenue) & set(net_income)
+            if revenue[fy] is not None and revenue[fy] > 0 and net_income[fy] is not None
+        }
+        if len(margin_by_fy) < cyclical._MIN_CYCLE_YEARS:
+            return False
+        if min(margin_by_fy.values()) >= 0:
+            return False
+        metrics = metrics or {}
+        if metrics.get("ttm_complete") and isinstance(metrics.get("ttm_net_margin"), (int, float)):
+            current = metrics["ttm_net_margin"]
+        else:
+            current = margin_by_fy[max(margin_by_fy)]
+        percentile = multiples.percentile_position(list(margin_by_fy.values()), current)
+        return percentile is not None and percentile >= cyclical._PEAK_MARGIN_PERCENTILE
+    except Exception:
+        logger.warning("_is_peak_cycle_semi: unexpected error; treating filer as "
+                       "not at a cycle peak.", exc_info=True)
+        return False
+
+
 def _is_deposit_funded(normalized: dict, metrics: dict) -> bool:
     """Whether deposits fund a material share of the filer's liabilities.
 
@@ -199,8 +238,11 @@ def classify_sector(sic: Optional[Union[int, str]], normalized: dict, metrics: d
         displaces a reit classification and is checked before the cyclical
         and profitability branches;
         SIC 3674 (semiconductors) -> cyclical when the realized revenue
-        CAGR (5y, falling back to 3y) is unknown or <= 15%, otherwise falls
-        through to the profitability check below like any other SIC; SIC
+        CAGR (5y, falling back to 3y) is unknown or <= 15%, or when its
+        net-margin history has a loss year and the current margin sits at
+        or above the 80th percentile of that history (a peak-cycle CAGR),
+        otherwise falls through to the profitability check below like any
+        other SIC; SIC
         in the (remaining) cyclical set -> cyclical; else, if the latest
         fiscal year's ``NetIncome`` is negative -> growth_unprofitable,
         UNLESS the firm is normally profitable (>=2 prior fiscal years of
@@ -234,6 +276,10 @@ def classify_sector(sic: Optional[Union[int, str]], normalized: dict, metrics: d
         if cagr is None or cagr <= _SEMICONDUCTOR_GROWTH_CAGR_MIN:
             # Commodity/memory-type or unknown-growth semi: keep the
             # through-cycle normalization treatment.
+            return SECTOR_CYCLICAL
+        if _is_peak_cycle_semi(normalized, metrics):
+            # Loss-year history + peak margin: the high CAGR is the upswing
+            # itself, not secular growth.
             return SECTOR_CYCLICAL
         # Secular-growth semi: fall through to the profitability check
         # below instead of forcing "cyclical" -- this also lets

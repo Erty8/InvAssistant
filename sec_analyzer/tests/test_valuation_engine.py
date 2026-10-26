@@ -597,6 +597,60 @@ def test_classify_sector_low_growth_semiconductor_stays_cyclical():
     assert classify_sector(3674, {}, {"revenue_cagr_5y": 0.10}) == "cyclical"
 
 
+# Micron FY2016-FY2026 revenue / net income ($B): a FY2023 loss year, then a
+# FY2026 peak whose 63.8% margin tops the 12-year history.
+_MU_REVENUE = {2016: 12.40, 2017: 20.32, 2018: 30.39, 2019: 23.41, 2020: 21.43,
+               2021: 27.70, 2022: 30.76, 2023: 15.54, 2024: 25.11, 2025: 37.38,
+               2026: 133.19}
+_MU_NET_INCOME = {2016: -0.28, 2017: 5.09, 2018: 14.14, 2019: 6.31, 2020: 2.69,
+                  2021: 5.86, 2022: 8.69, 2023: -5.83, 2024: 0.78, 2025: 8.54,
+                  2026: 84.97}
+
+
+def _semi_normalized(revenue, net_income):
+    return {"annual": {
+        "Revenue": [_ni_record(fy, v) for fy, v in revenue.items()],
+        "NetIncome": [_ni_record(fy, v) for fy, v in net_income.items()],
+    }}
+
+
+def test_classify_sector_peak_cycle_semiconductor_stays_cyclical():
+    # MU after FY2026: the 5y trend CAGR (29%) clears the 15% bar only because
+    # the window ends on the upswing. Loss-year history + peak margin keeps it
+    # cyclical instead of letting the peak FCF headline as a "mature" DCF.
+    normalized = _semi_normalized(_MU_REVENUE, _MU_NET_INCOME)
+    metrics = {"latest_fy": 2026, "revenue_cagr_5y": 0.29}
+    assert classify_sector(3674, normalized, metrics) == "cyclical"
+
+
+def test_classify_sector_loss_year_semiconductor_off_peak_gives_mature():
+    # Same loss-year history, but the current margin (10%) sits mid-history:
+    # the high CAGR is not a peak artifact, so the secular-growth path stands.
+    net_income = {**_MU_NET_INCOME, 2026: 13.32}
+    normalized = _semi_normalized(_MU_REVENUE, net_income)
+    metrics = {"latest_fy": 2026, "revenue_cagr_5y": 0.29}
+    assert classify_sector(3674, normalized, metrics) == "mature"
+
+
+def test_classify_sector_peak_margin_semiconductor_without_loss_year_gives_mature():
+    # Peak margin but no loss year anywhere (NVDA-type secular grower): stays
+    # on the secular-growth path.
+    net_income = {fy: max(v, 0.5) for fy, v in _MU_NET_INCOME.items()}
+    normalized = _semi_normalized(_MU_REVENUE, net_income)
+    metrics = {"latest_fy": 2026, "revenue_cagr_5y": 0.29}
+    assert classify_sector(3674, normalized, metrics) == "mature"
+
+
+def test_classify_sector_peak_cycle_semiconductor_uses_ttm_margin():
+    # A complete TTM window is the current cycle position, as in
+    # through_cycle_stats: a TTM margin back at mid-cycle (10%) means the
+    # filer is no longer at the peak even though FY2026 was.
+    normalized = _semi_normalized(_MU_REVENUE, _MU_NET_INCOME)
+    metrics = {"latest_fy": 2026, "revenue_cagr_5y": 0.29,
+               "ttm_complete": True, "ttm_net_margin": 0.10}
+    assert classify_sector(3674, normalized, metrics) == "mature"
+
+
 # ---------------------------------------------------------------------------
 # 9a. classify_sector one-off-loss guard (P3c)
 # ---------------------------------------------------------------------------
