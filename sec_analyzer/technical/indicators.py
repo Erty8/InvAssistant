@@ -103,8 +103,10 @@ _CLIMAX_RANGE_PCT = 0.04
 _PIVOT_WINDOW = 5
 
 #: Relative tolerance for clustering nearby swing levels into a single
-#: support/resistance zone (1.5% of the level). Also the minimum gap from the
-#: current price for a zone to count as "above"/"below" rather than "here".
+#: support/resistance zone (1.5% of the level). A zone is a support or a
+#: resistance purely by which side of the current price it sits on -- there is
+#: no "here" dead zone, so a level price is resting on (e.g. the 200-day just
+#: under price) is still reported.
 _SR_CLUSTER_TOL = 0.015
 
 #: Fibonacci retracement ratios drawn across the dominant swing (0.5 is not a
@@ -141,6 +143,16 @@ _SR_52W_FAR_THRESHOLD_PCT = 60.0
 #: then filled by the nearest strong in-range level (a tested shelf / Fib /
 #: MA) instead of the extreme, or left empty if none qualifies.
 _SR_MAX_DIST_PCT = 60.0
+
+#: Minimum zone score for the *near* level on each side: the near level is
+#: the closest zone at/above this score -- one with real price evidence (a
+#: swing touch, a major moving average, or a 52-week extreme) -- so
+#: ``nearest_support`` / ``nearest_resistance`` really are the nearest level
+#: rather than the strongest one somewhere in the closer half of the
+#: candidates. Fibonacci-only zones don't qualify (they are still reported in
+#: the ``fibonacci`` grid); when no zone on a side qualifies, the plain nearest
+#: zone is used.
+_SR_NEAR_MIN_SCORE = _SR_SCORE_PER_TOUCH
 
 #: Corroboration window: when finalizing a chosen level, all evidence within
 #: this fraction of its price is merged into it (summed touches, unioned fib
@@ -758,11 +770,15 @@ def _support_resistance(
     remaining zone is scored -- a 52-week extreme dominates, a moving-average
     confluence is a strong boost (~a well-tested shelf), swing touches
     accumulate, a Fibonacci confluence adds a smaller boost -- then exactly
-    **one near and one far** level are chosen, each the *strongest* in its distance half (so
-    both are well-corroborated, not the weakest nearby). Each chosen level is
-    then **strengthened by merging every nearby evidence source** within
+    **one near and one far** level are chosen: the near level is the closest
+    zone scoring at least :data:`_SR_NEAR_MIN_SCORE` (else the plain closest
+    zone), the far level the strongest zone beyond it. A zone's side is set
+    purely by whether it sits below or above price. Each chosen level is
+    then **strengthened by merging every same-side evidence source** within
     :data:`_SR_CORROBORATE_PCT` (summed touches, unioned fib ratios, 52w
-    flags) and expressed as a price **range** (``low``/``high``).
+    flags) and expressed as a price **range** (``low``/``high``) that never
+    crosses the current price. The 52-week flags and bonus refer to the last
+    :data:`_WEEKS_52_TRADING_DAYS` bars, not the whole S/R lookback.
 
     Falls back to ``Close`` when ``High``/``Low`` columns are absent. Returns
     all-empty when there isn't enough history or no usable price.
@@ -804,11 +820,34 @@ def _support_resistance(
         lo_val = float(low.min())
         pivots.append({"price": lo_val, "date": _date_str(low.idxmin())})
 
+    # The 52-week extremes (last _WEEKS_52_TRADING_DAYS bars) drive the
+    # is_52w_* flags and the 52w score bonus. They differ from hi_val/lo_val
+    # (the extremes of the longer S/R lookback) whenever the lookback's
+    # extreme is more than a year old, so they are added as levels of their
+    # own in that case.
+    high_1y = high.tail(_WEEKS_52_TRADING_DAYS)
+    low_1y = low.tail(_WEEKS_52_TRADING_DAYS)
+    hi_52w = lo_52w = None
+    if not high_1y.dropna().empty:
+        hi_52w = float(high_1y.max())
+        if hi_52w != hi_val:
+            pivots.append({"price": hi_52w, "date": _date_str(high_1y.idxmax())})
+    if not low_1y.dropna().empty:
+        lo_52w = float(low_1y.min())
+        if lo_52w != lo_val:
+            pivots.append({"price": lo_52w, "date": _date_str(low_1y.idxmin())})
+
     if not pivots:
         return [], [], None, None, None
 
     clusters = _cluster_pivots(pivots, _SR_CLUSTER_TOL)
     gap = _SR_CLUSTER_TOL
+
+    def _same_side(a: float, b: float) -> bool:
+        """Whether two levels sit on the same side of the current price -- a
+        Fib/MA level only confirms a zone on its own side (an MA just under
+        price must not tag a resistance zone just above it)."""
+        return (a < price) == (b < price)
 
     # --- Fibonacci retracement of the dominant swing (high<->low over the
     # lookback). Direction (which extreme came first) sets whether ratios are
@@ -831,7 +870,8 @@ def _support_resistance(
             best, best_diff = None, None
             for cluster in clusters:
                 diff = abs(cluster["price"] - level_price)
-                if diff <= level_price * gap and (best_diff is None or diff < best_diff):
+                if (diff <= level_price * gap and _same_side(cluster["price"], level_price)
+                        and (best_diff is None or diff < best_diff)):
                     best, best_diff = cluster, diff
             if best is not None:
                 if best.get("fib") is None or best_diff < best.get("_fib_diff", float("inf")):
@@ -860,7 +900,8 @@ def _support_resistance(
         best, best_diff = None, None
         for cluster in clusters:
             diff = abs(cluster["price"] - ma_value)
-            if diff <= ma_value * gap and (best_diff is None or diff < best_diff):
+            if (diff <= ma_value * gap and _same_side(cluster["price"], ma_value)
+                    and (best_diff is None or diff < best_diff)):
                 best, best_diff = cluster, diff
         if best is not None:
             existing = best.get("ma")
@@ -871,8 +912,10 @@ def _support_resistance(
 
     # Flag 52-week extremes and score every zone (52w > tested swing > fib).
     for zone in clusters:
-        zone["is_52w_high"] = hi_val is not None and abs(zone["price"] - hi_val) <= hi_val * gap
-        zone["is_52w_low"] = lo_val is not None and abs(zone["price"] - lo_val) <= lo_val * gap
+        zone["is_52w_high"] = (hi_52w is not None and abs(zone["price"] - hi_52w) <= hi_52w * gap
+                               and _same_side(zone["price"], hi_52w))
+        zone["is_52w_low"] = (lo_52w is not None and abs(zone["price"] - lo_52w) <= lo_52w * gap
+                              and _same_side(zone["price"], lo_52w))
         is_52w = zone["is_52w_high"] or zone["is_52w_low"]
         score_52w = 0
         if is_52w:
@@ -888,11 +931,15 @@ def _support_resistance(
             + (_SR_SCORE_MA if zone.get("ma") else 0)
         )
 
-    def _corroborate(pick: dict) -> dict:
-        """Merge all evidence within ``_SR_CORROBORATE_PCT`` of ``pick`` into a
-        single strong zone and express it as a price range."""
+    def _corroborate(pick: dict, side_zones: "list[dict]", is_support: bool) -> dict:
+        """Merge all same-side evidence within ``_SR_CORROBORATE_PCT`` of
+        ``pick`` into a single strong zone and express it as a price range.
+
+        Only zones on ``pick``'s own side of price are merged, and the band is
+        clipped at the current price, so a support band never reaches above
+        price (nor a resistance band below it)."""
         window = pick["price"] * _SR_CORROBORATE_PCT
-        members = [z for z in clusters if abs(z["price"] - pick["price"]) <= window]
+        members = [z for z in side_zones if abs(z["price"] - pick["price"]) <= window]
         prices = [z["price"] for z in members]
         fibs = [z["fib"] for z in members if z.get("fib")]
         mas = [z["ma"] for z in members if z.get("ma")]
@@ -901,6 +948,10 @@ def _support_resistance(
         if hi_p - lo_p < pick["price"] * _SR_BAND_MIN_PCT:
             half = pick["price"] * _SR_BAND_MIN_PCT / 2.0
             lo_p, hi_p = pick["price"] - half, pick["price"] + half
+        if is_support:
+            hi_p = min(hi_p, price)
+        else:
+            lo_p = max(lo_p, price)
         mid = (lo_p + hi_p) / 2.0
         return {
             "low": round(lo_p, 2), "high": round(hi_p, 2), "price": round(mid, 2),
@@ -914,18 +965,21 @@ def _support_resistance(
             "is_52w_low": any(z.get("is_52w_low") for z in members),
         }
 
-    def _pick_near_far(side_zones: "list[dict]") -> "list[dict]":
-        """Pick one near + one far level, each the strongest in its distance
-        half (so both are well-corroborated, not the weakest nearby)."""
+    def _pick_near_far(side_zones: "list[dict]", is_support: bool) -> "list[dict]":
+        """Pick one near + one far level: the near level is the closest zone
+        scoring at least ``_SR_NEAR_MIN_SCORE`` (else the plain closest zone),
+        the far level the strongest zone beyond it."""
         if not side_zones:
             return []
         by_distance = sorted(side_zones, key=lambda z: abs(z["price"] - price))
-        if len(by_distance) == 1:
-            return [_corroborate(by_distance[0])]
-        split = (len(by_distance) + 1) // 2
-        near = max(by_distance[:split], key=lambda z: (z["score"], -abs(z["price"] - price)))
-        far = max(by_distance[split:], key=lambda z: (z["score"], -abs(z["price"] - price)))
-        near_fmt, far_fmt = _corroborate(near), _corroborate(far)
+        qualified = [z for z in by_distance if z["score"] >= _SR_NEAR_MIN_SCORE]
+        near = qualified[0] if qualified else by_distance[0]
+        near_fmt = _corroborate(near, side_zones, is_support)
+        beyond = by_distance[by_distance.index(near) + 1:]
+        if not beyond:
+            return [near_fmt]
+        far = max(beyond, key=lambda z: (z["score"], -abs(z["price"] - price)))
+        far_fmt = _corroborate(far, side_zones, is_support)
         # If corroboration collapsed them onto the same band, keep just the near.
         if far_fmt["low"] <= near_fmt["high"] and far_fmt["high"] >= near_fmt["low"]:
             return [near_fmt]
@@ -937,10 +991,10 @@ def _support_resistance(
     max_dist = _SR_MAX_DIST_PCT / 100.0
     lo_bound, hi_bound = price * (1 - max_dist), price * (1 + max_dist)
     supports = _pick_near_far(
-        [c for c in clusters if lo_bound <= c["price"] < price * (1 - gap)]
+        [c for c in clusters if lo_bound <= c["price"] < price], is_support=True
     )
     resistances = _pick_near_far(
-        [c for c in clusters if price * (1 + gap) < c["price"] <= hi_bound]
+        [c for c in clusters if price < c["price"] <= hi_bound], is_support=False
     )
     supports.sort(key=lambda z: z["price"], reverse=True)   # nearest below first
     resistances.sort(key=lambda z: z["price"])              # nearest above first

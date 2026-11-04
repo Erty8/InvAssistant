@@ -373,15 +373,25 @@ def test_fibonacci_levels_and_confluence_tagging():
     # 50% retracement of ~100..200 sits at ~150.
     assert abs(prices["50%"] - (fib["low"] + 0.5 * (fib["high"] - fib["low"]))) < 0.5
 
-    # Fibonacci levels are folded into the S/R zones (tagged via "fib").
-    tagged = [z for z in ind["support_levels"] + ind["resistance_levels"] if z.get("fib")]
-    assert tagged
-    # Fib-only zones (no swing touches) still surface as levels.
-    assert any(z["touches"] == 0 and z.get("fib") for z in tagged)
     # The swing's own extremes are flagged where they surface (the ~200 high
-    # is a resistance, the ~100 low a support).
+    # is a resistance, the ~100 low a support). They carry real price evidence,
+    # so they -- not the Fibonacci-only grid levels -- are the near levels.
     assert any(r["is_52w_high"] for r in ind["resistance_levels"])
     assert any(s["is_52w_low"] for s in ind["support_levels"])
+
+
+def test_support_resistance_falls_back_to_fib_levels_without_evidenced_zones():
+    # Same shape, but the swing low (~50) sits beyond the distance cap, so no
+    # support zone has a swing touch / MA / 52w extreme in range. Fibonacci-only
+    # zones then surface as the support levels instead of leaving the side empty.
+    def _ramp(a, b, n):
+        return [a + (b - a) * t / n for t in range(n)]
+
+    ind = compute_indicators(_make_df(_ramp(50, 200, 120) + _ramp(200, 150, 30)))
+    supports = ind["support_levels"]
+    assert supports
+    assert all(s["touches"] == 0 and s.get("fib") for s in supports)
+    assert ind["nearest_support"] == supports[0]["price"]
 
 
 def test_price_series_is_ascending_capped_and_ends_at_latest_close():
@@ -499,6 +509,81 @@ def test_support_resistance_ignores_absent_moving_averages():
     supports, resistances, _ns, _nr, _fib = _support_resistance(df, price)   # sma50/sma200 default None
     tagged = [z for z in supports + resistances if z.get("ma")]
     assert tagged == []
+
+
+def test_support_resistance_reports_a_level_price_is_resting_on():
+    # The 200-day sits 1% under price -- inside the old 1.5% "here" dead zone,
+    # which dropped it from both sides. It must be reported as the near
+    # support, on the support side only (the 52-week high right at price must
+    # not absorb it and turn it into a resistance or a "52w high").
+    from sec_analyzer.technical.indicators import _support_resistance
+
+    df = _make_df([50.0] * 30 + [50.0 + (i + 1) * 2.33 for i in range(60)])
+    price = float(df["Close"].iloc[-1])
+    supports, resistances, nearest_support, _nr, _fib = _support_resistance(
+        df, price, sma50=None, sma200=price * 0.99
+    )
+
+    near = supports[0]
+    assert near["price"] == nearest_support
+    assert "SMA200" in (near["ma"] or "")
+    assert -1.5 < near["dist_pct"] < 0
+    assert near["is_52w_high"] is False
+    assert not any(z.get("ma") for z in resistances)
+
+
+def test_support_resistance_bands_never_cross_price():
+    # MAs just above and just below price: corroborating a level must only
+    # merge evidence from its own side, so no support band reaches above price
+    # and no resistance band dips below it.
+    from sec_analyzer.technical.indicators import _support_resistance
+
+    for df in (_multi_swing_df(), _zigzag_df()):
+        price = float(df["Close"].iloc[-1])
+        supports, resistances, _ns, _nr, _fib = _support_resistance(
+            df, price, sma50=price * 1.004, sma200=price * 0.985
+        )
+        assert supports and resistances
+        assert all(s["high"] <= price for s in supports), supports
+        assert all(r["low"] >= price for r in resistances), resistances
+
+
+def test_nearest_levels_are_the_closest_swing_levels():
+    # nearest_support / nearest_resistance must be the closest level backed by
+    # a swing touch -- not the strongest zone somewhere in the closer half of
+    # the candidates. Check against an independent +/-5-bar fractal scan.
+    for df in (_multi_swing_df(), _zigzag_df()):
+        ind = compute_indicators(df)
+        price = ind["price"]
+        high, low = df["High"].tolist(), df["Low"].tolist()
+        k = 5
+        lows = [low[i] for i in range(k, len(low) - k)
+                if low[i] <= min(low[i - k:i + k + 1]) and low[i] < price]
+        highs = [high[i] for i in range(k, len(high) - k)
+                 if high[i] >= max(high[i - k:i + k + 1]) and high[i] > price]
+        if lows:
+            closest_low = max(lows)
+            near = ind["support_levels"][0]
+            assert near["low"] <= closest_low <= near["high"] or near["price"] >= closest_low * 0.985
+        if highs:
+            closest_high = min(highs)
+            near = ind["resistance_levels"][0]
+            assert near["low"] <= closest_high <= near["high"] or near["price"] <= closest_high * 1.015
+
+
+def test_52w_flags_use_the_last_year_not_the_whole_lookback():
+    # A 250 high ~1.5 years back and a 200 high within the last year: only the
+    # ~200 zone is the 52-week high, even though 250 is the lookback extreme.
+    def _ramp(a, b, n):
+        return [a + (b - a) * t / n for t in range(n)]
+
+    closes = (_ramp(180, 250, 40) + _ramp(250, 160, 60) + [160.0] * 10 + _ramp(160, 200, 60)
+              + _ramp(200, 150, 60) + _ramp(150, 200, 60) + _ramp(200, 170, 60) + _ramp(170, 185, 30))
+    ind = compute_indicators(_make_df(closes))
+
+    by_price = {round(r["price"]): r for r in ind["resistance_levels"]}
+    assert by_price[200]["is_52w_high"] is True
+    assert by_price[250]["is_52w_high"] is False
 
 
 # ---------------------------------------------------------------------------
