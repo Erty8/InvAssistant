@@ -220,8 +220,9 @@ def test_textbook_pullback_scores_at_least_70():
     #   (rsi_divergence absent -> skipped)
     # rel_strength = avg(clamp(10/20), clamp(5/10)) = avg(0.5, 0.5) = 0.5
     # volume = avg(clamp(log(2)/log(2))=1, obv_trend=up -> +1) = 1.0
-    # risk_reward: risk=100-95=5, reward=115-100=15, rr=3
-    #   -> clamp(log(3)/log(3)) = 1.0
+    # risk_reward: stop = max(100-2*2=96, 95*0.99=94.05) = 96 (4 >= 1 ATR, kept)
+    #   risk=100-96=4, reward=115-100=15, rr=3.75
+    #   -> clamp(log(3.75)/log(3)) = 1.0
     #
     # s = .25*.75 + .25*(8/9) + .20*1 + .15*.5 + .10*1 + .05*1
     #   = .1875 + .222222 + .2 + .075 + .1 + .05 = 0.834722...
@@ -286,17 +287,18 @@ def test_extended_deteriorating_downtrend_scores_at_most_30():
     #               rsi_divergence=bearish -> -1) = -1.0
     # rel_strength = avg(clamp(-20/20), clamp(-10/10)) = avg(-1, -1) = -1.0
     # volume = avg(clamp(log(0.5)/log(2))=-1, obv_trend=down -> -1) = -1.0
-    # risk_reward: risk=100-90=10, reward=103-100=3, rr=0.3
-    #   -> clamp(log(0.3)/log(3)) = clamp(-1.0959) = -1.0
+    # risk_reward: stop = max(100-2*2=96, 90*0.99=89.1) = 96 (4 >= 1 ATR, kept)
+    #   risk=100-96=4, reward=103-100=3, rr=0.75
+    #   -> clamp(log(0.75)/log(3)) = -0.261860
     #
     # s = .25*(-1.0) + .25*(-0.37778) + .20*(-1.0) + .15*(-1.0)
-    #     + .10*(-1.0) + .05*(-1.0)
-    #   = -0.25 - 0.094444 - 0.2 - 0.15 - 0.1 - 0.05 = -0.844444
-    # score = round(50 + 50*(-0.844444)) = round(50 - 42.2222) = round(7.778) = 8
+    #     + .10*(-1.0) + .05*(-0.261860)
+    #   = -0.25 - 0.094444 - 0.2 - 0.15 - 0.1 - 0.013093 = -0.807537
+    # score = round(50 + 50*(-0.807537)) = round(50 - 40.3769) = round(9.623) = 10
     result = compute_swing_score(_extended_deteriorating_downtrend())
 
     assert result is not None
-    assert result["score"] == 8
+    assert result["score"] == 10
     assert result["score"] <= 30
     assert result["label"] == "AVOID"
     assert result["setup"] == "NO SETUP"
@@ -304,6 +306,25 @@ def test_extended_deteriorating_downtrend_scores_at_most_30():
     # Everything negative -> a "weakest" driver is named, no "strongest".
     assert "weakest" in result["summary"]
     assert "strongest:" not in result["summary"]
+
+
+def test_risk_reward_uses_the_atr_floored_stop_not_raw_support():
+    # Support 0.5% under price with a 2.0 ATR: measured to raw support the
+    # risk is 0.5 and rr = 3/0.5 = 6 (sub capped at +1). The Sec.3.11 floor
+    # replaces that sub-ATR stop with the 2xATR one (96), so risk = 4,
+    # rr = 0.75 and the sub-score matches the rr the card shows.
+    import math
+
+    from sec_analyzer.technical.swing import _risk_reward_subscore
+
+    ind = {"price": 100.0, "nearest_support": 99.5, "nearest_resistance": 103.0, "atr14": 2.0}
+    result = compute_swing_score({**_textbook_pullback(), **ind})
+
+    assert _risk_reward_subscore(ind) == pytest.approx(math.log(0.75) / math.log(3.0))
+    assert result["stop"] == 96.0
+    assert result["rr"] == 0.75   # target = resistance 103 (>= 2% above price)
+    rr_component = next(c for c in result["components"] if c["key"] == "risk_reward")
+    assert rr_component["sub"] < 0
 
 
 # ---------------------------------------------------------------------------

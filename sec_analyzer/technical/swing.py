@@ -321,10 +321,12 @@ def _volume_subscore(ind: dict) -> "float | None":
 
 
 def _risk_reward_subscore(ind: dict) -> "float | None":
-    """Nearest-support/resistance risk:reward sub-score in [-1, 1]
-    (SWING_SPEC.md Sec.3.7) on a log scale (3:1 -> +1, 1:1 -> 0, 1:3 -> -1).
-    ``None`` unless ``price``, a ``nearest_support`` below it, and a
-    ``nearest_resistance`` above it are all available, with positive risk."""
+    """Risk:reward sub-score in [-1, 1] (SWING_SPEC.md Sec.3.7) on a log scale
+    (3:1 -> +1, 1:1 -> 0, 1:3 -> -1). Reward runs to ``nearest_resistance``;
+    risk runs to the Sec.3.11 trade stop (:func:`_stop_level`, ATR-floored),
+    so a support hugging price can't inflate the score past the ``rr`` the
+    card shows. ``None`` unless ``price``, a ``nearest_support`` below it, a
+    ``nearest_resistance`` above it, and a stop are all available."""
     price = ind.get("price")
     support = ind.get("nearest_support")
     resistance = ind.get("nearest_resistance")
@@ -333,7 +335,10 @@ def _risk_reward_subscore(ind: dict) -> "float | None":
     price, support, resistance = float(price), float(support), float(resistance)
     if not (support < price < resistance):
         return None
-    risk = price - support
+    stop = _stop_level(price, ind)
+    if stop is None:
+        return None
+    risk = price - stop
     reward = resistance - price
     if risk <= 0 or reward <= 0:
         return None
@@ -419,6 +424,37 @@ def _label_for_score(score: int) -> str:
     return "AVOID"
 
 
+def _stop_level(price: float, ind: dict) -> "float | None":
+    """Unrounded Sec.3.11 stop for a positive ``price``: ``max`` of the 2xATR
+    stop and a 1%-buffered nearest support, with the support-based pick
+    discarded when it sits closer than ``_STOP_MIN_ATR_MULT`` ATRs (inside
+    daily noise). ``None`` when neither input exists or the result isn't
+    strictly between 0 and ``price``."""
+    atr = ind.get("atr14")
+    atr = float(atr) if _is_num(atr) and atr > 0 else None
+
+    support = ind.get("nearest_support")
+    support = float(support) if _is_num(support) else None
+
+    base_stop = price - _STOP_ATR_MULT * atr if atr is not None else None
+    if support is not None and support < price:
+        support_stop = support * _STOP_SUPPORT_BUFFER
+        stop = max(base_stop, support_stop) if base_stop is not None else support_stop
+    else:
+        stop = base_stop
+
+    # Volatility floor: a support-based stop that sits closer than 1 ATR is
+    # inside daily noise range, so it's discarded in favour of the 2xATR
+    # stop. When atr is unavailable there is nothing to floor against, so the
+    # structural stop stands unchanged.
+    if stop is not None and atr is not None and price - stop < _STOP_MIN_ATR_MULT * atr:
+        stop = base_stop
+
+    if stop is not None and not (0 < stop < price):
+        stop = None
+    return stop
+
+
 def _trade_levels(ind: dict) -> dict:
     """Entry/stop/target/R:R trade levels (SWING_SPEC.md Sec.3.11).
 
@@ -443,26 +479,7 @@ def _trade_levels(ind: dict) -> dict:
 
     atr = ind.get("atr14")
     atr = float(atr) if _is_num(atr) and atr > 0 else None
-
-    support = ind.get("nearest_support")
-    support = float(support) if _is_num(support) else None
-
-    base_stop = price - _STOP_ATR_MULT * atr if atr is not None else None
-    if support is not None and support < price:
-        support_stop = support * _STOP_SUPPORT_BUFFER
-        stop = max(base_stop, support_stop) if base_stop is not None else support_stop
-    else:
-        stop = base_stop
-
-    # Volatility floor: a support-based stop that sits closer than 1 ATR is
-    # inside daily noise range, so it's discarded in favour of the 2xATR
-    # stop. When atr is unavailable there is nothing to floor against, so the
-    # structural stop stands unchanged.
-    if stop is not None and atr is not None and price - stop < _STOP_MIN_ATR_MULT * atr:
-        stop = base_stop
-
-    if stop is not None and not (0 < stop < price):
-        stop = None
+    stop = _stop_level(price, ind)
 
     resistance = ind.get("nearest_resistance")
     resistance = float(resistance) if _is_num(resistance) else None

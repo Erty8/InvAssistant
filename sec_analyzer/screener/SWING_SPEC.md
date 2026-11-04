@@ -208,15 +208,21 @@ Average of whichever are computable:
 
 ### 3.7 `risk_reward` sub-score
 
-Needs `price`, `nearest_support` (`< price`) and `nearest_resistance`
-(`> price`); otherwise `None`.
+Needs `price`, `nearest_support` (`< price`), `nearest_resistance`
+(`> price`) and a §3.11 `stop`; otherwise `None`.
 
 ```
 reward = nearest_resistance - price
-risk   = price - nearest_support
+risk   = price - stop                        (the unrounded §3.11 stop, ATR floor included)
 rr     = reward / risk                       (risk > 0 required)
 sub    = clamp(log(rr) / log(3.0))           (rr = 3 -> +1, rr = 1 -> 0, rr = 1/3 -> -1)
 ```
+
+Risk is measured to the §3.11 stop rather than to `nearest_support` itself, so
+the sub-score and the displayed trade levels share one stop. Measuring to raw
+support let a support hugging price (risk of a fraction of an ATR) push the
+sub-score to its +1 cap even though the §3.11 volatility floor had already
+replaced that stop with the 2×ATR one.
 
 ### 3.8 Setup classification (`setup` label, Turkish)
 
