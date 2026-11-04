@@ -153,6 +153,11 @@ def _load_erp_history(path: str) -> Optional[Dict[int, dict]]:
     return history or None
 
 
+#: Market-priced columns of a multiples row: withheld in as-of mode when no
+#: per-year snapshot covers the date (see :func:`load_sector_data`).
+_MARKET_MULTIPLE_KEYS = ("pe", "ps", "pfcf", "growth", "peg")
+
+
 def _find_year_subdir(dir_path: str, as_of_year: int) -> Tuple[Optional[int], Optional[str]]:
     """Find the nearest past-year ``data/damodaran/{YEAR}/`` snapshot subfolder.
 
@@ -195,7 +200,9 @@ def load_sector_data(
             provenance block is added and historical sources are preferred:
             * Multiples/betas: a ``data/damodaran/{YEAR}/multiples.csv`` snapshot
               subfolder (nearest year on/before ``as_of``) if present, else the
-              current ``multiples.csv`` with an "anachronistic multiple/beta" warning.
+              current ``multiples.csv`` with its market multiples
+              (``pe``/``ps``/``pfcf``/``growth``/``peg``) set to ``None`` --
+              only ``beta``/``capex_sales`` are kept -- and a warning.
             * ERP: per-year snapshot ``erp.csv`` -> ``erp_history.csv`` row for
               ``as_of.year`` -> current ``erp.csv`` (with an anachronism warning
               on the last fallback).
@@ -293,21 +300,33 @@ def load_sector_data(
     history = _load_erp_history(os.path.join(dir_path, _ERP_HISTORY_FILENAME))
     hist_row = history.get(as_of_year) if history else None
 
-    # Multiples/betas: per-year snapshot -> current top-level (anachronistic).
+    # Multiples/betas: per-year snapshot -> current top-level with the market
+    # multiples withheld. Sector P/E, P/S (and P/FCF, growth, PEG) move with
+    # the market, so today's values applied to a past date would leak the
+    # future into the sector comparison; they are blanked instead. The slow-
+    # moving structural columns (unlevered beta, capex/sales) are kept, so
+    # CAPM and the maintenance-capex floor still run as they do live.
     if hist_multiples:
         used_multiples = hist_multiples
         multiples_source = f"data/damodaran/{hist_year}/multiples.csv"
     else:
-        used_multiples = parsed_multiples
-        multiples_source = "multiples.csv (current snapshot — anachronistic)"
+        used_multiples = [
+            {**row, **{key: None for key in _MARKET_MULTIPLE_KEYS}}
+            for row in (parsed_multiples or [])
+        ]
+        multiples_source = (
+            "multiples.csv (current snapshot — betas/capex only; "
+            "sector P/E and P/S withheld)"
+        )
         if parsed_multiples:
             warnings.append(
-                f"Anachronistic multiple/beta: no historical Damodaran snapshot "
-                f"for {as_of_year}; used current multiples.csv."
+                f"No historical Damodaran snapshot for {as_of_year}: sector "
+                "P/E and P/S comparisons skipped; sector betas and capex/sales "
+                "taken from the current multiples.csv."
             )
             logger.warning(
-                "damodaran: no per-year snapshot for as_of year %s; using current "
-                "multiples.csv (anachronistic sector multiples/betas).", as_of_year,
+                "damodaran: no per-year snapshot for as_of year %s; sector "
+                "multiples withheld, current betas/capex used.", as_of_year,
             )
 
     # ERP: per-year snapshot erp.csv -> erp_history.csv row -> current erp.csv.

@@ -2761,7 +2761,9 @@ def test_run_valuation_as_of_copies_macro_asof_and_appends_notes(tmp_path):
         "as_of": "2022-06-30",
         "erp_source": "erp.csv (current value)",
         "risk_free_source": "DGS10 (2022-06-29)",
-        "multiples_source": "multiples.csv (current snapshot — anachronistic)",
+        "multiples_source": (
+            "multiples.csv (current snapshot — betas/capex only; sector P/E and P/S withheld)"
+        ),
     }
     # Single provenance note naming all three macro sources; no warnings key
     # (empty dir -> nothing current substituted for a missing historical file).

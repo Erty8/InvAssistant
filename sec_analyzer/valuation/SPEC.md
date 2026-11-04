@@ -3805,9 +3805,20 @@ code path when it is `None`.
     `valuation["macro_asof"]` (present only when `as_of` was given), plus
     appends two Turkish notes to `valuation["notes"]`: the macro-source
     provenance itself, and the static-sector-data caveat (below).
-  - Sector multiples/betas in `multiples.csv` are **NOT** date-keyed -- they
-    remain the current static snapshot regardless of `as_of` (see
-    "Limitations" below).
+  - **Sector multiples/betas:** a per-year snapshot
+    `data/damodaran/{YEAR}/multiples.csv` (the largest `YEAR <= as_of.year`)
+    is used when present (`multiples_source = "data/damodaran/{YEAR}/
+    multiples.csv"`). With no qualifying snapshot, the current `multiples.csv`
+    is used **with its market-priced columns withheld**: `pe`, `ps`, `pfcf`,
+    `growth`, `peg` are set to `None` on every row, while `beta`
+    (`unlevered_beta`) and `capex_sales` are kept. Today's sector P/E and P/S
+    would otherwise leak the future into a past date's sector comparison;
+    beta and capex/sales are slow-moving structural figures, kept so CAPM and
+    the maintenance-capex floor behave as in a live run. `multiples_source`
+    is then `"multiples.csv (current snapshot — betas/capex only; sector P/E
+    and P/S withheld)"` and a warning is appended to `macro_asof["warnings"]`
+    (copied into the valuation notes). Live runs (`as_of=None`) are
+    unaffected.
   - `fetch.fred.get_risk_free_asof(as_of, no_cache=False) -> Optional[dict]`
     returns `{"value_pct": float, "date": "YYYY-MM-DD", "series": "DGS10",
     "source": "FRED DGS10", ...}` -- the last DGS10 observation on/before
@@ -3914,13 +3925,12 @@ always a typo) via `argparse.ArgumentTypeError`. `cmd_analyze`'s flow, with
    yfinance, so an as-of calibration basket (Sec.17/`calibrate --as-of`) can
    only include names that are still trading today -- its measured
    ratio/median distribution is systematically skewed toward survivors.
-3. **Static sector multiples and betas.** Only `erp`/`risk_free` are sourced
-   historically (`erp_history.csv`); `multiples.csv`'s `pe`/`ps`/`pfcf`/
-   `unlevered_beta`/`capex_sales` columns remain the current snapshot,
-   NOT date-keyed, for every `as_of` value. Sector-relative multiples
-   comparisons (Sec.10's axis-b) and CAPM beta in as-of mode therefore use
-   today's sector data applied to a historical filer -- a documented
-   approximation, not a historical sector reconstruction.
+3. **Sector data coverage.** Sector P/E and P/S are point-in-time only for
+   years covered by a `data/damodaran/{YEAR}/` snapshot; for other years the
+   sector-relative multiples comparison (Sec.10's axis-b) is skipped rather
+   than run on today's values. `unlevered_beta`/`capex_sales` without a
+   snapshot remain the current figures applied to a historical filer -- a
+   documented approximation for slow-moving structural data.
 
 ## 19. Financial-filer net-revenue basis (WP1) — `normalize.normalizer._apply_net_revenue_basis`
 

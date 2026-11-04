@@ -493,19 +493,41 @@ def test_load_sector_data_as_of_uses_per_year_subfolder_when_present(tmp_path):
     assert "warnings" not in result["macro_asof"]
 
 
-def test_load_sector_data_as_of_no_subfolder_falls_back_to_current_multiples_with_warning(tmp_path):
-    """No data/damodaran/{YEAR}/ subfolder at all -> multiples/betas fall
-    back to the current top-level multiples.csv, flagged anachronistic."""
+def test_load_sector_data_as_of_no_subfolder_withholds_current_market_multiples(tmp_path):
+    """No data/damodaran/{YEAR}/ subfolder at all -> today's market multiples
+    must not leak into a past date: pe/ps/pfcf/growth/peg are withheld
+    (None), while the structural beta and capex/sales columns are kept from
+    the current multiples.csv, and a warning says so."""
     (tmp_path / "multiples.csv").write_text(
-        "industry,pe,ps,pfcf\nSemiconductor,28.4,6.1,24.7\n", encoding="utf-8",
+        "industry,pe,ps,pfcf,growth,unlevered_beta,capex_sales\n"
+        "Semiconductor,28.4,6.1,24.7,0.15,1.40,0.08\n",
+        encoding="utf-8",
     )
     (tmp_path / "erp.csv").write_text("region,erp\nUS,4.6\n", encoding="utf-8")
 
     result = load_sector_data(str(tmp_path), as_of=date(2022, 6, 30))
 
-    assert result["macro_asof"]["multiples_source"] == "multiples.csv (current snapshot — anachronistic)"
-    assert "warnings" in result["macro_asof"]
-    assert any("Anachronistic multiple/beta" in w for w in result["macro_asof"]["warnings"])
+    row = result["multiples"][0]
+    assert row["industry"] == "Semiconductor"
+    assert all(row[key] is None for key in ("pe", "ps", "pfcf", "growth", "peg"))
+    assert row["beta"] == pytest.approx(1.40)
+    assert row["capex_sales"] == pytest.approx(0.08)
+    assert "P/E and P/S withheld" in result["macro_asof"]["multiples_source"]
+    assert any("sector P/E and P/S comparisons skipped" in w
+               for w in result["macro_asof"]["warnings"])
+
+
+def test_load_sector_data_live_mode_keeps_current_market_multiples(tmp_path):
+    """The as-of guard must not touch live runs: as_of=None still returns the
+    current pe/ps unchanged."""
+    (tmp_path / "multiples.csv").write_text(
+        "industry,pe,ps,pfcf\nSemiconductor,28.4,6.1,24.7\n", encoding="utf-8",
+    )
+
+    result = load_sector_data(str(tmp_path))
+
+    assert result["multiples"][0]["pe"] == pytest.approx(28.4)
+    assert result["multiples"][0]["ps"] == pytest.approx(6.1)
 
 
 def test_load_sector_data_as_of_no_history_or_subfolder_risk_free_falls_back_with_warning(tmp_path):
