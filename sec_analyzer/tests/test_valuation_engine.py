@@ -1223,6 +1223,64 @@ def test_run_valuation_cyclical_normalized_variant_uses_upper_half_mean_not_medi
     assert normalized_variant["base"]["per_share"] > old_median_per_share
 
 
+def _turnaround_normalized(recent_margins, recent_revenues):
+    """FY2018-2021: revenue 100, FCF margins -5%, 0%, 2%, -3% (earlier peak
+    margin 2%, peak revenue 100); FY2022-2023 take the given margins and
+    revenues. CapEx is a flat 10% of revenue, so OCF = (margin + 0.10) x revenue."""
+    earlier = [(2018, -0.05, 100.0), (2019, 0.0, 100.0), (2020, 0.02, 100.0), (2021, -0.03, 100.0)]
+    recent = [(2022, recent_margins[0], recent_revenues[0]), (2023, recent_margins[1], recent_revenues[1])]
+    rows = earlier + recent
+    return _normalized({
+        "Revenue": [_rec(fy, rev) for fy, _, rev in rows],
+        "OperatingCashFlow": [_rec(fy, (m + 0.10) * rev) for fy, m, rev in rows],
+        "CapEx": [_rec(fy, 0.10 * rev) for fy, _, rev in rows],
+    })
+
+
+def _run_turnaround(recent_margins, recent_revenues):
+    normalized = _turnaround_normalized(recent_margins, recent_revenues)
+    latest_fcf = recent_margins[1] * recent_revenues[1]
+    metrics = {"shares": 10.0, "latest_fy": 2023, "fcf": latest_fcf, "net_debt": 0.0}
+    ratios = [{"fy": 2023, "fcf": latest_fcf}]
+    assumptions = _assumptions(base_growth=0.10, base_terminal=0.03, base_discount=0.10)
+    return run_valuation(
+        normalized, ratios, metrics, price=None, price_df=None,
+        assumptions=assumptions, sector_type="cyclical",
+    )
+
+
+def test_run_valuation_cyclical_turnaround_skips_normalized_variant():
+    # SPEC Sec.8 structural-break guard: FY2022/2023 margins 8%/20% both beat
+    # the earlier peak 2%, and FY2023 revenue 200 is exactly 2.0x the earlier
+    # peak 100 (inclusive) -> no normalized variant; the headline falls back
+    # to the raw FCF-DCF band, with a note saying why.
+    result = _run_turnaround((0.08, 0.20), (150.0, 200.0))
+
+    assert result["dcf"]["normalized_variant"] is None
+    raw_base = result["dcf"]["scenarios"]["base"]
+    assert result["fair_value_range"]["base"]["lo"] == pytest.approx(raw_base["lo"])
+    assert result["fair_value_range"]["base"]["hi"] == pytest.approx(raw_base["hi"])
+    assert any("structurally changed" in note for note in result["notes"])
+
+
+def test_run_valuation_cyclical_peak_without_revenue_break_keeps_normalized_variant():
+    # Margins beat every earlier year (a cycle peak looks like this too) but
+    # revenue is only 1.9x the earlier peak -> not a break; normalize as usual.
+    result = _run_turnaround((0.08, 0.20), (150.0, 190.0))
+
+    assert result["dcf"]["normalized_variant"] is not None
+    assert not any("structurally changed" in note for note in result["notes"])
+
+
+def test_run_valuation_cyclical_single_strong_year_is_not_a_break():
+    # Revenue doubled but FY2022's margin (1%) doesn't beat the earlier peak
+    # (2%): only one strong year, so it is still normalized.
+    result = _run_turnaround((0.01, 0.20), (150.0, 250.0))
+
+    assert result["dcf"]["normalized_variant"] is not None
+    assert not any("structurally changed" in note for note in result["notes"])
+
+
 def test_run_valuation_cyclical_normalized_variant_none_when_top_half_margin_not_positive():
     # Every FY has a non-positive FCF margin, so even the best (least bad)
     # ceil(N/2) margins average to <= 0 -- the "normalized" cyclical

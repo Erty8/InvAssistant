@@ -741,6 +741,32 @@ def _build_dcf_scenarios(
     return scenarios, notes, bool(high_growth_keys)
 
 
+# Structural-break (turnaround) guard for the cyclical normalized FCF (SPEC Sec.8).
+_STRUCTURAL_BREAK_RECENT_YEARS = 2
+_STRUCTURAL_BREAK_MIN_EARLIER_YEARS = 3
+_STRUCTURAL_BREAK_REVENUE_MULTIPLE = 2.0
+
+
+def _is_structural_break(margin_by_fy: dict, revenue_series: dict, latest_fy: int) -> bool:
+    """True when the FCF-margin history shows a turnaround, not a cycle
+    (SPEC Sec.8 structural-break guard): the last two consecutive margin
+    years end at ``latest_fy``, each beats every earlier year's margin, and
+    latest revenue is at least ``_STRUCTURAL_BREAK_REVENUE_MULTIPLE`` x the
+    highest earlier-year revenue, with at least
+    ``_STRUCTURAL_BREAK_MIN_EARLIER_YEARS`` earlier years to compare against."""
+    fys = sorted(margin_by_fy)
+    recent = fys[-_STRUCTURAL_BREAK_RECENT_YEARS:]
+    earlier = fys[:-_STRUCTURAL_BREAK_RECENT_YEARS]
+    if len(earlier) < _STRUCTURAL_BREAK_MIN_EARLIER_YEARS:
+        return False
+    if recent[-1] != latest_fy or recent[-1] - recent[0] != _STRUCTURAL_BREAK_RECENT_YEARS - 1:
+        return False
+    if min(margin_by_fy[fy] for fy in recent) <= max(margin_by_fy[fy] for fy in earlier):
+        return False
+    earlier_peak_revenue = max(revenue_series[fy] for fy in earlier)
+    return revenue_series[latest_fy] >= _STRUCTURAL_BREAK_REVENUE_MULTIPLE * earlier_peak_revenue
+
+
 def _normalized_fcf0(normalized: dict, metrics: dict) -> "tuple[Optional[float], List[str]]":
     """Cyclical normalized-earnings fcf0 (Sec.8): the mean of the best
     ``ceil(N/2)`` FCF margins across the ``N`` available fiscal years
@@ -755,7 +781,9 @@ def _normalized_fcf0(normalized: dict, metrics: dict) -> "tuple[Optional[float],
     trough earning power. If that upper-half average margin is itself
     non-positive, the variant is considered not meaningful and this
     returns ``None`` plus a note rather than a nonsensical
-    negative "normalized" valuation.
+    negative "normalized" valuation. It also returns ``None`` plus a note
+    when :func:`_is_structural_break` detects a turnaround (AMD FY2021),
+    since a pre-break margin history isn't a cycle to normalize over.
 
     Per-year margin (F2): ``(ocf - capex - sbc) / revenue``, treating a
     missing SBC figure as ``0.0`` -- same SBC-as-expense treatment as
@@ -777,7 +805,7 @@ def _normalized_fcf0(normalized: dict, metrics: dict) -> "tuple[Optional[float],
         notes.append("Cyclical normalized FCF could not be computed: the latest year's revenue is missing or negative.")
         return None, notes
 
-    margins = []
+    margin_by_fy = {}
     for fy, revenue in revenue_series.items():
         if revenue is None or revenue <= 0:
             continue
@@ -786,10 +814,21 @@ def _normalized_fcf0(normalized: dict, metrics: dict) -> "tuple[Optional[float],
         if ocf is None or capex is None:
             continue
         sbc = sbc_series.get(fy) or 0.0
-        margins.append((ocf - capex - sbc) / revenue)
+        margin_by_fy[fy] = (ocf - capex - sbc) / revenue
+    margins = list(margin_by_fy.values())
 
     if not margins:
         notes.append("Cyclical normalized FCF could not be computed: not enough FCF margin history.")
+        return None, notes
+
+    if _is_structural_break(margin_by_fy, revenue_series, latest_fy):
+        notes.append(
+            "Cyclical normalized FCF was not used: the last two years' FCF margins are above every earlier "
+            f"year's and revenue is at least {_STRUCTURAL_BREAK_REVENUE_MULTIPLE:.1f}x its earlier peak, so the "
+            "business has structurally changed rather than moved through a cycle (a turnaround). Averaging in "
+            "the earlier years would value the new business on the old one's margins, so the standard FCF-DCF "
+            "is used instead."
+        )
         return None, notes
 
     # Mid-to-upper cycle: average the top ceil(N/2) margins rather than

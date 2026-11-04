@@ -565,6 +565,32 @@ this file.)
   (mid-to-upper-cycle) FCF margins rather than the median, since the median
   degenerated to the trough year for deep cyclicals; a non-positive
   normalized margin yields `None` plus a Turkish note instead of a variant.
+
+  **Structural-break (turnaround) guard.** Normalization assumes the margin
+  history is one repeating cycle. A filer that has left its old business
+  behind (AMD FY2021: FCF margins −10%…+1% over FY2011–FY2019, then 5.2% and
+  17.3%, revenue 2.4× any earlier year) breaks that assumption: averaging in
+  the pre-break years values the new business on the old one's economics.
+  The variant is therefore **not built** (`None` plus a note, exactly like
+  the non-positive case, so every downstream consumer falls back to the raw
+  FCF-DCF band and `fcf0`) when ALL of these hold, using the per-year
+  margins defined above:
+  - at least 3 fiscal years exist before the last 2 ("earlier" years), and
+    the last 2 margin years are consecutive and end at the latest fiscal
+    year;
+  - each of the last 2 years' margins is strictly above the highest
+    earlier-year margin;
+  - latest-fiscal-year revenue is at least `2.0×` the highest earlier-year
+    revenue.
+
+  Both conditions are needed. The margin condition alone also fires at an
+  ordinary cycle peak (NUE FY2022, ON FY2022, MCHP FY2023), which is exactly
+  what normalization exists to discount; those peaks stayed at
+  1.4–1.7× prior-max revenue. A scan of 19 semiconductor, memory, steel,
+  mining, energy and industrial filers at mid-year as-of dates 2016–2025
+  fired only for AMD (2022, 2023) and TSLA (2020, 2022, 2023), never for
+  MU, NVDA, INTC, LRCX, AMAT, KLAC, WDC, STX, NUE, FCX, CAT, XOM, F, ON,
+  MCHP, QCOM or AVGO.
   Run the same 3 scenarios; report under `dcf.normalized_variant` with the
   same scenario shape. Both variants are reported side by side. The reported
   `sensitivity` matrix (Sec.9) is taken from `normalized_variant`'s base
