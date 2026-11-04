@@ -178,6 +178,46 @@ fuzzy fallback ile güçlendirildi; örn. "SEMICONDUCTORS & RELATED DEVICES"
 artık doğru şekilde "Semiconductor"a eşleniyor. Ayrıntılar için kod yorumları
 kaynak kabul edilmeli.
 
+## Yıllık anlık görüntüler (`{YIL}/multiples.csv`, as-of modu için)
+
+`2015/` … `2026/` klasörleri, geçmiş tarihli (`--as-of`) çalıştırmaların o
+tarihte gerçekten bilinen sektör P/E ve P/S değerlerini kullanmasını sağlar.
+Yükleyici, `as_of` yılına eşit ya da ondan küçük en büyük yıl klasörünü seçer
+(SPEC.md §18). Uygun klasör yoksa (2014 ve öncesi) bugünün P/E/P/S değerleri
+**kullanılmaz**: bu kolonlar boş geçilir, sektör çoklu karşılaştırması o
+çalıştırmada atlanır.
+
+- Kaynak: Damodaran arşivi (`pages.stern.nyu.edu/~adamodar/pc/archives/`),
+  `pedataNN.xls` ve `psdataNN.xls`. `NN` eki yayından bir yıl geridedir:
+  `pedata19.xls` Ocak 2020 yayınıdır ve `2020/` klasörüne yazılır.
+- `pe`: "Aggregate Mkt Cap/ Trailing Net Income (only money making firms)",
+  yani güncel dosyayla aynı kolon. 2015–2017 yayınlarında aynı kolonun adı
+  "Aggregate Mkt Cap/ Trailing Net Income"; 2017→2018 geçişinde değerler
+  süreklidir.
+- `ps`: "Price/Sales".
+- `unlevered_beta` ve `capex_sales`: tohum değerler olduğu için güncel
+  `multiples.csv`'den sektör adıyla kopyalanır. Böylece as-of motoru canlı
+  motordan yalnızca piyasaya bağlı kolonlarda ayrılır.
+- `2026/`, güncel `multiples.csv`'nin (Ocak 2026 yayını) kopyasıdır. Bu
+  olmasa 2026 tarihli as-of çalıştırmaları Ocak 2025 verisine düşerdi.
+- 2015 öncesi bilerek üretilmedi: 2005–2014 yayınlarında P/E zarar eden
+  şirketleri de içeren farklı bir tanımla hesaplanıyor ve 2014 yayını eski
+  sektör adlarını kullanıyor (SIC eşleştirmesi tutmaz).
+- Bilinen küçük sapma: Ocak yayını ayın ilk haftasında çıkar. Yılın ilk
+  günlerine ait bir as-of tarihi o yılın verisini birkaç gün erken görür.
+
+**Yeniden üretme / yıllık güncelleme:** arşiv dosyalarını bir klasöre indirip
+şunu çalıştırın (`xlrd` gerekir; yalnızca bu araç için, çalışma zamanı
+bağımlılığı değildir):
+
+```
+python data/damodaran/_build/build_snapshots.py ARŞİV_KLASÖRÜ --last 2025 --current-year 2026
+```
+
+Her yıl güncel `multiples.csv` yenilendiğinde `--last` ve `--current-year`
+birer artırılarak araç yeniden çalıştırılmalıdır; aksi halde yeni yılın
+klasörü eksik kalır.
+
 Aşağıdaki bölümler, bu dosyaları **gelecekte** güncellerken izlenecek genel
 format/dönüştürme kurallarını anlatır.
 

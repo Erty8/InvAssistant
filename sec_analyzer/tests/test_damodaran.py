@@ -10,6 +10,7 @@ returns) rather than depending on the real CSVs in ``data/damodaran/``, so
 they stay correct regardless of what an operator has dropped in that folder.
 """
 
+import os
 from datetime import date
 
 import pytest
@@ -547,3 +548,37 @@ def test_load_sector_data_as_of_no_history_or_subfolder_risk_free_falls_back_wit
     assert result["risk_free"] == pytest.approx(4.20)
     assert result["macro_asof"]["risk_free_source"] == "erp.csv (current value)"
     assert any("Anachronistic risk-free" in w for w in result["macro_asof"]["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# The committed per-year snapshots in data/damodaran/{YEAR}/ (built by
+# data/damodaran/_build/build_snapshots.py from Damodaran's archives).
+# ---------------------------------------------------------------------------
+
+_REPO_DAMODARAN = os.path.join(os.path.dirname(__file__), "..", "..", "data", "damodaran")
+_SNAPSHOT_YEARS = range(2015, 2027)
+
+
+@pytest.mark.parametrize("year", _SNAPSHOT_YEARS)
+def test_committed_snapshot_is_used_for_its_year(year):
+    """Each committed snapshot loads, is the one picked for a mid-year as-of
+    date, carries P/E and P/S for nearly every industry, and keeps the
+    current file's seed beta/capex columns."""
+    result = load_sector_data(_REPO_DAMODARAN, as_of=date(year, 6, 30))
+
+    assert result["macro_asof"]["multiples_source"] == f"data/damodaran/{year}/multiples.csv"
+    rows = result["multiples"]
+    assert len(rows) >= 90
+    assert sum(r["pe"] is not None for r in rows) >= 0.95 * len(rows)
+    assert sum(r["ps"] is not None for r in rows) >= 0.95 * len(rows)
+    assert sum(r["beta"] is not None for r in rows) >= 0.95 * len(rows)
+    assert not any("total market" in r["industry"].lower() for r in rows)
+
+
+def test_as_of_before_first_snapshot_withholds_market_multiples():
+    """2014 and earlier have no snapshot (different P/E definition), so the
+    as-of guard withholds today's P/E and P/S instead of using them."""
+    result = load_sector_data(_REPO_DAMODARAN, as_of=date(2014, 6, 30))
+
+    assert "P/E and P/S withheld" in result["macro_asof"]["multiples_source"]
+    assert all(r["pe"] is None and r["ps"] is None for r in result["multiples"])
