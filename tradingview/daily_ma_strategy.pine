@@ -1,0 +1,142 @@
+//@version=5
+// SMA200 + EMA8/21 stratejisi — karar sıklığı ayarlı
+//
+// Modlar (günlük grafikte):
+//  * "Günlük alım + haftalık stop" (varsayılan): alım kararı her gün kapanışta, stop haftada bir güncellenir.
+//  * "Haftalık": alım ve stop kararı haftanın son işlem günü kapanışında.
+//  * "Günlük": alım ve stop kararı her gün kapanışta.
+//  Alım: kararın ardından gelen ilk barın açılışı.
+//  * Alım:
+//      - Kapanış > SMA200                                                -> AL (tip 1)
+//      - Kapanış < SMA200 ve EMA8 > EMA21 ve kapanış ikisinin de üstünde -> AL (tip 2)
+//  * Stop (yalnızca yukarı çekilir, her karar anında güncellenir):
+//      - Kapanış > SMA50 > SMA200 ise SMA50 * (1 - tampon), değilse SMA200 * (1 - tampon)
+//      - Tip 2 pozisyonda fiyat SMA200 altındayken EMA21 * (1 - tampon)
+//  * Satış: yalnızca stop. Gün içinde dokunduğu anda; aşağı boşlukta açılış fiyatından.
+//  * Alım günü açılış stopun altındaysa alım yapılmaz.
+//
+// Not: göstergedeki "pozisyon", kuralın kendi varsayımsal işlemleridir; senin gerçek
+// pozisyonların değildir. Grafikte gösterilen geçmişin başlangıcına göre değişebilir.
+indicator("SMA200 + EMA8/21 Stratejisi (günlük/haftalık)", shorttitle="MA Strateji", overlay=true, max_labels_count=500)
+
+mode      = input.string("Günlük alım + haftalık stop", "Karar sıklığı", options=["Günlük alım + haftalık stop", "Haftalık", "Günlük"])
+stopPct   = input.float(5.0, "Stop tamponu (%)", minval=0.0, step=0.5) / 100
+showMAs   = input.bool(true, "Ortalamaları göster")
+showEMAs  = input.bool(true, "EMA8 / EMA21 göster")
+showTable = input.bool(true, "Durum tablosunu göster")
+
+sma50  = ta.sma(close, 50)
+sma200 = ta.sma(close, 200)
+ema8   = ta.ema(close, 8)
+ema21  = ta.ema(close, 21)
+
+tierStop(c, s50, s200) =>
+    (c > s50 and s50 > s200) ? s50 * (1 - stopPct) : s200 * (1 - stopPct)
+
+// Önceki barın (karar günü) değerleri
+c1     = close[1]
+s50_1  = sma50[1]
+s200_1 = sma200[1]
+e8_1   = ema8[1]
+e21_1  = ema21[1]
+
+newWeek     = timeframe.change("W")
+entryDecide = mode == "Haftalık" ? newWeek : true
+trailDecide = mode == "Günlük" ? true : newWeek
+
+var bool  inPos    = false
+var float stopLvl  = na
+var int   kind     = 0
+var float entryPx  = na
+var int   entryBar = na
+
+buySig  = false
+exitSig = false
+float exitPx = na
+
+if not na(s200_1) and not na(s50_1)
+    // 1) Açık pozisyonun stopunu karar günü değerleriyle yukarı çek
+    if trailDecide and inPos
+        float cand = (kind == 1 or c1 > s200_1) ? tierStop(c1, s50_1, s200_1) : e21_1 * (1 - stopPct)
+        if cand > stopLvl
+            stopLvl := cand
+    // 2) Yeni alım (karar günü kapanışına göre, bu barın açılışında)
+    if entryDecide and not inPos
+        float s = na
+        int k = 0
+        if c1 > s200_1
+            s := tierStop(c1, s50_1, s200_1)
+            k := 1
+        else if e8_1 > e21_1 and c1 > e8_1 and c1 > e21_1
+            s := e21_1 * (1 - stopPct)
+            k := 2
+        if k != 0 and s < c1 and open > s
+            inPos    := true
+            stopLvl  := s
+            kind     := k
+            entryPx  := open
+            entryBar := bar_index
+            buySig   := true
+
+// 3) Gün içi stop
+if inPos and low <= stopLvl
+    exitPx  := bar_index == entryBar ? stopLvl : math.min(open, stopLvl)
+    exitSig := true
+    inPos   := false
+
+showStop = inPos or exitSig
+
+plot(showMAs ? sma50 : na,  "SMA50",  color=color.orange, linewidth=1)
+plot(showMAs ? sma200 : na, "SMA200", color=color.blue,   linewidth=2)
+plot(showEMAs ? ema8 : na,  "EMA8",   color=color.new(color.teal, 30),   linewidth=1)
+plot(showEMAs ? ema21 : na, "EMA21",  color=color.new(color.purple, 30), linewidth=1)
+plot(showStop ? stopLvl : na, "Stop", color=color.red, style=plot.style_linebr, linewidth=2)
+
+if buySig
+    label.new(bar_index, low, "AL\n" + str.tostring(entryPx, format.mintick) + (kind == 1 ? "\nSMA200 üstü" : "\nEMA8>EMA21"),
+              style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+if exitSig
+    label.new(bar_index, high, "STOP\n" + str.tostring(exitPx, format.mintick),
+              style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+
+alertcondition(buySig,  "AL sinyali",   "MA stratejisi: AL (bu barın açılışı)")
+alertcondition(exitSig, "Stop çalıştı", "MA stratejisi: stop seviyesine dokundu")
+
+// --- Durum tablosu: karar günü şu anki fiyatla kapanırsa ne olur
+var table tbl = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 80), border_width=1)
+if showTable and barstate.islast
+    string sig = "BEKLE"
+    float liveStop = na
+    if inPos
+        float cand = (kind == 1 or close > sma200) ? tierStop(close, sma50, sma200) : ema21 * (1 - stopPct)
+        liveStop := math.max(stopLvl, cand)
+        sig := "POZİSYONDA"
+    else if close > sma200
+        sig := "AL (SMA200 üstü)"
+        liveStop := tierStop(close, sma50, sma200)
+    else if ema8 > ema21 and close > ema8 and close > ema21
+        sig := "AL (EMA8>EMA21)"
+        liveStop := ema21 * (1 - stopPct)
+    sigColor = str.startswith(sig, "AL") ? color.green : sig == "BEKLE" ? color.gray : color.orange
+    closeLabel = mode == "Haftalık" ? "Cuma bu fiyatla kapanırsa" : "Bugün bu fiyatla kapanırsa"
+    nextLabel  = not inPos ? "Alımda ilk stop" : mode == "Günlük" ? "Stop (yarından itibaren)" : "Stop (gelecek hafta)"
+
+    table.cell(tbl, 0, 0, "MA Strateji (" + mode + ")", text_color=color.white)
+    table.cell(tbl, 1, 0, timeframe.isdaily ? "" : "Günlük grafikte kullan!", text_color=color.yellow)
+    table.cell(tbl, 0, 1, "Fiyat", text_color=color.white)
+    table.cell(tbl, 1, 1, str.tostring(close, format.mintick), text_color=color.white)
+    table.cell(tbl, 0, 2, "SMA200", text_color=color.white)
+    table.cell(tbl, 1, 2, str.tostring(sma200, format.mintick) + (close > sma200 ? "  (üstünde)" : "  (altında)"),
+               text_color=close > sma200 ? color.green : color.red)
+    table.cell(tbl, 0, 3, "SMA50", text_color=color.white)
+    table.cell(tbl, 1, 3, str.tostring(sma50, format.mintick), text_color=color.white)
+    table.cell(tbl, 0, 4, "EMA8 / EMA21", text_color=color.white)
+    table.cell(tbl, 1, 4, str.tostring(ema8, format.mintick) + " / " + str.tostring(ema21, format.mintick),
+               text_color=ema8 > ema21 ? color.green : color.red)
+    table.cell(tbl, 0, 5, closeLabel, text_color=color.white)
+    table.cell(tbl, 1, 5, sig, text_color=sigColor)
+    table.cell(tbl, 0, 6, nextLabel, text_color=color.white)
+    table.cell(tbl, 1, 6, na(liveStop) ? "—" : str.tostring(liveStop, format.mintick) + "  (" + str.tostring((liveStop / close - 1) * 100, "#.0") + "%)",
+               text_color=color.red)
+    table.cell(tbl, 0, 7, "Geçerli stop", text_color=color.white)
+    table.cell(tbl, 1, 7, inPos ? str.tostring(stopLvl, format.mintick) : "—", text_color=color.white)

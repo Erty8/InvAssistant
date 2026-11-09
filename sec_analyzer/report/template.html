@@ -4581,6 +4581,70 @@
     );
   }
 
+  // ---- Weekly strategy box (t.weekly_strategy, technical/weekly_strategy.py) --
+  // The user's weekly SMA200 / EMA8-21 rule (WEEKLY_STRATEGY_SPEC.md): what it
+  // says if this week closes at the last price, the first stop for a new buy,
+  // the rule's own replayed position + stop, and the X2 day-1 warning. Pure
+  // render; returns "" when the field is absent (older stored runs).
+  function weeklyStrategyBoxHtml(t) {
+    var w = t && t.weekly_strategy;
+    if (!w || !w.signal) return "";
+    var tone = (w.signal === "BUY_NEXT_OPEN" || w.signal === "BUY_FRIDAY_CLOSE") ? "green"
+      : (w.signal === "WAIT" ? "red" : "amber");
+    var badge = {
+      BUY_NEXT_OPEN: "BUY", BUY_FRIDAY_CLOSE: "BUY", FIRST_FRIDAY: "WATCH",
+      WAIT: "WAIT", IN_POSITION: "IN POSITION"
+    }[w.signal] || w.signal;
+    function pct(v) { return isNum(v) ? (v > 0 ? "+" : "") + Number(v).toFixed(1) + "%" : "—"; }
+
+    var lv = w.levels || {};
+    var levels = ["close", "sma50", "sma200", "ema8", "ema21"].map(function (k) {
+      var name = { close: "Close", sma50: "SMA50", sma200: "SMA200", ema8: "EMA8", ema21: "EMA21" }[k];
+      return '<span>' + name + ' <b>' + (isNum(lv[k]) ? fmtMoney(lv[k]) : "—") + '</b></span>';
+    }).join("");
+
+    var stopHtml = "";
+    var p = w.position;
+    if (w.signal === "IN_POSITION" && p) {
+      stopHtml =
+        '<div class="act-guide">' +
+          '<div class="act-guide-item"><span class="act-guide-label">Model position (the rule\'s own trade)</span>' +
+            'Since ' + escapeHtml(p.entry_date || "—") + ' @ ' + (isNum(p.entry_price) ? fmtMoney(p.entry_price) : "—") +
+            (p.kind === "below_sma200" ? " (EMA8/21 entry)" : " (above SMA200)") + '</div>' +
+          '<div class="act-guide-item"><span class="act-guide-label">Stop</span>' +
+            (isNum(p.stop) ? fmtMoney(p.stop) : "—") + ' (' + pct(p.stop_pct) + ') · next week ≥ ' +
+            (isNum(p.next_stop) ? fmtMoney(p.next_stop) : "—") + ' (' + pct(p.next_stop_pct) + ')</div>' +
+        '</div>';
+    } else if (isNum(w.entry_stop)) {
+      stopHtml = '<div class="act-levels"><span>First stop if bought <b>' + fmtMoney(w.entry_stop) +
+        '</b> (' + pct(w.entry_stop_pct) + ')</span></div>';
+    }
+
+    var x2Html = (w.x2 && w.x2.day1)
+      ? '<div class="act-why"><b>X2 day 1:</b> sell at the next close if it closes below SMA50 (' +
+          (isNum(lv.sma50) ? fmtMoney(lv.sma50) : "—") + ').</div>' : "";
+
+    var trades = Array.isArray(w.recent_trades) ? w.recent_trades.slice(-3) : [];
+    var tradesHtml = trades.length
+      ? '<div class="act-why">Recent model trades: ' + trades.map(function (x) {
+          return escapeHtml((x.entry_date || "—") + " → " + (x.exit_date || "—")) + ' ' + pct(x.return_pct) +
+            ' (' + escapeHtml(x.exit_reason || "—") + ')';
+        }).join(" · ") + '</div>' : "";
+
+    return (
+      '<div class="act-box act-' + tone + '">' +
+        '<div class="act-head"><span class="badge badge-' + tone + '">' + escapeHtml(badge) + '</span>' +
+          '<span class="act-headline">Weekly strategy (H2): ' + escapeHtml(w.label || "") + '</span></div>' +
+        stopHtml +
+        '<div class="act-levels">' + levels + '</div>' +
+        x2Html + tradesHtml +
+        '<div class="act-evidence">Signal assumes this week closes at the last price (as of ' + escapeHtml(w.as_of || "—") +
+          '). The model position is the rule replayed over the loaded history, not your account. ' +
+          'Backtested rule, not investment advice.</div>' +
+      '</div>'
+    );
+  }
+
   function technicalCardHtml(technical, verdictText, horizon) {
     var t = technical || {};
     // No usable indicators at all -> fall back to the plain verdict card.
@@ -4589,6 +4653,7 @@
     }
     var color = bucketColor(verdictText);
     var actionHtml = actionBoxHtml(t);
+    var strategyHtml = weeklyStrategyBoxHtml(t);
 
     // ---- Trend regime: price vs SMA50/SMA200 (the two trend lines) --------
     var p = isNum(t.price) ? Number(t.price) : null;
@@ -4822,6 +4887,7 @@
             : '<div class="gauge"><div class="gauge-marker" style="left:' + GAUGE_POSITION[color] + '%;"></div></div>' +
               '<div><span class="badge badge-' + color + '">' + escapeHtml(verdictText || "—") + '</span></div>' +
               (t.verdict_detail ? '<div class="verdict-note">' + escapeHtml(t.verdict_detail) + '</div>' : "")) +
+          strategyHtml +
           regimeHtml +
           calloutHtml +
           ladderHtml +

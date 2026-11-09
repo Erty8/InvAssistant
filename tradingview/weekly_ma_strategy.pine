@@ -1,0 +1,251 @@
+//@version=6
+// =====================================================================================
+// WEEKLY TREND RULE (SMA200 + EMA8/21)
+// =====================================================================================
+// WHAT IT IS
+//   A simple, long-only trend-following rule for people who check their portfolio once a
+//   week. It tells you when a stock is in an uptrend worth buying and where to keep a
+//   protective stop-loss. It never sells short and never takes profit at a target: positions
+//   are closed only when the price falls to the stop.
+//
+// HOW IT DECIDES (use it on a DAILY chart)
+//   Buy
+//     1. If Friday's close is ABOVE the 200-day simple moving average (SMA200),
+//        buy at the next week's first open (usually Monday).
+//     2. If the price is BELOW the SMA200, buy only after a short-term turn that holds for
+//        two Fridays in a row: on both Friday closes EMA8 is above EMA21 and the price is
+//        above both (the first of the two Fridays may also qualify via rule 1).
+//        This buy happens at the second Friday's close.
+//   Stop-loss (raised once a week using Friday's values, NEVER lowered)
+//     - Price above SMA50 and SMA50 above SMA200  ->  stop = SMA50 minus the buffer (5%)
+//     - Otherwise, while above SMA200             ->  stop = SMA200 minus the buffer
+//     - Bought below SMA200 (rule 2) and still below it -> stop = EMA21 minus the buffer
+//   Sell
+//     Only when the price touches the stop (on a gap down, at the open).
+//     Optional "early exit" (off by default): see the setting's tooltip.
+//
+// HOW TO USE IT EACH WEEK (after Friday's close)
+//   - For every stock you hold, read "Your stop" in the table. If it is HIGHER than the
+//     stop-loss order you have at your broker, raise your order to it. Never lower it.
+//   - "BUY at Monday open" means the rule would buy at the next open.
+//   - Place the stop as a stop-MARKET order, good-till-cancelled.
+//
+// WHAT THE CHART SHOWS
+//   Blue = SMA200, orange = SMA50, teal = EMA8, purple = EMA21.
+//   Red line: dark = stop of the rule's own simulated position; faded = the stop you would
+//   get if you bought today. Green BUY / red STOP labels = the rule's simulated trades.
+//   The simulated trades start from the first bar loaded on the chart, so they can differ
+//   from YOUR real positions - always use "Your stop" for your own holdings.
+//
+// LIMITATIONS
+//   Backtested on a handful of stock, sector-ETF, commodity and crypto baskets
+//   (2020-2026 and 2007-2012). It protected well in crashes and lagged buy-and-hold in strong
+//   bull markets; on very volatile speculative stocks the stops can be far away (20-30%).
+//   Results depend on the data source: use the index/ETF/stock itself, not CFDs or
+//   continuous futures, whose daily bars and roll gaps differ.
+//   This is an educational tool, not investment advice.
+// =====================================================================================
+indicator("Weekly Trend Rule (SMA200 + EMA8/21)", shorttitle="Weekly Trend Rule", overlay=true, max_labels_count=500)
+
+// ---- Settings ------------------------------------------------------------------------
+GRP_RULE = "Rule"
+GRP_VIEW = "Display"
+
+stopPct = input.float(5.0, "Stop buffer below the average (%)", minval=0.0, step=0.5, group=GRP_RULE,
+     tooltip="How far below the moving average the stop-loss sits. The rule was tested with 5%.") / 100
+useX2   = input.bool(false, "Early exit on SMA50 rejection", group=GRP_RULE,
+     tooltip="Optional, needs a daily check. While holding, if the price is below the SMA50 but more than 10% above the SMA200, " +
+             "rallies to within 2% of the SMA50 and closes below it, and the NEXT day also closes below the SMA50, sell at that close. " +
+             "In tests it helped on volatile/speculative stocks and commodities and hurt on strong-trend stocks.")
+
+showMAs  = input.bool(true, "Show SMA50 / SMA200", group=GRP_VIEW)
+showEMAs = input.bool(true, "Show EMA8 / EMA21", group=GRP_VIEW)
+tblMode  = input.string("Compact", "Info table", options=["Compact", "Full", "Off"], group=GRP_VIEW,
+     tooltip="Compact: signal and your stop only. Full: also the moving-average values.")
+tblSizeIn = input.string("Small", "Table text size", options=["Tiny", "Small", "Normal"], group=GRP_VIEW)
+tblPosIn  = input.string("Bottom right", "Table position", options=["Bottom right", "Top right", "Bottom left", "Top left", "Bottom center"], group=GRP_VIEW)
+tblSize   = tblSizeIn == "Tiny" ? size.tiny : tblSizeIn == "Normal" ? size.normal : size.small
+tblPos    = tblPosIn == "Top right" ? position.top_right : tblPosIn == "Bottom left" ? position.bottom_left : tblPosIn == "Top left" ? position.top_left : tblPosIn == "Bottom center" ? position.bottom_center : position.bottom_right
+
+// ---- Indicators ----------------------------------------------------------------------
+sma50  = ta.sma(close, 50)
+sma200 = ta.sma(close, 200)
+ema8   = ta.ema(close, 8)
+ema21  = ta.ema(close, 21)
+
+// Stop for a position bought above the SMA200: SMA50-based in a healthy uptrend, else SMA200-based.
+tierStop(c, s50, s200) =>
+    (c > s50 and s50 > s200) ? s50 * (1 - stopPct) : s200 * (1 - stopPct)
+
+// Previous bar = last trading day of the previous week when evaluated on the week's first bar.
+c1     = close[1]
+s50_1  = sma50[1]
+s200_1 = sma200[1]
+e21_1  = ema21[1]
+
+newWeek = timeframe.change("W")
+isFri   = dayofweek == dayofweek.friday
+ready   = not na(sma200) and not na(sma50)
+
+// Short-term turn below the SMA200 (buy rule 2).
+emaTurn = close < sma200 and ema8 > ema21 and close > ema8 and close > ema21
+anyBuyCond = ready and (close > sma200 or emaTurn)
+
+// ---- Simulated position --------------------------------------------------------------
+var bool  inPos       = false
+var float stopLvl     = na
+var int   kind        = 0      // 1 = bought above SMA200, 2 = bought below SMA200 (EMA turn)
+var float entryPx     = na
+var int   entryBar    = na
+var int   exitBar     = na
+var bool  friCondLast = false  // did last Friday's close meet a buy condition?
+
+prevFriCond = friCondLast      // value at the start of this bar (on a Friday: the previous Friday)
+
+buySig  = false
+exitSig = false
+float exitPx = na
+
+// 1) First bar of the week: raise the stop from last Friday's values; buy rule 1 at the open.
+if newWeek and not na(s200_1) and not na(s50_1)
+    if inPos
+        float cand = (kind == 1 or c1 > s200_1) ? tierStop(c1, s50_1, s200_1) : e21_1 * (1 - stopPct)
+        if cand > stopLvl
+            stopLvl := cand
+    if not inPos and c1 > s200_1
+        float s = tierStop(c1, s50_1, s200_1)
+        if s < c1 and open > s
+            inPos    := true
+            stopLvl  := s
+            kind     := 1
+            entryPx  := open
+            entryBar := bar_index
+            buySig   := true
+
+// 2) Stop-loss during the day (at the open if the price gaps below it).
+if inPos and low <= stopLvl
+    exitPx  := bar_index == entryBar ? stopLvl : math.min(open, stopLvl)
+    exitSig := true
+    inPos   := false
+    exitBar := bar_index
+
+// 2b) Optional early exit on an SMA50 rejection (two daily closes).
+rejectYesterday = close[1] < sma50[1] and close[1] > sma200[1] * 1.10 and high[1] >= sma50[1] * 0.98
+bool earlyExit = false
+if useX2 and inPos and not na(sma200[1]) and (bar_index - 1) >= entryBar and rejectYesterday and close < sma50
+    exitPx    := close
+    exitSig   := true
+    earlyExit := true
+    inPos     := false
+    exitBar   := bar_index
+
+// 3) Friday close: buy rule 2 (EMA turn confirmed on two Fridays).
+if isFri and ready and not inPos and (na(exitBar) or exitBar != bar_index) and emaTurn and prevFriCond
+    float s2 = ema21 * (1 - stopPct)
+    if s2 < close
+        inPos    := true
+        stopLvl  := s2
+        kind     := 2
+        entryPx  := close
+        entryBar := bar_index
+        buySig   := true
+
+// 4) Remember this Friday's condition for next Friday.
+if isFri
+    friCondLast := anyBuyCond
+
+showStop = inPos or exitSig
+
+// Early-exit warning: today was day 1 of an SMA50 rejection while holding.
+rejectToday = useX2 and inPos and ready and close < sma50 and close > sma200 * 1.10 and high >= sma50 * 0.98
+
+// ---- Plots and labels ------------------------------------------------------------------
+plot(showMAs ? sma50 : na,  "SMA50",  color=color.orange, linewidth=1)
+plot(showMAs ? sma200 : na, "SMA200", color=color.blue,   linewidth=2)
+plot(showEMAs ? ema8 : na,  "EMA8",   color=color.new(color.teal, 30),   linewidth=1)
+plot(showEMAs ? ema21 : na, "EMA21",  color=color.new(color.purple, 30), linewidth=1)
+// Faded line when there is no simulated position: the stop you would get if you bought today.
+candStop  = ready ? (close > sma200 ? tierStop(close, sma50, sma200) : ema21 * (1 - stopPct)) : na
+stopPlot  = showStop ? stopLvl : candStop
+stopColor = showStop ? color.red : color.new(color.red, 65)
+plot(stopPlot, "Stop", color=stopColor, style=plot.style_linebr, linewidth=2)
+
+if buySig
+    label.new(bar_index, low, "BUY\n" + str.tostring(entryPx, format.mintick) + (kind == 1 ? "\nabove SMA200 (open)" : "\nEMA turn, 2nd Friday (close)"),
+              style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+if exitSig
+    label.new(bar_index, high, (earlyExit ? "EARLY EXIT\n" : "STOP\n") + str.tostring(exitPx, format.mintick),
+              style=label.style_label_down, color=earlyExit ? color.maroon : color.red, textcolor=color.white, size=size.small)
+if rejectToday
+    label.new(bar_index, high, "SMA50 reject: day 1", style=label.style_label_down, color=color.new(color.orange, 20),
+              textcolor=color.white, size=size.tiny)
+
+alertcondition(buySig,      "Buy signal",            "Weekly Trend Rule: BUY")
+alertcondition(exitSig,     "Sell (stop or early)",  "Weekly Trend Rule: SELL (stop hit or early exit)")
+alertcondition(earlyExit,   "Early exit",            "Weekly Trend Rule: SMA50 rejection confirmed - sell at the close")
+alertcondition(rejectToday, "Early exit: day 1",     "Weekly Trend Rule: SMA50 rejection day 1 - sell at tomorrow's close if it closes below the SMA50 again")
+
+// ---- Info table ----------------------------------------------------------------------
+tblRows = tblMode == "Full" ? 8 : 3
+var table tbl = table.new(tblPos, 2, tblRows, bgcolor=color.new(color.black, 80), border_width=1)
+if tblMode != "Off" and barstate.islast
+    // On a Friday the "previous Friday" is prevFriCond; on other days the last Friday is friCondLast.
+    bool lastFri = isFri ? prevFriCond : friCondLast
+    string sig = "WAIT"
+    float liveStop = na
+    if inPos
+        float cand = (kind == 1 or close > sma200) ? tierStop(close, sma50, sma200) : ema21 * (1 - stopPct)
+        liveStop := math.max(stopLvl, cand)
+        sig := "IN POSITION (simulated)"
+    else if ready and close > sma200
+        sig := "BUY at Monday open"
+        liveStop := tierStop(close, sma50, sma200)
+    else if ready and emaTurn and lastFri
+        sig := "BUY at Friday close (2nd week)"
+        liveStop := ema21 * (1 - stopPct)
+    else if ready and emaTurn
+        sig := "Watch: buy if next Friday confirms"
+        liveStop := ema21 * (1 - stopPct)
+    sigColor = str.startswith(sig, "BUY") ? color.green : sig == "WAIT" ? color.gray : color.orange
+
+    // Stop for YOUR position, from the current close. Raise your order to it only if it is higher.
+    bufTxt = str.tostring(stopPct * 100, "#.#")
+    string ownTxt = "—"
+    if ready and close > sma50 and sma50 > sma200
+        ownTxt := str.tostring(sma50 * (1 - stopPct), format.mintick) + " (SMA50 − " + bufTxt + "%), raise only"
+    else if ready and close > sma200
+        ownTxt := str.tostring(sma200 * (1 - stopPct), format.mintick) + " (SMA200 − " + bufTxt + "%), raise only"
+    else if ready
+        float emaStop = ema21 * (1 - stopPct)
+        ownTxt := emaStop < close ? "Bought below SMA200: " + str.tostring(emaStop, format.mintick) + " · otherwise SELL" : "SELL (stop is above the price)"
+    string exitTxt = not useX2 ? "off" : rejectToday ? "Day 1 - sell at tomorrow's close if below SMA50" : "—"
+    string hdr = timeframe.isdaily ? "Weekly Trend Rule" : "Use a DAILY chart!"
+
+    if tblMode == "Compact"
+        table.cell(tbl, 0, 0, hdr, text_color=color.white, text_size=tblSize)
+        table.cell(tbl, 1, 0, sig, text_color=sigColor, text_size=tblSize)
+        table.cell(tbl, 0, 1, "Your stop", text_color=color.white, text_size=tblSize)
+        table.cell(tbl, 1, 1, ownTxt, text_color=color.yellow, text_size=tblSize)
+        if useX2
+            table.cell(tbl, 0, 2, "Early exit", text_color=color.white, text_size=tblSize)
+            table.cell(tbl, 1, 2, exitTxt, text_color=rejectToday ? color.orange : color.white, text_size=tblSize)
+    else
+        table.cell(tbl, 0, 0, hdr, text_color=color.white, text_size=tblSize)
+        table.cell(tbl, 1, 0, "Price " + str.tostring(close, format.mintick), text_color=color.white, text_size=tblSize)
+        table.cell(tbl, 0, 1, "SMA50 / SMA200", text_color=color.white, text_size=tblSize)
+        table.cell(tbl, 1, 1, str.tostring(sma50, format.mintick) + " / " + str.tostring(sma200, format.mintick) + (close > sma200 ? " (price above)" : " (price below)"),
+                   text_color=close > sma200 ? color.green : color.red, text_size=tblSize)
+        table.cell(tbl, 0, 2, "EMA8 / EMA21", text_color=color.white, text_size=tblSize)
+        table.cell(tbl, 1, 2, str.tostring(ema8, format.mintick) + " / " + str.tostring(ema21, format.mintick) + (lastFri ? " (last Friday: buy condition ✓)" : " (last Friday: no buy condition)"),
+                   text_color=ema8 > ema21 ? color.green : color.red, text_size=tblSize)
+        table.cell(tbl, 0, 3, "Signal if Friday closes here", text_color=color.white, text_size=tblSize)
+        table.cell(tbl, 1, 3, sig, text_color=sigColor, text_size=tblSize)
+        table.cell(tbl, 0, 4, inPos ? "Simulated stop next week" : "Stop if bought now", text_color=color.white, text_size=tblSize)
+        table.cell(tbl, 1, 4, na(liveStop) ? "—" : str.tostring(liveStop, format.mintick) + " (" + str.tostring((liveStop / close - 1) * 100, "#.0") + "%)",
+                   text_color=color.red, text_size=tblSize)
+        table.cell(tbl, 0, 5, "Simulated stop now", text_color=color.white, text_size=tblSize)
+        table.cell(tbl, 1, 5, inPos ? str.tostring(stopLvl, format.mintick) : "—", text_color=color.white, text_size=tblSize)
+        table.cell(tbl, 0, 6, "Your stop", text_color=color.white, text_size=tblSize)
+        table.cell(tbl, 1, 6, ownTxt, text_color=color.yellow, text_size=tblSize)
+        table.cell(tbl, 0, 7, "Early exit", text_color=color.white, text_size=tblSize)
+        table.cell(tbl, 1, 7, exitTxt, text_color=rejectToday ? color.orange : color.white, text_size=tblSize)

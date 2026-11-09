@@ -1891,8 +1891,24 @@ def _ffo_scenario_band(
     return round(min(cells), 2), round(max(cells), 2), False
 
 
+def _strict_positive_trend(series: dict, fy: Optional[int]) -> bool:
+    """True when ``series`` at ``fy-2``, ``fy-1``, ``fy`` is present, positive
+    and strictly increasing or strictly decreasing (SPEC Sec.8a)."""
+    if fy is None:
+        return False
+    values = [series.get(y) for y in (fy - 2, fy - 1, fy)]
+    if any(v is None or v <= 0 for v in values):
+        return False
+    a, b, c = values
+    return a < b < c or a > b > c
+
+
 def _build_earnings_power(
-    assumptions: dict, normalized: dict, metrics: dict, ratios: list
+    assumptions: dict,
+    normalized: dict,
+    metrics: dict,
+    ratios: list,
+    structural_trend_exception: bool = False,
 ) -> "tuple[Optional[dict], List[str]]":
     """Earnings-power-value (EPV) anchor for mature, FCF-suppressed filers
     (Sec.8a) -- e.g. Amazon, whose free cash flow is depressed by heavy
@@ -1917,6 +1933,13 @@ def _build_earnings_power(
     year the same way FCF-DCF's own ``fcf0`` selection guards against a
     one-off FCF spike (see ``_select_fcf0``).
 
+    Structural-trend exception (mature filers only, via
+    ``structural_trend_exception``): the guard is skipped when net income
+    over the last 3 fiscal years is positive and strictly monotonic, so a
+    structurally re-rated margin (AMZN FY2023-FY2025) isn't pulled back to
+    a long-history median. The cyclical caller leaves it off -- earnings
+    climbing into a peak must still be normalized.
+
     An advisory-only note is appended (never altering the computed value)
     when the implied ROE-over-cost-of-equity ratio is very high, warning
     that reading EPV as a floor may be misleading if that return isn't
@@ -1934,6 +1957,9 @@ def _build_earnings_power(
         ratios: Unused directly (accepted for signature symmetry with
             ``_build_pb_roe`` and to allow future ratio-based refinements
             without changing the call site).
+        structural_trend_exception: Allow the strict-trend exception to
+            the sanity guard (SPEC Sec.8a). The engine passes
+            ``sector_type == "mature"``.
 
     Returns:
         A ``(detail, notes)`` tuple. ``detail`` is ``None`` if EPV can't be
@@ -1975,7 +2001,16 @@ def _build_earnings_power(
         normalized_ni = latest_ni
     else:
         ref_ni = statistics.median(margins) * latest_rev
-        if ref_ni > 0 and abs(latest_ni / ref_ni - 1.0) > _EPV_SANITY_DEVIATION:
+        deviates = ref_ni > 0 and abs(latest_ni / ref_ni - 1.0) > _EPV_SANITY_DEVIATION
+        if deviates and structural_trend_exception and _strict_positive_trend(ni_series, fy):
+            normalized_ni = latest_ni
+            notes.append(
+                f"The latest year's net income ({latest_ni:,.0f}) deviated markedly from the historical margin "
+                f"median ({ref_ni:,.0f}); but since net income has moved steadily in one direction over the "
+                "last 3 years (a structural shift, not a one-off), the latest figure was kept for the "
+                "earnings-power base."
+            )
+        elif deviates:
             normalized_ni = ref_ni
             sanity_applied = True
             notes.append(
@@ -3187,8 +3222,9 @@ def _mature_target_fcf_margin(normalized: dict, metrics: dict, ratios: list) -> 
     """Mature-state target FCF margin for the revenue-first DCF (reviewer
     Findings 5-6), the smaller of two independent, data-derived anchors:
 
-    - **op-anchor:** the median of every fiscal year's positive operating
-      margin (``OperatingIncome / Revenue``), converted to a NOPAT-based FCF
+    - **op-anchor:** the median of the last 3 fiscal years' positive
+      operating margins (``OperatingIncome / Revenue``; every fiscal year's
+      when none of those three has one), converted to a NOPAT-based FCF
       margin proxy: ``op_margin * (1 - _MATURE_TAX_ASSUMPTION) *
       _MATURE_REINVEST_HAIRCUT``. ``None`` if no fiscal year has a positive
       operating margin (missing ``OperatingIncome`` data).
@@ -3219,12 +3255,17 @@ def _mature_target_fcf_margin(normalized: dict, metrics: dict, ratios: list) -> 
     ocf_series = to_annual_series(normalized, "OperatingCashFlow")
     capex_series = to_annual_series(normalized, "CapEx")
 
-    op_margins = [
-        op_income_series[y] / revenue_series[y]
+    op_margins_by_fy = {
+        y: op_income_series[y] / revenue_series[y]
         for y in op_income_series
         if op_income_series.get(y) is not None and op_income_series[y] > 0
         and revenue_series.get(y) is not None and revenue_series[y] > 0
-    ]
+    }
+    # Last 3 fiscal years only, so a structural margin shift moves the
+    # target; the all-history median is the sparse-data fallback.
+    fy = resolve_fundamental_fy(metrics)
+    recent = [op_margins_by_fy[y] for y in (fy, fy - 1, fy - 2) if y in op_margins_by_fy] if fy is not None else []
+    op_margins = recent or list(op_margins_by_fy.values())
     nopat = None
     if op_margins:
         op_margin = statistics.median(op_margins)
@@ -5052,7 +5093,10 @@ def _run_valuation(
     earnings_power = None
     ep_notes: List[str] = []
     if sector_type in ("mature", "cyclical") and not hyper_growth_active:
-        earnings_power, ep_notes = _build_earnings_power(assumptions, normalized, metrics, ratios)
+        earnings_power, ep_notes = _build_earnings_power(
+            assumptions, normalized, metrics, ratios,
+            structural_trend_exception=(sector_type == "mature"),
+        )
 
     # For cyclical filers, the headline fair-value band and the triangulation
     # DCF signal should reflect through-cycle earning power, not a single

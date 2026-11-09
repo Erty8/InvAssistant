@@ -439,6 +439,9 @@ _ALIASES: List[Tuple[str, str]] = [
     ("biological products", "Drugs (Biotechnology)"),
     ("pharmaceutical", "Drugs (Pharmaceutical)"),
     ("retail variety", "Retail (General)"),
+    # SIC 5961 (AMZN): the fuzzy fallback matched the first "Retail" row,
+    # Retail (Automotive).
+    ("catalog & mail order", "Retail (General)"),
     ("retail grocery", "Retail (Grocery and Food)"),
     ("eating places", "Restaurant/Dining"),
     ("commercial bank", "Banks (Regional)"),

@@ -132,6 +132,10 @@ from sec_analyzer.technical.indicators import compute_indicators, relative_stren
 from sec_analyzer.technical.action import compute_technical_action
 from sec_analyzer.technical.momentum import compute_price_momentum, sector_etf_for_sic
 from sec_analyzer.technical.verdict import technical_verdict
+from sec_analyzer.technical.weekly_strategy import (
+    SIGNAL_IN_POSITION as _WS_IN_POSITION,
+    compute_weekly_strategy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -297,6 +301,9 @@ def _fetch_price_and_technical(
         verdict_result = technical_verdict(indicators, horizon)
         technical = {**indicators, **verdict_result}
         technical["action"] = compute_technical_action(technical, horizon)
+        # The user's weekly SMA200 / EMA8-21 rule (technical/WEEKLY_STRATEGY_SPEC.md);
+        # display only, None-safe.
+        technical["weekly_strategy"] = compute_weekly_strategy(price_df)
         # Provenance of the price series these indicators were computed from,
         # carried here rather than widening this function's return tuple
         # (four call sites plus test fakes). The report names the source
@@ -1451,6 +1458,38 @@ def _signal_volume_line(technical: dict) -> Optional[str]:
     return "MACD/Volume:  " + " · ".join(parts)
 
 
+def _weekly_strategy_lines(technical: dict) -> List[str]:
+    """Card rows for the weekly SMA200 / EMA8-21 rule
+    (``technical/WEEKLY_STRATEGY_SPEC.md``). Empty when it wasn't computed.
+
+    The "IN POSITION (model)" row is the rule's own replayed trade, not the
+    user's account.
+    """
+    ws = (technical or {}).get("weekly_strategy")
+    if not isinstance(ws, dict) or not ws.get("signal"):
+        return []
+
+    def _pct(value) -> str:
+        return _DASH if value is None else f"{value:+.1f}%"
+
+    pos = ws.get("position")
+    if ws["signal"] == _WS_IN_POSITION and isinstance(pos, dict):
+        text = (
+            f"IN POSITION (model) since {pos.get('entry_date') or _DASH} @ {_fmt_money(pos.get('entry_price'))}"
+            f" · stop {_fmt_money(pos.get('stop'))} ({_pct(pos.get('stop_pct'))})"
+            f" · next week {_fmt_money(pos.get('next_stop'))}"
+        )
+    else:
+        text = ws.get("label") or _DASH
+        if ws.get("entry_stop") is not None:
+            text += f" · first stop {_fmt_money(ws['entry_stop'])} ({_pct(ws.get('entry_stop_pct'))})"
+    lines = [f"{'Strategy:'.ljust(_CARD_LABEL_WIDTH)}{text}"]
+    if (ws.get("x2") or {}).get("day1"):
+        sma50 = (ws.get("levels") or {}).get("sma50")
+        lines.append(f"  ⚠ X2 day 1: sell at the next close if it closes below SMA50 ({_fmt_money(sma50)})")
+    return lines
+
+
 def _support_resistance_line(technical: dict) -> Optional[str]:
     """Compact support/resistance sub-line for the technical card, e.g.
     ``"Support/Resistance:  Resistance $108 (+%8), $118 (+%18) | Support $92.50 (-%8)"``.
@@ -1641,6 +1680,8 @@ def _print_verdict_card(
     sr_line = _support_resistance_line(technical)
     if sr_line:
         print(f"  {sr_line}")
+    for ws_line in _weekly_strategy_lines(technical):
+        print(ws_line)
 
     # Top-level momentum synthesis row (price + fundamental + verdict momentum)
     # with any value x momentum cross-signals as indented sub-lines.

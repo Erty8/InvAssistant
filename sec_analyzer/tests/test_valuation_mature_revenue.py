@@ -102,8 +102,9 @@ def _mature_assumptions(discount_rate=0.15, terminal_growth=0.03, growth_5y=None
 
 
 def test_mature_target_fcf_margin_nopat_anchor_binds():
-    # op_margins (positive years only): FY2020 80/1000=0.08, FY2021
-    # 120/1000=0.12 -> median([0.08,0.12]) = 0.10.
+    # op_margins (positive years only): FY2019 80/1000=0.08, FY2020
+    # 120/1000=0.12. Neither is in the fy/fy-1/fy-2 window (2023/2022/2021),
+    # so the all-history fallback applies: median([0.08,0.12]) = 0.10.
     # nopat = 0.10 * (1-0.25) * 0.85 = 0.10*0.75*0.85 = 0.06375.
     # hist-anchor: only OCF/CapEx data at FY2015 (outside the fy/fy-1/fy-2
     # window used by _mature_current_margin, see below): (300-100)/1000=0.20
@@ -113,8 +114,8 @@ def test_mature_target_fcf_margin_nopat_anchor_binds():
     # those years has OCF/CapEx data (only 2015 does) -> current_margin=0.0,
     # floor inactive (0.0 is not > 0).
     normalized = _annual(
-        OperatingIncome={2020: 80.0, 2021: 120.0},
-        Revenue={2020: 1000.0, 2021: 1000.0, 2015: 1000.0},
+        OperatingIncome={2019: 80.0, 2020: 120.0},
+        Revenue={2019: 1000.0, 2020: 1000.0, 2015: 1000.0},
         OperatingCashFlow={2015: 300.0}, CapEx={2015: 100.0},
     )
     metrics = {"latest_fy": 2023}
@@ -122,6 +123,39 @@ def test_mature_target_fcf_margin_nopat_anchor_binds():
     assert _mature_current_margin(normalized, metrics) == pytest.approx(0.0)
     target = _mature_target_fcf_margin(normalized, metrics, ratios=[])
     assert target == pytest.approx(0.06375)
+
+
+def test_mature_target_fcf_margin_op_anchor_uses_last_three_years():
+    # AMZN-shaped re-rating: op margin 2% over FY2015-FY2020, then 8% /
+    # 10% / 12% over FY2021-FY2023.
+    #   Window (2023/2022/2021): median([0.12, 0.10, 0.08]) = 0.10
+    #   -> nopat = 0.10 * 0.75 * 0.85 = 0.06375.
+    #   (The all-history median would be 0.02 -> nopat 0.01275.)
+    #   hist: FY2015 (400-100)/1000 = 0.30 -> 0.45; doesn't bind.
+    #   current_margin = 0.0 (no OCF/CapEx in the window) -> no floor.
+    normalized = _annual(
+        OperatingIncome={**{y: 20.0 for y in range(2015, 2021)}, 2021: 80.0, 2022: 100.0, 2023: 120.0},
+        Revenue={y: 1000.0 for y in range(2015, 2024)},
+        OperatingCashFlow={2015: 400.0}, CapEx={2015: 100.0},
+    )
+    metrics = {"latest_fy": 2023}
+
+    target = _mature_target_fcf_margin(normalized, metrics, ratios=[])
+    assert target == pytest.approx(0.06375)
+
+
+def test_mature_target_fcf_margin_op_anchor_window_also_lowers_a_falling_margin():
+    # Mirror case: op margin 20% over FY2015-FY2020, then 4% / 5% / 6%.
+    #   Window median = 0.05 -> nopat = 0.05 * 0.75 * 0.85 = 0.031875.
+    normalized = _annual(
+        OperatingIncome={**{y: 200.0 for y in range(2015, 2021)}, 2021: 60.0, 2022: 50.0, 2023: 40.0},
+        Revenue={y: 1000.0 for y in range(2015, 2024)},
+        OperatingCashFlow={2015: 400.0}, CapEx={2015: 100.0},
+    )
+    metrics = {"latest_fy": 2023}
+
+    target = _mature_target_fcf_margin(normalized, metrics, ratios=[])
+    assert target == pytest.approx(0.031875)
 
 
 def test_mature_target_fcf_margin_hist_anchor_binds():

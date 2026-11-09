@@ -656,7 +656,7 @@ cash-flow-backed profitable — canonical case: Amazon. Everywhere else
 (`cyclical`/`financial`/`reit`/`growth_unprofitable`, or any filer already in
 hyper-grower mode) this section does not apply and behavior is unchanged.
 
-### `_build_earnings_power(assumptions, normalized, metrics, ratios) -> tuple[Optional[dict], list[str]]`
+### `_build_earnings_power(assumptions, normalized, metrics, ratios, structural_trend_exception=False) -> tuple[Optional[dict], list[str]]`
 
 - Only called by the engine when `sector_type == "mature"` AND hyper-grower
   mode is NOT active (`not hyper_growth_active`, built after
@@ -686,6 +686,25 @@ hyper-grower mode) this section does not apply and behavior is unchanged.
   ("Kazanç-gücü tabanı için son yılın net kârı (...) geçmiş marj medyanından
   belirgin saptı; ... marj-medyanı bazlı normalize kazanç (...) kullanıldı.");
   else `normalized_ni = latest_ni`, `sanity_applied = False`.
+- **Structural-trend exception (2026-10-30, mature only).** Keyword argument
+  `structural_trend_exception: bool = False`; the engine passes
+  `sector_type == "mature"`, so the cyclical caller (Sec.8e) keeps the guard
+  unchanged — a cyclical's earnings rising year after year into a peak is
+  exactly what the guard must not read as structural. When the flag is set
+  and the guard would fire, it is skipped (`normalized_ni = latest_ni`,
+  `sanity_applied = False`) if `NetIncome` at `fy-2`, `fy-1`, `fy` is
+  present, positive, and **strictly** monotonic (strictly increasing or
+  strictly decreasing), with an English note saying the latest net income
+  was kept because it follows a steady trend. This mirrors `_select_fcf0`'s
+  monotonic-ramp exception (Sec.4) but uses strict inequalities, so a flat
+  history with a one-year jump (e.g. 100, 100, 200) still triggers the
+  guard. **Why:** a filer whose margin has structurally re-rated (AMZN:
+  net income $30.4B → $59.2B → $77.7B over FY2023–FY2025) was being
+  normalized back to a 12-year margin median ($34.5B), halving its
+  zero-growth floor ($34 → $78 per share with the exception).
+  **Limitation:** a strictly rising series whose last step is itself a
+  one-off (e.g. 90, 100, 200) also passes; the same is true of the `fcf0`
+  rule.
 - **Value**: `base_value_per_share = normalized_ni / dr_base / shares` — a
   zero-growth, no-net-debt-bridge equity anchor (Bruce Greenwald earnings
   power). **No growth term** — deliberate, consistent with Sec.3's Gordon-
@@ -932,10 +951,21 @@ data.
 
 The fade's *mature target*, the smaller of two independent, data-derived
 anchors, further floored at today's margin:
-- **op-anchor (NOPAT proxy):** median of every fiscal year's positive
-  `OperatingIncome / Revenue`, converted with
+- **op-anchor (NOPAT proxy):** median of the positive
+  `OperatingIncome / Revenue` margins of the **last 3 fiscal years**
+  (`fy`, `fy-1`, `fy-2`, with `fy = resolve_fundamental_fy(metrics)`),
+  converted with
   `op_margin * (1 - _MATURE_TAX_ASSUMPTION) * _MATURE_REINVEST_HAIRCUT`.
-  `None` if no fiscal year has a positive operating margin.
+  If none of those three years has a positive operating margin, the median
+  of every fiscal year's positive margin is used instead (sparse-data
+  fallback). `None` if no fiscal year at all has a positive operating
+  margin. **Why the 3-year window (2026-10-30):** the all-history median
+  could not see a structural margin shift. AMZN's operating margin went
+  from 2–5% in the 2010s to 10.8–11.2% in FY2024–FY2025, but the 12-year
+  median held the target FCF margin at 3.4% and the base value at
+  $41–71; with the 3-year window the target is 6.9% and the base value
+  $81–140. The window works in both directions: a filer whose margin has
+  structurally fallen gets a lower target.
 - **hist-anchor:** `_MATURE_HIST_UPLIFT ×` the single best historical raw
   FCF margin (`(OCF - CapEx) / Revenue`, positive years only). `None` if no
   fiscal year has a positive raw FCF margin.

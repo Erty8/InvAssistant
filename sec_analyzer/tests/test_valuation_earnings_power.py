@@ -204,6 +204,114 @@ def test_build_earnings_power_sanity_guard_does_not_trigger_under_50pct_deviatio
     assert not any("median for the earnings-power base" in n for n in notes)
 
 
+def _rising_margin_fixture():
+    # AMZN-shaped structural re-rating: margin 2% for three years, then a
+    # strict climb to 5% / 8% / 11%.
+    #   margins = [0.02, 0.02, 0.02, 0.05, 0.08, 0.11]; median of 6 =
+    #   avg(3rd, 4th sorted) = (0.02+0.05)/2 = 0.035.
+    #   ref_ni = 0.035 * 1000 = 35.0; |110/35 - 1| = 2.14 > 0.5 -> deviates.
+    #   NI at fy-2/fy-1/fy = 50 < 80 < 110 -> strictly increasing.
+    return _annual(
+        NetIncome={2018: 20.0, 2019: 20.0, 2020: 20.0, 2021: 50.0, 2022: 80.0, 2023: 110.0},
+        Revenue={y: 1000.0 for y in range(2018, 2024)},
+    )
+
+
+def test_build_earnings_power_structural_trend_exception_keeps_latest_net_income():
+    # With the exception on (mature caller): normalized_ni = latest 110,
+    # per_share = 110 / 0.10 / 10 = 110.0.
+    metrics = {"shares": 10.0, "latest_fy": 2023}
+    assumptions = {"base": {"discount_rate": 0.10}}
+
+    detail, notes = _build_earnings_power(
+        assumptions, _rising_margin_fixture(), metrics, ratios=[], structural_trend_exception=True,
+    )
+
+    assert detail["sanity_applied"] is False
+    assert detail["normalized_net_income"] == pytest.approx(110.0)
+    assert detail["scenarios"]["base"]["per_share"] == pytest.approx(110.0)
+    assert any("structural shift" in n for n in notes)
+    assert not any("median for the earnings-power base" in n for n in notes)
+
+
+def test_build_earnings_power_structural_trend_exception_off_by_default():
+    # Same fixture, flag off (the cyclical caller): the guard fires and
+    # normalizes to ref_ni = 35.0 -> per_share = 35 / 0.10 / 10 = 35.0.
+    metrics = {"shares": 10.0, "latest_fy": 2023}
+    assumptions = {"base": {"discount_rate": 0.10}}
+
+    detail, notes = _build_earnings_power(assumptions, _rising_margin_fixture(), metrics, ratios=[])
+
+    assert detail["sanity_applied"] is True
+    assert detail["normalized_net_income"] == pytest.approx(35.0)
+    assert detail["scenarios"]["base"]["per_share"] == pytest.approx(35.0)
+
+
+def test_build_earnings_power_structural_trend_exception_needs_a_strict_trend():
+    # The one-off spike fixture (100, 100, 100, 200): fy-2/fy-1/fy =
+    # 100, 100, 200 is non-decreasing but not strictly increasing, so the
+    # guard still fires even with the exception on -> normalized_ni = 100.
+    normalized = _annual(
+        NetIncome={2020: 100.0, 2021: 100.0, 2022: 100.0, 2023: 200.0},
+        Revenue={2020: 1000.0, 2021: 1000.0, 2022: 1000.0, 2023: 1000.0},
+    )
+    metrics = {"shares": 10.0, "latest_fy": 2023}
+    assumptions = {"base": {"discount_rate": 0.10}}
+
+    detail, _ = _build_earnings_power(
+        assumptions, normalized, metrics, ratios=[], structural_trend_exception=True,
+    )
+
+    assert detail["sanity_applied"] is True
+    assert detail["normalized_net_income"] == pytest.approx(100.0)
+
+
+def test_build_earnings_power_structural_trend_exception_covers_a_strict_decline():
+    # Margin 10% for three years, then 7% / 5% / 3%:
+    #   margins = [0.10, 0.10, 0.10, 0.07, 0.05, 0.03]; median =
+    #   (0.07+0.10)/2 = 0.085 -> ref_ni = 85.0; |30/85 - 1| = 0.647 > 0.5.
+    #   NI 70 > 50 > 30 strictly decreasing -> keep the (lower) latest 30.
+    normalized = _annual(
+        NetIncome={2018: 100.0, 2019: 100.0, 2020: 100.0, 2021: 70.0, 2022: 50.0, 2023: 30.0},
+        Revenue={y: 1000.0 for y in range(2018, 2024)},
+    )
+    metrics = {"shares": 10.0, "latest_fy": 2023}
+    assumptions = {"base": {"discount_rate": 0.10}}
+
+    detail, _ = _build_earnings_power(
+        assumptions, normalized, metrics, ratios=[], structural_trend_exception=True,
+    )
+
+    assert detail["sanity_applied"] is False
+    assert detail["normalized_net_income"] == pytest.approx(30.0)
+
+
+@pytest.mark.parametrize("sector_type, expected", [("mature", True), ("cyclical", False)])
+def test_run_valuation_passes_structural_trend_exception_for_mature_only(monkeypatch, sector_type, expected):
+    import sec_analyzer.valuation.engine as engine_mod
+
+    seen = {}
+    original = engine_mod._build_earnings_power
+
+    def spy(*args, **kwargs):
+        seen["flag"] = kwargs.get("structural_trend_exception", False)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(engine_mod, "_build_earnings_power", spy)
+    normalized = _normalized_epv({
+        "NetIncome": {2023: 100.0}, "Revenue": {2023: 1000.0},
+        "OperatingCashFlow": {2023: 90.0}, "CapEx": {2023: 50.0},
+    })
+    metrics = {"shares": 10.0, "latest_fy": 2023, "fcf": 1.0, "net_debt": 0.0}
+
+    run_valuation(
+        normalized, [{"fy": 2023, "fcf": 1.0}], metrics, price=None, price_df=None,
+        assumptions=_epv_assumptions(base_discount=0.10), sector_type=sector_type,
+    )
+
+    assert seen["flag"] is expected
+
+
 def test_build_earnings_power_adds_advisory_note_for_high_implied_roe_but_does_not_clamp_value():
     # eq=10, normalized_ni=100 (single-year fixture, sanity never triggers,
     # same as the first test) -> implied roe = normalized_ni/eq = 100/10 =

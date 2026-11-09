@@ -32,6 +32,7 @@ _INDUSTRIES = [
     ("Software (System & Application)", 32.0, 8.2, 27.5),
     ("Drugs (Pharmaceutical)", 19.5, 4.0, 18.0),
     ("Drugs (Biotechnology)", 22.0, 5.5, 20.0),
+    ("Retail (Automotive)", 24.0, 0.9, 20.0),
     ("Retail (General)", 18.6, 1.1, 17.2),
     ("Retail (Grocery and Food)", 16.0, 0.4, 15.0),
     ("Restaurant/Dining", 24.0, 2.1, 21.0),
@@ -70,6 +71,8 @@ _ACCEPTANCE_CASES = [
     ("PHARMACEUTICAL PREPARATIONS", "Drugs (Pharmaceutical)"),
     ("BIOLOGICAL PRODUCTS, (NO DIAGNOSTIC SUBSTANCES)", "Drugs (Biotechnology)"),
     ("RETAIL-VARIETY STORES", "Retail (General)"),
+    # AMZN: used to fall through to the first "Retail" row, Retail (Automotive).
+    ("RETAIL-CATALOG & MAIL-ORDER HOUSES", "Retail (General)"),
     ("RETAIL-GROCERY STORES", "Retail (Grocery and Food)"),
     ("RETAIL-EATING PLACES", "Restaurant/Dining"),
     ("NATIONAL COMMERCIAL BANKS", "Banks (Regional)"),
