@@ -26,6 +26,15 @@ PREVFRI = {}
 HYB2 = False
 LASTBUY = {}
 ONE_PER_WEEK = False
+BUF = 0.05      # stop buffer below the reference MA (0.05 = x0.95)
+VOLK = 0        # >0: buffer = VOLK * 252d mean ATR%, clipped 2..12% (HANDOFF sec.7c)
+ENTRYF = ""     # rule-1 (Monday) entry filter: A<k> vol band, B SMA200 slope, C momentum vote (HANDOFF sec.9)
+ENTRYK = 1.0
+DTB = 0         # downtrend-break entry below SMA200: 1 trendline, 2 structure (HANDOFF sec.10)
+DTB_REPLACE = False  # True: DTB replaces the EMA8/21 rule-2 entry
+PIV = {}
+RECLAIM = False # stop-reclaim re-entry (HANDOFF sec.7)
+RC = {}
 """Walk-forward strategy search (method stated to the user before running).
 
 Train 2020-11-02 .. 2025-10-31, test 2025-11-03 .. 2026-11-03, both baskets.
@@ -51,8 +60,9 @@ from sec_analyzer.fetch.prices import get_price_history
 CAPITAL, COST = 100_000.0, 0.001
 PERIODS = {"train": (pd.Timestamp("2020-11-02"), pd.Timestamp("2025-10-31")),
            "test": (pd.Timestamp("2025-11-03"), pd.Timestamp("2026-11-03")),
-           "crisis": (pd.Timestamp("2007-01-03"), pd.Timestamp("2012-12-31"))}
-BASKETS = {"semi_noMU": ["NVDA", "AVGO", "MRVL", "NBIS", "ORCL"], "first_noAPP": ["UBER", "NFLX", "RDDT"], "b3_etf": ["GLD", "SLV", "USO", "BTC-USD"], "sectors": ["XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLU", "XLI"], "b5": ["HIMS", "EOSE", "RKLB", "SOFI", "HOOD"]}
+           "crisis": (pd.Timestamp("2007-01-03"), pd.Timestamp("2012-12-31")),
+           "val": (pd.Timestamp("2015-01-02"), pd.Timestamp("2020-10-30"))}
+BASKETS = {"semi_AMD": ["NVDA", "AVGO", "MRVL", "AMD", "ORCL"], "first_noAPP": ["UBER", "NFLX", "RDDT"], "b3_etf": ["GLD", "SLV", "USO", "BTC-USD"], "sectors": ["XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLU", "XLI"], "b5": ["HIMS", "EOSE", "RKLB", "SOFI", "HOOD"]}
 LAST = pd.Timestamp("2026-11-03")
 
 ENTRIES = (["DON20", "DON50", "DON100", "TT"]
@@ -98,6 +108,7 @@ def frame(df):
     f["ema21"] = c.ewm(span=21, adjust=False).mean()
     tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
     f["atr"] = tr.ewm(alpha=1 / 14, adjust=False).mean()
+    f["atrp252"] = (f["atr"] / c).rolling(252, min_periods=200).mean()
     for n in (20, 50, 100):
         f[f"hi{n}_prev"] = c.shift(1).rolling(n).max()
     for n in (20, 50):
@@ -109,7 +120,7 @@ def frame(df):
     f["rsi"] = 100 - 100 / (1 + up / dn)
     f["bb_lo"] = c.rolling(20).mean() - 2 * c.rolling(20).std()
     f["mom12_1"] = c.shift(21) / c.shift(252) - 1
-    for n in (63, 126, 252):
+    for n in (21, 63, 126, 252):
         f[f"ret{n}"] = c / c.shift(n) - 1
     return f
 
@@ -119,6 +130,42 @@ for t in sorted({x for v in BASKETS.values() for x in v} | {"SPY"}):
     df, _ = get_price_history(t)
     F[t] = frame(df[df.index <= LAST])
 SPY = F["SPY"]
+import bisect
+for _t, _f in F.items():
+    _h, _l = _f["high"], _f["low"]
+    _ph = _h == _h.rolling(11, center=True).max()
+    _pl = _l == _l.rolling(11, center=True).min()
+    PIV[_t] = (list(np.flatnonzero(_ph.values)), list(np.flatnonzero(_pl.values)))
+
+
+def dtb_signal(t, day, prevfri):
+    """Fresh downtrend break on Friday `day` (close above the line/level, previous Friday not)."""
+    f = F[t]
+    j = f.index.get_loc(day)
+    r = f.iloc[j]
+    if pd.isna(r["sma200"]) or r["close"] >= r["sma200"] or prevfri not in f.index:
+        return False
+    jp = f.index.get_loc(prevfri)
+    ph, pl = PIV[t]
+    hs = [i for i in ph[max(0, bisect.bisect_right(ph, j - 253)):bisect.bisect_right(ph, j - 5)]]
+    if len(hs) < 2:
+        return False
+    p1, p2 = hs[-2], hs[-1]
+    h1, h2 = float(f["high"].iloc[p1]), float(f["high"].iloc[p2])
+    if not h2 < h1:
+        return False
+    c, cp = float(r["close"]), float(f["close"].iloc[jp])
+    if DTB == 1:
+        slope = (h2 - h1) / (p2 - p1)
+        line = lambda x: h2 + slope * (x - p2)
+        return c > line(j) and cp <= line(jp)
+    ls = [i for i in pl[:bisect.bisect_right(pl, j - 5)] if i > p2]
+    prior = [i for i in pl[:bisect.bisect_right(pl, p2)]]
+    if not ls or not prior:
+        return False
+    if not float(f["low"].iloc[ls[-1]]) > float(f["low"].iloc[prior[-1]]):
+        return False
+    return c > h2 and cp <= h2
 ALL_DAYS = SPY.index
 WK = ALL_DAYS.to_series().dt.isocalendar()
 FRIDAYS = sorted(set(ALL_DAYS.to_series().groupby([WK.year, WK.week]).max()))
@@ -182,6 +229,7 @@ def simulate(entry, stop, tickers, start, end):
     LASTBUY.clear()
     BLOCKED.clear()
     EXITDAY.clear()
+    RC.clear()
     last_close = {t: None for t in tickers}
     for day in days:
         if (not CLOSE_ENTRY or HYB2) and day in sig:
@@ -195,6 +243,8 @@ def simulate(entry, stop, tickers, start, end):
                 if s is None:
                     continue
                 if HYB2 and sk != "TIER":
+                    continue
+                if not entry_ok(t, fri):
                     continue
                 if REBLOCK and BLOCKED.get(t) and not STRONG(t, fri):
                     continue
@@ -217,6 +267,8 @@ def simulate(entry, stop, tickers, start, end):
                                "pnl": round(cash[t] - p["cost"], 2)})
                 del pos[t]
                 EXITDAY[t] = day; BLOCKED[t] = True
+                if RECLAIM:
+                    RC[t] = {"lvl": p["stop"], "exit": day, "cnt": 0, "armed": None}
             else:
                 p["hi"] = max(p["hi"], float(b["close"]))
         for t in tickers:
@@ -283,6 +335,8 @@ def simulate(entry, stop, tickers, start, end):
                 s, sk = entry_kind(entry, t, day, tickers)
                 if HYB2 and sk == "TIER":
                     continue
+                if DTB_REPLACE and sk == "E821":
+                    continue
                 if s is None:
                     continue
                 if REBLOCK and BLOCKED.get(t) and not STRONG(t, day):
@@ -292,6 +346,40 @@ def simulate(entry, stop, tickers, start, end):
                     continue
                 _s2 = CAPSTOP(o, s); _f = FRAC(o, _s2); pos[t] = {"left": cash[t] * (1 - _f), "sh": cash[t] * _f * (1 - COST) / o, "stop": _s2, "hi": o, "entry": day, "cost": cash[t], "px": o, "fri": day, "sk": sk}
                 cash[t] = pos[t]["left"]
+        if DTB and day in fridays_in and day in PREVFRI:
+            for t in tickers:
+                if t in pos or day not in F[t].index or EXITDAY.get(t) == day:
+                    continue
+                if not dtb_signal(t, day, PREVFRI[day]):
+                    continue
+                r = F[t].loc[day]
+                c = float(r["close"])
+                s = float(r["ema21"]) * (1 - buf(r))
+                if not s < c:
+                    continue
+                pos[t] = {"left": 0.0, "sh": cash[t] * (1 - COST) / c, "stop": s, "hi": c, "entry": day,
+                          "cost": cash[t], "px": c, "fri": day, "sk": "DTB"}
+                cash[t] = 0.0
+        if RECLAIM:
+            for t in list(RC):
+                if t in pos:
+                    del RC[t]  # a normal H2 entry fired -> rule resets
+                    continue
+                if day not in F[t].index or day <= RC[t]["exit"]:
+                    continue
+                st, c = RC[t], float(F[t].loc[day, "close"])
+                if st["armed"] is None:
+                    st["cnt"] = st["cnt"] + 1 if c > st["lvl"] else 0
+                    if st["cnt"] >= 3:
+                        st["armed"] = day
+                    continue
+                if day in fridays_in and day > st["armed"]:
+                    del RC[t]
+                    if c > st["lvl"]:
+                        s = st["lvl"] * 0.95
+                        pos[t] = {"left": 0.0, "sh": cash[t] * (1 - COST) / c, "stop": s, "hi": c, "entry": day,
+                                  "cost": cash[t], "px": c, "fri": day, "sk": "RECLAIM"}
+                        cash[t] = 0.0
         if day in fridays_in:
             for t, p in pos.items():
                 if day in F[t].index:
@@ -336,14 +424,36 @@ def buy_hold(tickers, start, end):
 
 
 
+def buf(r):
+    if VOLK:
+        v = r["atrp252"]
+        return 0.05 if pd.isna(v) else min(0.12, max(0.02, VOLK * float(v)))
+    return BUF
+
+
+def entry_ok(t, d):
+    if not ENTRYF:
+        return True
+    r = F[t].loc[d]
+    if ENTRYF == "A":
+        v = r["atrp252"]
+        band = 0.05 if pd.isna(v) else min(0.12, max(0.02, ENTRYK * float(v)))
+        return bool(r["close"] > r["sma200"] * (1 + band))
+    if ENTRYF == "B":
+        return bool(pd.notna(r["sma200_prev"]) and r["sma200"] > r["sma200_prev"])
+    if ENTRYF == "C":
+        return sum(bool(pd.notna(r[c]) and r[c] > 0) for c in ("ret21", "ret63", "ret252")) >= 2
+    raise ValueError(ENTRYF)
+
+
 def tier(r):
-    return r["sma50"] * 0.95 if r["close"] > r["sma50"] > r["sma200"] else r["sma200"] * 0.95
+    return r["sma50"] * (1 - buf(r)) if r["close"] > r["sma50"] > r["sma200"] else r["sma200"] * (1 - buf(r))
 
 
 def stop_level(kind, r):
     if kind == "TIER" or r["close"] > r["sma200"]:
         return tier(r)
-    return r["ema21"] * 0.95
+    return r["ema21"] * (1 - buf(r))
 
 
 def entry_kind(entry, t, d, tickers):
@@ -362,17 +472,33 @@ def entry_kind(entry, t, d, tickers):
     ok = entry == "E821" and r["ema8"] > r["ema21"] and c > r["ema8"] and c > r["ema21"]
     if not ok:
         return None, None
-    s = r["ema21"] * 0.95
+    s = r["ema21"] * (1 - buf(r))
     return (float(s), "E821") if 0 < s < c else (None, None)
 
 
 WEEKLY0 = list(FRIDAYS)
 out = {}
+import re
+MODES = [m for m in sys.argv[2].split(",")] if len(sys.argv) > 2 else ["H2", "H2_X2_approach"]
+ONLY = sys.argv[3].split(",") if len(sys.argv) > 3 else None
 for bk, tk in BASKETS.items():
-    for per in ("test", "train"):
+    if ONLY and bk not in ONLY:
+        continue
+    for per in (sys.argv[4].split(",") if len(sys.argv) > 4 else (("test", "train", "crisis") if bk == "sectors" else ("test", "train"))):
         bh = buy_hold(tk, *PERIODS[per])
         WEEKLY = WEEKLY0
-        for name, MODE in (("E821", "H2"), ("E821", "H2_X2_approach")):
+        for name, MODE in (("E821", m) for m in MODES):
+            _b = re.search(r"_B(\d+)", MODE)
+            globals()["BUF"] = int(_b.group(1)) / 100 if _b else 0.05
+            globals()["RECLAIM"] = "_RC" in MODE
+            _dm = re.search(r"_D([12])(R?)", MODE)
+            globals()["DTB"] = int(_dm.group(1)) if _dm else 0
+            globals()["DTB_REPLACE"] = bool(_dm and _dm.group(2))
+            _e = re.search(r"_E([ABC])(\d*)", MODE)
+            globals()["ENTRYF"] = _e.group(1) if _e else ""
+            globals()["ENTRYK"] = int(_e.group(2)) / 10 if _e and _e.group(2) else 1.0
+            _v = re.search(r"_V(\d+)", MODE)
+            globals()["VOLK"] = int(_v.group(1)) / 10 if _v else 0
             globals()["REBLOCK"] = 1 if "RB50" in MODE else 0
             globals()["QUAL"] = 1 if "_Q1" in MODE else (2 if "_Q2" in MODE else 0)
             globals()["RISKCAP"] = 0.15 if "RCAP" in MODE else 0

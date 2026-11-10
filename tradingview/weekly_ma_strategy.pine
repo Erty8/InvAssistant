@@ -17,9 +17,13 @@
 //        above both (the first of the two Fridays may also qualify via rule 1).
 //        This buy happens at the second Friday's close.
 //   Stop-loss (raised once a week using Friday's values, NEVER lowered)
-//     - Price above SMA50 and SMA50 above SMA200  ->  stop = SMA50 minus the buffer (5%)
+//     - Price above SMA50 and SMA50 above SMA200  ->  stop = SMA50 minus the buffer
 //     - Otherwise, while above SMA200             ->  stop = SMA200 minus the buffer
 //     - Bought below SMA200 (rule 2) and still below it -> stop = EMA21 minus the buffer
+//   Buffer (default "Volatility"): the stock's typical daily move = 1 x the 252-day average of
+//     ATR(14) / close, kept between 2% and 12%. Calm ETFs get ~2%, large-cap tech ~3-4%,
+//     speculative stocks ~6-11%. Until a year of data exists it falls back to the fixed 5%.
+//     "Fixed %" mode uses the same 5% for every stock (the original rule).
 //   Sell
 //     Only when the price touches the stop (on a gap down, at the open).
 //     Optional "early exit" (off by default): see the setting's tooltip.
@@ -39,7 +43,8 @@
 //
 // LIMITATIONS
 //   Backtested on a handful of stock, sector-ETF, commodity and crypto baskets
-//   (2020-2026 and 2007-2012). It protected well in crashes and lagged buy-and-hold in strong
+//   (2020-2026, 2015-2020 and 2007-2012). The volatility buffer beat the fixed 5% on most
+//   baskets and periods, but not on every one. It protected well in crashes and lagged buy-and-hold in strong
 //   bull markets; on very volatile speculative stocks the stops can be far away (20-30%).
 //   Results depend on the data source: use the index/ETF/stock itself, not CFDs or
 //   continuous futures, whose daily bars and roll gaps differ.
@@ -51,8 +56,15 @@ indicator("Weekly Trend Rule (SMA200 + EMA8/21)", shorttitle="Weekly Trend Rule"
 GRP_RULE = "Rule"
 GRP_VIEW = "Display"
 
-stopPct = input.float(5.0, "Stop buffer below the average (%)", minval=0.0, step=0.5, group=GRP_RULE,
-     tooltip="How far below the moving average the stop-loss sits. The rule was tested with 5%.") / 100
+bufMode = input.string("Volatility", "Stop buffer", options=["Volatility", "Fixed %"], group=GRP_RULE,
+     tooltip="How far below the moving average the stop-loss sits. Volatility: k x the 252-day average of ATR(14)/close, " +
+             "clamped to the min/max below (tested with k = 1, 2%-12%). Fixed %: the same percentage for every stock (tested with 5%).")
+volK    = input.float(1.0, "Volatility buffer: k", minval=0.1, step=0.1, group=GRP_RULE,
+     tooltip="Multiplier on the typical daily move. Tested value: 1.0; 1.5 was weaker out of sample.")
+bufMin  = input.float(2.0, "Volatility buffer: min (%)", minval=0.0, step=0.5, group=GRP_RULE) / 100
+bufMax  = input.float(12.0, "Volatility buffer: max (%)", minval=0.5, step=0.5, group=GRP_RULE) / 100
+stopPct = input.float(5.0, "Fixed buffer (%)", minval=0.0, step=0.5, group=GRP_RULE,
+     tooltip="Used in 'Fixed %' mode, and in 'Volatility' mode until 252 bars of data exist.") / 100
 useX2   = input.bool(false, "Early exit on SMA50 rejection", group=GRP_RULE,
      tooltip="Optional, needs a daily check. While holding, if the price is below the SMA50 but more than 10% above the SMA200, " +
              "rallies to within 2% of the SMA50 and closes below it, and the NEXT day also closes below the SMA50, sell at that close. " +
@@ -73,15 +85,20 @@ sma200 = ta.sma(close, 200)
 ema8   = ta.ema(close, 8)
 ema21  = ta.ema(close, 21)
 
+// Stop buffer: the stock's typical daily move (1-year average of ATR%), clamped; fixed % as fallback.
+atrPct252 = ta.sma(ta.atr(14) / close, 252)
+buf = bufMode == "Fixed %" or na(atrPct252) ? stopPct : math.max(bufMin, math.min(bufMax, volK * atrPct252))
+
 // Stop for a position bought above the SMA200: SMA50-based in a healthy uptrend, else SMA200-based.
-tierStop(c, s50, s200) =>
-    (c > s50 and s50 > s200) ? s50 * (1 - stopPct) : s200 * (1 - stopPct)
+tierStop(c, s50, s200, b) =>
+    (c > s50 and s50 > s200) ? s50 * (1 - b) : s200 * (1 - b)
 
 // Previous bar = last trading day of the previous week when evaluated on the week's first bar.
 c1     = close[1]
 s50_1  = sma50[1]
 s200_1 = sma200[1]
 e21_1  = ema21[1]
+buf_1  = buf[1]
 
 newWeek = timeframe.change("W")
 isFri   = dayofweek == dayofweek.friday
@@ -109,11 +126,11 @@ float exitPx = na
 // 1) First bar of the week: raise the stop from last Friday's values; buy rule 1 at the open.
 if newWeek and not na(s200_1) and not na(s50_1)
     if inPos
-        float cand = (kind == 1 or c1 > s200_1) ? tierStop(c1, s50_1, s200_1) : e21_1 * (1 - stopPct)
+        float cand = (kind == 1 or c1 > s200_1) ? tierStop(c1, s50_1, s200_1, buf_1) : e21_1 * (1 - buf_1)
         if cand > stopLvl
             stopLvl := cand
     if not inPos and c1 > s200_1
-        float s = tierStop(c1, s50_1, s200_1)
+        float s = tierStop(c1, s50_1, s200_1, buf_1)
         if s < c1 and open > s
             inPos    := true
             stopLvl  := s
@@ -141,7 +158,7 @@ if useX2 and inPos and not na(sma200[1]) and (bar_index - 1) >= entryBar and rej
 
 // 3) Friday close: buy rule 2 (EMA turn confirmed on two Fridays).
 if isFri and ready and not inPos and (na(exitBar) or exitBar != bar_index) and emaTurn and prevFriCond
-    float s2 = ema21 * (1 - stopPct)
+    float s2 = ema21 * (1 - buf)
     if s2 < close
         inPos    := true
         stopLvl  := s2
@@ -165,7 +182,7 @@ plot(showMAs ? sma200 : na, "SMA200", color=color.blue,   linewidth=2)
 plot(showEMAs ? ema8 : na,  "EMA8",   color=color.new(color.teal, 30),   linewidth=1)
 plot(showEMAs ? ema21 : na, "EMA21",  color=color.new(color.purple, 30), linewidth=1)
 // Faded line when there is no simulated position: the stop you would get if you bought today.
-candStop  = ready ? (close > sma200 ? tierStop(close, sma50, sma200) : ema21 * (1 - stopPct)) : na
+candStop  = ready ? (close > sma200 ? tierStop(close, sma50, sma200, buf) : ema21 * (1 - buf)) : na
 stopPlot  = showStop ? stopLvl : candStop
 stopColor = showStop ? color.red : color.new(color.red, 65)
 plot(stopPlot, "Stop", color=stopColor, style=plot.style_linebr, linewidth=2)
@@ -194,29 +211,29 @@ if tblMode != "Off" and barstate.islast
     string sig = "WAIT"
     float liveStop = na
     if inPos
-        float cand = (kind == 1 or close > sma200) ? tierStop(close, sma50, sma200) : ema21 * (1 - stopPct)
+        float cand = (kind == 1 or close > sma200) ? tierStop(close, sma50, sma200, buf) : ema21 * (1 - buf)
         liveStop := math.max(stopLvl, cand)
         sig := "IN POSITION (simulated)"
     else if ready and close > sma200
         sig := "BUY at Monday open"
-        liveStop := tierStop(close, sma50, sma200)
+        liveStop := tierStop(close, sma50, sma200, buf)
     else if ready and emaTurn and lastFri
         sig := "BUY at Friday close (2nd week)"
-        liveStop := ema21 * (1 - stopPct)
+        liveStop := ema21 * (1 - buf)
     else if ready and emaTurn
         sig := "Watch: buy if next Friday confirms"
-        liveStop := ema21 * (1 - stopPct)
+        liveStop := ema21 * (1 - buf)
     sigColor = str.startswith(sig, "BUY") ? color.green : sig == "WAIT" ? color.gray : color.orange
 
     // Stop for YOUR position, from the current close. Raise your order to it only if it is higher.
-    bufTxt = str.tostring(stopPct * 100, "#.#")
+    bufTxt = str.tostring(buf * 100, "#.#")
     string ownTxt = "—"
     if ready and close > sma50 and sma50 > sma200
-        ownTxt := str.tostring(sma50 * (1 - stopPct), format.mintick) + " (SMA50 − " + bufTxt + "%), raise only"
+        ownTxt := str.tostring(sma50 * (1 - buf), format.mintick) + " (SMA50 − " + bufTxt + "%), raise only"
     else if ready and close > sma200
-        ownTxt := str.tostring(sma200 * (1 - stopPct), format.mintick) + " (SMA200 − " + bufTxt + "%), raise only"
+        ownTxt := str.tostring(sma200 * (1 - buf), format.mintick) + " (SMA200 − " + bufTxt + "%), raise only"
     else if ready
-        float emaStop = ema21 * (1 - stopPct)
+        float emaStop = ema21 * (1 - buf)
         ownTxt := emaStop < close ? "Bought below SMA200: " + str.tostring(emaStop, format.mintick) + " · otherwise SELL" : "SELL (stop is above the price)"
     string exitTxt = not useX2 ? "off" : rejectToday ? "Day 1 - sell at tomorrow's close if below SMA50" : "—"
     string hdr = timeframe.isdaily ? "Weekly Trend Rule" : "Use a DAILY chart!"
